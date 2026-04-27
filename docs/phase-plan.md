@@ -6,6 +6,7 @@
 - 建立 Supabase schema：商品、訂單、訂單明細、會員、交易日誌、列印任務。
 - 建立 Edge Function skeleton，先支援訂單建立與狀態更新。
 - 建立 PIN 保護的後台商品管理入口，先支援前台商品顯示、價格、排序與停售。
+- 補齊後台商品菜單通路、出單機規則與角色權限模型，作為 iCHEF/肚肚式營運後台基礎。
 - 規劃 LINE Login profile 與會員資料邊界。
 
 ## Phase 2：Capacitor LAN Printing POC
@@ -14,6 +15,7 @@
 - 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。
 - 驗證列印成功後的狀態回寫。
 - 設計多平板共用出單機的鎖定策略。
+- 依後台印單規則決定收據、貼紙、品項類別與出單機。
 
 ## Phase 3：顧客端線上點餐與金流
 

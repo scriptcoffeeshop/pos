@@ -28,7 +28,8 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ## 初始 schema 草案
 
-- `products`：商品、分類、售價、上架狀態。
+- `products`：商品、分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站與標籤列印設定。
+- `pos_settings`：出單機/印單規則與角色權限等後台設定。
 - `orders`：訂單主檔、來源、服務方式、付款狀態、製作狀態。
 - `order_items`：訂單品項、數量、單價、客製選項。
 - `members`：LINE Login profile 與會員錢包摘要。
@@ -45,6 +46,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - Migration：`20260427155000_initial_pos_schema.sql`
 - Advisor 修正：`20260427161000_fix_advisor_security_warnings.sql`
+- Admin 設定擴充：`20260428102000_add_pos_admin_settings.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -52,13 +54,16 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 列印工作端點：`/functions/v1/pos-api/print-jobs`
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
+- Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
+- 後台設定端點：`/functions/v1/pos-api/admin/settings`
 
 ## 前端同步邊界
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
-- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products` 與 `/orders`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
+- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders` 與 `/settings/runtime`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若自動列印開啟，會接著建立 `POST /print-jobs`。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
+- 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 
 ## 後台 PIN
 
@@ -69,4 +74,4 @@ rtk supabase secrets set POS_ADMIN_PIN=<your-pin> --project-ref uuzwcmceotooocyr
 rtk npm run supabase:functions:deploy
 ```
 
-若未設定 `POS_ADMIN_PIN`，後台會回傳 `POS_ADMIN_PIN is not configured`，前台 POS 仍可正常點餐。
+若未設定 `POS_ADMIN_PIN`，後台會回傳 `POS_ADMIN_PIN is not configured`，前台 POS 仍可正常點餐與讀取 runtime 設定。

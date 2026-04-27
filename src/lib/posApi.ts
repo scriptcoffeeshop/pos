@@ -1,4 +1,17 @@
-import type { MenuCategory, MenuItem, OrderSource, OrderStatus, PaymentMethod, PaymentStatus, PosOrder, PrintStation, ServiceMode } from '../types/pos'
+import type {
+  AccessControlSettings,
+  MenuCategory,
+  MenuItem,
+  OrderSource,
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  PosAdminSettings,
+  PosOrder,
+  PrinterSettings,
+  PrintStation,
+  ServiceMode,
+} from '../types/pos'
 
 interface ApiProduct {
   id: string
@@ -10,6 +23,11 @@ interface ApiProduct {
   accent: string | null
   is_available: boolean
   sort_order: number
+  pos_visible: boolean
+  online_visible: boolean
+  qr_visible: boolean
+  prep_station: string | null
+  print_label: boolean
 }
 
 interface ApiOrderItem {
@@ -61,6 +79,19 @@ interface PrintJobResponse {
   printJob: ApiPrintJob
 }
 
+interface ApiSettingRow {
+  key: string
+  value: unknown
+}
+
+interface AdminSettingsResponse {
+  settings: ApiSettingRow[]
+}
+
+interface RuntimeSettingsResponse {
+  printerSettings: PrinterSettings
+}
+
 export interface ProductUpdateInput {
   name: string
   category: MenuCategory
@@ -69,11 +100,18 @@ export interface ProductUpdateInput {
   accent: string
   isAvailable: boolean
   sortOrder: number
+  posVisible: boolean
+  onlineVisible: boolean
+  qrVisible: boolean
+  prepStation: string
+  printLabel: boolean
 }
 
 interface ProductResponse {
   product: ApiProduct
 }
+
+export type AdminSettingKey = 'printer_settings' | 'access_control'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -127,7 +165,40 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   accent: product.accent ?? '#0b6b63',
   available: product.is_available,
   sortOrder: product.sort_order,
+  posVisible: product.pos_visible,
+  onlineVisible: product.online_visible,
+  qrVisible: product.qr_visible,
+  prepStation: product.prep_station ?? 'bar',
+  printLabel: product.print_label,
 })
+
+const isPrinterSettings = (value: unknown): value is PrinterSettings => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const settings = value as PrinterSettings
+  return Array.isArray(settings.stations) && Array.isArray(settings.rules)
+}
+
+const isAccessControlSettings = (value: unknown): value is AccessControlSettings => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const settings = value as AccessControlSettings
+  return Array.isArray(settings.roles)
+}
+
+const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
+  const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
+  const accessControl = rows.find((row) => row.key === 'access_control')?.value
+
+  return {
+    printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
+    accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
+  }
+}
 
 export const normalizeOrder = (order: ApiOrder): PosOrder => ({
   id: order.order_number,
@@ -186,6 +257,35 @@ export const updateProduct = async (
 
   return normalizeProduct(data.product)
 }
+
+export const fetchAdminSettings = async (adminPin: string): Promise<PosAdminSettings> => {
+  const data = await request<AdminSettingsResponse>('/admin/settings', {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return normalizeAdminSettings(data.settings)
+}
+
+export const updateAdminSetting = async <SettingValue>(
+  adminPin: string,
+  key: AdminSettingKey,
+  value: SettingValue,
+): Promise<SettingValue> => {
+  const data = await request<{ setting: ApiSettingRow }>(`/admin/settings/${key}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+    body: JSON.stringify(value),
+  })
+
+  return data.setting.value as SettingValue
+}
+
+export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =>
+  request<RuntimeSettingsResponse>('/settings/runtime')
 
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {
   const data = await request<OrdersResponse>(`/orders?limit=${limit}`)

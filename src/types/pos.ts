@@ -15,6 +15,11 @@ export interface MenuItem {
   accent: string
   available: boolean
   sortOrder: number
+  posVisible: boolean
+  onlineVisible: boolean
+  qrVisible: boolean
+  prepStation: string
+  printLabel: boolean
 }
 
 export interface CartLine {
@@ -51,6 +56,7 @@ export interface PosOrder {
 }
 
 export interface PrintStation {
+  id?: string
   name: string
   host: string
   port: number
@@ -58,4 +64,58 @@ export interface PrintStation {
   online: boolean
   autoPrint: boolean
   lastPrintAt: string | null
+}
+
+export type PrintLabelMode = 'receipt' | 'label' | 'both'
+
+export interface PrintStationSetting {
+  id: string
+  name: string
+  host: string
+  port: number
+  protocol: string
+  enabled: boolean
+  autoPrint: boolean
+}
+
+export interface PrintRuleSetting {
+  id: string
+  name: string
+  serviceMode: ServiceMode
+  stationId: string
+  categories: MenuCategory[]
+  copies: number
+  labelMode: PrintLabelMode
+  enabled: boolean
+}
+
+export interface PrinterSettings {
+  stations: PrintStationSetting[]
+  rules: PrintRuleSetting[]
+}
+
+export type AdminPermission =
+  | 'manageProducts'
+  | 'managePrinting'
+  | 'managePayments'
+  | 'manageReports'
+  | 'manageCustomers'
+  | 'manageAccess'
+  | 'voidOrders'
+  | 'closeRegister'
+
+export interface RoleSetting {
+  id: string
+  name: string
+  pinRequired: boolean
+  permissions: AdminPermission[]
+}
+
+export interface AccessControlSettings {
+  roles: RoleSetting[]
+}
+
+export interface PosAdminSettings {
+  printerSettings: PrinterSettings
+  accessControl: AccessControlSettings
 }

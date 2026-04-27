@@ -1,5 +1,13 @@
 import type { MenuItem } from '../types/pos'
 
+const defaultChannelState = {
+  posVisible: true,
+  onlineVisible: false,
+  qrVisible: false,
+  prepStation: 'bar',
+  printLabel: true,
+}
+
 export const menuItems: MenuItem[] = [
   {
     id: 'americano-ice',
@@ -11,6 +19,7 @@ export const menuItems: MenuItem[] = [
     accent: '#1f6f8b',
     available: true,
     sortOrder: 10,
+    ...defaultChannelState,
   },
   {
     id: 'latte-hot',
@@ -22,6 +31,7 @@ export const menuItems: MenuItem[] = [
     accent: '#9a6539',
     available: true,
     sortOrder: 20,
+    ...defaultChannelState,
   },
   {
     id: 'brown-sugar-latte',
@@ -33,6 +43,7 @@ export const menuItems: MenuItem[] = [
     accent: '#b84d35',
     available: true,
     sortOrder: 30,
+    ...defaultChannelState,
   },
   {
     id: 'oolong-tea',
@@ -44,6 +55,7 @@ export const menuItems: MenuItem[] = [
     accent: '#3f7d4c',
     available: true,
     sortOrder: 40,
+    ...defaultChannelState,
   },
   {
     id: 'lemon-black-tea',
@@ -55,6 +67,7 @@ export const menuItems: MenuItem[] = [
     accent: '#d19a2a',
     available: true,
     sortOrder: 50,
+    ...defaultChannelState,
   },
   {
     id: 'bagel',
@@ -66,6 +79,7 @@ export const menuItems: MenuItem[] = [
     accent: '#c47b47',
     available: true,
     sortOrder: 60,
+    ...defaultChannelState,
   },
   {
     id: 'croissant',
@@ -77,6 +91,7 @@ export const menuItems: MenuItem[] = [
     accent: '#d6a84f',
     available: true,
     sortOrder: 70,
+    ...defaultChannelState,
   },
   {
     id: 'drip-bag',
@@ -88,6 +103,7 @@ export const menuItems: MenuItem[] = [
     accent: '#5c6f9c',
     available: true,
     sortOrder: 80,
+    ...defaultChannelState,
   },
 ]
 

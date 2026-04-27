@@ -14,7 +14,7 @@
 ## Phase 2 驗證步驟
 
 1. 店內路由器替 GODEX DT2X 綁定固定內網 IP。
-2. Vue POS 保留 `VITE_POS_PRINTER_HOST` 與 `VITE_POS_PRINTER_PORT` 設定。
+2. Vue POS 會優先讀取 `/settings/runtime` 的啟用出單機；`.env.local` 的 `VITE_POS_PRINTER_HOST` 與 `VITE_POS_PRINTER_PORT` 只作為本機 fallback。
 3. 加入 Capacitor：
 
 ```bash
@@ -26,6 +26,12 @@ rtk npx cap add android
 4. 加入 TCP socket 外掛後，建立最小列印測試頁。
 5. 在平板安裝 APK，送出 healthcheck label。
 6. 成功後再把列印結果接回 `print_jobs` 狀態。
+
+## 後台設定邊界
+
+- `pos_settings.printer_settings` 保存出單機、服務方式、商品類別、單據類型與份數。
+- 前台目前先使用第一台啟用的出單機建立 `print_jobs`。
+- Phase 2 APK 需要依印單規則拆分貼紙/收據，再依規則回寫列印結果。
 
 ## 重要限制
 

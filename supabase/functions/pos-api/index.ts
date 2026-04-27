@@ -9,6 +9,8 @@ type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
 type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
+type PrintLabelMode = "receipt" | "label" | "both";
+type AdminSettingKey = "printer_settings" | "access_control";
 
 interface OrderLineInput {
   productId?: string;
@@ -53,6 +55,48 @@ interface ProductUpdateInput {
   accent?: string;
   isAvailable?: boolean;
   sortOrder?: number;
+  posVisible?: boolean;
+  onlineVisible?: boolean;
+  qrVisible?: boolean;
+  prepStation?: string;
+  printLabel?: boolean;
+}
+
+interface PrintStationSetting {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  protocol: string;
+  enabled: boolean;
+  autoPrint: boolean;
+}
+
+interface PrintRuleSetting {
+  id: string;
+  name: string;
+  serviceMode: ServiceMode;
+  stationId: string;
+  categories: MenuCategory[];
+  copies: number;
+  labelMode: PrintLabelMode;
+  enabled: boolean;
+}
+
+interface PrinterSettings {
+  stations: PrintStationSetting[];
+  rules: PrintRuleSetting[];
+}
+
+interface RoleSetting {
+  id: string;
+  name: string;
+  pinRequired: boolean;
+  permissions: string[];
+}
+
+interface AccessControlSettings {
+  roles: RoleSetting[];
 }
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
@@ -74,7 +118,54 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 const api = new Hono();
 
 const orderSelect = "*, order_items(*), print_jobs(status, printed_at, created_at)";
-const productSelect = "id, sku, name, category, price, tags, accent, is_available, sort_order";
+const productSelect =
+  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label";
+
+const defaultPrinterSettings: PrinterSettings = {
+  stations: [
+    {
+      id: "counter",
+      name: "櫃台出單機",
+      host: "192.168.1.100",
+      port: 9100,
+      protocol: "EZPL over TCP",
+      enabled: true,
+      autoPrint: true,
+    },
+  ],
+  rules: [
+    {
+      id: "takeout-label",
+      name: "外帶貼紙",
+      serviceMode: "takeout",
+      stationId: "counter",
+      categories: ["coffee", "tea", "food", "retail"],
+      copies: 1,
+      labelMode: "label",
+      enabled: true,
+    },
+  ],
+};
+
+const defaultAccessControl: AccessControlSettings = {
+  roles: [
+    {
+      id: "owner",
+      name: "店主",
+      pinRequired: true,
+      permissions: [
+        "manageProducts",
+        "managePrinting",
+        "managePayments",
+        "manageReports",
+        "manageCustomers",
+        "manageAccess",
+        "voidOrders",
+        "closeRegister",
+      ],
+    },
+  ],
+};
 
 const loadOrder = (orderId: string) =>
   supabase
@@ -110,6 +201,7 @@ api.get("/products", async (c) => {
     .from("products")
     .select(productSelect)
     .eq("is_available", true)
+    .eq("pos_visible", true)
     .order("sort_order", { ascending: true });
 
   if (error) {
@@ -117,6 +209,15 @@ api.get("/products", async (c) => {
   }
 
   return c.json({ products: data });
+});
+
+api.get("/settings/runtime", async (c) => {
+  const printerSettings = await loadSetting<PrinterSettings>(
+    "printer_settings",
+    defaultPrinterSettings,
+  );
+
+  return c.json({ printerSettings });
 });
 
 api.get("/admin/products", async (c) => {
@@ -162,6 +263,54 @@ api.patch("/admin/products/:id", async (c) => {
   }
 
   return c.json({ product: data });
+});
+
+api.get("/admin/settings", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { data, error } = await supabase
+    .from("pos_settings")
+    .select("key, value")
+    .in("key", ["printer_settings", "access_control"]);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ settings: data });
+});
+
+api.patch("/admin/settings/:key", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const key = c.req.param("key") as AdminSettingKey;
+  if (!["printer_settings", "access_control"].includes(key)) {
+    return c.json({ error: "Invalid setting key" }, 400);
+  }
+
+  const input = await c.req.json<unknown>();
+  const { value, error: validationError } = validateAdminSetting(key, input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("pos_settings")
+    .upsert({ key, value }, { onConflict: "key" })
+    .select("key, value")
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ setting: data });
 });
 
 api.get("/orders", async (c) => {
@@ -317,6 +466,35 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
 };
 
 const productCategories: MenuCategory[] = ["coffee", "tea", "food", "retail"];
+const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
+const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
+const knownPermissions = [
+  "manageProducts",
+  "managePrinting",
+  "managePayments",
+  "manageReports",
+  "manageCustomers",
+  "manageAccess",
+  "voidOrders",
+  "closeRegister",
+];
+
+const loadSetting = async <SettingValue>(
+  key: AdminSettingKey,
+  fallback: SettingValue,
+): Promise<SettingValue> => {
+  const { data, error } = await supabase
+    .from("pos_settings")
+    .select("value")
+    .eq("key", key)
+    .single();
+
+  if (error || !data?.value) {
+    return fallback;
+  }
+
+  return data.value as SettingValue;
+};
 
 const requireAdmin = (c: Context): Response | null => {
   if (!adminPin) {
@@ -375,7 +553,170 @@ const validateProductUpdateInput = (
   }
   payload.sort_order = sortOrder;
 
+  if (typeof input.posVisible !== "boolean") {
+    return { payload, error: "posVisible must be a boolean" };
+  }
+  payload.pos_visible = input.posVisible;
+
+  if (typeof input.onlineVisible !== "boolean") {
+    return { payload, error: "onlineVisible must be a boolean" };
+  }
+  payload.online_visible = input.onlineVisible;
+
+  if (typeof input.qrVisible !== "boolean") {
+    return { payload, error: "qrVisible must be a boolean" };
+  }
+  payload.qr_visible = input.qrVisible;
+
+  if (typeof input.prepStation !== "string" || input.prepStation.trim().length === 0) {
+    return { payload, error: "prepStation is required" };
+  }
+  payload.prep_station = input.prepStation.trim();
+
+  if (typeof input.printLabel !== "boolean") {
+    return { payload, error: "printLabel must be a boolean" };
+  }
+  payload.print_label = input.printLabel;
+
   return { payload, error: null };
+};
+
+const sanitizeIdentifier = (value: unknown, fallback: string): string =>
+  typeof value === "string" && value.trim() ? value.trim() : fallback;
+
+const sanitizeText = (value: unknown, fallback: string): string =>
+  typeof value === "string" && value.trim() ? value.trim() : fallback;
+
+const validatePrinterSettings = (input: unknown): {
+  value: PrinterSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "printer_settings must be an object" };
+  }
+
+  const settings = input as Partial<PrinterSettings>;
+  if (!Array.isArray(settings.stations) || !Array.isArray(settings.rules)) {
+    return { value: null, error: "printer_settings requires stations and rules" };
+  }
+
+  const stations: PrintStationSetting[] = [];
+  for (const [index, station] of settings.stations.entries()) {
+    if (!station || typeof station !== "object") {
+      return { value: null, error: "each station must be an object" };
+    }
+    const entry = station as Partial<PrintStationSetting>;
+    const id = sanitizeIdentifier(entry.id, `station-${index + 1}`);
+    const port = Number(entry.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      return { value: null, error: "station port must be between 1 and 65535" };
+    }
+    stations.push({
+      id,
+      name: sanitizeText(entry.name, id),
+      host: sanitizeText(entry.host, "192.168.1.100"),
+      port,
+      protocol: sanitizeText(entry.protocol, "EZPL over TCP"),
+      enabled: Boolean(entry.enabled),
+      autoPrint: Boolean(entry.autoPrint),
+    });
+  }
+
+  if (stations.length === 0) {
+    return { value: null, error: "at least one print station is required" };
+  }
+
+  const stationIds = new Set(stations.map((station) => station.id));
+  const rules: PrintRuleSetting[] = [];
+  for (const [index, rule] of settings.rules.entries()) {
+    if (!rule || typeof rule !== "object") {
+      return { value: null, error: "each print rule must be an object" };
+    }
+    const entry = rule as Partial<PrintRuleSetting>;
+    const stationId = sanitizeIdentifier(entry.stationId, stations[0].id);
+    const serviceMode = entry.serviceMode;
+    const labelMode = entry.labelMode;
+    const copies = Number(entry.copies);
+    if (!stationIds.has(stationId)) {
+      return { value: null, error: "print rule stationId is invalid" };
+    }
+    if (!serviceMode || !serviceModes.includes(serviceMode)) {
+      return { value: null, error: "print rule serviceMode is invalid" };
+    }
+    if (!labelMode || !labelModes.includes(labelMode)) {
+      return { value: null, error: "print rule labelMode is invalid" };
+    }
+    if (!Number.isInteger(copies) || copies < 1 || copies > 5) {
+      return { value: null, error: "print rule copies must be 1 to 5" };
+    }
+    const categories = Array.isArray(entry.categories)
+      ? entry.categories.filter((category): category is MenuCategory =>
+        productCategories.includes(category as MenuCategory)
+      )
+      : [];
+    rules.push({
+      id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),
+      name: sanitizeText(entry.name, `規則 ${index + 1}`),
+      serviceMode,
+      stationId,
+      categories,
+      copies,
+      labelMode,
+      enabled: Boolean(entry.enabled),
+    });
+  }
+
+  return { value: { stations, rules }, error: null };
+};
+
+const validateAccessControl = (input: unknown): {
+  value: AccessControlSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "access_control must be an object" };
+  }
+
+  const settings = input as Partial<AccessControlSettings>;
+  if (!Array.isArray(settings.roles)) {
+    return { value: null, error: "access_control requires roles" };
+  }
+
+  const roles: RoleSetting[] = settings.roles.map((role, index) => {
+    const entry = role as Partial<RoleSetting>;
+    const permissions = Array.isArray(entry.permissions)
+      ? entry.permissions.filter((permission): permission is string =>
+        knownPermissions.includes(permission)
+      )
+      : [];
+
+    return {
+      id: sanitizeIdentifier(entry.id, `role-${index + 1}`),
+      name: sanitizeText(entry.name, `角色 ${index + 1}`),
+      pinRequired: Boolean(entry.pinRequired),
+      permissions,
+    };
+  });
+
+  if (roles.length === 0) {
+    return { value: null, error: "at least one role is required" };
+  }
+
+  return { value: { roles }, error: null };
+};
+
+const validateAdminSetting = (
+  key: AdminSettingKey,
+  input: unknown,
+): {
+  value: PrinterSettings | AccessControlSettings | null;
+  error: string | null;
+} => {
+  if (key === "printer_settings") {
+    return validatePrinterSettings(input);
+  }
+
+  return validateAccessControl(input);
 };
 
 const app = new Hono();

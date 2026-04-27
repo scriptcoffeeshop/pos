@@ -7,6 +7,7 @@ import {
   createPrintJob,
   fetchOrders,
   fetchProducts,
+  fetchRuntimeSettings,
   isPosApiConfigured,
   updateOrderStatus as persistOrderStatus,
 } from '../lib/posApi'
@@ -81,6 +82,7 @@ export const usePosSession = () => {
     note: '',
   })
   const printStation = reactive<PrintStation>({
+    id: 'counter',
     name: 'GODEX DT2X',
     host: import.meta.env.VITE_POS_PRINTER_HOST ?? '192.168.1.100',
     port: Number(import.meta.env.VITE_POS_PRINTER_PORT ?? 9100),
@@ -89,6 +91,22 @@ export const usePosSession = () => {
     autoPrint: true,
     lastPrintAt: null,
   })
+
+  const applyRuntimePrinterSettings = async (): Promise<void> => {
+    const runtimeSettings = await fetchRuntimeSettings()
+    const primaryStation = runtimeSettings.printerSettings.stations.find((station) => station.enabled)
+    if (!primaryStation) {
+      return
+    }
+
+    printStation.id = primaryStation.id
+    printStation.name = primaryStation.name
+    printStation.host = primaryStation.host
+    printStation.port = primaryStation.port
+    printStation.protocol = primaryStation.protocol
+    printStation.autoPrint = primaryStation.autoPrint
+    printStation.online = primaryStation.enabled
+  }
 
   const filteredMenu = computed(() => {
     const keyword = searchTerm.value.trim().toLowerCase()
@@ -129,6 +147,7 @@ export const usePosSession = () => {
 
     try {
       const [remoteProducts, remoteOrders] = await Promise.all([fetchProducts(), fetchOrders()])
+      await applyRuntimePrinterSettings()
       menuCatalog.value = remoteProducts
       orderQueue.value = remoteOrders
       nextSequence.value = nextSequenceFromOrders(remoteOrders)
