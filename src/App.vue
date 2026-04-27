@@ -8,6 +8,7 @@ import {
   Plus,
   Printer,
   ReceiptText,
+  RefreshCw,
   Search,
   ShoppingCart,
   Trash2,
@@ -21,6 +22,7 @@ import type { MenuCategory, OrderStatus, PaymentMethod, ServiceMode } from './ty
 
 const {
   addItem,
+  backendStatus,
   cartLines,
   cartQuantity,
   cartTotal,
@@ -29,11 +31,13 @@ const {
   decreaseLine,
   filteredMenu,
   increaseLine,
+  isSubmitting,
   lastPrintPreview,
   orderQueue,
   paymentMethod,
   pendingOrders,
   printStation,
+  refreshBackendData,
   searchTerm,
   selectedCategory,
   sendPrinterHealthcheck,
@@ -133,9 +137,13 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
       </div>
 
       <div class="topbar-status" aria-label="POS 狀態">
-        <span class="status-pill status-pill--success">
+        <span
+          class="status-pill"
+          :class="backendStatus.mode === 'fallback' ? 'status-pill--danger' : 'status-pill--success'"
+          :title="backendStatus.detail"
+        >
           <Wifi :size="18" aria-hidden="true" />
-          API 已部署
+          {{ backendStatus.label }}
         </span>
         <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
           <Printer :size="18" aria-hidden="true" />
@@ -145,6 +153,16 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
           <Clock3 :size="18" aria-hidden="true" />
           {{ queueHealth }}
         </span>
+        <button
+          class="icon-button sync-button"
+          :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
+          type="button"
+          title="重新同步 POS API"
+          :disabled="backendStatus.mode === 'syncing'"
+          @click="refreshBackendData"
+        >
+          <RefreshCw :size="18" aria-hidden="true" />
+        </button>
       </div>
     </header>
 
@@ -299,9 +317,14 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
             <span>{{ cartQuantity }} 件</span>
             <strong>{{ formatCurrency(cartTotal) }}</strong>
           </div>
-          <button class="primary-button" type="button" :disabled="cartLines.length === 0" @click="submitCounterOrder">
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="cartLines.length === 0 || isSubmitting"
+            @click="submitCounterOrder"
+          >
             <ReceiptText :size="20" aria-hidden="true" />
-            建立訂單
+            {{ isSubmitting ? '建立中' : '建立訂單' }}
           </button>
         </footer>
       </section>

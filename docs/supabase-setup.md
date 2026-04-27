@@ -48,3 +48,12 @@ SUPABASE_DB_PASSWORD=<database-password>
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
+- 訂單端點：`/functions/v1/pos-api/orders`
+- 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
+- 列印工作端點：`/functions/v1/pos-api/print-jobs`
+
+## 前端同步邊界
+
+- `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
+- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products` 與 `/orders`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
+- 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若自動列印開啟，會接著建立 `POST /print-jobs`。

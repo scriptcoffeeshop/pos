@@ -3,6 +3,7 @@ import type { MenuItem } from '../types/pos'
 export const menuItems: MenuItem[] = [
   {
     id: 'americano-ice',
+    sku: 'americano-ice',
     name: '冰美式',
     category: 'coffee',
     price: 95,
@@ -12,6 +13,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'latte-hot',
+    sku: 'latte-hot',
     name: '熱拿鐵',
     category: 'coffee',
     price: 120,
@@ -21,6 +23,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'brown-sugar-latte',
+    sku: 'brown-sugar-latte',
     name: '黑糖拿鐵',
     category: 'coffee',
     price: 135,
@@ -30,6 +33,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'oolong-tea',
+    sku: 'oolong-tea',
     name: '杉林溪烏龍',
     category: 'tea',
     price: 90,
@@ -39,6 +43,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'lemon-black-tea',
+    sku: 'lemon-black-tea',
     name: '檸檬紅茶',
     category: 'tea',
     price: 80,
@@ -48,6 +53,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'bagel',
+    sku: 'bagel',
     name: '奶油貝果',
     category: 'food',
     price: 75,
@@ -57,6 +63,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'croissant',
+    sku: 'croissant',
     name: '可頌',
     category: 'food',
     price: 85,
@@ -66,6 +73,7 @@ export const menuItems: MenuItem[] = [
   },
   {
     id: 'drip-bag',
+    sku: 'drip-bag',
     name: '耳掛咖啡',
     category: 'retail',
     price: 45,

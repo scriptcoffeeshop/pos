@@ -7,6 +7,7 @@ export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'fai
 
 export interface MenuItem {
   id: string
+  sku: string
   name: string
   category: MenuCategory
   price: number
@@ -17,6 +18,8 @@ export interface MenuItem {
 
 export interface CartLine {
   itemId: string
+  productId?: string
+  productSku: string
   name: string
   unitPrice: number
   quantity: number
@@ -31,6 +34,7 @@ export interface CustomerDraft {
 
 export interface PosOrder {
   id: string
+  remoteId?: string
   source: OrderSource
   mode: ServiceMode
   customerName: string

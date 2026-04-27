@@ -1,16 +1,17 @@
 # Script Coffee POS
 
-Script Coffee POS 是門市平板點餐、線上訂單中樞與 GODEX DT2X 區域網路列印的初始專案。第一版先建立 Vue 3 + Vite + TypeScript 前端工作台，後續再接 Supabase、LINE Login、LINE Pay / 街口支付與 Capacitor Android APK。
+Script Coffee POS 是門市平板點餐、線上訂單中樞與 GODEX DT2X 區域網路列印的初始專案。第一版已建立 Vue 3 + Vite + TypeScript 前端工作台，並接上獨立 Supabase `pos-api` 作為商品、訂單與列印工作的後端入口；後續再接 LINE Login、LINE Pay / 街口支付與 Capacitor Android APK。
 
 ## 初版範圍
 
 - 門市 POS 第一屏：品項、購物車、付款方式、顧客備註、訂單佇列。
+- 前端 POS API 同步：商品與訂單從 `pos-api` 載入，櫃台建單、狀態更新與列印工作寫回 Supabase；API 失敗時保留本機 fallback。
 - 區網列印 POC 介面：固定出單機 IP、EZPL 預覽、測試列印入口。
 - Supabase 後端：獨立專案已綁定，包含 POS schema migration 與 `pos-api` Edge Function。
 - 工程規範：TypeScript strict、ESLint、禁止 legacy DOM/event bridge 的 guardrails。
 - GitHub Actions：guardrails、typecheck、lint、Edge Function check、build，並在 `main` 自動部署 Supabase。
 
-GitHub 倉庫：<https://github.com/scriptcoffeeshop/pos>，目前為 private。
+GitHub 倉庫：<https://github.com/scriptcoffeeshop/pos>，目前為 public。
 
 ## 本機開發
 

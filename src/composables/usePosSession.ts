@@ -1,7 +1,15 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
+import {
+  createOrder,
+  createPrintJob,
+  fetchOrders,
+  fetchProducts,
+  isPosApiConfigured,
+  updateOrderStatus as persistOrderStatus,
+} from '../lib/posApi'
 import { buildEzplTicketPreview, buildPrinterHealthcheckPreview } from '../lib/printing'
 import type {
   CartLine,
@@ -16,6 +24,13 @@ import type {
 } from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
+type BackendMode = 'syncing' | 'connected' | 'fallback'
+
+interface BackendStatus {
+  mode: BackendMode
+  label: string
+  detail: string
+}
 
 const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
   if (method === 'cash' || method === 'transfer') {
@@ -27,15 +42,39 @@ const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
 const buildOrderId = (date: Date, sequence: number): string =>
   `POS-${formatDateKey(date)}-${String(sequence).padStart(3, '0')}`
 
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return '未知錯誤'
+}
+
+const nextSequenceFromOrders = (orders: PosOrder[]): number => {
+  const maxSequence = orders.reduce((currentMax, order) => {
+    const match = order.id.match(/-(\d{3,})$/)
+    const sequence = match ? Number(match[1]) : 0
+    return Number.isFinite(sequence) ? Math.max(currentMax, sequence) : currentMax
+  }, 0)
+
+  return maxSequence + 1
+}
+
 export const usePosSession = () => {
   const selectedCategory = ref<CategoryFilter>('all')
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>('takeout')
   const paymentMethod = ref<PaymentMethod>('cash')
+  const menuCatalog = ref<MenuItem[]>([...menuItems])
   const cartLines = ref<CartLine[]>([])
   const orderQueue = ref<PosOrder[]>([...initialOrders])
   const lastPrintPreview = ref('尚未送出列印資料')
-  const nextSequence = ref(3)
+  const nextSequence = ref(nextSequenceFromOrders(initialOrders))
+  const isSubmitting = ref(false)
+  const backendStatus = reactive<BackendStatus>({
+    mode: isPosApiConfigured ? 'syncing' : 'fallback',
+    label: isPosApiConfigured ? 'API 同步中' : '本機模式',
+    detail: isPosApiConfigured ? '正在連線 POS API' : '尚未設定 Supabase URL 或 anon key',
+  })
   const customer = reactive<CustomerDraft>({
     name: '現場客',
     phone: '',
@@ -53,7 +92,7 @@ export const usePosSession = () => {
 
   const filteredMenu = computed(() => {
     const keyword = searchTerm.value.trim().toLowerCase()
-    return menuItems.filter((item) => {
+    return menuCatalog.value.filter((item) => {
       const matchesCategory = selectedCategory.value === 'all' || item.category === selectedCategory.value
       const matchesKeyword =
         keyword.length === 0 ||
@@ -70,6 +109,35 @@ export const usePosSession = () => {
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
   const pendingOrders = computed(() => orderQueue.value.filter((order) => order.status !== 'served'))
 
+  const setBackendStatus = (mode: BackendMode, label: string, detail: string): void => {
+    backendStatus.mode = mode
+    backendStatus.label = label
+    backendStatus.detail = detail
+  }
+
+  const replaceOrder = (orderId: string, nextOrder: PosOrder): void => {
+    orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
+  }
+
+  const refreshBackendData = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      setBackendStatus('fallback', '本機模式', '尚未設定 Supabase URL 或 anon key')
+      return
+    }
+
+    setBackendStatus('syncing', 'API 同步中', '正在載入商品與訂單')
+
+    try {
+      const [remoteProducts, remoteOrders] = await Promise.all([fetchProducts(), fetchOrders()])
+      menuCatalog.value = remoteProducts
+      orderQueue.value = remoteOrders
+      nextSequence.value = nextSequenceFromOrders(remoteOrders)
+      setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
+    } catch (error) {
+      setBackendStatus('fallback', '本機模式', `POS API 載入失敗：${getErrorMessage(error)}`)
+    }
+  }
+
   const addItem = (item: MenuItem): void => {
     const existing = cartLines.value.find((line) => line.itemId === item.id)
     if (existing) {
@@ -77,13 +145,20 @@ export const usePosSession = () => {
       return
     }
 
-    cartLines.value.push({
+    const nextLine: CartLine = {
       itemId: item.id,
+      productSku: item.sku,
       name: item.name,
       unitPrice: item.price,
       quantity: 1,
       options: item.tags.slice(0, 1),
-    })
+    }
+
+    if (item.id !== item.sku) {
+      nextLine.productId = item.id
+    }
+
+    cartLines.value.push(nextLine)
   }
 
   const increaseLine = (itemId: string): void => {
@@ -111,19 +186,38 @@ export const usePosSession = () => {
     cartLines.value = []
   }
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus): void => {
+  const updateOrderStatus = async (orderId: string, status: OrderStatus): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return
     }
+    const previousStatus = order.status
     order.status = status
+
+    if (!isPosApiConfigured || !order.remoteId) {
+      return
+    }
+
+    try {
+      const persistedOrder = await persistOrderStatus(order, status)
+      replaceOrder(orderId, {
+        ...persistedOrder,
+        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
+        printStatus: persistedOrder.printStatus === 'skipped' ? order.printStatus : persistedOrder.printStatus,
+      })
+      setBackendStatus('connected', 'API 已同步', `${orderId} 已更新為 ${status}`)
+    } catch (error) {
+      order.status = previousStatus
+      setBackendStatus('fallback', '本機模式', `訂單狀態同步失敗：${getErrorMessage(error)}`)
+    }
   }
 
-  const submitCounterOrder = (): PosOrder | null => {
-    if (cartLines.value.length === 0) {
+  const submitCounterOrder = async (): Promise<PosOrder | null> => {
+    if (cartLines.value.length === 0 || isSubmitting.value) {
       return null
     }
 
+    isSubmitting.value = true
     const now = new Date()
     const order: PosOrder = {
       id: buildOrderId(now, nextSequence.value),
@@ -138,17 +232,48 @@ export const usePosSession = () => {
       paymentStatus: paymentStatusFor(paymentMethod.value),
       status: 'new',
       createdAt: now.toISOString(),
-      printStatus: printStation.autoPrint ? 'printed' : 'queued',
+      printStatus: printStation.autoPrint ? 'queued' : 'skipped',
     }
 
     nextSequence.value += 1
     orderQueue.value.unshift(order)
-    lastPrintPreview.value = buildEzplTicketPreview(order, printStation)
+    const printPreview = buildEzplTicketPreview(order, printStation)
+    lastPrintPreview.value = printPreview
     if (printStation.autoPrint) {
       printStation.lastPrintAt = now.toISOString()
     }
     clearCart()
-    return order
+
+    if (!isPosApiConfigured) {
+      isSubmitting.value = false
+      return order
+    }
+
+    try {
+      const persistedOrder = await createOrder(order)
+      const nextOrder: PosOrder = {
+        ...order,
+        createdAt: persistedOrder.createdAt,
+        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
+      }
+
+      if (persistedOrder.remoteId) {
+        nextOrder.remoteId = persistedOrder.remoteId
+      }
+
+      if (printStation.autoPrint) {
+        nextOrder.printStatus = await createPrintJob(nextOrder, printPreview, printStation)
+      }
+
+      replaceOrder(order.id, nextOrder)
+      setBackendStatus('connected', 'API 已同步', `${order.id} 已建立`)
+      return nextOrder
+    } catch (error) {
+      setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${getErrorMessage(error)}`)
+      return order
+    } finally {
+      isSubmitting.value = false
+    }
   }
 
   const sendPrinterHealthcheck = (): void => {
@@ -158,7 +283,12 @@ export const usePosSession = () => {
     lastPrintPreview.value = buildPrinterHealthcheckPreview(printStation)
   }
 
+  onMounted(() => {
+    void refreshBackendData()
+  })
+
   return {
+    backendStatus,
     cartLines,
     cartQuantity,
     cartTotal,
@@ -167,6 +297,7 @@ export const usePosSession = () => {
     decreaseLine,
     filteredMenu,
     increaseLine,
+    isSubmitting,
     lastPrintPreview,
     orderQueue,
     paymentMethod,
@@ -176,6 +307,7 @@ export const usePosSession = () => {
     selectedCategory,
     serviceMode,
     addItem,
+    refreshBackendData,
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,

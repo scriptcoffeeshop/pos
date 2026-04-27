@@ -2,19 +2,13 @@
 
 ## GitHub Pages
 
-CI 已預留手動部署 job。第一次部署前：
+CI 已預留手動部署 job。倉庫目前已改為 public，可使用 GitHub Free 的 GitHub Pages。第一次部署前：
 
-1. 確認 private repo 是否符合目前 GitHub Pages 方案。GitHub Free 只能從 public repo 使用 Pages；GitHub Pro、Team、Enterprise Cloud 或 Enterprise Server 才支援 private repo Pages。
-2. GitHub repo 設定 Pages source 為 GitHub Actions。
-3. 到 Actions 執行 `POS CI` workflow。
-4. 勾選 `deploy_frontend=true`。
+1. GitHub repo 設定 Pages source 為 GitHub Actions。
+2. 到 Actions 執行 `POS CI` workflow。
+3. 勾選 `deploy_frontend=true`。
 
 Vite 會在 GitHub Actions 內偵測 `scriptcoffeeshop/pos`，自動使用 `/pos/` base path。
-
-若目前帳號方案不支援 private repo Pages，有兩個低風險選擇：
-
-- 將 repo 改成 public 後使用 GitHub Pages。
-- 保持 repo private，改用 Cloudflare Pages / Netlify 類部署服務接 GitHub private repo。
 
 ## Supabase
 

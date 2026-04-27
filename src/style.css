@@ -423,6 +423,10 @@ h3 {
   color: var(--ink-soft);
 }
 
+.sync-button--active svg {
+  animation: sync-rotate 900ms linear infinite;
+}
+
 .cart-lines {
   display: grid;
   align-content: start;
@@ -802,6 +806,12 @@ h3 {
     transition-duration: 0.001ms !important;
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@keyframes sync-rotate {
+  to {
+    transform: rotate(360deg);
   }
 }
 

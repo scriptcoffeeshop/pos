@@ -11,6 +11,7 @@ export const initialOrders: PosOrder[] = [
     lines: [
       {
         itemId: 'latte-hot',
+        productSku: 'latte-hot',
         name: '熱拿鐵',
         unitPrice: 120,
         quantity: 1,
@@ -18,6 +19,7 @@ export const initialOrders: PosOrder[] = [
       },
       {
         itemId: 'drip-bag',
+        productSku: 'drip-bag',
         name: '耳掛咖啡',
         unitPrice: 45,
         quantity: 2,
@@ -41,6 +43,7 @@ export const initialOrders: PosOrder[] = [
     lines: [
       {
         itemId: 'americano-ice',
+        productSku: 'americano-ice',
         name: '冰美式',
         unitPrice: 95,
         quantity: 2,

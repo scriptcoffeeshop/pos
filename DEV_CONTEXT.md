@@ -1,14 +1,15 @@
 # 開發交接紀錄
 
-更新日期：2026-04-27
+更新日期：2026-04-28
 
 ## 目前狀態
 
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態。
+- 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
-- GitHub repo：`scriptcoffeeshop/pos`，目前為 private。
+- GitHub repo：`scriptcoffeeshop/pos`，目前為 public。
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
 - SSH 綁定：repo-local `core.sshCommand=ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes`。
 - 第一次 CI：GitHub Actions run `25003328938`，`verify` job 已通過；Pages deploy job 只在手動部署時啟動。
@@ -16,6 +17,7 @@
 - 本機 env：`.env.local` 與 `.env.supabase.local` 已建立並被 `.gitignore` 保護，不提交真實值。
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
+- POS API 同步：商品與訂單會從 `/products`、`/orders` 載入，櫃台建單走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
 
 ## 來源藍圖
 
@@ -41,7 +43,7 @@
 
 ## 下一步
 
-1. 將前端從 mock data 漸進切到 `pos-api/products` 與 `pos-api/orders`。
-2. 補訂單建立/狀態更新的前端 API client 與錯誤狀態。
-3. Phase 2 安裝 Capacitor 與 TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
-4. GitHub Pages 部署確認後，再規劃 APK build 與店內平板安裝流程。
+1. GitHub Pages 部署確認後，將 Web POS 固定到公開 URL。
+2. Phase 2 安裝 Capacitor 與 TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
+3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
+4. 規劃 APK build 與店內平板安裝流程。

@@ -60,6 +60,15 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 
 const api = new Hono();
 
+const orderSelect = "*, order_items(*), print_jobs(status, printed_at, created_at)";
+
+const loadOrder = (orderId: string) =>
+  supabase
+    .from("orders")
+    .select(orderSelect)
+    .eq("id", orderId)
+    .single();
+
 api.use(
   "*",
   cors({
@@ -96,7 +105,7 @@ api.get("/orders", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 50), 100);
   const { data, error } = await supabase
     .from("orders")
-    .select("*, order_items(*)")
+    .select(orderSelect)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -152,7 +161,12 @@ api.post("/orders", async (c) => {
     return c.json({ error: itemError.message }, 500);
   }
 
-  return c.json({ order }, 201);
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(order.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder }, 201);
 });
 
 api.patch("/orders/:id/status", async (c) => {
@@ -176,7 +190,12 @@ api.patch("/orders/:id/status", async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
-  return c.json({ order: data });
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder });
 });
 
 api.post("/print-jobs", async (c) => {
