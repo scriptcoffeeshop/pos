@@ -33,6 +33,6 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 1. 櫃台或線上來源建立訂單。
 2. POS 訂單佇列即時顯示新訂單。
-3. POS 依 `pos_settings.printer_settings` 選擇啟用的出單機，新訂單進入 `print_jobs`。
-4. Android APK 透過 LAN 對 GODEX DT2X 送出列印 payload。
+3. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、貼紙/收據模式與份數建立列印計畫。
+4. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
 5. 列印成功或失敗後回寫列印任務狀態。

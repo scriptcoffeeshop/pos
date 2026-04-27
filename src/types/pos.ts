@@ -27,10 +27,13 @@ export interface CartLine {
   itemId: string
   productId?: string
   productSku: string
+  category?: MenuCategory
   name: string
   unitPrice: number
   quantity: number
   options: string[]
+  prepStation?: string
+  printLabel?: boolean
 }
 
 export interface CustomerDraft {

@@ -74,6 +74,16 @@ values
           "copies": 1,
           "labelMode": "receipt",
           "enabled": true
+        },
+        {
+          "id": "delivery-receipt",
+          "name": "外送收據",
+          "serviceMode": "delivery",
+          "stationId": "counter",
+          "categories": ["coffee", "tea", "food", "retail"],
+          "copies": 1,
+          "labelMode": "both",
+          "enabled": true
         }
       ]
     }'::jsonb

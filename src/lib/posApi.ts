@@ -165,8 +165,24 @@ const normalizeOptions = (options: unknown): string[] => {
 }
 
 const normalizePrintStatus = (order: ApiOrder): PrintStatus => {
-  const newestPrintJob = [...(order.print_jobs ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
-  return newestPrintJob?.status ?? 'skipped'
+  const printJobs = order.print_jobs ?? []
+  if (printJobs.length === 0) {
+    return 'skipped'
+  }
+
+  if (printJobs.some((job) => job.status === 'failed')) {
+    return 'failed'
+  }
+
+  if (printJobs.every((job) => job.status === 'printed')) {
+    return 'printed'
+  }
+
+  if (printJobs.some((job) => job.status === 'queued')) {
+    return 'queued'
+  }
+
+  return 'skipped'
 }
 
 const normalizePrintJob = (printJob: ApiPrintJob): PrintJob => ({

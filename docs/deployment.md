@@ -18,7 +18,7 @@ Vite 使用相對 base path，讓 GitHub Pages 預設網址與 custom domain 都
 rtk npm run pages:check
 ```
 
-GitHub Pages 憑證核發後啟用強制 HTTPS：
+目前 `order.scriptcoffee.com.tw` 的 HTTPS 已完成；若未來重新綁定網域或重設 Pages，可在憑證核發後重新啟用強制 HTTPS：
 
 ```bash
 rtk npm run pages:enable-https

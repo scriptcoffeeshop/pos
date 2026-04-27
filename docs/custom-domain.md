@@ -25,13 +25,10 @@ order.scriptcoffee.com.tw
 
 目前狀態：
 
-- 網路中文後台已設定 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io.`。
-- `2026-04-28 03:15:04` 已在網路中文重新儲存 DNS 紀錄，後台顯示 `DNS紀錄設定成功`。
-- `cns1.net-chinese.com.tw` 目前會回 `order -> scriptcoffeeshop.github.io.`，但 `cns2.net-chinese.com.tw` 仍未發布這筆紀錄；SOA serial 仍停在 `2026040905`，需等待網路中文後端同步或請網路中文客服處理。
-- 部分公開 DNS 查詢已可解析到 GitHub Pages，HTTP 已回 `200`；但在 `cns2` 同步前，GitHub Pages DNS check 可能仍顯示 `InvalidDNSError`。
 - GitHub Pages custom domain 已綁定 `order.scriptcoffee.com.tw`。
-- GitHub Pages DNS health 可能會比公開 DNS 慢，若仍顯示 `InvalidDNSError`，先以權威 DNS 查詢確認兩台 nameserver 都同步，再等待 GitHub 端更新。
-- `https_certificate` 仍為 `null` 時，GitHub API 會回覆 `The certificate does not exist yet`，此時不能開啟 `Enforce HTTPS`；等待 GitHub Pages 憑證核發後再重跑啟用。
+- 網路中文後台已設定 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io.`。
+- 2026-04-28 使用者回報 HTTPS 已完成。
+- Codex 沙盒目前無法直接二次驗證此狀態：`dig` 會因 socket 權限失敗，GitHub API 也會被網路限制擋住；需要用一般終端、GitHub Pages UI 或 GitHub Actions 檢查。
 
 專案已在 `public/CNAME` 保留同一個網域，讓部署產物可追蹤目前目標；但此 repo 使用 GitHub Actions 發布 Pages，仍需要在 GitHub Pages 設定中指定 custom domain。
 
@@ -63,7 +60,7 @@ rtk npm run pages:check
 結果應看到 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io`，再由 GitHub Pages 回應。
 若 `cns1` 有回應但 `cns2` 沒有，GitHub Pages 仍可能判定 DNS 未設定成功，因為任一權威 DNS 都可能被查到。
 
-當 `pages:check` 顯示 GitHub Pages 已有有效 `https_certificate` 後，可執行：
+若未來重新綁定網域，且 `pages:check` 顯示 GitHub Pages 已有有效 `https_certificate` 後，可執行：
 
 ```bash
 rtk npm run pages:enable-https

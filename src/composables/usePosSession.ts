@@ -13,7 +13,10 @@ import {
   updatePrintJobStatus,
   updateOrderStatus as persistOrderStatus,
 } from '../lib/posApi'
-import { buildEzplTicketPreview, buildPrinterHealthcheckPreview } from '../lib/printing'
+import {
+  buildOrderPrintPlan,
+  buildPrinterHealthcheckPreview,
+} from '../lib/printing'
 import type {
   CartLine,
   CustomerDraft,
@@ -22,7 +25,9 @@ import type {
   OrderStatus,
   PaymentMethod,
   PosOrder,
+  PrinterSettings,
   PrintStation,
+  PrintStatus,
   ServiceMode,
 } from '../types/pos'
 
@@ -49,6 +54,52 @@ const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
 const buildOrderId = (date: Date, sequence: number): string =>
   `POS-${formatDateKey(date)}-${String(sequence).padStart(3, '0')}`
 
+const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => ({
+  stations: [
+    {
+      id: station.id ?? 'counter',
+      name: station.name,
+      host: station.host,
+      port: station.port,
+      protocol: station.protocol,
+      enabled: station.online,
+      autoPrint: station.autoPrint,
+    },
+  ],
+  rules: [
+    {
+      id: 'counter-all-labels',
+      name: '櫃台全品項貼紙',
+      serviceMode: 'takeout',
+      stationId: station.id ?? 'counter',
+      categories: ['coffee', 'tea', 'food', 'retail'],
+      copies: 1,
+      labelMode: 'label',
+      enabled: true,
+    },
+    {
+      id: 'counter-dine-in-receipt',
+      name: '內用收據',
+      serviceMode: 'dine-in',
+      stationId: station.id ?? 'counter',
+      categories: ['coffee', 'tea', 'food', 'retail'],
+      copies: 1,
+      labelMode: 'receipt',
+      enabled: true,
+    },
+    {
+      id: 'counter-delivery-receipt',
+      name: '外送收據',
+      serviceMode: 'delivery',
+      stationId: station.id ?? 'counter',
+      categories: ['coffee', 'tea', 'food', 'retail'],
+      copies: 1,
+      labelMode: 'both',
+      enabled: true,
+    },
+  ],
+})
+
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message
@@ -64,6 +115,22 @@ const nextSequenceFromOrders = (orders: PosOrder[]): number => {
   }, 0)
 
   return maxSequence + 1
+}
+
+const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
+  if (statuses.length === 0) {
+    return 'skipped'
+  }
+
+  if (statuses.some((status) => status === 'failed')) {
+    return 'failed'
+  }
+
+  if (statuses.every((status) => status === 'printed')) {
+    return 'printed'
+  }
+
+  return 'queued'
 }
 
 export const usePosSession = (options: UsePosSessionOptions = {}) => {
@@ -98,10 +165,33 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     autoPrint: true,
     lastPrintAt: null,
   })
+  const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
+
+  const currentPrinterSettings = (): PrinterSettings => ({
+    stations: printerSettings.value.stations.map((station) => {
+      if (station.id !== printStation.id) {
+        return { ...station }
+      }
+
+      return {
+        ...station,
+        enabled: printStation.online,
+        autoPrint: printStation.autoPrint,
+        host: printStation.host,
+        port: printStation.port,
+        protocol: printStation.protocol,
+        name: printStation.name,
+      }
+    }),
+    rules: printerSettings.value.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
+  })
 
   const applyRuntimePrinterSettings = async (): Promise<void> => {
     const runtimeSettings = await fetchRuntimeSettings()
-    const primaryStation = runtimeSettings.printerSettings.stations.find((station) => station.enabled)
+    printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
+      ? runtimeSettings.printerSettings
+      : buildDefaultPrinterSettings(printStation)
+    const primaryStation = printerSettings.value.stations.find((station) => station.enabled)
     if (!primaryStation) {
       return
     }
@@ -148,20 +238,25 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintPreview.value = `${lastPrintPreview.value}\n${message}`
   }
 
-  const tryNativeLanPrint = async (payload: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const tryNativeLanPrint = async (
+    payload: string,
+    station: PrintStation = printStation,
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
     if (!isNativeLanPrinterAvailable()) {
       appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，尚未送出 TCP payload`)
       return { ok: false, error: 'native LAN printer is not available' }
     }
 
     try {
-      const result = await sendLanPrintPayload(printStation, payload)
-      appendPrintPreviewStatus(`STATUS 已送出 ${result.bytesWritten} bytes，耗時 ${result.elapsedMs}ms`)
+      const result = await sendLanPrintPayload(station, payload)
+      appendPrintPreviewStatus(`STATUS ${station.name} 已送出 ${result.bytesWritten} bytes，耗時 ${result.elapsedMs}ms`)
       return { ok: true }
     } catch (error) {
       const message = getErrorMessage(error)
-      printStation.online = false
-      appendPrintPreviewStatus(`STATUS TCP 列印失敗：${message}`)
+      if (station.id === printStation.id) {
+        printStation.online = false
+      }
+      appendPrintPreviewStatus(`STATUS ${station.name} TCP 列印失敗：${message}`)
       return { ok: false, error: message }
     }
   }
@@ -196,10 +291,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const nextLine: CartLine = {
       itemId: item.id,
       productSku: item.sku,
+      category: item.category,
       name: item.name,
       unitPrice: item.price,
       quantity: 1,
       options: item.tags.slice(0, 1),
+      prepStation: item.prepStation,
+      printLabel: item.printLabel,
     }
 
     if (item.id !== item.sku) {
@@ -280,19 +378,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       paymentStatus: paymentStatusFor(paymentMethod.value),
       status: 'new',
       createdAt: now.toISOString(),
-      printStatus: printStation.autoPrint ? 'queued' : 'skipped',
+      printStatus: 'skipped',
     }
+    const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
+    order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
 
     nextSequence.value += 1
     orderQueue.value.unshift(order)
-    const printPreview = buildEzplTicketPreview(order, printStation)
-    lastPrintPreview.value = printPreview
-    if (printStation.autoPrint) {
+    lastPrintPreview.value = printPlan.preview
+    if (printPlan.jobs.length > 0) {
       printStation.lastPrintAt = now.toISOString()
     }
     clearCart()
 
     if (!isPosApiConfigured) {
+      if (printPlan.jobs.length > 0) {
+        appendPrintPreviewStatus('STATUS 本機模式已產生列印 payload，尚未建立雲端 print_jobs')
+      }
       isSubmitting.value = false
       return order
     }
@@ -310,24 +412,38 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       }
 
       replaceOrder(order.id, nextOrder)
-      let backendDetail = `${order.id} 已建立`
+      let backendDetail = printPlan.jobs.length > 0
+        ? `${order.id} 已建立，待處理 ${printPlan.jobs.length} 筆列印任務`
+        : `${order.id} 已建立，${printPlan.skippedReason ?? '未建立列印任務'}`
 
-      if (printStation.autoPrint) {
+      if (printPlan.jobs.length > 0) {
+        const printStatuses: PrintStatus[] = []
+
         try {
-          const printJob = await createPrintJob(nextOrder, printPreview, printStation)
-          nextOrder.printStatus = printJob.status
+          for (const job of printPlan.jobs) {
+            const printJob = await createPrintJob(nextOrder, job.payload, job.station)
+            let jobStatus: PrintStatus = printJob.status
 
-          if (isNativeLanPrinterAvailable()) {
-            const printResult = await tryNativeLanPrint(printPreview)
-            const updatedPrintJob = await updatePrintJobStatus(
-              printJob.id,
-              printResult.ok ? 'printed' : 'failed',
-              printResult.ok ? undefined : printResult.error,
-            )
-            nextOrder.printStatus = updatedPrintJob.status
-            backendDetail = printResult.ok ? `${order.id} 已建立並列印` : `${order.id} 已建立，列印失敗`
+            if (isNativeLanPrinterAvailable()) {
+              const printResult = await tryNativeLanPrint(job.payload, job.station)
+              const updatedPrintJob = await updatePrintJobStatus(
+                printJob.id,
+                printResult.ok ? 'printed' : 'failed',
+                printResult.ok ? undefined : printResult.error,
+              )
+              jobStatus = updatedPrintJob.status
+            }
+
+            printStatuses.push(jobStatus)
           }
 
+          nextOrder.printStatus = summarizePrintStatuses(printStatuses)
+          if (!isNativeLanPrinterAvailable()) {
+            appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已建立 ${printPlan.jobs.length} 筆 print_jobs`)
+          }
+          backendDetail = nextOrder.printStatus === 'printed'
+            ? `${order.id} 已建立並完成 ${printPlan.jobs.length} 筆列印`
+            : `${order.id} 已建立，列印狀態：${nextOrder.printStatus}`
           replaceOrder(order.id, nextOrder)
         } catch (error) {
           nextOrder.printStatus = 'failed'
