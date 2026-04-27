@@ -12,6 +12,18 @@ Vite 使用相對 base path，讓 GitHub Pages 預設網址與 custom domain 都
 
 消費者線上點餐建議綁定 `order.scriptcoffee.com.tw`。DNS 與 GitHub Pages custom domain 設定見 [GitHub Pages 網域設定](custom-domain.md)。
 
+檢查目前 Pages / DNS / HTTPS 狀態：
+
+```bash
+rtk npm run pages:check
+```
+
+GitHub Pages 憑證核發後啟用強制 HTTPS：
+
+```bash
+rtk npm run pages:enable-https
+```
+
 ## Supabase
 
 POS 後端會使用另一個全新的 Supabase 專案，不沿用咖啡訂購專案。建立後需要：

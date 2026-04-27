@@ -19,6 +19,8 @@
     "apk:open": "open android/app/build/outputs/apk/debug",
     "supabase:db:push": "bash scripts/supabase_db_push.sh",
     "supabase:functions:deploy": "bash scripts/supabase_deploy.sh",
+    "pages:check": "bash scripts/check_pages_domain.sh",
+    "pages:enable-https": "bash scripts/check_pages_domain.sh --enable-https",
     "deploy": "npm run supabase:db:push && npm run supabase:functions:deploy",
     "ci-local": "npm run guardrails && npm run typecheck && npm run lint && npm run check:backend && npm run build"
   },

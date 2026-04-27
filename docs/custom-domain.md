@@ -23,6 +23,14 @@ order.scriptcoffee.com.tw
 4. 儲存後等待 GitHub 檢查 DNS。
 5. HTTPS 可用後開啟 `Enforce HTTPS`。
 
+目前狀態：
+
+- 網路中文後台已設定 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io.`。
+- 公開 DNS 查詢已可解析到 GitHub Pages。
+- GitHub Pages custom domain 已綁定 `order.scriptcoffee.com.tw`。
+- GitHub Pages DNS health 可能會比公開 DNS 慢，若仍顯示 `InvalidDNSError`，先以 `dig` 與 `curl http://order.scriptcoffee.com.tw/` 確認，再等待 GitHub 端更新。
+- `https_certificate` 仍為 `null` 時，GitHub API 會回覆 `The certificate does not exist yet`，此時不能開啟 `Enforce HTTPS`；等待 GitHub Pages 憑證核發後再重跑啟用。
+
 專案已在 `public/CNAME` 保留同一個網域，讓部署產物可追蹤目前目標；但此 repo 使用 GitHub Actions 發布 Pages，仍需要在 GitHub Pages 設定中指定 custom domain。
 
 GitHub 官方文件：<https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site>
@@ -45,9 +53,16 @@ GitHub 官方文件：<https://docs.github.com/en/pages/configuring-a-custom-dom
 
 ```bash
 dig order.scriptcoffee.com.tw +nostats +nocomments +nocmd
+rtk npm run pages:check
 ```
 
 結果應看到 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io`，再由 GitHub Pages 回應。
+
+當 `pages:check` 顯示 GitHub Pages 已有有效 `https_certificate` 後，可執行：
+
+```bash
+rtk npm run pages:enable-https
+```
 
 ## 若要使用主網域
 
