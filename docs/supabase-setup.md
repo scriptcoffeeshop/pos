@@ -44,6 +44,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 ## 已部署項目
 
 - Migration：`20260427155000_initial_pos_schema.sql`
+- Advisor 修正：`20260427161000_fix_advisor_security_warnings.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
