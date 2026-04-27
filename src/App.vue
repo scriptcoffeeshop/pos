@@ -56,13 +56,15 @@ const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
   { value: 'delivery', label: '外送' },
 ]
 
-const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
-  { value: 'cash', label: '現金' },
-  { value: 'card', label: '刷卡' },
-  { value: 'line-pay', label: 'LINE Pay' },
-  { value: 'jkopay', label: '街口' },
-  { value: 'transfer', label: '轉帳' },
+const paymentOptions: Array<{ value: PaymentMethod; label: string; visible: boolean }> = [
+  { value: 'cash', label: '現金', visible: true },
+  { value: 'card', label: '刷卡', visible: false },
+  { value: 'line-pay', label: 'LINE Pay', visible: true },
+  { value: 'jkopay', label: '街口', visible: true },
+  { value: 'transfer', label: '轉帳', visible: false },
 ]
+
+const visiblePaymentOptions = computed(() => paymentOptions.filter((payment) => payment.visible))
 
 const statusActions: Array<{ value: OrderStatus; label: string }> = [
   { value: 'preparing', label: '製作' },
@@ -211,7 +213,7 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
 
         <div class="payment-list" aria-label="付款方式">
           <button
-            v-for="payment in paymentOptions"
+            v-for="payment in visiblePaymentOptions"
             :key="payment.value"
             class="payment-button"
             :class="{ 'payment-button--active': paymentMethod === payment.value }"
