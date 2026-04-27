@@ -41,6 +41,7 @@
 
 body {
   min-width: 320px;
+  min-height: 100%;
   margin: 0;
 }
 
@@ -62,6 +63,66 @@ button:disabled {
 
 #app {
   min-height: 100svh;
+}
+
+.boot-loading-shell,
+.boot-error-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.boot-loading-panel,
+.boot-error-panel {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 28px;
+  box-shadow: var(--shadow);
+}
+
+.boot-loading-panel p,
+.boot-error-eyebrow {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.boot-loading-panel h1,
+.boot-error-panel h1 {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.boot-loading-panel span,
+.boot-error-panel p:not(.boot-error-eyebrow) {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.boot-error-panel pre {
+  max-height: 300px;
+  overflow: auto;
+  margin: 18px 0 0;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .pos-shell {

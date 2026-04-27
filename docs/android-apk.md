@@ -4,7 +4,7 @@
 
 ### GitHub Actions
 
-這是目前建議方式，因為本機還沒有 Java 與 Android SDK。
+這是目前建議方式，因為它不依賴本機 Java / Android SDK 狀態，產物也固定保存在 Actions artifact。
 
 1. 到 GitHub repo 的 Actions。
 2. 選擇 `Android APK` workflow。
@@ -33,6 +33,12 @@ android/app/build/outputs/apk/debug/app-debug.apk
 rtk npm run apk:install
 ```
 
+如果安裝時出現 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，代表平板上舊 debug APK 的簽章與這次建置不同。debug APK 只用於測試，可直接先移除舊版再安裝：
+
+```bash
+rtk npm run apk:install:fresh
+```
+
 ## 平板安裝
 
 1. 將 `app-debug.apk` 傳到 Samsung 平板。
@@ -42,6 +48,16 @@ rtk npm run apk:install
    - 選擇你用來開啟 APK 的 App，例如 `Chrome`、`我的檔案` 或雲端硬碟 App，開啟允許。
 3. 點開 `app-debug.apk`，選擇安裝。
 4. 安裝完成後開啟 `Script Coffee POS`。
+
+## 白屏偵錯
+
+若 APK 開啟後一片空白，先用 USB 偵錯連線並擷取 log：
+
+```bash
+rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|Uncaught|TypeError|ReferenceError|SyntaxError|ERR_|net::|Capacitor' | tail -n 160
+```
+
+曾遇過的白屏原因是舊 APK 內的 Web assets 使用 `/pos/assets/...` 絕對路徑，Capacitor 會在 `https://localhost/pos/assets/...` 找檔案而失敗。新版 build 應使用 `./assets/...` 相對路徑；若看到 `Unable to open asset URL`，請重新下載最新版 artifact，並用 fresh install 重新安裝。
 
 ## 測試重點
 
