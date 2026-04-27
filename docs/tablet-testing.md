@@ -26,6 +26,10 @@ rtk npm run tablet:url
 
 GitHub Pages 啟用後，可直接用公開網址在平板測試 Web POS。這種方式適合測試前台 UI、Supabase 訂單同步與後台商品設定。
 
+## APK 測試
+
+若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。目前 debug APK 可測 POS app 外殼、Supabase 同步與後台；實機 TCP 列印仍需後續加入 Capacitor TCP socket 外掛。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要等 Phase 2 的 Capacitor Android APK；APK 會在平板內透過 TCP socket 連到 `VITE_POS_PRINTER_HOST:VITE_POS_PRINTER_PORT`。

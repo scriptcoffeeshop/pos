@@ -35,4 +35,12 @@ rtk npm run supabase:functions:deploy
 
 ## Android APK
 
-Phase 2 才加入 Capacitor。APK 產物不直接提交 git，建議後續用 GitHub Actions artifact 或 release 管理。
+已加入 Capacitor Android 專案與 `Android APK` GitHub Actions workflow。Debug APK 產物不直接提交 git，使用 Actions artifact 管理。
+
+手動產出測試 APK：
+
+```bash
+rtk npm run apk:debug
+```
+
+目前本機若尚未安裝 JDK / Android SDK，請改用 GitHub Actions 產出 APK。安裝平板流程見 [Android APK 測試流程](android-apk.md)。

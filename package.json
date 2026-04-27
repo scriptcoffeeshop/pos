@@ -13,12 +13,19 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "tablet:url": "bash scripts/show_tablet_url.sh",
+    "cap:sync": "npm run build && cap sync android",
+    "apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "apk:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    "apk:open": "open android/app/build/outputs/apk/debug",
     "supabase:db:push": "bash scripts/supabase_db_push.sh",
     "supabase:functions:deploy": "bash scripts/supabase_deploy.sh",
     "deploy": "npm run supabase:db:push && npm run supabase:functions:deploy",
     "ci-local": "npm run guardrails && npm run typecheck && npm run lint && npm run check:backend && npm run build"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/cli": "^8.3.1",
+    "@capacitor/core": "^8.3.1",
     "lucide-vue-next": "^1.0.0",
     "vue": "^3.5.32"
   },

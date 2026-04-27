@@ -18,9 +18,8 @@
 3. 加入 Capacitor：
 
 ```bash
-rtk npm install @capacitor/core @capacitor/cli @capacitor/android
-rtk npx cap init
-rtk npx cap add android
+rtk npm run cap:sync
+rtk npm run apk:debug
 ```
 
 4. 加入 TCP socket 外掛後，建立最小列印測試頁。

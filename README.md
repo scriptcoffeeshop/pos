@@ -31,6 +31,7 @@ rtk npm run check:backend
 rtk npm run build
 rtk npm run ci-local
 rtk npm run tablet:url
+rtk npm run apk:debug
 ```
 
 本機環境變數請從 `.env.example` 複製成 `.env.local`，不要提交真實金鑰。
@@ -43,6 +44,7 @@ rtk npm run tablet:url
 - [分期計畫](docs/phase-plan.md)
 - [部署路線](docs/deployment.md)
 - [平板測試流程](docs/tablet-testing.md)
+- [Android APK 測試流程](docs/android-apk.md)
 - [開發交接](DEV_CONTEXT.md)
 
 ## 主要決策

@@ -12,6 +12,7 @@
 ## Phase 2：Capacitor LAN Printing POC
 
 - 封裝 Android APK。
+- 建立 GitHub Actions debug APK artifact，讓平板可先測 POS app 外殼。
 - 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。
 - 驗證列印成功後的狀態回寫。
 - 設計多平板共用出單機的鎖定策略。

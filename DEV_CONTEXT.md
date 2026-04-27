@@ -20,6 +20,7 @@
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
 - POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products`、`/orders`、`/settings/runtime` 載入，櫃台建單走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；實機 LAN TCP 列印仍需 Phase 2 Capacitor APK。
+- APK 測試：已加入 Capacitor Android 專案與 `Android APK` workflow；本機若未安裝 JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
 
 ## 來源藍圖
 
@@ -30,7 +31,7 @@
 - Samsung Tab A11+ 作為前台 POS 平板。
 - GODEX DT2X 透過 RJ45 接店內 AP，固定內網 IP，例如 `192.168.1.100`。
 - Web POS 使用 Vue 3 + Vite SFC，原始網頁部署到 GitHub Pages。
-- Android 平板版本使用 Capacitor 封裝成 APK。
+- Android 平板版本使用 Capacitor 封裝成 APK，debug APK 測試流程見 `docs/android-apk.md`。
 - 區網列印用 Capacitor TCP socket 外掛繞過瀏覽器對本地 IP 的限制，直接送 EZPL 到出單機。
 - 後端採 Supabase PostgreSQL + Deno/Hono Edge Functions。
 - 外部整合包含 LINE Login、LINE Pay、街口支付。
@@ -47,6 +48,6 @@
 
 1. 設定 `POS_ADMIN_PIN` Supabase secret，讓後台可正式儲存商品、出單機與權限設定。
 2. GitHub Pages 部署確認後，將 Web POS 固定到公開 URL。
-3. Phase 2 安裝 Capacitor 與 TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
+3. Phase 2 安裝 Capacitor TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
 4. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
 5. 規劃 APK build 與店內平板安裝流程。
