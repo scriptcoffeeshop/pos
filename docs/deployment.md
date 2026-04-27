@@ -4,9 +4,10 @@
 
 CI 已預留手動部署 job。第一次部署前：
 
-1. GitHub repo 設定 Pages source 為 GitHub Actions。
-2. 到 Actions 執行 `POS CI` workflow。
-3. 勾選 `deploy_frontend=true`。
+1. 確認 private repo 是否符合目前 GitHub Pages 方案；若要公開部署，先評估是否改成 public。
+2. GitHub repo 設定 Pages source 為 GitHub Actions。
+3. 到 Actions 執行 `POS CI` workflow。
+4. 勾選 `deploy_frontend=true`。
 
 Vite 會在 GitHub Actions 內偵測 `scriptcoffeeshop/pos`，自動使用 `/pos/` base path。
 

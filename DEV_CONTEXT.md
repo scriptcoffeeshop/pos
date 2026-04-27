@@ -8,7 +8,10 @@
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
-- GitHub 目標：`scriptcoffeeshop/pos`。
+- GitHub repo：`scriptcoffeeshop/pos`，目前為 private。
+- Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
+- SSH 綁定：repo-local `core.sshCommand=ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes`。
+- 第一次 CI：GitHub Actions run `25003328938`，`verify` job 已通過；Pages deploy job 只在手動部署時啟動。
 
 ## 來源藍圖
 
