@@ -1,0 +1,83 @@
+import type { MenuItem } from '../types/pos'
+
+export const menuItems: MenuItem[] = [
+  {
+    id: 'americano-ice',
+    name: '冰美式',
+    category: 'coffee',
+    price: 95,
+    tags: ['冰', '單品豆'],
+    accent: '#1f6f8b',
+    available: true,
+  },
+  {
+    id: 'latte-hot',
+    name: '熱拿鐵',
+    category: 'coffee',
+    price: 120,
+    tags: ['熱', '牛奶'],
+    accent: '#9a6539',
+    available: true,
+  },
+  {
+    id: 'brown-sugar-latte',
+    name: '黑糖拿鐵',
+    category: 'coffee',
+    price: 135,
+    tags: ['甜度固定', '熱賣'],
+    accent: '#b84d35',
+    available: true,
+  },
+  {
+    id: 'oolong-tea',
+    name: '杉林溪烏龍',
+    category: 'tea',
+    price: 90,
+    tags: ['無糖', '回甘'],
+    accent: '#3f7d4c',
+    available: true,
+  },
+  {
+    id: 'lemon-black-tea',
+    name: '檸檬紅茶',
+    category: 'tea',
+    price: 80,
+    tags: ['冰', '微酸'],
+    accent: '#d19a2a',
+    available: true,
+  },
+  {
+    id: 'bagel',
+    name: '奶油貝果',
+    category: 'food',
+    price: 75,
+    tags: ['烘烤', '點心'],
+    accent: '#c47b47',
+    available: true,
+  },
+  {
+    id: 'croissant',
+    name: '可頌',
+    category: 'food',
+    price: 85,
+    tags: ['烘烤', '限量'],
+    accent: '#d6a84f',
+    available: true,
+  },
+  {
+    id: 'drip-bag',
+    name: '耳掛咖啡',
+    category: 'retail',
+    price: 45,
+    tags: ['零售', '可加購'],
+    accent: '#5c6f9c',
+    available: true,
+  },
+]
+
+export const categoryLabels: Record<MenuItem['category'], string> = {
+  coffee: '咖啡',
+  tea: '茶飲',
+  food: '輕食',
+  retail: '零售',
+}

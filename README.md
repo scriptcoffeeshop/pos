@@ -1,0 +1,43 @@
+# Script Coffee POS
+
+Script Coffee POS 是門市平板點餐、線上訂單中樞與 GODEX DT2X 區域網路列印的初始專案。第一版先建立 Vue 3 + Vite + TypeScript 前端工作台，後續再接 Supabase、LINE Login、LINE Pay / 街口支付與 Capacitor Android APK。
+
+## 初版範圍
+
+- 門市 POS 第一屏：品項、購物車、付款方式、顧客備註、訂單佇列。
+- 區網列印 POC 介面：固定出單機 IP、EZPL 預覽、測試列印入口。
+- 工程規範：TypeScript strict、ESLint、禁止 legacy DOM/event bridge 的 guardrails。
+- GitHub Actions：guardrails、typecheck、lint、build，並預留 GitHub Pages 手動部署 job。
+
+## 本機開發
+
+```bash
+rtk npm install
+rtk npm run dev
+```
+
+常用檢查：
+
+```bash
+rtk npm run guardrails
+rtk npm run typecheck
+rtk npm run lint
+rtk npm run build
+rtk npm run ci-local
+```
+
+本機環境變數請從 `.env.example` 複製成 `.env.local`，不要提交真實金鑰。
+
+## 架構文件
+
+- [系統架構](docs/architecture.md)
+- [區域網路列印 POC](docs/lan-printing-poc.md)
+- [分期計畫](docs/phase-plan.md)
+- [部署路線](docs/deployment.md)
+- [開發交接](DEV_CONTEXT.md)
+
+## 主要決策
+
+- 前端全面 Vue-owned state，不新增 inline `onclick/onchange`、`data-action` 事件代理、`window.*` 全域 API 或 `innerHTML` 資料渲染。
+- 先用 GitHub Pages 承載 Web POS，再於 Phase 2 用 Capacitor 封裝 Android APK，透過 TCP socket 直接送 EZPL 到 GODEX DT2X。
+- 後端沿用咖啡訂購專案經驗：Supabase PostgreSQL + Deno/Hono Edge Functions，金鑰放 GitHub Secrets 或 Supabase，不進 git。

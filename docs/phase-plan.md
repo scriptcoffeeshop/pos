@@ -1,0 +1,27 @@
+# 階段性開發計畫
+
+## Phase 1：基礎建設與資料庫設計
+
+- 建立 GitHub repo、CI、GitHub Pages 部署鏈。
+- 建立 Supabase schema：商品、訂單、訂單明細、會員、交易日誌、列印任務。
+- 建立 Edge Function skeleton，先支援訂單建立與狀態更新。
+- 規劃 LINE Login profile 與會員資料邊界。
+
+## Phase 2：Capacitor LAN Printing POC
+
+- 封裝 Android APK。
+- 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。
+- 驗證列印成功後的狀態回寫。
+- 設計多平板共用出單機的鎖定策略。
+
+## Phase 3：顧客端線上點餐與金流
+
+- 商品展示、購物車、結帳流程。
+- LINE Pay 與街口支付正式環境串接。
+- 支付逾期自動標記 `status=failed`、`payment_status=expired`。
+
+## Phase 4：店內 POS 與進階功能
+
+- 平板專用操作介面完善。
+- 會員儲值與 transaction ledger。
+- 消費明細、外送欄位與未來多店支援。

@@ -1,0 +1,57 @@
+import type { PosOrder } from '../types/pos'
+
+export const initialOrders: PosOrder[] = [
+  {
+    id: 'POS-20260427-002',
+    source: 'qr',
+    mode: 'takeout',
+    customerName: '林小姐',
+    customerPhone: '0912-000-128',
+    note: '拿鐵少冰，15 分鐘後取餐',
+    lines: [
+      {
+        itemId: 'latte-hot',
+        name: '熱拿鐵',
+        unitPrice: 120,
+        quantity: 1,
+        options: ['少冰'],
+      },
+      {
+        itemId: 'drip-bag',
+        name: '耳掛咖啡',
+        unitPrice: 45,
+        quantity: 2,
+        options: [],
+      },
+    ],
+    subtotal: 210,
+    paymentMethod: 'line-pay',
+    paymentStatus: 'paid',
+    status: 'preparing',
+    createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+    printStatus: 'printed',
+  },
+  {
+    id: 'POS-20260427-001',
+    source: 'online',
+    mode: 'delivery',
+    customerName: '王先生',
+    customerPhone: '0988-100-555',
+    note: '外送地址待 Supabase 訂單欄位接入',
+    lines: [
+      {
+        itemId: 'americano-ice',
+        name: '冰美式',
+        unitPrice: 95,
+        quantity: 2,
+        options: ['無糖'],
+      },
+    ],
+    subtotal: 190,
+    paymentMethod: 'jkopay',
+    paymentStatus: 'authorized',
+    status: 'new',
+    createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
+    printStatus: 'queued',
+  },
+]
