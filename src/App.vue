@@ -72,8 +72,52 @@ const statusActions: Array<{ value: OrderStatus; label: string }> = [
   { value: 'served', label: '交付' },
 ]
 
+const serviceModeLabels: Record<ServiceMode, string> = {
+  'dine-in': '內用',
+  takeout: '外帶',
+  delivery: '外送',
+}
+
+const paymentLabels: Record<PaymentMethod, string> = {
+  cash: '現金',
+  card: '刷卡',
+  'line-pay': 'LINE Pay',
+  jkopay: '街口',
+  transfer: '轉帳',
+}
+
+const paymentStatusLabels = {
+  pending: '待收款',
+  authorized: '已授權',
+  paid: '已付款',
+  expired: '逾期',
+  failed: '失敗',
+} as const
+
+const statusLabels: Record<OrderStatus, string> = {
+  new: '新單',
+  preparing: '製作中',
+  ready: '可交付',
+  served: '已交付',
+  failed: '異常',
+}
+
+const printStatusLabels = {
+  queued: '待列印',
+  printed: '已列印',
+  skipped: '略過',
+} as const
+
 const activeOrder = computed(() => pendingOrders.value[0] ?? orderQueue.value[0] ?? null)
 const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
+const readyOrders = computed(() => pendingOrders.value.filter((order) => order.status === 'ready').length)
+const activeOrderItemCount = computed(
+  () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
+)
+const todayRevenue = computed(() => orderQueue.value.reduce((total, order) => total + order.subtotal, 0))
+const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
+
+const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 </script>
 
 <template>
@@ -84,6 +128,7 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
         <div>
           <p class="eyebrow">Script Coffee</p>
           <h1>門市 POS</h1>
+          <span class="brand-subtitle">櫃台點餐 · 線上訂單 · LAN 列印</span>
         </div>
       </div>
 
@@ -103,12 +148,32 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
       </div>
     </header>
 
+    <section class="overview-strip" aria-label="今日營運摘要">
+      <article>
+        <span>今日營收</span>
+        <strong>{{ formatCurrency(todayRevenue) }}</strong>
+      </article>
+      <article>
+        <span>待處理</span>
+        <strong>{{ pendingOrders.length }}</strong>
+      </article>
+      <article>
+        <span>可交付</span>
+        <strong>{{ readyOrders }}</strong>
+      </article>
+      <article>
+        <span>列印狀態</span>
+        <strong>{{ printStation.online ? '在線' : '離線' }}</strong>
+      </article>
+    </section>
+
     <section class="workspace" aria-label="POS 工作台">
       <section class="menu-panel" aria-labelledby="menu-title">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">Counter</p>
             <h2 id="menu-title">點餐</h2>
+            <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
           </div>
           <label class="search-box">
             <Search :size="18" aria-hidden="true" />
@@ -137,11 +202,14 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
             type="button"
             @click="addItem(item)"
           >
-            <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
+            <span class="product-tile-top">
+              <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
+              <span class="product-category">{{ categoryLabels[item.category] }}</span>
+            </span>
             <span class="product-name">{{ item.name }}</span>
             <span class="product-meta">
-              <span>{{ categoryLabels[item.category] }}</span>
               <strong>{{ formatCurrency(item.price) }}</strong>
+              <span>點選加入</span>
             </span>
             <span class="product-tags">{{ item.tags.join(' / ') }}</span>
           </button>
@@ -153,6 +221,7 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
           <div>
             <p class="eyebrow">Cart</p>
             <h2 id="cart-title">目前訂單</h2>
+            <span class="panel-note">{{ serviceModeLabels[serviceMode] }} · {{ paymentLabels[paymentMethod] }}</span>
           </div>
           <button class="icon-button" type="button" title="清空購物車" @click="clearCart">
             <Trash2 :size="20" aria-hidden="true" />
@@ -243,24 +312,33 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
             <div>
               <p class="eyebrow">Orders</p>
               <h2 id="queue-title">訂單佇列</h2>
+              <span class="panel-note">依建立時間排序</span>
             </div>
             <span class="queue-count">{{ pendingOrders.length }}</span>
           </div>
 
-          <article v-for="order in orderQueue" :key="order.id" class="order-row">
+          <article v-for="order in orderQueue" :key="order.id" class="order-row" :class="`order-row--${order.status}`">
             <div class="order-row-main">
-              <span class="order-id">{{ order.id }}</span>
+              <div class="order-row-title">
+                <span class="order-id">{{ order.id }}</span>
+                <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+              </div>
               <strong>{{ order.customerName }}</strong>
-              <span>{{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}</span>
+              <span>
+                {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
+                {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
+              </span>
             </div>
             <div class="order-row-meta">
               <span>{{ formatCurrency(order.subtotal) }}</span>
-              <span>{{ order.paymentMethod }} / {{ order.paymentStatus }}</span>
+              <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
+              <span>{{ printStatusLabels[order.printStatus] }}</span>
             </div>
             <div class="order-actions">
               <button
                 v-for="action in statusActions"
                 :key="action.value"
+                :class="{ 'order-action--active': order.status === action.value }"
                 type="button"
                 :disabled="order.status === action.value"
                 @click="updateOrderStatus(order.id, action.value)"
@@ -276,6 +354,7 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
             <div>
               <p class="eyebrow">LAN Printing</p>
               <h2>列印站</h2>
+              <span class="panel-note">最後列印：{{ lastPrintTime }}</span>
             </div>
             <button class="icon-button" type="button" title="送出測試列印" @click="sendPrinterHealthcheck">
               <Printer :size="20" aria-hidden="true" />
@@ -301,8 +380,11 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
 
         <section v-if="activeOrder" class="active-order">
           <p class="eyebrow">Next</p>
-          <h2>{{ activeOrder.id }}</h2>
-          <p>{{ activeOrder.note || '無備註' }}</p>
+          <div class="next-order-title">
+            <h2>{{ activeOrder.id }}</h2>
+            <span class="status-chip" :class="statusClass(activeOrder.status)">{{ statusLabels[activeOrder.status] }}</span>
+          </div>
+          <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
         </section>
       </aside>
     </section>
