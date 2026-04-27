@@ -13,7 +13,7 @@ Vite 會在 GitHub Actions 內偵測 `scriptcoffeeshop/pos`，自動使用 `/pos
 
 ## Supabase
 
-尚未建立 POS 專用 Supabase 專案。建立後需要：
+POS 後端會使用另一個全新的 Supabase 專案，不沿用咖啡訂購專案。建立後需要：
 
 - `SUPABASE_ACCESS_TOKEN`
 - `SUPABASE_DB_PASSWORD`
@@ -21,7 +21,7 @@ Vite 會在 GitHub Actions 內偵測 `scriptcoffeeshop/pos`，自動使用 `/pos
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-前兩者放 GitHub Secrets，前端公開 anon key 使用 `.env.local` 與部署環境變數管理。
+`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 放 GitHub Secrets 或 `.env.supabase.local`。前端公開值使用 `.env.local` 與部署環境變數管理。
 
 ## Android APK
 

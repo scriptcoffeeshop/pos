@@ -15,7 +15,7 @@
 
 ## 後端
 
-規劃沿用咖啡訂購專案的 Supabase 模式：
+POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；但工程模式沿用咖啡訂購專案已驗證的 Supabase 架構：
 
 - PostgreSQL 保存商品、訂單、會員、付款、交易日誌與列印任務。
 - Deno/Hono Edge Functions 處理商業邏輯、金流回呼與訂單狀態。

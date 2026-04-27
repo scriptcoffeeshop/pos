@@ -33,6 +33,7 @@ rtk npm run ci-local
 ## 架構文件
 
 - [系統架構](docs/architecture.md)
+- [Supabase 新專案設定](docs/supabase-setup.md)
 - [區域網路列印 POC](docs/lan-printing-poc.md)
 - [分期計畫](docs/phase-plan.md)
 - [部署路線](docs/deployment.md)

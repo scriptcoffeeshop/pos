@@ -12,6 +12,7 @@
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
 - SSH 綁定：repo-local `core.sshCommand=ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes`。
 - 第一次 CI：GitHub Actions run `25003328938`，`verify` job 已通過；Pages deploy job 只在手動部署時啟動。
+- 後端決策：POS 會建立獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫。
 
 ## 來源藍圖
 
@@ -37,7 +38,8 @@
 
 ## 下一步
 
-1. 在 Supabase 建立 POS 專用 schema：`products`、`orders`、`order_items`、`members`、`transaction_ledger`、`print_jobs`。
-2. 建立 Deno/Hono Edge Function，先處理訂單建立、狀態更新、付款逾期回收。
-3. Phase 2 安裝 Capacitor 與 TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
-4. GitHub Pages 部署確認後，再規劃 APK build 與店內平板安裝流程。
+1. 等使用者建立新的 Supabase 專案後，填入 `.env.local` 與 `.env.supabase.local`，並把正式值放到 GitHub Secrets。
+2. 在新 Supabase 專案建立 POS 專用 schema：`products`、`orders`、`order_items`、`members`、`transaction_ledger`、`print_jobs`。
+3. 建立 Deno/Hono Edge Function，先處理訂單建立、狀態更新、付款逾期回收。
+4. Phase 2 安裝 Capacitor 與 TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
+5. GitHub Pages 部署確認後，再規劃 APK build 與店內平板安裝流程。
