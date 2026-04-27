@@ -15,10 +15,17 @@ echo "domain: ${DOMAIN}"
 echo
 
 echo "DNS"
-echo "CNAME:"
-dig +short "${DOMAIN}" CNAME || true
-echo "A:"
-dig +short "${DOMAIN}" A || true
+for resolver in default 1.1.1.1 8.8.8.8 cns1.net-chinese.com.tw cns2.net-chinese.com.tw; do
+  if [[ "${resolver}" == "default" ]]; then
+    cname="$(dig +short "${DOMAIN}" CNAME || true)"
+    address="$(dig +short "${DOMAIN}" A || true)"
+  else
+    cname="$(dig @"${resolver}" +short "${DOMAIN}" CNAME || true)"
+    address="$(dig @"${resolver}" +short "${DOMAIN}" A || true)"
+  fi
+  echo "${resolver} CNAME: ${cname:-<empty>}"
+  echo "${resolver} A:     ${address:-<empty>}"
+done
 echo
 
 echo "HTTP"

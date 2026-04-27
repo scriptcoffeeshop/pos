@@ -17,7 +17,7 @@
 - 後端決策：POS 使用獨立 Supabase 專案 `uuzwcmceotooocyrtnao`，不沿用咖啡訂購專案的資料庫。
 - 本機 env：`.env.local` 與 `.env.supabase.local` 已建立並被 `.gitignore` 保護，不提交真實值。
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
-- Pages 網域：網路中文已設定 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io.`，公開 DNS 已解析，GitHub Pages custom domain 已綁定；GitHub 憑證尚未核發時 `https_certificate=null`，需稍後執行 `rtk npm run pages:enable-https`。
+- Pages 網域：網路中文已設定 `order.scriptcoffee.com.tw` CNAME 到 `scriptcoffeeshop.github.io.`，且 `2026-04-28 03:15:04` 後台重新儲存成功；目前 `cns1` 權威 DNS 有回 `order`，但 `cns2` 仍未同步且 SOA serial 停在 `2026040905`，GitHub Pages DNS check 可能因此顯示 `InvalidDNSError`；GitHub 憑證尚未核發時 `https_certificate=null`，需等兩台權威 DNS 同步後再執行 `rtk npm run pages:enable-https`。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
 - POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products?channel=pos`、`/orders`、`/settings/runtime` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。
@@ -47,7 +47,8 @@
 
 ## 下一步
 
-1. 等 GitHub Pages `https_certificate` 產生後，執行 `rtk npm run pages:enable-https` 開啟強制 HTTPS。
-2. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label 與櫃台訂單列印實測。
-3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
-4. 依實機列印結果調整 EZPL 版面、中文顯示與多平板重複出單鎖定策略。
+1. 持續用 `rtk npm run pages:check` 檢查 `cns2.net-chinese.com.tw` 是否同步 `order` CNAME；若長時間不同步，聯絡網路中文客服要求重新發布 zone。
+2. 等兩台權威 DNS 同步且 GitHub Pages `https_certificate` 產生後，執行 `rtk npm run pages:enable-https` 開啟強制 HTTPS。
+3. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label 與櫃台訂單列印實測。
+4. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
+5. 依實機列印結果調整 EZPL 版面、中文顯示與多平板重複出單鎖定策略。
