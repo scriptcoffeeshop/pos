@@ -8,6 +8,7 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosOrder,
+  PrintStatus,
   PrinterSettings,
   PrintStation,
   ServiceMode,
@@ -41,9 +42,12 @@ interface ApiOrderItem {
 }
 
 interface ApiPrintJob {
-  status: PosOrder['printStatus']
+  id: string
+  status: PrintStatus
   printed_at: string | null
   created_at: string
+  attempts: number
+  last_error: string | null
 }
 
 interface ApiOrder {
@@ -77,6 +81,15 @@ interface OrdersResponse {
 
 interface PrintJobResponse {
   printJob: ApiPrintJob
+}
+
+export interface PrintJob {
+  id: string
+  status: PrintStatus
+  printedAt: string | null
+  createdAt: string
+  attempts: number
+  lastError: string | null
 }
 
 interface ApiSettingRow {
@@ -151,10 +164,19 @@ const normalizeOptions = (options: unknown): string[] => {
   return options.filter((option): option is string => typeof option === 'string')
 }
 
-const normalizePrintStatus = (order: ApiOrder): PosOrder['printStatus'] => {
+const normalizePrintStatus = (order: ApiOrder): PrintStatus => {
   const newestPrintJob = [...(order.print_jobs ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
   return newestPrintJob?.status ?? 'skipped'
 }
+
+const normalizePrintJob = (printJob: ApiPrintJob): PrintJob => ({
+  id: printJob.id,
+  status: printJob.status,
+  printedAt: printJob.printed_at,
+  createdAt: printJob.created_at,
+  attempts: printJob.attempts,
+  lastError: printJob.last_error,
+})
 
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   id: product.id,
@@ -333,7 +355,7 @@ export const createPrintJob = async (
   order: PosOrder,
   payload: string,
   station: PrintStation,
-): Promise<PosOrder['printStatus']> => {
+): Promise<PrintJob> => {
   if (!order.remoteId) {
     throw new Error('remote order id is required before creating print job')
   }
@@ -350,5 +372,18 @@ export const createPrintJob = async (
     }),
   })
 
-  return data.printJob.status
+  return normalizePrintJob(data.printJob)
+}
+
+export const updatePrintJobStatus = async (
+  printJobId: string,
+  status: Extract<PrintStatus, 'printed' | 'failed'>,
+  error?: string,
+): Promise<PrintJob> => {
+  const data = await request<PrintJobResponse>(`/print-jobs/${printJobId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, error }),
+  })
+
+  return normalizePrintJob(data.printJob)
 }

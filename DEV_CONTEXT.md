@@ -19,8 +19,8 @@
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
 - POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products?channel=pos`、`/orders`、`/settings/runtime` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
-- 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；實機 LAN TCP 列印仍需 Phase 2 Capacitor APK。
-- APK 測試：已加入 Capacitor Android 專案與 `Android APK` workflow；本機若未安裝 Node.js 22+、JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
+- 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。
+- APK 測試：已加入 Capacitor Android 專案、`Android APK` workflow 與 Android `LanPrinter` TCP socket plugin；本機若未安裝 Node.js 22+、JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
 
 ## 來源藍圖
 
@@ -32,7 +32,7 @@
 - GODEX DT2X 透過 RJ45 接店內 AP，固定內網 IP，例如 `192.168.1.100`。
 - Web POS 使用 Vue 3 + Vite SFC，原始網頁部署到 GitHub Pages。
 - Android 平板版本使用 Capacitor 封裝成 APK，debug APK 測試流程見 `docs/android-apk.md`。
-- 區網列印用 Capacitor TCP socket 外掛繞過瀏覽器對本地 IP 的限制，直接送 EZPL 到出單機。
+- 區網列印用 Android `LanPrinter` Capacitor native plugin 繞過瀏覽器對本地 IP 的限制，直接送 EZPL 到出單機。
 - 後端採 Supabase PostgreSQL + Deno/Hono Edge Functions。
 - 外部整合包含 LINE Login、LINE Pay、街口支付。
 
@@ -47,6 +47,6 @@
 ## 下一步
 
 1. 在 DNS 管理後台把 `order.scriptcoffee.com.tw` CNAME 指到 `scriptcoffeeshop.github.io`，並在 GitHub Pages 設定 custom domain。
-2. Phase 2 安裝 Capacitor TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
+2. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label 與櫃台訂單列印實測。
 3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
-4. 規劃 APK build 與店內平板安裝流程。
+4. 依實機列印結果調整 EZPL 版面、中文顯示與多平板重複出單鎖定策略。

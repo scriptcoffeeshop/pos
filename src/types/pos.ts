@@ -4,6 +4,7 @@ export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed'
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed'
+export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 
 export interface MenuItem {
   id: string
@@ -52,7 +53,7 @@ export interface PosOrder {
   paymentStatus: PaymentStatus
   status: OrderStatus
   createdAt: string
-  printStatus: 'queued' | 'printed' | 'skipped'
+  printStatus: PrintStatus
 }
 
 export interface PrintStation {

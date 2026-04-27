@@ -9,6 +9,7 @@ type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
 type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
+type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control";
 type ProductChannel = "pos" | "online" | "qr";
@@ -37,6 +38,11 @@ interface CreateOrderInput {
 
 interface UpdateStatusInput {
   status: OrderStatus;
+}
+
+interface UpdatePrintJobStatusInput {
+  status: PrintStatus;
+  error?: string;
 }
 
 interface PrintJobInput {
@@ -118,7 +124,9 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 
 const api = new Hono();
 
-const orderSelect = "*, order_items(*), print_jobs(status, printed_at, created_at)";
+const orderSelect =
+  "*, order_items(*), print_jobs(id, status, printed_at, created_at, attempts, last_error)";
+const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label";
 
@@ -435,7 +443,7 @@ api.post("/print-jobs", async (c) => {
       printer_port: input.printerPort ?? 9100,
       protocol: input.protocol ?? "EZPL over TCP",
     })
-    .select("*")
+    .select(printJobSelect)
     .single();
 
   if (error) {
@@ -443,6 +451,49 @@ api.post("/print-jobs", async (c) => {
   }
 
   return c.json({ printJob: data }, 201);
+});
+
+api.patch("/print-jobs/:id/status", async (c) => {
+  const printJobId = c.req.param("id");
+  const input = await c.req.json<UpdatePrintJobStatusInput>();
+
+  if (!isPrintStatus(input.status) || !["printed", "failed"].includes(input.status)) {
+    return c.json({ error: "status must be printed or failed" }, 400);
+  }
+
+  const payload = {
+    status: input.status,
+    printed_at: input.status === "printed" ? new Date().toISOString() : null,
+    last_error: input.status === "failed"
+      ? sanitizeText(input.error, "Unknown LAN print failure").slice(0, 500)
+      : null,
+  };
+
+  const { data: currentJob, error: currentJobError } = await supabase
+    .from("print_jobs")
+    .select("attempts")
+    .eq("id", printJobId)
+    .single();
+
+  if (currentJobError) {
+    return c.json({ error: currentJobError.message }, 404);
+  }
+
+  const { data, error } = await supabase
+    .from("print_jobs")
+    .update({
+      ...payload,
+      attempts: Math.max(Number(currentJob.attempts ?? 0) + 1, 1),
+    })
+    .eq("id", printJobId)
+    .select(printJobSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ printJob: data });
 });
 
 const validateOrderInput = (input: CreateOrderInput): string | null => {
@@ -511,6 +562,10 @@ const readProductChannel = (channel: string | undefined): ProductChannel => {
 
   return "pos";
 };
+
+const isPrintStatus = (status: unknown): status is PrintStatus =>
+  status === "queued" || status === "printed" || status === "skipped" ||
+  status === "failed";
 
 const requireAdmin = (c: Context): Response | null => {
   if (!adminPin) {

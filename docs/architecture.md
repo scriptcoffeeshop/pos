@@ -27,12 +27,12 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 - LINE Login：會員登入與 profile 綁定。會員顯示名稱不可被訂單收件人姓名覆蓋。
 - LINE Pay / 街口支付：線上付款與回呼。付款逾期要落到 `status=failed` 與 `payment_status=expired`。
-- Capacitor TCP socket：下一步加入外掛後，平板 APK 直接連線出單機 IP，送出 EZPL。
+- Capacitor TCP socket：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；GitHub Pages 瀏覽器版只做預覽與雲端 print job。
 
 ## 初始資料流
 
 1. 櫃台或線上來源建立訂單。
 2. POS 訂單佇列即時顯示新訂單。
 3. POS 依 `pos_settings.printer_settings` 選擇啟用的出單機，新訂單進入 `print_jobs`。
-4. 平板透過 LAN 對 GODEX DT2X 送出列印 payload。
-5. 列印成功後回寫訂單/列印任務狀態。
+4. Android APK 透過 LAN 對 GODEX DT2X 送出列印 payload。
+5. 列印成功或失敗後回寫列印任務狀態。

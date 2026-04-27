@@ -2,6 +2,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
+import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
 import {
   createOrder,
   createPrintJob,
@@ -9,6 +10,7 @@ import {
   fetchProducts,
   fetchRuntimeSettings,
   isPosApiConfigured,
+  updatePrintJobStatus,
   updateOrderStatus as persistOrderStatus,
 } from '../lib/posApi'
 import { buildEzplTicketPreview, buildPrinterHealthcheckPreview } from '../lib/printing'
@@ -140,6 +142,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const replaceOrder = (orderId: string, nextOrder: PosOrder): void => {
     orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
+  }
+
+  const appendPrintPreviewStatus = (message: string): void => {
+    lastPrintPreview.value = `${lastPrintPreview.value}\n${message}`
+  }
+
+  const tryNativeLanPrint = async (payload: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    if (!isNativeLanPrinterAvailable()) {
+      appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，尚未送出 TCP payload`)
+      return { ok: false, error: 'native LAN printer is not available' }
+    }
+
+    try {
+      const result = await sendLanPrintPayload(printStation, payload)
+      appendPrintPreviewStatus(`STATUS 已送出 ${result.bytesWritten} bytes，耗時 ${result.elapsedMs}ms`)
+      return { ok: true }
+    } catch (error) {
+      const message = getErrorMessage(error)
+      printStation.online = false
+      appendPrintPreviewStatus(`STATUS TCP 列印失敗：${message}`)
+      return { ok: false, error: message }
+    }
   }
 
   const refreshBackendData = async (): Promise<void> => {
@@ -285,12 +309,34 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         nextOrder.remoteId = persistedOrder.remoteId
       }
 
+      replaceOrder(order.id, nextOrder)
+      let backendDetail = `${order.id} 已建立`
+
       if (printStation.autoPrint) {
-        nextOrder.printStatus = await createPrintJob(nextOrder, printPreview, printStation)
+        try {
+          const printJob = await createPrintJob(nextOrder, printPreview, printStation)
+          nextOrder.printStatus = printJob.status
+
+          if (isNativeLanPrinterAvailable()) {
+            const printResult = await tryNativeLanPrint(printPreview)
+            const updatedPrintJob = await updatePrintJobStatus(
+              printJob.id,
+              printResult.ok ? 'printed' : 'failed',
+              printResult.ok ? undefined : printResult.error,
+            )
+            nextOrder.printStatus = updatedPrintJob.status
+            backendDetail = printResult.ok ? `${order.id} 已建立並列印` : `${order.id} 已建立，列印失敗`
+          }
+
+          replaceOrder(order.id, nextOrder)
+        } catch (error) {
+          nextOrder.printStatus = 'failed'
+          replaceOrder(order.id, nextOrder)
+          backendDetail = `${order.id} 已建立，列印工作建立失敗：${getErrorMessage(error)}`
+        }
       }
 
-      replaceOrder(order.id, nextOrder)
-      setBackendStatus('connected', 'API 已同步', `${order.id} 已建立`)
+      setBackendStatus('connected', 'API 已同步', backendDetail)
       return nextOrder
     } catch (error) {
       setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${getErrorMessage(error)}`)
@@ -300,11 +346,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const sendPrinterHealthcheck = (): void => {
+  const sendPrinterHealthcheck = async (): Promise<void> => {
     const now = new Date()
     printStation.online = true
     printStation.lastPrintAt = now.toISOString()
     lastPrintPreview.value = buildPrinterHealthcheckPreview(printStation)
+    await tryNativeLanPrint(lastPrintPreview.value)
   }
 
   onMounted(() => {

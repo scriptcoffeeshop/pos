@@ -142,6 +142,7 @@ const printStatusLabels = {
   queued: '待列印',
   printed: '已列印',
   skipped: '略過',
+  failed: '失敗',
 } as const
 
 const activeOrder = computed(() => pendingOrders.value[0] ?? orderQueue.value[0] ?? null)

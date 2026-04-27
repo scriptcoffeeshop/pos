@@ -22,18 +22,19 @@ rtk npm run cap:sync
 rtk npm run apk:debug
 ```
 
-4. 加入 TCP socket 外掛後，建立最小列印測試頁。
-5. 在平板安裝 APK，送出 healthcheck label。
-6. 成功後再把列印結果接回 `print_jobs` 狀態。
+4. APK 內已加入 `LanPrinter` Capacitor native plugin，會透過 Android TCP socket 送出 EZPL payload。
+5. 在平板安裝 APK，按 POS 列印站的印表機按鈕送出 healthcheck label。
+6. 建立櫃台訂單時，若自動列印開啟，前端會先建立 `print_jobs`，Android APK 會嘗試送出 EZPL，再回寫 `printed` 或 `failed`。
 
 ## 後台設定邊界
 
 - `pos_settings.printer_settings` 保存出單機、服務方式、商品類別、單據類型與份數。
 - 前台目前先使用第一台啟用的出單機建立 `print_jobs`。
-- Phase 2 APK 需要依印單規則拆分貼紙/收據，再依規則回寫列印結果。
+- 目前 APK 先送出單一最小 EZPL ticket；下一步需要依印單規則拆分貼紙/收據，再依規則回寫列印結果。
 
 ## 重要限制
 
 - 瀏覽器網頁通常不能直接對內網 IP 開 TCP socket；實機列印應以 Capacitor APK 驗證。
 - GitHub Pages 只承載 Web POS，不負責硬體連線。
 - 若未來多台平板共用一台出單機，`print_jobs` 需要避免重複出單。
+- 若 Android TCP socket 連線失敗，POS 會把該 `print_jobs` 記為 `failed`，並在列印預覽中顯示錯誤訊息。
