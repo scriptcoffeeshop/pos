@@ -20,7 +20,7 @@
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
 - POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products`、`/orders`、`/settings/runtime` 載入，櫃台建單走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；實機 LAN TCP 列印仍需 Phase 2 Capacitor APK。
-- APK 測試：已加入 Capacitor Android 專案與 `Android APK` workflow；本機若未安裝 JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
+- APK 測試：已加入 Capacitor Android 專案與 `Android APK` workflow；本機若未安裝 Node.js 22+、JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
 
 ## 來源藍圖
 

@@ -15,7 +15,7 @@
 
 ### 本機建置
 
-本機需要先安裝 JDK 21、Android Studio / Android SDK，並設定好 Android SDK path。完成後執行：
+本機需要先安裝 Node.js 22 以上、JDK 21、Android Studio / Android SDK，並設定好 Android SDK path。完成後執行：
 
 ```bash
 rtk npm run apk:debug

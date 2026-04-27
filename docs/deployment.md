@@ -43,4 +43,4 @@ rtk npm run supabase:functions:deploy
 rtk npm run apk:debug
 ```
 
-目前本機若尚未安裝 JDK / Android SDK，請改用 GitHub Actions 產出 APK。安裝平板流程見 [Android APK 測試流程](android-apk.md)。
+目前本機若尚未安裝 Node.js 22+、JDK / Android SDK，請改用 GitHub Actions 產出 APK。安裝平板流程見 [Android APK 測試流程](android-apk.md)。
