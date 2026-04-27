@@ -11,6 +11,7 @@ type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control";
+type ProductChannel = "pos" | "online" | "qr";
 
 interface OrderLineInput {
   productId?: string;
@@ -197,11 +198,18 @@ api.get("/health", (c) =>
   }));
 
 api.get("/products", async (c) => {
+  const channel = readProductChannel(c.req.query("channel"));
+  const channelColumn = {
+    pos: "pos_visible",
+    online: "online_visible",
+    qr: "qr_visible",
+  }[channel];
+
   const { data, error } = await supabase
     .from("products")
     .select(productSelect)
     .eq("is_available", true)
-    .eq("pos_visible", true)
+    .eq(channelColumn, true)
     .order("sort_order", { ascending: true });
 
   if (error) {
@@ -494,6 +502,14 @@ const loadSetting = async <SettingValue>(
   }
 
   return data.value as SettingValue;
+};
+
+const readProductChannel = (channel: string | undefined): ProductChannel => {
+  if (channel === "online" || channel === "qr" || channel === "pos") {
+    return channel;
+  }
+
+  return "pos";
 };
 
 const requireAdmin = (c: Context): Response | null => {

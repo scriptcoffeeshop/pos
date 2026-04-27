@@ -112,6 +112,7 @@ interface ProductResponse {
 }
 
 export type AdminSettingKey = 'printer_settings' | 'access_control'
+export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -228,8 +229,8 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => ({
   }),
 })
 
-export const fetchProducts = async (): Promise<MenuItem[]> => {
-  const data = await request<ProductsResponse>('/products')
+export const fetchProducts = async (channel: ProductChannel = 'pos'): Promise<MenuItem[]> => {
+  const data = await request<ProductsResponse>(`/products?channel=${channel}`)
   return data.products.map(normalizeProduct)
 }
 

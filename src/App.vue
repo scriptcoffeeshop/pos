@@ -12,16 +12,45 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  ShoppingBag,
   ShoppingCart,
   Trash2,
   Wifi,
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 import AdminPanel from './components/AdminPanel.vue'
+import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import { formatCurrency, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import type { MenuCategory, OrderStatus, PaymentMethod, ServiceMode } from './types/pos'
+
+type AppView = 'pos' | 'admin' | 'online'
+
+const isConsumerDomain =
+  globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
+  globalThis.location?.hostname === 'online.scriptcoffee.com.tw'
+const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
+
+const readInitialView = (): AppView => {
+  if (isConsumerDomain) {
+    return 'online'
+  }
+
+  const params = new URLSearchParams(globalThis.location?.search ?? '')
+  const view = params.get('view') ?? params.get('mode')
+  const hash = globalThis.location?.hash.replace(/^#\/?/, '')
+
+  if (view === 'admin' || hash === 'admin') {
+    return 'admin'
+  }
+
+  if (view === 'order' || view === 'online' || hash === 'order' || hash === 'online') {
+    return 'online'
+  }
+
+  return 'pos'
+}
 
 const {
   addItem,
@@ -47,7 +76,7 @@ const {
   serviceMode,
   submitCounterOrder,
   updateOrderStatus,
-} = usePosSession()
+} = usePosSession({ autoLoad: !isConsumerDomain })
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'all', label: '全部' },
@@ -123,46 +152,71 @@ const activeOrderItemCount = computed(
 )
 const todayRevenue = computed(() => orderQueue.value.reduce((total, order) => total + order.subtotal, 0))
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
-const activeView = ref<'pos' | 'admin'>('pos')
+const activeView = ref<AppView>(readInitialView())
+const pageTitle = computed(() => (activeView.value === 'online' ? '線上點餐' : '門市 POS'))
+const pageSubtitle = computed(() =>
+  activeView.value === 'online' ? '線上菜單 · 自取訂單 · 門市接單' : '櫃台點餐 · 線上訂單 · LAN 列印',
+)
 
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
+
+const setActiveView = (view: AppView): void => {
+  activeView.value = view
+
+  if (isConsumerDomain) {
+    return
+  }
+
+  const params = new URLSearchParams(globalThis.location.search)
+  params.set('view', view === 'online' ? 'order' : view)
+  globalThis.history.replaceState(null, '', `${globalThis.location.pathname}?${params.toString()}`)
+}
 </script>
 
 <template>
-  <main class="pos-shell">
+  <main class="pos-shell" :class="{ 'pos-shell--consumer': activeView === 'online' }">
     <header class="topbar">
       <div class="brand">
-        <img src="/assets/script-coffee-logo.png" alt="Script Coffee" class="brand-logo" />
+        <img :src="brandLogoSrc" alt="Script Coffee" class="brand-logo" />
         <div>
           <p class="eyebrow">Script Coffee</p>
-          <h1>門市 POS</h1>
-          <span class="brand-subtitle">櫃台點餐 · 線上訂單 · LAN 列印</span>
+          <h1>{{ pageTitle }}</h1>
+          <span class="brand-subtitle">{{ pageSubtitle }}</span>
         </div>
       </div>
 
-      <div class="topbar-actions">
+      <div v-if="!isConsumerDomain" class="topbar-actions">
         <div class="view-switch" aria-label="工作區切換">
           <button
             class="view-switch-button"
             :class="{ 'view-switch-button--active': activeView === 'pos' }"
             type="button"
-            @click="activeView = 'pos'"
+            @click="setActiveView('pos')"
           >
             <LayoutDashboard :size="18" aria-hidden="true" />
             POS
           </button>
           <button
             class="view-switch-button"
+            :class="{ 'view-switch-button--active': activeView === 'online' }"
+            type="button"
+            @click="setActiveView('online')"
+          >
+            <ShoppingBag :size="18" aria-hidden="true" />
+            線上
+          </button>
+          <button
+            class="view-switch-button"
             :class="{ 'view-switch-button--active': activeView === 'admin' }"
             type="button"
-            @click="activeView = 'admin'"
+            @click="setActiveView('admin')"
           >
             <Settings2 :size="18" aria-hidden="true" />
             後台
           </button>
         </div>
 
-        <div class="topbar-status" aria-label="POS 狀態">
+        <div v-if="activeView !== 'online'" class="topbar-status" aria-label="POS 狀態">
           <span
             class="status-pill"
             :class="backendStatus.mode === 'fallback' ? 'status-pill--danger' : 'status-pill--success'"
@@ -193,7 +247,9 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
       </div>
     </header>
 
-    <template v-if="activeView === 'pos'">
+    <ConsumerOrderPage v-if="activeView === 'online'" />
+
+    <template v-else-if="activeView === 'pos'">
       <section class="overview-strip" aria-label="今日營運摘要">
         <article>
           <span>今日營收</span>

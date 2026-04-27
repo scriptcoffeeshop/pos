@@ -2,13 +2,15 @@
 
 ## GitHub Pages
 
-CI 已預留手動部署 job。倉庫目前已改為 public，可使用 GitHub Free 的 GitHub Pages。第一次部署前：
+CI 會在 `main` push 後自動部署 GitHub Pages。倉庫目前已改為 public，可使用 GitHub Free 的 GitHub Pages。第一次部署前：
 
 1. GitHub repo 設定 Pages source 為 GitHub Actions。
 2. 到 Actions 執行 `POS CI` workflow。
-3. 勾選 `deploy_frontend=true`。
+3. 若要手動補部署，勾選 `deploy_frontend=true`。
 
-Vite 會在 GitHub Actions 內偵測 `scriptcoffeeshop/pos`，自動使用 `/pos/` base path。
+Vite 使用相對 base path，讓 GitHub Pages 預設網址與 custom domain 都能讀取同一份靜態資產。
+
+消費者線上點餐建議綁定 `order.scriptcoffee.com.tw`。DNS 與 GitHub Pages custom domain 設定見 [GitHub Pages 網域設定](custom-domain.md)。
 
 ## Supabase
 

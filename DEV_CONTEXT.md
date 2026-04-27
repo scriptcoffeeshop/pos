@@ -6,19 +6,19 @@
 
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
-- 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態。
+- 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、POS/線上/掃碼可見性、備餐站、出單機規則與角色權限；寫入需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
 - GitHub repo：`scriptcoffeeshop/pos`，目前為 public。
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
 - SSH 綁定：repo-local `core.sshCommand=ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes`。
-- 第一次 CI：GitHub Actions run `25003328938`，`verify` job 已通過；Pages deploy job 只在手動部署時啟動。
+- 第一次 CI：GitHub Actions run `25003328938`，`verify` job 已通過；Pages deploy job 後續已改為 `main` push 自動部署。
 - 後端決策：POS 使用獨立 Supabase 專案 `uuzwcmceotooocyrtnao`，不沿用咖啡訂購專案的資料庫。
 - 本機 env：`.env.local` 與 `.env.supabase.local` 已建立並被 `.gitignore` 保護，不提交真實值。
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
-- POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products`、`/orders`、`/settings/runtime` 載入，櫃台建單走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
+- POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products?channel=pos`、`/orders`、`/settings/runtime` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作走 `POST /print-jobs`。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；實機 LAN TCP 列印仍需 Phase 2 Capacitor APK。
 - APK 測試：已加入 Capacitor Android 專案與 `Android APK` workflow；本機若未安裝 Node.js 22+、JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
 
@@ -46,8 +46,7 @@
 
 ## 下一步
 
-1. 設定 `POS_ADMIN_PIN` Supabase secret，讓後台可正式儲存商品、出單機與權限設定。
-2. GitHub Pages 部署確認後，將 Web POS 固定到公開 URL。
-3. Phase 2 安裝 Capacitor TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
-4. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
-5. 規劃 APK build 與店內平板安裝流程。
+1. 在 DNS 管理後台把 `order.scriptcoffee.com.tw` CNAME 指到 `scriptcoffeeshop.github.io`，並在 GitHub Pages 設定 custom domain。
+2. Phase 2 安裝 Capacitor TCP socket 外掛，做 GODEX DT2X 實機列印 POC。
+3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
+4. 規劃 APK build 與店內平板安裝流程。

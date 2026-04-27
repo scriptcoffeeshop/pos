@@ -27,6 +27,10 @@ import type {
 type CategoryFilter = 'all' | MenuCategory
 type BackendMode = 'syncing' | 'connected' | 'fallback'
 
+interface UsePosSessionOptions {
+  autoLoad?: boolean
+}
+
 interface BackendStatus {
   mode: BackendMode
   label: string
@@ -60,7 +64,8 @@ const nextSequenceFromOrders = (orders: PosOrder[]): number => {
   return maxSequence + 1
 }
 
-export const usePosSession = () => {
+export const usePosSession = (options: UsePosSessionOptions = {}) => {
+  const autoLoad = options.autoLoad ?? true
   const selectedCategory = ref<CategoryFilter>('all')
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>('takeout')
@@ -303,7 +308,9 @@ export const usePosSession = () => {
   }
 
   onMounted(() => {
-    void refreshBackendData()
+    if (autoLoad) {
+      void refreshBackendData()
+    }
   })
 
   return {

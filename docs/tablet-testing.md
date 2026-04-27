@@ -24,7 +24,7 @@ rtk npm run tablet:url
 
 ## 公開網址測試
 
-GitHub Pages 啟用後，可直接用公開網址在平板測試 Web POS。這種方式適合測試前台 UI、Supabase 訂單同步與後台商品設定。
+GitHub Pages 啟用後，可直接用公開網址在平板測試 Web POS 與消費者線上點餐。`order.scriptcoffee.com.tw` 會預設開啟線上點餐頁；內部 POS / 後台仍建議用本機網址或 APK 測試。
 
 ## APK 測試
 

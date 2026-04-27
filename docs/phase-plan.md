@@ -3,6 +3,7 @@
 ## Phase 1：基礎建設與資料庫設計
 
 - 建立 GitHub repo、CI、GitHub Pages 部署鏈。
+- 建立消費者線上點餐頁，並以 `order.scriptcoffee.com.tw` 作為 Pages custom domain 目標。
 - 建立 Supabase schema：商品、訂單、訂單明細、會員、交易日誌、列印任務。
 - 建立 Edge Function skeleton，先支援訂單建立與狀態更新。
 - 建立 PIN 保護的後台商品管理入口，先支援前台商品顯示、價格、排序與停售。

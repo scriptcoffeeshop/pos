@@ -77,7 +77,7 @@ jobs:
 
   deploy_frontend:
     name: Deploy GitHub Pages
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_frontend
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy_frontend)
     needs: verify
     runs-on: ubuntu-latest
     permissions:
