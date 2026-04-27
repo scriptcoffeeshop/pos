@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "imports": {
+    "@hono/hono": "jsr:@hono/hono@^4.6.14",
+    "@hono/hono/cors": "jsr:@hono/hono@^4.6.14/cors",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.47.10"
+  },
+  "tasks": {
+    "check": "deno check index.ts"
+  }
+}

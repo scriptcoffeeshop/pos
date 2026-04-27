@@ -2,6 +2,8 @@
 
 POS 後端資料庫會建立獨立 Supabase 專案，避免與咖啡訂購專案共享資料表、金流狀態或會員資料。
 
+目前綁定 project ref：`uuzwcmceotooocyrtnao`。
+
 ## 建立後需要回填的資訊
 
 前端 `.env.local`：
@@ -38,3 +40,10 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 會員 LINE profile 名稱固定保存，不被訂單收件人姓名覆蓋。
 - 線上付款逾期需要自動寫入 `status=failed` 與 `payment_status=expired`。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位。
+
+## 已部署項目
+
+- Migration：`20260427155000_initial_pos_schema.sql`
+- Edge Function：`pos-api`
+- 驗證端點：`/functions/v1/pos-api/health`
+- 商品端點：`/functions/v1/pos-api/products`

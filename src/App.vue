@@ -90,7 +90,7 @@ const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
       <div class="topbar-status" aria-label="POS 狀態">
         <span class="status-pill status-pill--success">
           <Wifi :size="18" aria-hidden="true" />
-          Supabase 待接
+          API 已部署
         </span>
         <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
           <Printer :size="18" aria-hidden="true" />

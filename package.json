@@ -9,9 +9,13 @@
     "typecheck": "vue-tsc -b",
     "lint": "eslint \"src/**/*.{ts,vue}\"",
     "guardrails": "python3 scripts/check_frontend_guardrails.py",
+    "check:backend": "cd supabase/functions/pos-api && deno check index.ts",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "ci-local": "npm run guardrails && npm run typecheck && npm run lint && npm run build"
+    "supabase:db:push": "bash scripts/supabase_db_push.sh",
+    "supabase:functions:deploy": "bash scripts/supabase_deploy.sh",
+    "deploy": "npm run supabase:db:push && npm run supabase:functions:deploy",
+    "ci-local": "npm run guardrails && npm run typecheck && npm run lint && npm run check:backend && npm run build"
   },
   "dependencies": {
     "lucide-vue-next": "^1.0.0",
