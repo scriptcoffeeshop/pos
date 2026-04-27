@@ -6,13 +6,16 @@ import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload }
 import {
   createOrder,
   createPrintJob,
+  fetchAdminProducts,
   fetchOrders,
   fetchProducts,
   fetchRuntimeSettings,
   isPosApiConfigured,
+  updateProduct,
   updatePrintJobStatus,
   updateOrderStatus as persistOrderStatus,
 } from '../lib/posApi'
+import type { ProductUpdateInput } from '../lib/posApi'
 import {
   buildOrderPrintPlan,
   buildPrinterHealthcheckPreview,
@@ -117,6 +120,24 @@ const nextSequenceFromOrders = (orders: PosOrder[]): number => {
   return maxSequence + 1
 }
 
+const sortProducts = (products: MenuItem[]): MenuItem[] =>
+  [...products].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+
+const productToUpdateInput = (product: MenuItem, isAvailable = product.available): ProductUpdateInput => ({
+  name: product.name,
+  category: product.category,
+  price: product.price,
+  tags: [...product.tags],
+  accent: product.accent,
+  isAvailable,
+  sortOrder: product.sortOrder,
+  posVisible: product.posVisible,
+  onlineVisible: product.onlineVisible,
+  qrVisible: product.qrVisible,
+  prepStation: product.prepStation,
+  printLabel: product.printLabel,
+})
+
 const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
   if (statuses.length === 0) {
     return 'skipped'
@@ -140,11 +161,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const serviceMode = ref<ServiceMode>('takeout')
   const paymentMethod = ref<PaymentMethod>('cash')
   const menuCatalog = ref<MenuItem[]>([...menuItems])
+  const productStatusCatalog = ref<MenuItem[]>([...menuItems])
   const cartLines = ref<CartLine[]>([])
   const orderQueue = ref<PosOrder[]>([...initialOrders])
   const lastPrintPreview = ref('尚未送出列印資料')
   const nextSequence = ref(nextSequenceFromOrders(initialOrders))
   const isSubmitting = ref(false)
+  const printingOrderId = ref<string | null>(null)
+  const isLoadingProductStatus = ref(false)
+  const togglingProductId = ref<string | null>(null)
+  const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
   const backendStatus = reactive<BackendStatus>({
     mode: isPosApiConfigured ? 'syncing' : 'fallback',
     label: isPosApiConfigured ? 'API 同步中' : '本機模式',
@@ -234,6 +260,27 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
   }
 
+  const applySavedProduct = (product: MenuItem): void => {
+    productStatusCatalog.value = sortProducts(
+      productStatusCatalog.value.some((entry) => entry.id === product.id)
+        ? productStatusCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
+        : [...productStatusCatalog.value, product],
+    )
+
+    const shouldShowInPos = product.available && product.posVisible
+    if (!shouldShowInPos) {
+      menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== product.id)
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id)
+      return
+    }
+
+    menuCatalog.value = sortProducts(
+      menuCatalog.value.some((entry) => entry.id === product.id)
+        ? menuCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
+        : [...menuCatalog.value, product],
+    )
+  }
+
   const appendPrintPreviewStatus = (message: string): void => {
     lastPrintPreview.value = `${lastPrintPreview.value}\n${message}`
   }
@@ -272,7 +319,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     try {
       const [remoteProducts, remoteOrders] = await Promise.all([fetchProducts(), fetchOrders()])
       await applyRuntimePrinterSettings()
-      menuCatalog.value = remoteProducts
+      menuCatalog.value = sortProducts(remoteProducts)
+      productStatusCatalog.value = sortProducts(remoteProducts)
       orderQueue.value = remoteOrders
       nextSequence.value = nextSequenceFromOrders(remoteOrders)
       setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
@@ -355,6 +403,137 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } catch (error) {
       order.status = previousStatus
       setBackendStatus('fallback', '本機模式', `訂單狀態同步失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const printOrder = async (orderId: string): Promise<void> => {
+    if (printingOrderId.value) {
+      return
+    }
+
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    printingOrderId.value = orderId
+    const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
+    lastPrintPreview.value = printPlan.preview
+
+    if (printPlan.jobs.length === 0) {
+      const nextOrder = { ...order, printStatus: 'skipped' as const }
+      replaceOrder(order.id, nextOrder)
+      setBackendStatus('connected', '出單略過', printPlan.skippedReason ?? '沒有建立列印任務')
+      printingOrderId.value = null
+      return
+    }
+
+    printStation.lastPrintAt = new Date().toISOString()
+    const printStatuses: PrintStatus[] = []
+
+    try {
+      for (const job of printPlan.jobs) {
+        let jobStatus: PrintStatus = 'queued'
+        let printJobId: string | null = null
+
+        if (isPosApiConfigured && order.remoteId) {
+          const printJob = await createPrintJob(order, job.payload, job.station)
+          jobStatus = printJob.status
+          printJobId = printJob.id
+        }
+
+        if (isNativeLanPrinterAvailable()) {
+          const printResult = await tryNativeLanPrint(job.payload, job.station)
+          jobStatus = printResult.ok ? 'printed' : 'failed'
+
+          if (printJobId) {
+            const updatedPrintJob = await updatePrintJobStatus(
+              printJobId,
+              printResult.ok ? 'printed' : 'failed',
+              printResult.ok ? undefined : printResult.error,
+            )
+            jobStatus = updatedPrintJob.status
+          }
+        }
+
+        printStatuses.push(jobStatus)
+      }
+
+      const nextPrintStatus = summarizePrintStatuses(printStatuses)
+      replaceOrder(order.id, { ...order, printStatus: nextPrintStatus })
+
+      if (!isNativeLanPrinterAvailable()) {
+        appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已準備 ${printPlan.jobs.length} 筆出單資料`)
+      }
+
+      setBackendStatus(
+        'connected',
+        '出單完成',
+        nextPrintStatus === 'printed'
+          ? `${order.id} 已完成 ${printPlan.jobs.length} 筆列印`
+          : `${order.id} 出單狀態：${nextPrintStatus}`,
+      )
+    } catch (error) {
+      replaceOrder(order.id, { ...order, printStatus: 'failed' })
+      setBackendStatus('fallback', '出單失敗', `${order.id} 出單失敗：${getErrorMessage(error)}`)
+    } finally {
+      printingOrderId.value = null
+    }
+  }
+
+  const loadProductStatusCatalog = async (adminPin: string): Promise<void> => {
+    if (!adminPin) {
+      productStatusMessage.value = '請先輸入管理 PIN'
+      return
+    }
+
+    isLoadingProductStatus.value = true
+    productStatusMessage.value = '載入完整商品狀態中'
+
+    try {
+      const products = await fetchAdminProducts(adminPin)
+      productStatusCatalog.value = sortProducts(products.filter((product) => product.posVisible))
+      productStatusMessage.value = `已載入 ${productStatusCatalog.value.length} 個 POS 商品，可直接暫停或恢復供應`
+    } catch (error) {
+      productStatusMessage.value = `商品狀態載入失敗：${getErrorMessage(error)}`
+    } finally {
+      isLoadingProductStatus.value = false
+    }
+  }
+
+  const updateProductAvailability = async (
+    adminPin: string,
+    productId: string,
+    isAvailable: boolean,
+  ): Promise<void> => {
+    if (!adminPin) {
+      productStatusMessage.value = '請先輸入管理 PIN'
+      return
+    }
+
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return
+    }
+
+    togglingProductId.value = productId
+    const optimisticProduct = { ...product, available: isAvailable }
+    applySavedProduct(optimisticProduct)
+    productStatusMessage.value = `${product.name} ${isAvailable ? '恢復供應中' : '暫停供應中'}`
+
+    try {
+      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, isAvailable))
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 已${savedProduct.available ? '恢復供應' : '暫停供應'}`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+    } catch (error) {
+      applySavedProduct(product)
+      productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+    } finally {
+      togglingProductId.value = null
     }
   }
 
@@ -487,18 +666,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     filteredMenu,
     increaseLine,
     isSubmitting,
+    isLoadingProductStatus,
     lastPrintPreview,
+    loadProductStatusCatalog,
     orderQueue,
     paymentMethod,
     pendingOrders,
+    printOrder,
+    printingOrderId,
     printStation,
+    productStatusCatalog,
+    productStatusMessage,
     searchTerm,
     selectedCategory,
     serviceMode,
+    togglingProductId,
     addItem,
     refreshBackendData,
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,
+    updateProductAvailability,
   }
 }

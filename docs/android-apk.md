@@ -62,7 +62,8 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 ## 測試重點
 
 - APK 目前是 debug 版，只用於平板測試，不用於正式上架。
-- APK 會載入同一套 Web POS 與 Supabase `pos-api`，可測試 POS、後台、訂單同步、依後台規則拆分的 `print_jobs` 與 Android TCP socket 列印 POC。
+- APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應與列印站操作；消費者線上點餐維持 Web / GitHub Pages 入口，不出現在 APK 裡。
+- APK 會載入同一套門市 POS 與 Supabase `pos-api`，可測試訂單同步、依後台規則拆分的 `print_jobs` 與 Android TCP socket 列印 POC。
 - APK 已包含 `LanPrinter` native plugin；瀏覽器版仍只能測 EZPL 預覽與 `print_jobs` 建立，實際 GODEX TCP 列印要在 APK 內測。
 - 平板需要可連網，才能連到 Supabase。
 - 未來實機列印時，平板與 GODEX DT2X 必須在同一個 Wi-Fi / LAN，且出單機 IP 要與後台設定一致。

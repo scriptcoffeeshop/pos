@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { Capacitor } from '@capacitor/core'
 import {
   CheckCircle2,
   CircleAlert,
   Clock3,
   CreditCard,
+  Eye,
+  EyeOff,
   LayoutDashboard,
+  LockKeyhole,
   Minus,
   Plus,
   Printer,
@@ -23,16 +27,21 @@ import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import { formatCurrency, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import type { MenuCategory, OrderStatus, PaymentMethod, ServiceMode } from './types/pos'
+import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, ServiceMode } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
   globalThis.location?.hostname === 'online.scriptcoffee.com.tw'
+const isNativeApp = Capacitor.getPlatform() !== 'web'
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 
 const readInitialView = (): AppView => {
+  if (isNativeApp) {
+    return 'pos'
+  }
+
   if (isConsumerDomain) {
     return 'online'
   }
@@ -64,18 +73,26 @@ const {
   filteredMenu,
   increaseLine,
   isSubmitting,
+  isLoadingProductStatus,
   lastPrintPreview,
+  loadProductStatusCatalog,
   orderQueue,
   paymentMethod,
   pendingOrders,
+  printOrder,
+  printingOrderId,
   printStation,
+  productStatusCatalog,
+  productStatusMessage,
   refreshBackendData,
   searchTerm,
   selectedCategory,
   sendPrinterHealthcheck,
   serviceMode,
   submitCounterOrder,
+  togglingProductId,
   updateOrderStatus,
+  updateProductAvailability,
 } = usePosSession({ autoLoad: !isConsumerDomain })
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
@@ -151,17 +168,43 @@ const readyOrders = computed(() => pendingOrders.value.filter((order) => order.s
 const activeOrderItemCount = computed(
   () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
 )
+const stationProducts = computed(() =>
+  [...productStatusCatalog.value]
+    .filter((product: MenuItem) => product.posVisible)
+    .sort((a: MenuItem, b: MenuItem) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+)
+const availableStationProducts = computed(() => stationProducts.value.filter((product) => product.available).length)
+const stoppedStationProducts = computed(() => stationProducts.value.length - availableStationProducts.value)
 const todayRevenue = computed(() => orderQueue.value.reduce((total, order) => total + order.subtotal, 0))
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
-const pageTitle = computed(() => (activeView.value === 'online' ? '線上點餐' : '門市 POS'))
-const pageSubtitle = computed(() =>
-  activeView.value === 'online' ? '線上菜單 · 自取訂單 · 門市接單' : '櫃台點餐 · 線上訂單 · LAN 列印',
-)
+const stationPin = ref('')
+const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
+const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
+const pageTitle = computed(() => {
+  if (activeView.value === 'online') {
+    return '線上點餐'
+  }
+
+  return isNativeApp ? '平板工作站' : '門市 POS'
+})
+const pageSubtitle = computed(() => {
+  if (activeView.value === 'online') {
+    return '線上菜單 · 自取訂單 · 門市接單'
+  }
+
+  return isNativeApp ? '櫃台點餐 · 線上接單 · 商品暫停 · LAN 出單' : '櫃台點餐 · 線上訂單 · LAN 列印'
+})
 
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 
 const setActiveView = (view: AppView): void => {
+  if (isNativeApp) {
+    activeView.value = 'pos'
+    globalThis.history.replaceState(null, '', globalThis.location.pathname)
+    return
+  }
+
   activeView.value = view
 
   if (isConsumerDomain) {
@@ -171,6 +214,14 @@ const setActiveView = (view: AppView): void => {
   const params = new URLSearchParams(globalThis.location.search)
   params.set('view', view === 'online' ? 'order' : view)
   globalThis.history.replaceState(null, '', `${globalThis.location.pathname}?${params.toString()}`)
+}
+
+const loadStationProducts = (): void => {
+  void loadProductStatusCatalog(stationPin.value.trim())
+}
+
+const toggleStationProduct = (product: MenuItem): void => {
+  void updateProductAvailability(stationPin.value.trim(), product.id, !product.available)
 }
 </script>
 
@@ -186,8 +237,8 @@ const setActiveView = (view: AppView): void => {
         </div>
       </div>
 
-      <div v-if="!isConsumerDomain" class="topbar-actions">
-        <div class="view-switch" aria-label="工作區切換">
+      <div v-if="showInternalHeaderControls" class="topbar-actions">
+        <div v-if="canSwitchWorkspace" class="view-switch" aria-label="工作區切換">
           <button
             class="view-switch-button"
             :class="{ 'view-switch-button--active': activeView === 'pos' }"
@@ -216,6 +267,10 @@ const setActiveView = (view: AppView): void => {
             後台
           </button>
         </div>
+        <span v-else-if="isNativeApp" class="status-pill status-pill--success">
+          <LockKeyhole :size="18" aria-hidden="true" />
+          APK 工作站
+        </span>
 
         <div v-if="activeView !== 'online'" class="topbar-status" aria-label="POS 狀態">
           <span
@@ -444,6 +499,15 @@ const setActiveView = (view: AppView): void => {
               </div>
               <div class="order-actions">
                 <button
+                  class="order-action--print"
+                  type="button"
+                  :disabled="printingOrderId === order.id"
+                  @click="printOrder(order.id)"
+                >
+                  <Printer :size="16" aria-hidden="true" />
+                  {{ printingOrderId === order.id ? '出單中' : '出單' }}
+                </button>
+                <button
                   v-for="action in statusActions"
                   :key="action.value"
                   :class="{ 'order-action--active': order.status === action.value }"
@@ -455,6 +519,51 @@ const setActiveView = (view: AppView): void => {
                 </button>
               </div>
             </article>
+          </section>
+
+          <section v-if="isNativeApp" class="station-section" aria-labelledby="station-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Station</p>
+                <h2 id="station-title">前台操作</h2>
+                <span class="panel-note">
+                  {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停
+                </span>
+              </div>
+            </div>
+
+            <div class="station-pin-row">
+              <label>
+                PIN
+                <input v-model="stationPin" type="password" inputmode="numeric" autocomplete="off" placeholder="管理 PIN" />
+              </label>
+              <button type="button" :disabled="isLoadingProductStatus" @click="loadStationProducts">
+                <RefreshCw :size="16" aria-hidden="true" />
+                {{ isLoadingProductStatus ? '載入中' : '載入' }}
+              </button>
+            </div>
+
+            <p class="station-message">{{ productStatusMessage }}</p>
+
+            <div class="station-product-list" aria-label="前台商品狀態">
+              <article v-for="product in stationProducts" :key="product.id" class="station-product-row">
+                <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
+                <span>
+                  <strong>{{ product.name }}</strong>
+                  <small>{{ categoryLabels[product.category] }} · {{ formatCurrency(product.price) }}</small>
+                </span>
+                <button
+                  type="button"
+                  :class="{ 'station-product-toggle--stopped': !product.available }"
+                  :disabled="togglingProductId === product.id"
+                  @click="toggleStationProduct(product)"
+                >
+                  <EyeOff v-if="product.available" :size="16" aria-hidden="true" />
+                  <Eye v-else :size="16" aria-hidden="true" />
+                  {{ product.available ? '暫停' : '恢復' }}
+                </button>
+              </article>
+            </div>
           </section>
 
           <section class="printer-section">
@@ -493,6 +602,15 @@ const setActiveView = (view: AppView): void => {
               <span class="status-chip" :class="statusClass(activeOrder.status)">{{ statusLabels[activeOrder.status] }}</span>
             </div>
             <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
+            <button
+              class="active-order-print-button"
+              type="button"
+              :disabled="printingOrderId === activeOrder.id"
+              @click="printOrder(activeOrder.id)"
+            >
+              <Printer :size="16" aria-hidden="true" />
+              {{ printingOrderId === activeOrder.id ? '出單中' : '立即出單' }}
+            </button>
           </section>
         </aside>
       </section>

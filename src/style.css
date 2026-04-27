@@ -357,6 +357,7 @@ h3 {
 .menu-panel,
 .cart-panel,
 .queue-section,
+.station-section,
 .printer-section,
 .active-order {
   border: 1px solid var(--line);
@@ -368,6 +369,7 @@ h3 {
 .menu-panel,
 .cart-panel,
 .queue-section,
+.station-section,
 .printer-section {
   padding: 14px;
 }
@@ -846,8 +848,23 @@ h3 {
   font-weight: 900;
 }
 
+.order-actions button svg {
+  flex: 0 0 auto;
+}
+
 .order-actions button:not(:disabled):hover {
   border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.order-action--print {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  gap: 6px;
+  border-color: #91c5b6;
+  background: var(--primary-soft);
   color: var(--primary-dark);
 }
 
@@ -855,6 +872,117 @@ h3 {
   border-color: #91c5b6;
   background: var(--primary-soft);
   color: var(--primary-dark);
+}
+
+.station-section {
+  display: grid;
+  gap: 10px;
+}
+
+.station-pin-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.station-pin-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.station-pin-row input {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.station-pin-row button,
+.station-product-row button,
+.active-order-print-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-weight: 900;
+}
+
+.station-pin-row button:not(:disabled):hover,
+.station-product-row button:not(:disabled):hover,
+.active-order-print-button:not(:disabled):hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.station-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.station-product-list {
+  display: grid;
+  gap: 7px;
+  max-height: 292px;
+  overflow: auto;
+}
+
+.station-product-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 82px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.station-product-row .product-swatch {
+  height: 34px;
+}
+
+.station-product-row span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.station-product-row strong,
+.station-product-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-product-row strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.station-product-row small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.station-product-toggle--stopped {
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
 .printer-health {
@@ -903,9 +1031,17 @@ h3 {
 }
 
 .active-order {
+  display: grid;
+  gap: 10px;
   padding: 14px;
   border-color: #dfc58e;
   background: var(--amber-soft);
+}
+
+.active-order-print-button {
+  width: 100%;
+  border-color: #d6b574;
+  background: var(--surface-raised);
 }
 
 .consumer-shell {

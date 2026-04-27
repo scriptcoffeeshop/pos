@@ -24,11 +24,11 @@ rtk npm run tablet:url
 
 ## 公開網址測試
 
-GitHub Pages 啟用後，可直接用公開網址在平板測試 Web POS 與消費者線上點餐。`order.scriptcoffee.com.tw` 會預設開啟線上點餐頁；內部 POS / 後台仍建議用本機網址或 APK 測試。
+GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費者線上點餐。`order.scriptcoffee.com.tw` 會預設開啟線上點餐頁；內部 POS / 後台仍建議用本機網址測試。
 
 ## APK 測試
 
-若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。目前 debug APK 可測 POS app 外殼、Supabase 同步、後台與 Android TCP socket 列印 POC。
+若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。debug APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應與 Android TCP socket 列印 POC；消費者線上點餐不會出現在 APK 裡。
 
 ## 列印測試邊界
 

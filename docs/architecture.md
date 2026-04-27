@@ -9,10 +9,10 @@
 ## 前端
 
 - Vue 3 + Vite + TypeScript。
-- 消費者線上點餐、Web POS 與 Capacitor Android APK 共用同一套 Vue build；`order.scriptcoffee.com.tw` 預設進入線上點餐，內部工作區仍可切換 POS / 後台。
+- 消費者線上點餐與門市工作台共用同一套 Vue build，但入口責任不同：`order.scriptcoffee.com.tw` 預設進入消費者線上點餐；Capacitor Android APK 永遠進入門市 POS 工作站，不提供消費者線上點餐 view。
 - 所有互動都由 Vue component event 與 composable 管理。
 - 禁止新增 inline event handler、`data-action` bridge、`window.*` API 與手動 `innerHTML` 資料渲染。
-- 前台與後台共用同一個 Vue App，透過工作區切換進入線上點餐、POS、商品菜單、出單規則與權限管理；後台寫入必須經 `POS_ADMIN_PIN` 保護的 Edge Function。
+- Web 內部工作區可切換 POS / 線上點餐 / 後台；APK 只保留前台點餐、線上訂單接單、立即出單與商品暫停供應等門市操作。完整商品菜單、出單規則與權限管理仍在 Web 後台，寫入必須經 `POS_ADMIN_PIN` 保護的 Edge Function。
 
 ## 後端
 
@@ -27,7 +27,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 - LINE Login：會員登入與 profile 綁定。會員顯示名稱不可被訂單收件人姓名覆蓋。
 - LINE Pay / 街口支付：線上付款與回呼。付款逾期要落到 `status=failed` 與 `payment_status=expired`。
-- Capacitor TCP socket：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；GitHub Pages 瀏覽器版只做預覽與雲端 print job。
+- Capacitor TCP socket：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；GitHub Pages 瀏覽器版只做預覽與雲端 print job。消費者線上點餐只以 Web 形式提供，不包進 APK 操作介面。
 
 ## 初始資料流
 
