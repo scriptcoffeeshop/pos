@@ -14,6 +14,7 @@ export interface MenuItem {
   tags: string[]
   accent: string
   available: boolean
+  sortOrder: number
 }
 
 export interface CartLine {

@@ -12,6 +12,7 @@
     "check:backend": "cd supabase/functions/pos-api && deno check index.ts",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "tablet:url": "bash scripts/show_tablet_url.sh",
     "supabase:db:push": "bash scripts/supabase_db_push.sh",
     "supabase:functions:deploy": "bash scripts/supabase_deploy.sh",
     "deploy": "npm run supabase:db:push && npm run supabase:functions:deploy",

@@ -5,6 +5,7 @@
 - 建立 GitHub repo、CI、GitHub Pages 部署鏈。
 - 建立 Supabase schema：商品、訂單、訂單明細、會員、交易日誌、列印任務。
 - 建立 Edge Function skeleton，先支援訂單建立與狀態更新。
+- 建立 PIN 保護的後台商品管理入口，先支援前台商品顯示、價格、排序與停售。
 - 規劃 LINE Login profile 與會員資料邊界。
 
 ## Phase 2：Capacitor LAN Printing POC

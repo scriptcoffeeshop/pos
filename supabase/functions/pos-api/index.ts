@@ -1,7 +1,9 @@
 import { Hono } from "@hono/hono";
 import { cors } from "@hono/hono/cors";
+import type { Context } from "@hono/hono";
 import { createClient } from "@supabase/supabase-js";
 
+type MenuCategory = "coffee" | "tea" | "food" | "retail";
 type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
@@ -43,9 +45,20 @@ interface PrintJobInput {
   protocol?: string;
 }
 
+interface ProductUpdateInput {
+  name?: string;
+  category?: MenuCategory;
+  price?: number;
+  tags?: unknown;
+  accent?: string;
+  isAvailable?: boolean;
+  sortOrder?: number;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const adminPin = Deno.env.get("POS_ADMIN_PIN");
 
 if (!supabaseUrl || !serviceRoleKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -61,6 +74,7 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 const api = new Hono();
 
 const orderSelect = "*, order_items(*), print_jobs(status, printed_at, created_at)";
+const productSelect = "id, sku, name, category, price, tags, accent, is_available, sort_order";
 
 const loadOrder = (orderId: string) =>
   supabase
@@ -73,7 +87,13 @@ api.use(
   "*",
   cors({
     origin: "*",
-    allowHeaders: ["authorization", "x-client-info", "apikey", "content-type"],
+    allowHeaders: [
+      "authorization",
+      "x-client-info",
+      "apikey",
+      "content-type",
+      "x-pos-admin-pin",
+    ],
     allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   }),
 );
@@ -88,9 +108,7 @@ api.get("/health", (c) =>
 api.get("/products", async (c) => {
   const { data, error } = await supabase
     .from("products")
-    .select(
-      "id, sku, name, category, price, tags, accent, is_available, sort_order",
-    )
+    .select(productSelect)
     .eq("is_available", true)
     .order("sort_order", { ascending: true });
 
@@ -99,6 +117,51 @@ api.get("/products", async (c) => {
   }
 
   return c.json({ products: data });
+});
+
+api.get("/admin/products", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { data, error } = await supabase
+    .from("products")
+    .select(productSelect)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ products: data });
+});
+
+api.patch("/admin/products/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const productId = c.req.param("id");
+  const input = await c.req.json<ProductUpdateInput>();
+  const { payload, error: validationError } = validateProductUpdateInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("products")
+    .update(payload)
+    .eq("id", productId)
+    .select(productSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ product: data });
 });
 
 api.get("/orders", async (c) => {
@@ -251,6 +314,68 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
   }
 
   return null;
+};
+
+const productCategories: MenuCategory[] = ["coffee", "tea", "food", "retail"];
+
+const requireAdmin = (c: Context): Response | null => {
+  if (!adminPin) {
+    return c.json({ error: "POS_ADMIN_PIN is not configured" }, 503);
+  }
+
+  if (c.req.header("x-pos-admin-pin") !== adminPin) {
+    return c.json({ error: "Invalid admin PIN" }, 401);
+  }
+
+  return null;
+};
+
+const validateProductUpdateInput = (
+  input: ProductUpdateInput,
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const payload: Record<string, unknown> = {};
+
+  if (typeof input.name !== "string" || input.name.trim().length === 0) {
+    return { payload, error: "name is required" };
+  }
+  payload.name = input.name.trim();
+
+  if (!input.category || !productCategories.includes(input.category)) {
+    return { payload, error: "category is invalid" };
+  }
+  payload.category = input.category;
+
+  const price = input.price;
+  if (!Number.isInteger(price) || typeof price !== "number" || price < 0) {
+    return { payload, error: "price must be a non-negative integer" };
+  }
+  payload.price = price;
+
+  if (!Array.isArray(input.tags) || !input.tags.every((tag) => typeof tag === "string")) {
+    return { payload, error: "tags must be an array of strings" };
+  }
+  payload.tags = input.tags.map((tag) => tag.trim()).filter(Boolean);
+
+  if (typeof input.accent !== "string" || !/^#[0-9a-fA-F]{6}$/.test(input.accent)) {
+    return { payload, error: "accent must be a hex color" };
+  }
+  payload.accent = input.accent;
+
+  if (typeof input.isAvailable !== "boolean") {
+    return { payload, error: "isAvailable must be a boolean" };
+  }
+  payload.is_available = input.isAvailable;
+
+  const sortOrder = input.sortOrder;
+  if (!Number.isInteger(sortOrder) || typeof sortOrder !== "number") {
+    return { payload, error: "sortOrder must be an integer" };
+  }
+  payload.sort_order = sortOrder;
+
+  return { payload, error: null };
 };
 
 const app = new Hono();

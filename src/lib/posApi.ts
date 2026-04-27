@@ -9,6 +9,7 @@ interface ApiProduct {
   tags: string[] | null
   accent: string | null
   is_available: boolean
+  sort_order: number
 }
 
 interface ApiOrderItem {
@@ -58,6 +59,20 @@ interface OrdersResponse {
 
 interface PrintJobResponse {
   printJob: ApiPrintJob
+}
+
+export interface ProductUpdateInput {
+  name: string
+  category: MenuCategory
+  price: number
+  tags: string[]
+  accent: string
+  isAvailable: boolean
+  sortOrder: number
+}
+
+interface ProductResponse {
+  product: ApiProduct
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -111,6 +126,7 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   tags: product.tags ?? [],
   accent: product.accent ?? '#0b6b63',
   available: product.is_available,
+  sortOrder: product.sort_order,
 })
 
 export const normalizeOrder = (order: ApiOrder): PosOrder => ({
@@ -144,6 +160,31 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => ({
 export const fetchProducts = async (): Promise<MenuItem[]> => {
   const data = await request<ProductsResponse>('/products')
   return data.products.map(normalizeProduct)
+}
+
+export const fetchAdminProducts = async (adminPin: string): Promise<MenuItem[]> => {
+  const data = await request<ProductsResponse>('/admin/products', {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+  return data.products.map(normalizeProduct)
+}
+
+export const updateProduct = async (
+  adminPin: string,
+  productId: string,
+  input: ProductUpdateInput,
+): Promise<MenuItem> => {
+  const data = await request<ProductResponse>(`/admin/products/${productId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+    body: JSON.stringify(input),
+  })
+
+  return normalizeProduct(data.product)
 }
 
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {

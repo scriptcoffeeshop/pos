@@ -10,6 +10,7 @@ export const menuItems: MenuItem[] = [
     tags: ['冰', '單品豆'],
     accent: '#1f6f8b',
     available: true,
+    sortOrder: 10,
   },
   {
     id: 'latte-hot',
@@ -20,6 +21,7 @@ export const menuItems: MenuItem[] = [
     tags: ['熱', '牛奶'],
     accent: '#9a6539',
     available: true,
+    sortOrder: 20,
   },
   {
     id: 'brown-sugar-latte',
@@ -30,6 +32,7 @@ export const menuItems: MenuItem[] = [
     tags: ['甜度固定', '熱賣'],
     accent: '#b84d35',
     available: true,
+    sortOrder: 30,
   },
   {
     id: 'oolong-tea',
@@ -40,6 +43,7 @@ export const menuItems: MenuItem[] = [
     tags: ['無糖', '回甘'],
     accent: '#3f7d4c',
     available: true,
+    sortOrder: 40,
   },
   {
     id: 'lemon-black-tea',
@@ -50,6 +54,7 @@ export const menuItems: MenuItem[] = [
     tags: ['冰', '微酸'],
     accent: '#d19a2a',
     available: true,
+    sortOrder: 50,
   },
   {
     id: 'bagel',
@@ -60,6 +65,7 @@ export const menuItems: MenuItem[] = [
     tags: ['烘烤', '點心'],
     accent: '#c47b47',
     available: true,
+    sortOrder: 60,
   },
   {
     id: 'croissant',
@@ -70,6 +76,7 @@ export const menuItems: MenuItem[] = [
     tags: ['烘烤', '限量'],
     accent: '#d6a84f',
     available: true,
+    sortOrder: 70,
   },
   {
     id: 'drip-bag',
@@ -80,6 +87,7 @@ export const menuItems: MenuItem[] = [
     tags: ['零售', '可加購'],
     accent: '#5c6f9c',
     available: true,
+    sortOrder: 80,
   },
 ]
 
