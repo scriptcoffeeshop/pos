@@ -979,6 +979,11 @@ h3 {
   color: var(--danger);
 }
 
+.status-chip--voided {
+  background: #eef0ed;
+  color: var(--muted);
+}
+
 .claim-chip {
   display: inline-flex;
   align-items: center;
@@ -1077,6 +1082,17 @@ h3 {
   border-color: #b7c7dc;
   background: var(--secondary-soft);
   color: var(--secondary);
+}
+
+.order-action--void {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  gap: 6px;
+  border-color: #e4b1aa;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .order-action--claim {
@@ -1444,6 +1460,13 @@ h3 {
   width: 100%;
   border-color: #91c5b6;
   background: var(--surface-raised);
+}
+
+.active-order-void-button {
+  width: 100%;
+  border-color: #e4b1aa;
+  background: var(--surface-raised);
+  color: var(--danger);
 }
 
 .consumer-shell {

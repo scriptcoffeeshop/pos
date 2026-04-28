@@ -22,6 +22,7 @@ import {
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
   updateOrderStatus as persistOrderStatus,
+  voidOrder,
 } from '../lib/posApi'
 import type { ProductUpdateInput } from '../lib/posApi'
 import {
@@ -213,6 +214,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printingOrderId = ref<string | null>(null)
   const claimingOrderId = ref<string | null>(null)
   const updatingPaymentOrderId = ref<string | null>(null)
+  const voidingOrderId = ref<string | null>(null)
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
   const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
@@ -321,7 +323,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
-  const pendingOrders = computed(() => orderQueue.value.filter((order) => order.status !== 'served'))
+  const pendingOrders = computed(() => orderQueue.value.filter((order) => order.status !== 'served' && order.status !== 'voided'))
 
   const setBackendStatus = (mode: BackendMode, label: string, detail: string): void => {
     backendStatus.mode = mode
@@ -562,7 +564,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (isSubmitting.value || printingOrderId.value || claimingOrderId.value || updatingPaymentOrderId.value) {
+    if (
+      isSubmitting.value ||
+      printingOrderId.value ||
+      claimingOrderId.value ||
+      updatingPaymentOrderId.value ||
+      voidingOrderId.value
+    ) {
       return
     }
 
@@ -710,6 +718,56 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       setBackendStatus('fallback', '收款失敗', `付款狀態同步失敗：${getErrorMessage(error)}`)
     } finally {
       updatingPaymentOrderId.value = null
+    }
+  }
+
+  const voidOrderForStation = async (adminPin: string, orderId: string, note = ''): Promise<void> => {
+    if (!adminPin) {
+      setBackendStatus('fallback', '需要管理 PIN', '請先在前台操作區輸入管理 PIN')
+      return
+    }
+
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    if (order.paymentStatus !== 'pending') {
+      setBackendStatus('fallback', '不可作廢', `${order.id} 已收款，需先接退款流程`)
+      return
+    }
+
+    if (order.status === 'served' || order.status === 'voided') {
+      setBackendStatus('fallback', '不可作廢', `${order.id} 已交付或已作廢`)
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
+
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    voidingOrderId.value = orderId
+
+    try {
+      const voidedOrder = await voidOrder(adminPin, claimedOrder, note)
+      replaceOrder(orderId, {
+        ...voidedOrder,
+        lines: voidedOrder.lines.length > 0 ? voidedOrder.lines : claimedOrder.lines,
+        printStatus: voidedOrder.printStatus === 'skipped' ? claimedOrder.printStatus : voidedOrder.printStatus,
+      })
+      setBackendStatus('connected', '訂單已作廢', `${orderId} 已排除關帳統計`)
+      void loadRegisterSession()
+    } catch (error) {
+      setBackendStatus('fallback', '作廢失敗', `${orderId} 作廢失敗：${getErrorMessage(error)}`)
+    } finally {
+      voidingOrderId.value = null
     }
   }
 
@@ -1180,5 +1238,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updateOrderStatus,
     updatePaymentStatus,
     updateProductAvailability,
+    voidingOrderId,
+    voidOrderForStation,
   }
 }

@@ -7,7 +7,7 @@
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
-- 櫃台效率操作：POS 工作台已有最近/常用品項快速加購、常用備註 chip、待處理/可交付/全部佇列篩選、庫存/低庫存提示、多平板訂單鎖定、收款確認、列印重印紀錄、正式開班/關班、關帳摘要與鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
+- 櫃台效率操作：POS 工作台已有最近/常用品項快速加購、常用備註 chip、待處理/可交付/全部佇列篩選、庫存/低庫存提示、多平板訂單鎖定、收款確認、未收款訂單作廢、列印重印紀錄、正式開班/關班、關帳摘要與鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、出單機規則與角色權限；寫入需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
@@ -20,7 +20,7 @@
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - Pages 網域：`order.scriptcoffee.com.tw` 已綁定 GitHub Pages；2026-04-28 使用者回報 HTTPS 已完成。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
-- POS API 同步：商品、訂單、runtime 出單機設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，平板接單先走 `POST /orders/:id/claim`，收款確認走 `PATCH /orders/:id/payment`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`。POS 啟動後每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次。
+- POS API 同步：商品、訂單、runtime 出單機設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，平板接單先走 `POST /orders/:id/claim`，收款確認走 `PATCH /orders/:id/payment`，未收款作廢走 `POST /orders/:id/void`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`。POS 啟動後每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次。
 - 商品庫存欄位：`products.inventory_count`、`low_stock_threshold`、`sold_out_until` 由 `20260429110000_add_product_inventory_controls.sql` 新增；前端仍保留 `is_available` 作為人工上架/停售開關，庫存為 0 或暫停到期前會在 POS 端視為不可點。
 - 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 會在狀態更新與 print job 建立前檢查 lease，已交付/異常單會釋放 lease。
 - 收銀班別欄位：`register_sessions` 由 `20260429133000_add_register_sessions.sql` 新增；`pos-api` 提供 `/register/current`、`/register/open`、`/register/close`，開班/關班寫入需 `POS_ADMIN_PIN`。

@@ -494,6 +494,22 @@ export const updateOrderPaymentStatus = async (
   return normalizeOrder(data.order)
 }
 
+export const voidOrder = async (
+  adminPin: string,
+  order: PosOrder,
+  note = '',
+): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/void`, {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+    body: JSON.stringify({ stationId: currentStationId(), note }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
 export const claimOrder = async (order: PosOrder, force = false): Promise<PosOrder> => {
   const data = await request<ClaimOrderResponse>(`/orders/${order.remoteId ?? order.id}/claim`, {
     method: 'POST',

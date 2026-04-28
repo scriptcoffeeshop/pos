@@ -113,6 +113,8 @@ const {
   updatePaymentStatus,
   updateProductAvailability,
   updatingPaymentOrderId,
+  voidingOrderId,
+  voidOrderForStation,
 } = usePosSession({ autoLoad: !isConsumerDomain })
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
@@ -173,6 +175,7 @@ const statusLabels: Record<OrderStatus, string> = {
   ready: '可交付',
   served: '已交付',
   failed: '異常',
+  voided: '已作廢',
 }
 
 const printStatusLabels = {
@@ -201,6 +204,9 @@ const todayOrders = computed(() => {
     return Number.isFinite(orderDate.getTime()) && formatDateKey(orderDate) === todayKey
   })
 })
+const closeoutOrders = computed(() =>
+  todayOrders.value.filter((order) => order.status !== 'failed' && order.status !== 'voided'),
+)
 const queueFilterOptions = computed(() => [
   { value: 'active' as const, label: '待處理', count: pendingOrders.value.length },
   { value: 'ready' as const, label: '可交付', count: readyOrders.value },
@@ -246,11 +252,11 @@ const lowStockStationProducts = computed(() =>
     product.inventoryCount <= product.lowStockThreshold,
   ),
 )
-const todayRevenue = computed(() => todayOrders.value.reduce((total, order) => total + order.subtotal, 0))
+const todayRevenue = computed(() => closeoutOrders.value.reduce((total, order) => total + order.subtotal, 0))
 const closeoutSummary = computed(() => {
   const collectedStatuses = new Set(['authorized', 'paid'])
 
-  return todayOrders.value.reduce(
+  return closeoutOrders.value.reduce(
     (summary, order) => {
       if (collectedStatuses.has(order.paymentStatus)) {
         summary.collectedTotal += order.subtotal
@@ -283,7 +289,7 @@ const closeoutSummary = computed(() => {
 const paymentCloseoutRows = computed(() =>
   paymentOptions
     .map((payment) => {
-      const matchingOrders = todayOrders.value.filter((order) => order.paymentMethod === payment.value)
+      const matchingOrders = closeoutOrders.value.filter((order) => order.paymentMethod === payment.value)
       return {
         ...payment,
         count: matchingOrders.length,
@@ -504,6 +510,19 @@ const paymentActionDisabled = (order: PosOrder): boolean =>
 
 const confirmPaymentAction = (order: PosOrder): void => {
   void updatePaymentStatus(order.id, 'paid')
+}
+
+const orderCanBeVoided = (order: PosOrder): boolean =>
+  order.paymentStatus === 'pending' &&
+  !['served', 'failed', 'voided'].includes(order.status) &&
+  !orderClaimedByOtherStation(order)
+
+const voidActionLabel = (order: PosOrder): string => (
+  voidingOrderId.value === order.id ? '作廢中' : '作廢'
+)
+
+const voidOrderAction = (order: PosOrder): void => {
+  void voidOrderForStation(stationPin.value.trim(), order.id)
 }
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -985,6 +1004,16 @@ onBeforeUnmount(() => {
                   {{ claimActionLabel(order) }}
                 </button>
                 <button
+                  v-if="orderCanBeVoided(order)"
+                  class="order-action--void"
+                  type="button"
+                  :disabled="voidingOrderId === order.id"
+                  @click="voidOrderAction(order)"
+                >
+                  <Trash2 :size="16" aria-hidden="true" />
+                  {{ voidActionLabel(order) }}
+                </button>
+                <button
                   v-for="action in statusActions"
                   :key="action.value"
                   :class="{ 'order-action--active': order.status === action.value }"
@@ -1231,6 +1260,16 @@ onBeforeUnmount(() => {
             >
               <CreditCard :size="16" aria-hidden="true" />
               {{ paymentActionLabel(activeOrder) }}
+            </button>
+            <button
+              v-if="orderCanBeVoided(activeOrder)"
+              class="active-order-void-button"
+              type="button"
+              :disabled="voidingOrderId === activeOrder.id"
+              @click="voidOrderAction(activeOrder)"
+            >
+              <Trash2 :size="16" aria-hidden="true" />
+              {{ voidActionLabel(activeOrder) }}
             </button>
             <button
               class="active-order-print-button"

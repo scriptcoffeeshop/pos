@@ -7,7 +7,7 @@ type MenuCategory = "coffee" | "tea" | "food" | "retail";
 type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
-type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed";
+type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
@@ -45,6 +45,11 @@ interface UpdateStatusInput {
 interface UpdatePaymentInput {
   paymentStatus: PaymentStatus;
   stationId?: string;
+}
+
+interface VoidOrderInput {
+  stationId?: string;
+  note?: string;
 }
 
 interface ClaimOrderInput {
@@ -746,6 +751,72 @@ api.patch("/orders/:id/payment", async (c) => {
   return c.json({ order: savedOrder });
 });
 
+api.post("/orders/:id/void", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const orderId = c.req.param("id");
+  const input: VoidOrderInput = await c.req.json<VoidOrderInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const { data: currentOrder, error: currentOrderError } = await loadOrder(orderId);
+  if (currentOrderError) {
+    return c.json({ error: currentOrderError.message }, 404);
+  }
+
+  if (currentOrder.status === "served" || currentOrder.status === "voided") {
+    return c.json({ error: "Served or voided orders cannot be voided again" }, 409);
+  }
+
+  if (currentOrder.payment_status !== "pending") {
+    return c.json({ error: "Collected orders require a refund workflow before voiding" }, 409);
+  }
+
+  const now = new Date();
+  if (isLeaseActiveForOtherStation(currentOrder as Record<string, unknown>, stationId, now)) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      status: "voided",
+      payment_status: "failed",
+      note: appendVoidNote(currentOrder.note, input.note),
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    })
+    .eq("id", orderId)
+    .eq("payment_status", "pending")
+    .neq("status", "served")
+    .neq("status", "voided")
+    .or(buildLeaseAvailableFilter(stationId, now))
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  if (!data) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder });
+});
+
 api.post("/print-jobs", async (c) => {
   const input = await c.req.json<PrintJobInput>();
   const stationId = sanitizeStationId(input.stationId);
@@ -931,7 +1002,7 @@ const summarizeRegisterOrders = async (
   const rows = (data ?? []) as RegisterOrderSummaryRow[];
   const summary = rows.reduce(
     (current, order) => {
-      if (order.status === "failed") {
+      if (order.status === "failed" || order.status === "voided") {
         return current;
       }
 
@@ -1064,6 +1135,13 @@ const requireOrderClaim = async (c: Context, orderId: string, stationId: string)
   }
 
   return null;
+};
+
+const appendVoidNote = (currentNote: unknown, voidNote: unknown): string => {
+  const baseNote = typeof currentNote === "string" ? currentNote.trim() : "";
+  const reason = sanitizeText(voidNote, "").slice(0, 240);
+  const suffix = reason ? `作廢：${reason}` : "作廢";
+  return [baseNote, suffix].filter(Boolean).join(" / ").slice(0, 500);
 };
 
 const validateOrderInput = (input: CreateOrderInput): string | null => {

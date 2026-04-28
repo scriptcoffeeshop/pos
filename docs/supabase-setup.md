@@ -52,11 +52,13 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 商品庫存控管：`20260429110000_add_product_inventory_controls.sql`
 - 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
 - 收銀班別：`20260429133000_add_register_sessions.sql`
+- 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
 - 訂單端點：`/functions/v1/pos-api/orders`
 - 付款狀態端點：`/functions/v1/pos-api/orders/:id/payment`
+- 未收款作廢端點：`/functions/v1/pos-api/orders/:id/void`
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
@@ -76,6 +78,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
+- 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢，已收款訂單需等待退款流程。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
