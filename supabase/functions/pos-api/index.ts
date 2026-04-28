@@ -707,8 +707,8 @@ api.patch("/orders/:id/payment", async (c) => {
   const input = await c.req.json<UpdatePaymentInput>();
   const stationId = sanitizeStationId(input.stationId);
 
-  if (!isPaymentStatus(input.paymentStatus)) {
-    return c.json({ error: "Invalid payment status" }, 400);
+  if (!isPosPaymentStatus(input.paymentStatus)) {
+    return c.json({ error: "paymentStatus must be pending, authorized, or paid" }, 400);
   }
 
   if (!stationId) {
@@ -716,19 +716,10 @@ api.patch("/orders/:id/payment", async (c) => {
   }
 
   const now = new Date();
-  const shouldFailOrder = input.paymentStatus === "failed" || input.paymentStatus === "expired";
-  const payload = shouldFailOrder
-    ? {
-      payment_status: input.paymentStatus,
-      status: "failed",
-      claimed_by: null,
-      claimed_at: null,
-      claim_expires_at: null,
-    }
-    : {
-      payment_status: input.paymentStatus,
-      ...buildClaimPayload(stationId, now),
-    };
+  const payload = {
+    payment_status: input.paymentStatus,
+    ...buildClaimPayload(stationId, now),
+  };
 
   const { data, error } = await supabase
     .from("orders")
@@ -1146,9 +1137,8 @@ const isPrintStatus = (status: unknown): status is PrintStatus =>
   status === "queued" || status === "printed" || status === "skipped" ||
   status === "failed";
 
-const isPaymentStatus = (status: unknown): status is PaymentStatus =>
-  status === "pending" || status === "authorized" || status === "paid" ||
-  status === "expired" || status === "failed";
+const isPosPaymentStatus = (status: unknown): status is Extract<PaymentStatus, "pending" | "authorized" | "paid"> =>
+  status === "pending" || status === "authorized" || status === "paid";
 
 const requireAdmin = (c: Context): Response | null => {
   if (!adminPin) {
