@@ -26,6 +26,15 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 正式部署時，後端三項請放 GitHub Secrets，不要提交到 git。
 
+## Keep Supabase Alive
+
+POS 已加入 `.github/workflows/keep-alive.yml`，沿用咖啡訂購專案的 Keep Supabase Alive 行為：
+
+- 每 3 天自動執行一次，並支援 GitHub Actions 手動觸發。
+- ping `https://<project-ref>.supabase.co/auth/v1/health`，使用 anon key 帶 `apikey` 與 `Authorization` header。
+- 優先讀 GitHub Secrets `SUPABASE_URL` / `SUPABASE_ANON_KEY`，未設定時 fallback 到既有 GitHub Variables `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`。
+- 若兩組設定都缺，workflow 只輸出 warning 並跳過，不讓 CI 長期失敗。
+
 ## 初始 schema 草案
 
 - `products`：商品、分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站與標籤列印設定。
