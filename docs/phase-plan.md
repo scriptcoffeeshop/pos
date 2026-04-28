@@ -17,7 +17,7 @@
 - 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。已加入 Android `LanPrinter` TCP socket plugin，待實機驗證。
 - 驗證列印成功後的狀態回寫。已接 `print_jobs` 的 `printed` / `failed` 回寫流程，待實機確認。
 - POS 佇列已顯示列印 job 次數、重印入口與失敗訊息；待實機確認 GODEX TCP 回寫穩定性。
-- 設計多平板共用出單機的鎖定策略。
+- 多平板共用出單機的鎖定策略已進入第一版：`orders` 會保存 claim lease，狀態更新與 `print_jobs` 建立前都需要同一台平板持有有效 lease；後續可再補 realtime 訂閱與平板在線心跳。
 - 依後台印單規則決定收據、貼紙、品項類別與出單機。已接入前台列印計畫與多筆 `print_jobs`，待實機校正 EZPL 版面。
 
 ## Phase 3：顧客端線上點餐與金流

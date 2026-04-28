@@ -67,6 +67,9 @@ interface ApiOrder {
   payment_status: PaymentStatus
   status: OrderStatus
   created_at: string
+  claimed_by?: string | null
+  claimed_at?: string | null
+  claim_expires_at?: string | null
   order_items?: ApiOrderItem[]
   print_jobs?: ApiPrintJob[]
 }
@@ -85,6 +88,10 @@ interface OrdersResponse {
 
 interface PrintJobResponse {
   printJob: ApiPrintJob
+}
+
+interface ClaimOrderResponse {
+  order: ApiOrder
 }
 
 interface ApiSettingRow {
@@ -127,10 +134,33 @@ export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+const stationIdStorageKey = 'script-coffee-pos-station-id'
 
 const apiBaseUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/functions/v1/pos-api` : ''
 
 export const isPosApiConfigured = Boolean(apiBaseUrl && supabaseAnonKey)
+
+export const currentStationId = (): string => {
+  try {
+    const savedId = globalThis.localStorage?.getItem(stationIdStorageKey)
+    if (savedId && savedId.length <= 32) {
+      return savedId
+    }
+
+    const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const suffix = randomId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()
+    const nextId = `tablet-${suffix}`
+    globalThis.localStorage?.setItem(stationIdStorageKey, nextId)
+    return nextId
+  } catch {
+    return `tablet-session-${Date.now()}`
+  }
+}
+
+export const currentStationLabel = (): string => {
+  const stationId = currentStationId()
+  return `平板 ${stationId.replace(/^tablet-/, '').slice(-4).toUpperCase()}`
+}
 
 const request = async <ResponseBody>(path: string, init: RequestInit = {}): Promise<ResponseBody> => {
   if (!isPosApiConfigured || !supabaseAnonKey) {
@@ -253,6 +283,9 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => ({
   paymentStatus: order.payment_status,
   status: order.status,
   createdAt: order.created_at,
+  claimedBy: order.claimed_by ?? null,
+  claimedAt: order.claimed_at ?? null,
+  claimExpiresAt: order.claim_expires_at ?? null,
   printStatus: normalizePrintStatus(order),
   printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
   lines: (order.order_items ?? []).map((line) => {
@@ -363,7 +396,25 @@ export const createOrder = async (order: PosOrder): Promise<PosOrder> => {
 export const updateOrderStatus = async (order: PosOrder, status: OrderStatus): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, stationId: currentStationId() }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const claimOrder = async (order: PosOrder, force = false): Promise<PosOrder> => {
+  const data = await request<ClaimOrderResponse>(`/orders/${order.remoteId ?? order.id}/claim`, {
+    method: 'POST',
+    body: JSON.stringify({ stationId: currentStationId(), force }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const releaseOrderClaim = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<ClaimOrderResponse>(`/orders/${order.remoteId ?? order.id}/release-claim`, {
+    method: 'POST',
+    body: JSON.stringify({ stationId: currentStationId() }),
   })
 
   return normalizeOrder(data.order)
@@ -382,6 +433,7 @@ export const createPrintJob = async (
     method: 'POST',
     body: JSON.stringify({
       orderId: order.remoteId,
+      stationId: currentStationId(),
       payload,
       stationName: station.name,
       printerHost: station.host,

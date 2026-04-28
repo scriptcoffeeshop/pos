@@ -71,6 +71,9 @@ const {
   cartQuantity,
   cartTotal,
   clearCart,
+  claimLabelFor,
+  claimOrderForStation,
+  claimingOrderId,
   customer,
   decreaseLine,
   filteredMenu,
@@ -79,6 +82,9 @@ const {
   isLoadingProductStatus,
   lastPrintPreview,
   loadProductStatusCatalog,
+  orderClaimExpired,
+  orderClaimedByCurrentStation,
+  orderClaimedByOtherStation,
   orderQueue,
   paymentMethod,
   pendingOrders,
@@ -89,10 +95,12 @@ const {
   productStatusMessage,
   quickAddItems,
   refreshBackendData,
+  releaseOrderClaimForStation,
   searchTerm,
   selectedCategory,
   sendPrinterHealthcheck,
   serviceMode,
+  stationClaimLabel,
   submitCounterOrder,
   togglingProductId,
   updateOrderStatus,
@@ -167,8 +175,14 @@ const printStatusLabels = {
 } as const
 
 const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需要袋子']
+const currentTime = ref(Date.now())
 
-const activeOrder = computed(() => pendingOrders.value[0] ?? orderQueue.value[0] ?? null)
+const activeOrder = computed(() =>
+  pendingOrders.value.find((order) => !orderClaimedByOtherStation(order) || orderClaimExpired(order, currentTime.value)) ??
+  pendingOrders.value[0] ??
+  orderQueue.value[0] ??
+  null,
+)
 const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
 const readyOrders = computed(() => pendingOrders.value.filter((order) => order.status === 'ready').length)
 const todayOrders = computed(() => {
@@ -276,6 +290,7 @@ const activeView = ref<AppView>(readInitialView())
 const queueFilter = ref<QueueFilter>('active')
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
+let claimClockTimer: number | null = null
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
 const pageTitle = computed(() => {
@@ -373,6 +388,55 @@ const printActionLabel = (order: PosOrder): string => {
   return order.printJobs.length > 0 ? '重印' : '出單'
 }
 
+const claimActionLabel = (order: PosOrder): string => {
+  if (claimingOrderId.value === order.id) {
+    return '鎖定中'
+  }
+
+  if (orderClaimedByCurrentStation(order)) {
+    return '釋放'
+  }
+
+  if (order.claimedBy && orderClaimExpired(order, currentTime.value)) {
+    return '接手'
+  }
+
+  if (orderClaimedByOtherStation(order)) {
+    return '鎖定中'
+  }
+
+  return '鎖定'
+}
+
+const claimChipClass = (order: PosOrder): string => {
+  if (orderClaimedByCurrentStation(order)) {
+    return 'claim-chip--mine'
+  }
+
+  if (orderClaimedByOtherStation(order)) {
+    return 'claim-chip--locked'
+  }
+
+  if (order.claimedBy) {
+    return 'claim-chip--expired'
+  }
+
+  return ''
+}
+
+const claimOrderAction = (order: PosOrder): void => {
+  if (orderClaimedByCurrentStation(order)) {
+    void releaseOrderClaimForStation(order.id)
+    return
+  }
+
+  void claimOrderForStation(order.id, Boolean(order.claimedBy && orderClaimExpired(order, currentTime.value)))
+}
+
+const claimActionDisabled = (order: PosOrder): boolean =>
+  claimingOrderId.value === order.id ||
+  (orderClaimedByOtherStation(order) && !orderClaimExpired(order, currentTime.value))
+
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -457,10 +521,16 @@ const toggleStationProduct = (product: MenuItem): void => {
 
 onMounted(() => {
   globalThis.addEventListener('keydown', handlePosShortcut)
+  claimClockTimer = globalThis.setInterval(() => {
+    currentTime.value = Date.now()
+  }, 15_000)
 })
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handlePosShortcut)
+  if (claimClockTimer !== null) {
+    globalThis.clearInterval(claimClockTimer)
+  }
 })
 </script>
 
@@ -512,6 +582,10 @@ onBeforeUnmount(() => {
         </span>
 
         <div v-if="activeView !== 'online'" class="topbar-status" aria-label="POS 狀態">
+          <span class="status-pill status-pill--neutral">
+            <LockKeyhole :size="18" aria-hidden="true" />
+            {{ stationClaimLabel }}
+          </span>
           <span
             class="status-pill"
             :class="backendStatus.mode === 'fallback' ? 'status-pill--danger' : 'status-pill--success'"
@@ -763,11 +837,22 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <article v-for="order in visibleQueueOrders" :key="order.id" class="order-row" :class="`order-row--${order.status}`">
+            <article
+              v-for="order in visibleQueueOrders"
+              :key="order.id"
+              class="order-row"
+              :class="[`order-row--${order.status}`, { 'order-row--claimed-other': orderClaimedByOtherStation(order) }]"
+            >
               <div class="order-row-main">
                 <div class="order-row-title">
                   <span class="order-id">{{ order.id }}</span>
-                  <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+                  <span class="order-row-title-chips">
+                    <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
+                      <LockKeyhole :size="13" aria-hidden="true" />
+                      {{ claimLabelFor(order) }}
+                    </span>
+                    <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+                  </span>
                 </div>
                 <strong>{{ order.customerName }}</strong>
                 <span>
@@ -786,18 +871,28 @@ onBeforeUnmount(() => {
                 <button
                   class="order-action--print"
                   type="button"
-                  :disabled="printingOrderId === order.id"
+                  :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
                   @click="printOrder(order.id)"
                 >
                   <Printer :size="16" aria-hidden="true" />
                   {{ printActionLabel(order) }}
                 </button>
                 <button
+                  class="order-action--claim"
+                  type="button"
+                  :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
+                  :disabled="claimActionDisabled(order)"
+                  @click="claimOrderAction(order)"
+                >
+                  <LockKeyhole :size="16" aria-hidden="true" />
+                  {{ claimActionLabel(order) }}
+                </button>
+                <button
                   v-for="action in statusActions"
                   :key="action.value"
                   :class="{ 'order-action--active': order.status === action.value }"
                   type="button"
-                  :disabled="order.status === action.value"
+                  :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
                   @click="updateOrderStatus(order.id, action.value)"
                 >
                   {{ action.label }}
@@ -933,13 +1028,21 @@ onBeforeUnmount(() => {
             <p class="eyebrow">Next</p>
             <div class="next-order-title">
               <h2>{{ activeOrder.id }}</h2>
-              <span class="status-chip" :class="statusClass(activeOrder.status)">{{ statusLabels[activeOrder.status] }}</span>
+              <span class="order-row-title-chips">
+                <span v-if="claimLabelFor(activeOrder)" class="claim-chip" :class="claimChipClass(activeOrder)">
+                  <LockKeyhole :size="13" aria-hidden="true" />
+                  {{ claimLabelFor(activeOrder) }}
+                </span>
+                <span class="status-chip" :class="statusClass(activeOrder.status)">
+                  {{ statusLabels[activeOrder.status] }}
+                </span>
+              </span>
             </div>
             <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
             <button
               class="active-order-print-button"
               type="button"
-              :disabled="printingOrderId === activeOrder.id"
+              :disabled="printingOrderId === activeOrder.id || orderClaimedByOtherStation(activeOrder)"
               @click="printOrder(activeOrder.id)"
             >
               <Printer :size="16" aria-hidden="true" />

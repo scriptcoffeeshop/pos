@@ -31,6 +31,9 @@ export const initialOrders: PosOrder[] = [
     paymentStatus: 'paid',
     status: 'preparing',
     createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+    claimedBy: null,
+    claimedAt: null,
+    claimExpiresAt: null,
     printStatus: 'printed',
     printJobs: [
       {
@@ -65,6 +68,9 @@ export const initialOrders: PosOrder[] = [
     paymentStatus: 'authorized',
     status: 'new',
     createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
+    claimedBy: '平板 2F91',
+    claimedAt: new Date(Date.now() - 1000 * 60 * 3).toISOString(),
+    claimExpiresAt: new Date(Date.now() - 1000 * 30).toISOString(),
     printStatus: 'queued',
     printJobs: [
       {

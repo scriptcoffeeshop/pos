@@ -38,6 +38,12 @@ interface CreateOrderInput {
 
 interface UpdateStatusInput {
   status: OrderStatus;
+  stationId?: string;
+}
+
+interface ClaimOrderInput {
+  stationId?: string;
+  force?: boolean;
 }
 
 interface UpdatePrintJobStatusInput {
@@ -47,6 +53,7 @@ interface UpdatePrintJobStatusInput {
 
 interface PrintJobInput {
   orderId: string;
+  stationId?: string;
   payload: string;
   stationName?: string;
   printerHost?: string;
@@ -132,6 +139,8 @@ const orderSelect =
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
+const defaultOrderLeaseSeconds = 180;
+const maxOrderLeaseSeconds = 900;
 
 const defaultPrinterSettings: PrinterSettings = {
   stations: [
@@ -429,9 +438,83 @@ api.post("/orders", async (c) => {
   return c.json({ order: savedOrder }, 201);
 });
 
+api.post("/orders/:id/claim", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<ClaimOrderInput>();
+  const stationId = sanitizeStationId(input.stationId);
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const now = new Date();
+  const claimPayload = buildClaimPayload(stationId, now);
+  let query = supabase
+    .from("orders")
+    .update(claimPayload)
+    .eq("id", orderId)
+    .neq("status", "served");
+
+  if (!input.force) {
+    query = query.or(buildLeaseAvailableFilter(stationId, now));
+  }
+
+  const { data, error } = await query.select("*").maybeSingle();
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  if (!data) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder });
+});
+
+api.post("/orders/:id/release-claim", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<ClaimOrderInput>();
+  const stationId = sanitizeStationId(input.stationId);
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    })
+    .eq("id", orderId)
+    .eq("claimed_by", stationId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  if (!data) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder });
+});
+
 api.patch("/orders/:id/status", async (c) => {
   const orderId = c.req.param("id");
   const input = await c.req.json<UpdateStatusInput>();
+  const stationId = sanitizeStationId(input.stationId);
 
   if (
     !["new", "preparing", "ready", "served", "failed"].includes(input.status)
@@ -439,15 +522,39 @@ api.patch("/orders/:id/status", async (c) => {
     return c.json({ error: "Invalid order status" }, 400);
   }
 
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const now = new Date();
+  const shouldReleaseClaim = input.status === "served" || input.status === "failed";
+  const payload = shouldReleaseClaim
+    ? {
+      status: input.status,
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    }
+    : {
+      status: input.status,
+      ...buildClaimPayload(stationId, now),
+    };
+
   const { data, error } = await supabase
     .from("orders")
-    .update({ status: input.status })
+    .update(payload)
     .eq("id", orderId)
+    .neq("status", "served")
+    .or(buildLeaseAvailableFilter(stationId, now))
     .select("*")
-    .single();
+    .maybeSingle();
 
   if (error) {
     return c.json({ error: error.message }, 500);
+  }
+
+  if (!data) {
+    return claimConflictResponse(c, orderId, stationId);
   }
 
   const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
@@ -460,9 +567,19 @@ api.patch("/orders/:id/status", async (c) => {
 
 api.post("/print-jobs", async (c) => {
   const input = await c.req.json<PrintJobInput>();
+  const stationId = sanitizeStationId(input.stationId);
 
   if (!input.orderId || !input.payload) {
     return c.json({ error: "orderId and payload are required" }, 400);
+  }
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required before creating print jobs" }, 400);
+  }
+
+  const claimError = await requireOrderClaim(c, input.orderId, stationId);
+  if (claimError) {
+    return claimError;
   }
 
   const { data, error } = await supabase
@@ -527,6 +644,81 @@ api.patch("/print-jobs/:id/status", async (c) => {
 
   return c.json({ printJob: data });
 });
+
+const sanitizeStationId = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9:._-]/g, "-")
+    .slice(0, 80);
+};
+
+const buildClaimPayload = (stationId: string, now: Date) => ({
+  claimed_by: stationId,
+  claimed_at: now.toISOString(),
+  claim_expires_at: new Date(
+    now.getTime() + Math.min(defaultOrderLeaseSeconds, maxOrderLeaseSeconds) * 1000,
+  ).toISOString(),
+});
+
+const buildLeaseAvailableFilter = (stationId: string, now: Date): string =>
+  [
+    "claimed_by.is.null",
+    `claimed_by.eq.${stationId}`,
+    "claim_expires_at.is.null",
+    `claim_expires_at.lt.${now.toISOString()}`,
+  ].join(",");
+
+const isLeaseActiveForOtherStation = (
+  order: Record<string, unknown>,
+  stationId: string,
+  now = new Date(),
+): boolean => {
+  const claimedBy = typeof order.claimed_by === "string" ? order.claimed_by : "";
+  if (!claimedBy || claimedBy === stationId) {
+    return false;
+  }
+
+  const expiresAt = typeof order.claim_expires_at === "string"
+    ? new Date(order.claim_expires_at)
+    : null;
+  return Boolean(expiresAt && Number.isFinite(expiresAt.getTime()) && expiresAt > now);
+};
+
+const claimConflictResponse = async (c: Context, orderId: string, stationId: string): Promise<Response> => {
+  const { data, error } = await loadOrder(orderId);
+  if (error) {
+    return c.json({ error: error.message }, 404);
+  }
+
+  const claimedBy = typeof data?.claimed_by === "string" ? data.claimed_by : "其他平板";
+  const message = isLeaseActiveForOtherStation(data as Record<string, unknown>, stationId)
+    ? `Order is already claimed by ${claimedBy}`
+    : "Order could not be claimed";
+
+  return c.json({ error: message, order: data }, 409);
+};
+
+const requireOrderClaim = async (c: Context, orderId: string, stationId: string): Promise<Response | null> => {
+  const { data, error } = await loadOrder(orderId);
+  if (error) {
+    return c.json({ error: error.message }, 404);
+  }
+
+  if (!data?.claimed_by || data.claimed_by !== stationId) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const expiresAt = typeof data.claim_expires_at === "string" ? new Date(data.claim_expires_at) : null;
+  if (!expiresAt || !Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date()) {
+    return c.json({ error: "Order claim has expired", order: data }, 409);
+  }
+
+  return null;
+};
 
 const validateOrderInput = (input: CreateOrderInput): string | null => {
   if (!input.orderNumber?.trim()) {

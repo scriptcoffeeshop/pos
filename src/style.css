@@ -316,6 +316,12 @@ h3 {
   color: var(--danger);
 }
 
+.status-pill--neutral {
+  border-color: #b7c7dc;
+  background: var(--secondary-soft);
+  color: var(--secondary);
+}
+
 .overview-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -897,6 +903,10 @@ h3 {
   border-top: 1px solid var(--line);
 }
 
+.order-row--claimed-other {
+  opacity: 0.72;
+}
+
 .order-row:first-of-type {
   padding-top: 0;
   border-top: 0;
@@ -910,6 +920,13 @@ h3 {
 .order-row-title {
   justify-content: space-between;
   gap: 10px;
+}
+
+.order-row-title-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .order-id {
@@ -962,6 +979,44 @@ h3 {
   color: var(--danger);
 }
 
+.claim-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  max-width: 176px;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #b7c7dc;
+  border-radius: 999px;
+  background: var(--secondary-soft);
+  color: var(--secondary);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.claim-chip svg {
+  flex: 0 0 auto;
+}
+
+.claim-chip--mine {
+  border-color: #a9d2c4;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.claim-chip--locked {
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.claim-chip--expired {
+  border-color: #d8c8a4;
+  background: #fff8e8;
+  color: #806018;
+}
+
 .order-row-meta {
   display: grid;
   grid-template-columns: 0.72fr 1fr auto;
@@ -1011,6 +1066,14 @@ h3 {
   border-color: #91c5b6;
   background: var(--primary-soft);
   color: var(--primary-dark);
+}
+
+.order-action--claim {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  gap: 6px;
 }
 
 .order-action--active {

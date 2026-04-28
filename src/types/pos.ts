@@ -59,6 +59,9 @@ export interface PosOrder {
   paymentStatus: PaymentStatus
   status: OrderStatus
   createdAt: string
+  claimedBy: string | null
+  claimedAt: string | null
+  claimExpiresAt: string | null
   printStatus: PrintStatus
   printJobs: PrintJob[]
 }

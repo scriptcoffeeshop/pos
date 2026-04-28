@@ -10,7 +10,11 @@ import {
   fetchOrders,
   fetchProducts,
   fetchRuntimeSettings,
+  claimOrder,
+  currentStationId,
+  currentStationLabel,
   isPosApiConfigured,
+  releaseOrderClaim,
   updateProduct,
   updatePrintJobStatus,
   updateOrderStatus as persistOrderStatus,
@@ -173,6 +177,17 @@ const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
   return 'queued'
 }
 
+const claimExpiresIn = (seconds = 180): string => new Date(Date.now() + seconds * 1000).toISOString()
+
+const isClaimExpired = (order: PosOrder, now = Date.now()): boolean => {
+  if (!order.claimedBy || !order.claimExpiresAt) {
+    return true
+  }
+
+  const expiresAt = new Date(order.claimExpiresAt).getTime()
+  return !Number.isFinite(expiresAt) || expiresAt <= now
+}
+
 export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const autoLoad = options.autoLoad ?? true
   const selectedCategory = ref<CategoryFilter>('all')
@@ -188,6 +203,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const nextSequence = ref(nextSequenceFromOrders(initialOrders))
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
+  const claimingOrderId = ref<string | null>(null)
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
   const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
@@ -212,6 +228,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintAt: null,
   })
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
+  const stationClaimId = currentStationId()
+  const stationClaimLabel = currentStationLabel()
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -351,6 +369,97 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
   }
 
+  const orderClaimedByCurrentStation = (order: PosOrder): boolean =>
+    Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !isClaimExpired(order)
+
+  const orderClaimedByOtherStation = (order: PosOrder): boolean =>
+    Boolean(order.claimedBy) && order.claimedBy !== stationClaimId && !isClaimExpired(order)
+
+  const claimLabelFor = (order: PosOrder): string => {
+    if (!order.claimedBy) {
+      return ''
+    }
+
+    if (isClaimExpired(order)) {
+      return `鎖定逾時：${order.claimedBy}`
+    }
+
+    if (order.claimedBy === stationClaimId) {
+      return `本機處理中 · ${stationClaimLabel}`
+    }
+
+    return `${order.claimedBy} 處理中`
+  }
+
+  const claimOrderForStation = async (orderId: string, force = false): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return false
+    }
+
+    if (orderClaimedByCurrentStation(order) && !force) {
+      return true
+    }
+
+    claimingOrderId.value = orderId
+
+    if (!isPosApiConfigured || !order.remoteId) {
+      replaceOrder(order.id, {
+        ...order,
+        claimedBy: stationClaimId,
+        claimedAt: new Date().toISOString(),
+        claimExpiresAt: claimExpiresIn(),
+      })
+      claimingOrderId.value = null
+      return true
+    }
+
+    try {
+      const claimedOrder = await claimOrder(order, force)
+      replaceOrder(order.id, {
+        ...claimedOrder,
+        lines: claimedOrder.lines.length > 0 ? claimedOrder.lines : order.lines,
+        printStatus: claimedOrder.printStatus === 'skipped' ? order.printStatus : claimedOrder.printStatus,
+      })
+      setBackendStatus('connected', '訂單已鎖定', `${order.id} 由 ${stationClaimLabel} 處理`)
+      return true
+    } catch (error) {
+      setBackendStatus('fallback', '鎖定失敗', `${order.id} 無法鎖定：${getErrorMessage(error)}`)
+      return false
+    } finally {
+      claimingOrderId.value = null
+    }
+  }
+
+  const releaseOrderClaimForStation = async (orderId: string): Promise<void> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order || !orderClaimedByCurrentStation(order)) {
+      return
+    }
+
+    claimingOrderId.value = orderId
+
+    if (!isPosApiConfigured || !order.remoteId) {
+      replaceOrder(order.id, { ...order, claimedBy: null, claimedAt: null, claimExpiresAt: null })
+      claimingOrderId.value = null
+      return
+    }
+
+    try {
+      const releasedOrder = await releaseOrderClaim(order)
+      replaceOrder(order.id, {
+        ...releasedOrder,
+        lines: releasedOrder.lines.length > 0 ? releasedOrder.lines : order.lines,
+        printStatus: releasedOrder.printStatus === 'skipped' ? order.printStatus : releasedOrder.printStatus,
+      })
+      setBackendStatus('connected', '訂單已釋放', `${order.id} 已解除平板鎖定`)
+    } catch (error) {
+      setBackendStatus('fallback', '釋放失敗', `${order.id} 釋放失敗：${getErrorMessage(error)}`)
+    } finally {
+      claimingOrderId.value = null
+    }
+  }
+
   const applySavedProduct = (product: MenuItem): void => {
     productStatusCatalog.value = sortProducts(
       productStatusCatalog.value.some((entry) => entry.id === product.id)
@@ -478,23 +587,32 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (!order) {
       return
     }
-    const previousStatus = order.status
-    order.status = status
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    const previousStatus = claimedOrder.status
+    claimedOrder.status = status
 
-    if (!isPosApiConfigured || !order.remoteId) {
+    if (!isPosApiConfigured || !claimedOrder.remoteId) {
       return
     }
 
     try {
-      const persistedOrder = await persistOrderStatus(order, status)
+      const persistedOrder = await persistOrderStatus(claimedOrder, status)
       replaceOrder(orderId, {
         ...persistedOrder,
-        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
-        printStatus: persistedOrder.printStatus === 'skipped' ? order.printStatus : persistedOrder.printStatus,
+        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : claimedOrder.lines,
+        printStatus: persistedOrder.printStatus === 'skipped' ? claimedOrder.printStatus : persistedOrder.printStatus,
       })
       setBackendStatus('connected', 'API 已同步', `${orderId} 已更新為 ${status}`)
     } catch (error) {
-      order.status = previousStatus
+      claimedOrder.status = previousStatus
       setBackendStatus('fallback', '本機模式', `訂單狀態同步失敗：${getErrorMessage(error)}`)
     }
   }
@@ -508,13 +626,22 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (!order) {
       return
     }
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
 
     printingOrderId.value = orderId
-    const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    const printPlan = buildOrderPrintPlan(claimedOrder, currentPrinterSettings())
     lastPrintPreview.value = printPlan.preview
 
     if (printPlan.jobs.length === 0) {
-      const nextOrder = { ...order, printStatus: 'skipped' as const }
+      const nextOrder = { ...claimedOrder, printStatus: 'skipped' as const }
       replaceOrder(order.id, nextOrder)
       setBackendStatus('connected', '出單略過', printPlan.skippedReason ?? '沒有建立列印任務')
       printingOrderId.value = null
@@ -531,7 +658,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         let printJobId: string | null = null
 
         if (isPosApiConfigured && order.remoteId) {
-          const printJob = await createPrintJob(order, job.payload, job.station)
+          const printJob = await createPrintJob(claimedOrder, job.payload, job.station)
           jobStatus = printJob.status
           printJobId = printJob.id
           createdPrintJobs.push(printJob)
@@ -557,9 +684,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       const nextPrintStatus = summarizePrintStatuses(printStatuses)
       replaceOrder(order.id, {
-        ...order,
+        ...claimedOrder,
         printStatus: nextPrintStatus,
-        printJobs: mergePrintJobs(order, createdPrintJobs),
+        printJobs: mergePrintJobs(claimedOrder, createdPrintJobs),
       })
 
       if (!isNativeLanPrinterAvailable()) {
@@ -575,9 +702,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       )
     } catch (error) {
       replaceOrder(order.id, {
-        ...order,
+        ...claimedOrder,
         printStatus: 'failed',
-        printJobs: mergePrintJobs(order, createdPrintJobs),
+        printJobs: mergePrintJobs(claimedOrder, createdPrintJobs),
       })
       setBackendStatus('fallback', '出單失敗', `${order.id} 出單失敗：${getErrorMessage(error)}`)
     } finally {
@@ -661,6 +788,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       paymentStatus: paymentStatusFor(paymentMethod.value),
       status: 'new',
       createdAt: now.toISOString(),
+      claimedBy: stationClaimId,
+      claimedAt: now.toISOString(),
+      claimExpiresAt: claimExpiresIn(),
       printStatus: 'skipped',
       printJobs: [],
     }
@@ -686,7 +816,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const persistedOrder = await createOrder(order)
-      const nextOrder: PosOrder = {
+      let nextOrder: PosOrder = {
         ...order,
         createdAt: persistedOrder.createdAt,
         lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
@@ -696,12 +826,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         nextOrder.remoteId = persistedOrder.remoteId
       }
 
-      replaceOrder(order.id, nextOrder)
       let backendDetail = printPlan.jobs.length > 0
         ? `${order.id} 已建立，待處理 ${printPlan.jobs.length} 筆列印任務`
         : `${order.id} 已建立，${printPlan.skippedReason ?? '未建立列印任務'}`
+      let claimSucceeded = true
 
-      if (printPlan.jobs.length > 0) {
+      try {
+        const claimedOrder = await claimOrder(nextOrder)
+        nextOrder = {
+          ...claimedOrder,
+          lines: claimedOrder.lines.length > 0 ? claimedOrder.lines : nextOrder.lines,
+          printStatus: claimedOrder.printStatus === 'skipped' ? nextOrder.printStatus : claimedOrder.printStatus,
+        }
+      } catch (error) {
+        claimSucceeded = false
+        backendDetail = `${order.id} 已建立，但平板鎖定失敗：${getErrorMessage(error)}`
+      }
+
+      replaceOrder(order.id, nextOrder)
+
+      if (printPlan.jobs.length > 0 && claimSucceeded) {
         const printStatuses: PrintStatus[] = []
         const createdPrintJobs: PrintJob[] = []
 
@@ -780,8 +924,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     isSubmitting,
     isLoadingProductStatus,
     lastPrintPreview,
+    claimLabelFor,
+    claimOrderForStation,
+    claimingOrderId,
     loadProductStatusCatalog,
     orderQueue,
+    orderClaimExpired: isClaimExpired,
+    orderClaimedByCurrentStation,
+    orderClaimedByOtherStation,
     paymentMethod,
     pendingOrders,
     printOrder,
@@ -790,9 +940,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusCatalog,
     productStatusMessage,
     quickAddItems,
+    releaseOrderClaimForStation,
     searchTerm,
     selectedCategory,
     serviceMode,
+    stationClaimId,
+    stationClaimLabel,
     togglingProductId,
     addItem,
     refreshBackendData,

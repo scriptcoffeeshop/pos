@@ -228,6 +228,9 @@ const submitOnlineOrder = async (): Promise<void> => {
     paymentStatus: 'pending',
     status: 'new',
     createdAt: now.toISOString(),
+    claimedBy: null,
+    claimedAt: null,
+    claimExpiresAt: null,
     printStatus: 'skipped',
     printJobs: [],
   }
