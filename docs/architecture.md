@@ -25,6 +25,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - 商品資料除了人工上架/停售，也保存 `inventory_count`、`low_stock_threshold` 與 `sold_out_until`；前台以這些欄位決定低庫存提示、售完與暫停供應狀態。
 - 訂單保存 `claimed_by`、`claimed_at`、`claim_expires_at` 作為多平板 claim lease；POS 改狀態或建立 `print_jobs` 前必須持有有效 lease，避免兩台平板同時出單或處理同一張訂單。
 - 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需 `POS_ADMIN_PIN`，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。
+- `pos_audit_events` 保存 POS 關鍵操作事件；claim、釋放、狀態更新、收款、作廢、開班與關班都由 Edge Function 以 service role 寫入，前端不能直接改。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位，方便後續接 Logflare 或 Datadog。
 
 ## 整合

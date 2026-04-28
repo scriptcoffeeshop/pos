@@ -36,6 +36,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `transaction_ledger`：儲值、扣款、退款與調帳流水。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
+- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、作廢、開班與關班。
 
 ## 邊界
 
@@ -54,6 +55,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收銀班別：`20260429133000_add_register_sessions.sql`
 - 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
 - 關帳異常計數：`20260429140500_add_register_closeout_exception_counts.sql`
+- 操作稽核：`20260429142000_add_pos_audit_events.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`

@@ -424,7 +424,7 @@ export const openRegisterSession = async (
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
     },
-    body: JSON.stringify({ openingCash, note }),
+    body: JSON.stringify({ openingCash, note, stationId: currentStationId() }),
   })
 
   if (!data.session) {
@@ -444,7 +444,7 @@ export const closeRegisterSession = async (
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
     },
-    body: JSON.stringify({ closingCash, note }),
+    body: JSON.stringify({ closingCash, note, stationId: currentStationId() }),
   })
 
   if (!data.session) {

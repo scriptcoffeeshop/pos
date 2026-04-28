@@ -52,6 +52,14 @@ interface VoidOrderInput {
   note?: string;
 }
 
+interface AuditEventInput {
+  action: string;
+  orderId?: string | null;
+  registerSessionId?: string | null;
+  stationId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 interface ClaimOrderInput {
   stationId?: string;
   force?: boolean;
@@ -75,11 +83,13 @@ interface PrintJobInput {
 interface OpenRegisterInput {
   openingCash?: number;
   note?: string;
+  stationId?: string;
 }
 
 interface CloseRegisterInput {
   closingCash?: number;
   note?: string;
+  stationId?: string;
 }
 
 interface ProductUpdateInput {
@@ -325,6 +335,7 @@ api.post("/register/open", async (c) => {
   }
 
   const input: OpenRegisterInput = await c.req.json<OpenRegisterInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId);
   const openingCash = readMoneyAmount(input.openingCash, "openingCash", 0);
   if (openingCash.error) {
     return c.json({ error: openingCash.error }, 400);
@@ -358,6 +369,15 @@ api.post("/register/open", async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
+  await writeAuditEvent({
+    action: "register.open",
+    registerSessionId: data.id,
+    stationId,
+    metadata: {
+      openingCash: openingCash.value,
+    },
+  });
+
   return c.json({ session: data }, 201);
 });
 
@@ -368,6 +388,7 @@ api.post("/register/close", async (c) => {
   }
 
   const input: CloseRegisterInput = await c.req.json<CloseRegisterInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId);
   const closingCash = readMoneyAmount(input.closingCash, "closingCash");
   if (closingCash.error) {
     return c.json({ error: closingCash.error }, 400);
@@ -419,6 +440,23 @@ api.post("/register/close", async (c) => {
   if (error) {
     return c.json({ error: error.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "register.close",
+    registerSessionId: data.id,
+    stationId,
+    metadata: {
+      closingCash: closingCash.value,
+      expectedCash: summary.expected_cash,
+      cashSales: summary.cash_sales,
+      nonCashSales: summary.non_cash_sales,
+      pendingTotal: summary.pending_total,
+      openOrderCount: summary.open_order_count,
+      failedPaymentCount: summary.failed_payment_count,
+      failedPrintCount: summary.failed_print_count,
+      voidedOrderCount: summary.voided_order_count,
+    },
+  });
 
   return c.json({ session: data });
 });
@@ -618,6 +656,16 @@ api.post("/orders/:id/claim", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
+  await writeAuditEvent({
+    action: "order.claim",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      force: Boolean(input.force),
+    },
+  });
+
   return c.json({ order: savedOrder });
 });
 
@@ -653,6 +701,15 @@ api.post("/orders/:id/release-claim", async (c) => {
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "order.release_claim",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+    },
+  });
 
   return c.json({ order: savedOrder });
 });
@@ -708,6 +765,16 @@ api.patch("/orders/:id/status", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
+  await writeAuditEvent({
+    action: "order.status.update",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      status: input.status,
+    },
+  });
+
   return c.json({ order: savedOrder });
 });
 
@@ -751,6 +818,16 @@ api.patch("/orders/:id/payment", async (c) => {
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "order.payment.update",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      paymentStatus: input.paymentStatus,
+    },
+  });
 
   return c.json({ order: savedOrder });
 });
@@ -817,6 +894,17 @@ api.post("/orders/:id/void", async (c) => {
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "order.void",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      previousStatus: currentOrder.status,
+      previousPaymentStatus: currentOrder.payment_status,
+    },
+  });
 
   return c.json({ order: savedOrder });
 });
@@ -1156,6 +1244,27 @@ const claimConflictResponse = async (c: Context, orderId: string, stationId: str
     : "Order could not be claimed";
 
   return c.json({ error: message, order: data }, 409);
+};
+
+const writeAuditEvent = async (event: AuditEventInput): Promise<void> => {
+  const { error } = await supabase
+    .from("pos_audit_events")
+    .insert({
+      action: event.action,
+      order_id: event.orderId ?? null,
+      register_session_id: event.registerSessionId ?? null,
+      station_id: event.stationId ?? "",
+      actor: "pos-api",
+      metadata: event.metadata ?? {},
+    });
+
+  if (error) {
+    console.error(JSON.stringify({
+      scope: "pos-audit",
+      action: event.action,
+      error: error.message,
+    }));
+  }
 };
 
 const requireOrderClaim = async (c: Context, orderId: string, stationId: string): Promise<Response | null> => {
