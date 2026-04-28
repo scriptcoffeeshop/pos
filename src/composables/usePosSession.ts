@@ -6,10 +6,13 @@ import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload }
 import {
   createOrder,
   createPrintJob,
+  closeRegisterSession,
   fetchAdminProducts,
+  fetchCurrentRegisterSession,
   fetchOrders,
   fetchProducts,
   fetchRuntimeSettings,
+  openRegisterSession,
   claimOrder,
   currentStationId,
   currentStationLabel,
@@ -36,6 +39,7 @@ import type {
   PrinterSettings,
   PrintStation,
   PrintStatus,
+  RegisterSession,
   ServiceMode,
 } from '../types/pos'
 
@@ -207,6 +211,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
   const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
+  const registerSession = ref<RegisterSession | null>(null)
+  const registerMessage = ref('尚未載入開班資料')
+  const isRegisterBusy = ref(false)
   const backendStatus = reactive<BackendStatus>({
     mode: isPosApiConfigured ? 'syncing' : 'fallback',
     label: isPosApiConfigured ? 'API 同步中' : '本機模式',
@@ -517,11 +524,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     setBackendStatus('syncing', 'API 同步中', '正在載入商品與訂單')
 
     try {
-      const [remoteProducts, remoteOrders] = await Promise.all([fetchProducts(), fetchOrders()])
+      const [remoteProducts, remoteOrders, currentRegisterSession] = await Promise.all([
+        fetchProducts(),
+        fetchOrders(),
+        fetchCurrentRegisterSession(),
+      ])
       await applyRuntimePrinterSettings()
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
       orderQueue.value = remoteOrders
+      registerSession.value = currentRegisterSession
+      registerMessage.value = currentRegisterSession
+        ? `目前班別：${currentRegisterSession.status === 'open' ? '營業中' : '已關班'}`
+        : '尚未開班'
       nextSequence.value = nextSequenceFromOrders(remoteOrders)
       setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
     } catch (error) {
@@ -768,6 +783,103 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const readRegisterCashAmount = (value: number): number | null => {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+      return null
+    }
+
+    return value
+  }
+
+  const loadRegisterSession = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      registerMessage.value = '本機模式未啟用雲端開班資料'
+      return
+    }
+
+    try {
+      registerSession.value = await fetchCurrentRegisterSession()
+      registerMessage.value = registerSession.value
+        ? `已載入${registerSession.value.status === 'open' ? '營業中' : '已關班'}班別`
+        : '尚未開班'
+    } catch (error) {
+      registerMessage.value = `開班資料載入失敗：${getErrorMessage(error)}`
+    }
+  }
+
+  const openRegisterSessionForStation = async (
+    adminPin: string,
+    openingCashValue: number,
+    note: string,
+  ): Promise<void> => {
+    if (!adminPin) {
+      registerMessage.value = '請先輸入管理 PIN'
+      return
+    }
+
+    const openingCash = readRegisterCashAmount(openingCashValue)
+    if (openingCash === null) {
+      registerMessage.value = '開班現金需為 0 以上整數'
+      return
+    }
+
+    if (!isPosApiConfigured) {
+      registerMessage.value = '本機模式無法建立雲端班別'
+      return
+    }
+
+    isRegisterBusy.value = true
+    registerMessage.value = '開班中'
+
+    try {
+      registerSession.value = await openRegisterSession(adminPin, openingCash, note)
+      registerMessage.value = `已開班，預期現金 ${registerSession.value.expectedCash}`
+      setBackendStatus('connected', '班別已開啟', `${stationClaimLabel} 已開班`)
+    } catch (error) {
+      registerMessage.value = `開班失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '開班失敗', registerMessage.value)
+    } finally {
+      isRegisterBusy.value = false
+    }
+  }
+
+  const closeRegisterSessionForStation = async (
+    adminPin: string,
+    closingCashValue: number,
+    note: string,
+  ): Promise<void> => {
+    if (!adminPin) {
+      registerMessage.value = '請先輸入管理 PIN'
+      return
+    }
+
+    const closingCash = readRegisterCashAmount(closingCashValue)
+    if (closingCash === null) {
+      registerMessage.value = '關班現金需為 0 以上整數'
+      return
+    }
+
+    if (!isPosApiConfigured) {
+      registerMessage.value = '本機模式無法關閉雲端班別'
+      return
+    }
+
+    isRegisterBusy.value = true
+    registerMessage.value = '關班結算中'
+
+    try {
+      registerSession.value = await closeRegisterSession(adminPin, closingCash, note)
+      const variance = closingCash - registerSession.value.expectedCash
+      registerMessage.value = `已關班，現金差額 ${variance}`
+      setBackendStatus('connected', '班別已關閉', `${stationClaimLabel} 已完成關班`)
+    } catch (error) {
+      registerMessage.value = `關班失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '關班失敗', registerMessage.value)
+    } finally {
+      isRegisterBusy.value = false
+    }
+  }
+
   const submitCounterOrder = async (): Promise<PosOrder | null> => {
     if (cartLines.value.length === 0 || isSubmitting.value) {
       return null
@@ -887,6 +999,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       }
 
       setBackendStatus('connected', 'API 已同步', backendDetail)
+      void loadRegisterSession()
       return nextOrder
     } catch (error) {
       setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${getErrorMessage(error)}`)
@@ -917,17 +1030,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartQuantity,
     cartTotal,
     clearCart,
+    closeRegisterSessionForStation,
     customer,
     decreaseLine,
     filteredMenu,
     increaseLine,
     isSubmitting,
     isLoadingProductStatus,
+    isRegisterBusy,
     lastPrintPreview,
     claimLabelFor,
     claimOrderForStation,
     claimingOrderId,
     loadProductStatusCatalog,
+    loadRegisterSession,
     orderQueue,
     orderClaimExpired: isClaimExpired,
     orderClaimedByCurrentStation,
@@ -940,6 +1056,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusCatalog,
     productStatusMessage,
     quickAddItems,
+    registerMessage,
+    registerSession,
     releaseOrderClaimForStation,
     searchTerm,
     selectedCategory,
@@ -948,6 +1066,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationClaimLabel,
     togglingProductId,
     addItem,
+    openRegisterSessionForStation,
     refreshBackendData,
     sendPrinterHealthcheck,
     submitCounterOrder,

@@ -10,6 +10,7 @@ type OrderSource = "counter" | "qr" | "online";
 type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
+type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control";
 type ProductChannel = "pos" | "online" | "qr";
@@ -59,6 +60,16 @@ interface PrintJobInput {
   printerHost?: string;
   printerPort?: number;
   protocol?: string;
+}
+
+interface OpenRegisterInput {
+  openingCash?: number;
+  note?: string;
+}
+
+interface CloseRegisterInput {
+  closingCash?: number;
+  note?: string;
 }
 
 interface ProductUpdateInput {
@@ -139,6 +150,8 @@ const orderSelect =
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
+const registerSessionSelect =
+  "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, note";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 
@@ -262,6 +275,15 @@ api.get("/products", async (c) => {
     .order("sort_order", { ascending: true });
 
   if (error) {
+    const existingSession = await loadOpenRegisterSession();
+    if (existingSession.session) {
+      try {
+        return c.json({ session: await withCurrentRegisterSummary(existingSession.session) });
+      } catch (summaryError) {
+        return c.json({ error: toPosApiError(summaryError).message }, 500);
+      }
+    }
+
     return c.json({ error: error.message }, 500);
   }
 
@@ -275,6 +297,116 @@ api.get("/settings/runtime", async (c) => {
   );
 
   return c.json({ printerSettings });
+});
+
+api.get("/register/current", async (c) => {
+  const { session, error } = await loadCurrentRegisterSession();
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ session });
+});
+
+api.post("/register/open", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input: OpenRegisterInput = await c.req.json<OpenRegisterInput>().catch(() => ({}));
+  const openingCash = readMoneyAmount(input.openingCash, "openingCash", 0);
+  if (openingCash.error) {
+    return c.json({ error: openingCash.error }, 400);
+  }
+
+  const openSession = await loadOpenRegisterSession();
+  if (openSession.error) {
+    return c.json({ error: openSession.error.message }, 500);
+  }
+
+  if (openSession.session) {
+    try {
+      return c.json({ session: await withCurrentRegisterSummary(openSession.session) });
+    } catch (error) {
+      return c.json({ error: toPosApiError(error).message }, 500);
+    }
+  }
+
+  const note = sanitizeText(input.note, "").slice(0, 500);
+  const { data, error } = await supabase
+    .from("register_sessions")
+    .insert({
+      opening_cash: openingCash.value,
+      expected_cash: openingCash.value,
+      note,
+    })
+    .select(registerSessionSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ session: data }, 201);
+});
+
+api.post("/register/close", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input: CloseRegisterInput = await c.req.json<CloseRegisterInput>().catch(() => ({}));
+  const closingCash = readMoneyAmount(input.closingCash, "closingCash");
+  if (closingCash.error) {
+    return c.json({ error: closingCash.error }, 400);
+  }
+
+  const openSession = await loadOpenRegisterSession();
+  if (openSession.error) {
+    return c.json({ error: openSession.error.message }, 500);
+  }
+
+  if (!openSession.session) {
+    return c.json({ error: "No open register session" }, 409);
+  }
+
+  const closedAt = new Date();
+  let summary: Awaited<ReturnType<typeof summarizeRegisterOrders>>;
+  try {
+    summary = await summarizeRegisterOrders(
+      openSession.session.opened_at,
+      closedAt,
+      openSession.session.opening_cash,
+    );
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
+  const note = sanitizeText(input.note, openSession.session.note).slice(0, 500);
+  const { data, error } = await supabase
+    .from("register_sessions")
+    .update({
+      status: "closed",
+      closed_at: closedAt.toISOString(),
+      closing_cash: closingCash.value,
+      expected_cash: summary.expected_cash,
+      cash_sales: summary.cash_sales,
+      non_cash_sales: summary.non_cash_sales,
+      pending_total: summary.pending_total,
+      order_count: summary.order_count,
+      note,
+    })
+    .eq("id", openSession.session.id)
+    .eq("status", "open")
+    .select(registerSessionSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ session: data });
 });
 
 api.get("/admin/products", async (c) => {
@@ -643,6 +775,171 @@ api.patch("/print-jobs/:id/status", async (c) => {
   }
 
   return c.json({ printJob: data });
+});
+
+interface PosApiError {
+  message: string;
+}
+
+interface RegisterSessionRow {
+  id: string;
+  status: RegisterSessionStatus;
+  opened_at: string;
+  closed_at: string | null;
+  opening_cash: number;
+  closing_cash: number | null;
+  expected_cash: number;
+  cash_sales: number;
+  non_cash_sales: number;
+  pending_total: number;
+  order_count: number;
+  note: string;
+}
+
+interface RegisterOrderSummaryRow {
+  subtotal: number;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  status: OrderStatus;
+}
+
+const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
+
+const loadOpenRegisterSession = async (): Promise<{
+  session: RegisterSessionRow | null;
+  error: PosApiError | null;
+}> => {
+  const { data, error } = await supabase
+    .from("register_sessions")
+    .select(registerSessionSelect)
+    .eq("status", "open")
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    session: data ? data as RegisterSessionRow : null,
+    error,
+  };
+};
+
+const loadCurrentRegisterSession = async (): Promise<{
+  session: RegisterSessionRow | null;
+  error: PosApiError | null;
+}> => {
+  const openSession = await loadOpenRegisterSession();
+  if (openSession.error || openSession.session) {
+    try {
+      return {
+        session: openSession.session ? await withCurrentRegisterSummary(openSession.session) : null,
+        error: openSession.error,
+      };
+    } catch (error) {
+      return { session: null, error: toPosApiError(error) };
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("register_sessions")
+    .select(registerSessionSelect)
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    session: data ? data as RegisterSessionRow : null,
+    error,
+  };
+};
+
+const withCurrentRegisterSummary = async (session: RegisterSessionRow): Promise<RegisterSessionRow> => {
+  if (session.status !== "open") {
+    return session;
+  }
+
+  const summary = await summarizeRegisterOrders(session.opened_at, new Date(), session.opening_cash);
+  return { ...session, ...summary };
+};
+
+const summarizeRegisterOrders = async (
+  openedAt: string,
+  closedAt: Date,
+  openingCash: number,
+): Promise<Pick<
+  RegisterSessionRow,
+  "expected_cash" | "cash_sales" | "non_cash_sales" | "pending_total" | "order_count"
+>> => {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("subtotal, payment_method, payment_status, status")
+    .gte("created_at", openedAt)
+    .lte("created_at", closedAt.toISOString());
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as RegisterOrderSummaryRow[];
+  const summary = rows.reduce(
+    (current, order) => {
+      if (order.status === "failed") {
+        return current;
+      }
+
+      const subtotal = Math.max(Number(order.subtotal) || 0, 0);
+      current.order_count += 1;
+
+      if (order.payment_status === "pending") {
+        current.pending_total += subtotal;
+        return current;
+      }
+
+      if (!collectedPaymentStatuses.has(order.payment_status)) {
+        return current;
+      }
+
+      if (order.payment_method === "cash") {
+        current.cash_sales += subtotal;
+      } else {
+        current.non_cash_sales += subtotal;
+      }
+
+      return current;
+    },
+    {
+      cash_sales: 0,
+      non_cash_sales: 0,
+      pending_total: 0,
+      order_count: 0,
+    },
+  );
+
+  return {
+    ...summary,
+    expected_cash: openingCash + summary.cash_sales,
+  };
+};
+
+const readMoneyAmount = (
+  value: unknown,
+  field: string,
+  fallback?: number,
+): { value: number; error: string | null } => {
+  const rawValue = value ?? fallback;
+  if (rawValue === undefined || rawValue === "") {
+    return { value: 0, error: `${field} is required` };
+  }
+
+  const amount = typeof rawValue === "number" ? rawValue : Number(rawValue);
+  if (!Number.isInteger(amount) || amount < 0) {
+    return { value: 0, error: `${field} must be a non-negative integer` };
+  }
+
+  return { value: amount, error: null };
+};
+
+const toPosApiError = (error: unknown): PosApiError => ({
+  message: error instanceof Error ? error.message : "Unknown POS API error",
 });
 
 const sanitizeStationId = (value: unknown): string => {

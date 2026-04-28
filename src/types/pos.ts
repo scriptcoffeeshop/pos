@@ -5,6 +5,7 @@ export type OrderSource = 'counter' | 'qr' | 'online'
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed'
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
+export type RegisterSessionStatus = 'open' | 'closed'
 
 export interface MenuItem {
   id: string
@@ -73,6 +74,21 @@ export interface PrintJob {
   createdAt: string
   attempts: number
   lastError: string | null
+}
+
+export interface RegisterSession {
+  id: string
+  status: RegisterSessionStatus
+  openedAt: string
+  closedAt: string | null
+  openingCash: number
+  closingCash: number | null
+  expectedCash: number
+  cashSales: number
+  nonCashSales: number
+  pendingTotal: number
+  orderCount: number
+  note: string
 }
 
 export interface PrintStation {

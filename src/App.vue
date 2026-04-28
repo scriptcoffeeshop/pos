@@ -22,7 +22,7 @@ import {
   Trash2,
   Wifi,
 } from 'lucide-vue-next'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminPanel from './components/AdminPanel.vue'
 import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
@@ -74,14 +74,17 @@ const {
   claimLabelFor,
   claimOrderForStation,
   claimingOrderId,
+  closeRegisterSessionForStation,
   customer,
   decreaseLine,
   filteredMenu,
   increaseLine,
   isSubmitting,
   isLoadingProductStatus,
+  isRegisterBusy,
   lastPrintPreview,
   loadProductStatusCatalog,
+  loadRegisterSession,
   orderClaimExpired,
   orderClaimedByCurrentStation,
   orderClaimedByOtherStation,
@@ -95,6 +98,8 @@ const {
   productStatusMessage,
   quickAddItems,
   refreshBackendData,
+  registerMessage,
+  registerSession,
   releaseOrderClaimForStation,
   searchTerm,
   selectedCategory,
@@ -103,6 +108,7 @@ const {
   stationClaimLabel,
   submitCounterOrder,
   togglingProductId,
+  openRegisterSessionForStation,
   updateOrderStatus,
   updateProductAvailability,
 } = usePosSession({ autoLoad: !isConsumerDomain })
@@ -290,6 +296,10 @@ const activeView = ref<AppView>(readInitialView())
 const queueFilter = ref<QueueFilter>('active')
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
+const registerPin = ref('')
+const registerOpeningCash = ref(0)
+const registerClosingCash = ref(0)
+const registerNote = ref('')
 let claimClockTimer: number | null = null
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -306,6 +316,36 @@ const pageSubtitle = computed(() => {
   }
 
   return isNativeApp ? '櫃台點餐 · 線上接單 · 商品暫停 · LAN 出單' : '櫃台點餐 · 線上訂單 · LAN 列印'
+})
+const registerIsOpen = computed(() => registerSession.value?.status === 'open')
+const registerStatusLabel = computed(() => {
+  if (!registerSession.value) {
+    return '未開班'
+  }
+
+  if (registerSession.value.status === 'open') {
+    return `營業中 · ${formatOrderTime(registerSession.value.openedAt)}`
+  }
+
+  return `已關班 · ${formatOrderTime(registerSession.value.closedAt ?? registerSession.value.openedAt)}`
+})
+const registerVariance = computed(() => {
+  if (!registerSession.value) {
+    return 0
+  }
+
+  const countedCash = registerSession.value.status === 'closed'
+    ? registerSession.value.closingCash ?? 0
+    : registerClosingCash.value
+
+  return countedCash - registerSession.value.expectedCash
+})
+const registerVarianceClass = computed(() => {
+  if (registerVariance.value === 0) {
+    return 'register-variance--balanced'
+  }
+
+  return registerVariance.value > 0 ? 'register-variance--over' : 'register-variance--short'
 })
 
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
@@ -518,6 +558,24 @@ const loadStationProducts = (): void => {
 const toggleStationProduct = (product: MenuItem): void => {
   void updateProductAvailability(stationPin.value.trim(), product.id, !product.available)
 }
+
+const openRegisterSessionAction = (): void => {
+  void openRegisterSessionForStation(registerPin.value.trim(), registerOpeningCash.value, registerNote.value.trim())
+}
+
+const closeRegisterSessionAction = (): void => {
+  void closeRegisterSessionForStation(registerPin.value.trim(), registerClosingCash.value, registerNote.value.trim())
+}
+
+watch(
+  registerSession,
+  (session) => {
+    if (session?.status === 'open') {
+      registerClosingCash.value = session.expectedCash
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   globalThis.addEventListener('keydown', handlePosShortcut)
@@ -1021,6 +1079,92 @@ onBeforeUnmount(() => {
                 <strong>{{ formatCurrency(payment.total) }}</strong>
                 <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
               </article>
+            </div>
+
+            <div class="register-session-panel" aria-label="班別開關帳">
+              <div class="register-session-heading">
+                <div>
+                  <span>班別</span>
+                  <strong>{{ registerStatusLabel }}</strong>
+                  <small>{{ registerMessage }}</small>
+                </div>
+                <button
+                  class="icon-button"
+                  type="button"
+                  title="重新載入班別"
+                  :disabled="isRegisterBusy"
+                  @click="loadRegisterSession"
+                >
+                  <RefreshCw :size="18" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div v-if="registerSession" class="register-metrics">
+                <article>
+                  <span>預期現金</span>
+                  <strong>{{ formatCurrency(registerSession.expectedCash) }}</strong>
+                </article>
+                <article>
+                  <span>現金銷售</span>
+                  <strong>{{ formatCurrency(registerSession.cashSales) }}</strong>
+                </article>
+                <article>
+                  <span>非現金</span>
+                  <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
+                </article>
+                <article>
+                  <span>待收</span>
+                  <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
+                </article>
+                <article>
+                  <span>單數</span>
+                  <strong>{{ registerSession.orderCount }}</strong>
+                </article>
+                <article :class="registerVarianceClass">
+                  <span>現金差額</span>
+                  <strong>{{ formatCurrency(registerVariance) }}</strong>
+                </article>
+              </div>
+
+              <div class="register-form-grid">
+                <label>
+                  管理 PIN
+                  <input v-model="registerPin" type="password" inputmode="numeric" autocomplete="off" />
+                </label>
+                <label v-if="!registerIsOpen">
+                  開班現金
+                  <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
+                </label>
+                <label v-else>
+                  實點現金
+                  <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
+                </label>
+                <label class="wide-field">
+                  備註
+                  <input v-model="registerNote" type="text" placeholder="交接、差額或補充說明" />
+                </label>
+              </div>
+
+              <button
+                v-if="registerIsOpen"
+                class="register-action-button register-action-button--close"
+                type="button"
+                :disabled="isRegisterBusy"
+                @click="closeRegisterSessionAction"
+              >
+                <WalletCards :size="18" aria-hidden="true" />
+                {{ isRegisterBusy ? '關班中' : '關班' }}
+              </button>
+              <button
+                v-else
+                class="register-action-button"
+                type="button"
+                :disabled="isRegisterBusy"
+                @click="openRegisterSessionAction"
+              >
+                <WalletCards :size="18" aria-hidden="true" />
+                {{ isRegisterBusy ? '開班中' : '開班' }}
+              </button>
             </div>
           </section>
 

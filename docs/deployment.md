@@ -57,4 +57,10 @@ rtk npm run supabase:functions:deploy
 rtk npm run apk:debug
 ```
 
-目前本機若尚未安裝 Node.js 22+、JDK / Android SDK，請改用 GitHub Actions 產出 APK。安裝平板流程見 [Android APK 測試流程](android-apk.md)。
+`apk:debug` 會先同步 Capacitor，並自動偵測 JDK / Android SDK；若 macOS arm64 JDK 在 Gradle 啟動時崩潰，會下載暫存 x86_64 Temurin 21 後重試。平板安裝預設使用 fresh reinstall：
+
+```bash
+rtk npm run apk:install:fresh
+```
+
+安裝平板流程見 [Android APK 測試流程](android-apk.md)。

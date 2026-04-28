@@ -8,6 +8,7 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosOrder,
+  RegisterSession,
   PrintJob,
   PrintStatus,
   PrinterSettings,
@@ -92,6 +93,25 @@ interface PrintJobResponse {
 
 interface ClaimOrderResponse {
   order: ApiOrder
+}
+
+interface ApiRegisterSession {
+  id: string
+  status: 'open' | 'closed'
+  opened_at: string
+  closed_at: string | null
+  opening_cash: number
+  closing_cash: number | null
+  expected_cash: number
+  cash_sales: number
+  non_cash_sales: number
+  pending_total: number
+  order_count: number
+  note: string
+}
+
+interface RegisterSessionResponse {
+  session: ApiRegisterSession | null
 }
 
 interface ApiSettingRow {
@@ -220,6 +240,21 @@ const normalizePrintJob = (printJob: ApiPrintJob): PrintJob => ({
   createdAt: printJob.created_at,
   attempts: printJob.attempts,
   lastError: printJob.last_error,
+})
+
+const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
+  id: session.id,
+  status: session.status,
+  openedAt: session.opened_at,
+  closedAt: session.closed_at,
+  openingCash: session.opening_cash,
+  closingCash: session.closing_cash,
+  expectedCash: session.expected_cash,
+  cashSales: session.cash_sales,
+  nonCashSales: session.non_cash_sales,
+  pendingTotal: session.pending_total,
+  orderCount: session.order_count,
+  note: session.note,
 })
 
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
@@ -364,6 +399,51 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {
   const data = await request<OrdersResponse>(`/orders?limit=${limit}`)
   return data.orders.map(normalizeOrder)
+}
+
+export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | null> => {
+  const data = await request<RegisterSessionResponse>('/register/current')
+  return data.session ? normalizeRegisterSession(data.session) : null
+}
+
+export const openRegisterSession = async (
+  adminPin: string,
+  openingCash: number,
+  note = '',
+): Promise<RegisterSession> => {
+  const data = await request<RegisterSessionResponse>('/register/open', {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+    body: JSON.stringify({ openingCash, note }),
+  })
+
+  if (!data.session) {
+    throw new Error('Register session was not returned')
+  }
+
+  return normalizeRegisterSession(data.session)
+}
+
+export const closeRegisterSession = async (
+  adminPin: string,
+  closingCash: number,
+  note = '',
+): Promise<RegisterSession> => {
+  const data = await request<RegisterSessionResponse>('/register/close', {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+    body: JSON.stringify({ closingCash, note }),
+  })
+
+  if (!data.session) {
+    throw new Error('Register session was not returned')
+  }
+
+  return normalizeRegisterSession(data.session)
 }
 
 export const createOrder = async (order: PosOrder): Promise<PosOrder> => {

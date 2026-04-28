@@ -35,6 +35,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `members`：LINE Login profile 與會員錢包摘要。
 - `transaction_ledger`：儲值、扣款、退款與調帳流水。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
+- `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
 
 ## 邊界
 
@@ -50,6 +51,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外送出單規則補強：`20260428193000_add_delivery_print_rule.sql`
 - 商品庫存控管：`20260429110000_add_product_inventory_controls.sql`
 - 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
+- 收銀班別：`20260429133000_add_register_sessions.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -58,6 +60,9 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
 - 列印工作端點：`/functions/v1/pos-api/print-jobs`
+- 收銀班別端點：`/functions/v1/pos-api/register/current`
+- 開班端點：`/functions/v1/pos-api/register/open`
+- 關班端點：`/functions/v1/pos-api/register/close`
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
@@ -65,9 +70,10 @@ SUPABASE_DB_PASSWORD=<database-password>
 ## 前端同步邊界
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
-- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders` 與 `/settings/runtime`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
+- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
+- 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 

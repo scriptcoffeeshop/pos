@@ -1302,6 +1302,119 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.register-session-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.register-session-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.register-session-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.register-session-heading span,
+.register-session-heading small,
+.register-metrics span,
+.register-form-grid label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.register-session-heading strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.register-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.register-metrics article {
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.register-metrics strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.register-variance--balanced {
+  border-color: #a9d4ba;
+  background: var(--success-soft);
+}
+
+.register-variance--over {
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+}
+
+.register-variance--short {
+  border-color: #e4b1aa;
+  background: var(--danger-soft);
+}
+
+.register-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.register-form-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.register-form-grid input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.register-form-grid input:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 107, 99, 0.12);
+}
+
+.register-action-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: white;
+  font-weight: 950;
+}
+
+.register-action-button--close {
+  background: var(--secondary);
+}
+
 .active-order {
   display: grid;
   gap: 10px;
