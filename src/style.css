@@ -1867,6 +1867,7 @@ h3 {
 }
 
 .admin-access-grid label,
+.admin-limit-field,
 .admin-product-row label,
 .admin-product-stock-grid label,
 .admin-station-row label,
@@ -1880,6 +1881,7 @@ h3 {
 }
 
 .admin-access-grid input,
+.admin-limit-field input,
 .admin-product-row input,
 .admin-product-row select,
 .admin-product-stock-grid input,
@@ -1914,6 +1916,11 @@ h3 {
 
 .admin-tabs {
   margin-bottom: 14px;
+}
+
+.admin-audit-filter {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
 .admin-tab-panel {
@@ -2096,6 +2103,59 @@ h3 {
   gap: 10px;
 }
 
+.admin-audit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-audit-row {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-audit-primary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-audit-primary strong,
+.admin-audit-primary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-primary span,
+.admin-audit-row time,
+.admin-audit-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-audit-row time {
+  font-family: var(--mono);
+}
+
+.admin-audit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.admin-audit-meta span {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
 .admin-role-header {
   grid-template-columns: auto minmax(180px, 1fr) minmax(160px, auto) auto;
   align-items: end;
@@ -2135,6 +2195,7 @@ h3 {
 .quantity-stepper button:focus-visible,
 .order-actions button:focus-visible,
 .admin-access-grid input:focus,
+.admin-limit-field input:focus,
 .admin-product-row input:focus,
 .admin-product-row select:focus,
 .admin-station-row input:focus,

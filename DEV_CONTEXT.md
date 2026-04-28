@@ -9,7 +9,7 @@
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
 - 櫃台效率操作：POS 工作台已有最近/常用品項快速加購、常用備註 chip、待處理/可交付/全部佇列篩選、庫存/低庫存提示、多平板訂單鎖定、收款確認、未收款訂單作廢、列印重印紀錄、正式開班/關班、關帳摘要、關帳異常檢查與鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
-- 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、出單機規則與角色權限；寫入需 Supabase secret `POS_ADMIN_PIN`。
+- 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、出單機規則、角色權限與操作稽核；讀取稽核與寫入設定需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
 - GitHub repo：`scriptcoffeeshop/pos`，目前為 public。
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
@@ -25,7 +25,7 @@
 - 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 會在狀態更新與 print job 建立前檢查 lease，已交付/異常單會釋放 lease。
 - 收銀班別欄位：`register_sessions` 由 `20260429133000_add_register_sessions.sql` 新增；`pos-api` 提供 `/register/current`、`/register/open`、`/register/close`，開班/關班寫入需 `POS_ADMIN_PIN`。
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。
-- 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄 claim、釋放、狀態更新、收款、作廢、開班與關班事件，供後續追帳與排錯。
+- 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄 claim、釋放、狀態更新、收款、作廢、開班與關班事件，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。
 - APK 測試：已加入 Capacitor Android 專案、`Android APK` workflow 與 Android `LanPrinter` TCP socket plugin；本機 `rtk npm run apk:debug` 會先同步 Capacitor，並在 macOS arm64 JDK 崩潰時自動改用暫存 x86_64 Temurin 21 建置。
 - 列印計畫：`src/lib/printing.ts` 會依 `printer_settings` 的服務方式、品項分類、貼紙/收據模式與 copies 建立多筆 EZPL payload；`usePosSession()` 逐筆建立/回寫 print job，Android APK 逐筆送 TCP。
@@ -57,4 +57,4 @@
 
 1. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label、櫃台訂單列印與關班流程實測。
 2. 多平板鎖定後續：短輪詢已接第一版；若需要更低延遲，再接 Supabase realtime 或平板在線心跳。
-3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。
+3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook、付款逾期狀態測試與已收款退款流水。

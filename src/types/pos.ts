@@ -159,3 +159,14 @@ export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
 }
+
+export interface PosAuditEvent {
+  id: string
+  action: string
+  orderId: string | null
+  registerSessionId: string | null
+  stationId: string
+  actor: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}

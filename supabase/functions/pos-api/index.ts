@@ -172,6 +172,8 @@ const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
+const auditEventSelect =
+  "id, action, order_id, register_session_id, station_id, actor, metadata, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 
@@ -522,6 +524,37 @@ api.get("/admin/settings", async (c) => {
   }
 
   return c.json({ settings: data });
+});
+
+api.get("/admin/audit-events", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 50);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+    : 50;
+  const action = sanitizeText(c.req.query("action"), "").slice(0, 80);
+
+  let query = supabase
+    .from("pos_audit_events")
+    .select(auditEventSelect)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (action) {
+    query = query.eq("action", action);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ events: data });
 });
 
 api.patch("/admin/settings/:key", async (c) => {

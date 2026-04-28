@@ -16,6 +16,7 @@ import {
 import { computed, ref } from 'vue'
 import { categoryLabels } from '../data/menu'
 import {
+  fetchAdminAuditEvents,
   fetchAdminProducts,
   fetchAdminSettings,
   type ProductUpdateInput,
@@ -28,6 +29,7 @@ import type {
   MenuCategory,
   MenuItem,
   PrinterSettings,
+  PosAuditEvent,
   PrintLabelMode,
   PrintRuleSetting,
   RoleSetting,
@@ -39,7 +41,7 @@ interface ProductDraft extends MenuItem {
   soldOutUntilInput: string
 }
 
-type AdminTab = 'products' | 'printing' | 'access'
+type AdminTab = 'products' | 'printing' | 'access' | 'audit'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -49,6 +51,7 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
+  { value: 'audit', label: '稽核' },
 ]
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
@@ -85,6 +88,25 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'voidOrders', label: '作廢' },
   { value: 'closeRegister', label: '關帳' },
 ]
+
+const auditActionLabels: Record<string, string> = {
+  'register.open': '開班',
+  'register.close': '關班',
+  'order.claim': '鎖單',
+  'order.release_claim': '釋放鎖單',
+  'order.status.update': '訂單狀態',
+  'order.payment.update': '收款狀態',
+  'order.void': '訂單作廢',
+}
+
+const auditTimeFormatter = new Intl.DateTimeFormat('zh-TW', {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+const auditActionLabel = (action: string): string => auditActionLabels[action] ?? action
 
 const readStoredPin = (): string => {
   try {
@@ -127,7 +149,11 @@ const selectedCategory = ref<'all' | MenuCategory>('all')
 const productDrafts = ref<ProductDraft[]>([])
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
+const auditEvents = ref<PosAuditEvent[]>([])
+const auditLimit = ref(50)
+const auditActionFilter = ref('all')
 const isLoading = ref(false)
+const isAuditLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
@@ -144,6 +170,18 @@ const lowStockProducts = computed(() =>
 )
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
+const auditEventCount = computed(() => auditEvents.value.length)
+const auditActionOptions = computed(() =>
+  Array.from(new Set(auditEvents.value.map((event) => event.action))).map((action) => ({
+    value: action,
+    label: auditActionLabel(action),
+  })),
+)
+const filteredAuditEvents = computed(() =>
+  auditActionFilter.value === 'all'
+    ? auditEvents.value
+    : auditEvents.value.filter((event) => event.action === auditActionFilter.value),
+)
 const stationOptions = computed(() => {
   if (printerSettings.value.stations.length > 0) {
     return printerSettings.value.stations
@@ -223,6 +261,71 @@ const fromDatetimeLocalInput = (value: string): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
+const formatAuditTime = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '時間未知' : auditTimeFormatter.format(date)
+}
+
+const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
+  const value = event.metadata[key]
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value.toLocaleString('zh-TW')
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? '是' : '否'
+  }
+
+  return null
+}
+
+const auditMoneyLabel = (event: PosAuditEvent, key: string): string | null => {
+  const value = event.metadata[key]
+  return typeof value === 'number' && Number.isFinite(value) ? `$${value.toLocaleString('zh-TW')}` : null
+}
+
+const auditSubject = (event: PosAuditEvent): string => {
+  const orderNumber = auditMetadataLabel(event, 'orderNumber')
+  if (orderNumber) {
+    return `訂單 ${orderNumber}`
+  }
+
+  if (event.orderId) {
+    return `訂單 ${event.orderId.slice(0, 8)}`
+  }
+
+  if (event.registerSessionId) {
+    return `班別 ${event.registerSessionId.slice(0, 8)}`
+  }
+
+  return '系統'
+}
+
+const auditMetadataSummary = (event: PosAuditEvent): string => {
+  const parts = [
+    auditMetadataLabel(event, 'status') ? `狀態 ${auditMetadataLabel(event, 'status')}` : null,
+    auditMetadataLabel(event, 'paymentStatus') ? `付款 ${auditMetadataLabel(event, 'paymentStatus')}` : null,
+    auditMetadataLabel(event, 'previousStatus') ? `原狀態 ${auditMetadataLabel(event, 'previousStatus')}` : null,
+    auditMetadataLabel(event, 'previousPaymentStatus')
+      ? `原付款 ${auditMetadataLabel(event, 'previousPaymentStatus')}`
+      : null,
+    auditMoneyLabel(event, 'openingCash') ? `開班金 ${auditMoneyLabel(event, 'openingCash')}` : null,
+    auditMoneyLabel(event, 'closingCash') ? `實點 ${auditMoneyLabel(event, 'closingCash')}` : null,
+    auditMoneyLabel(event, 'expectedCash') ? `預期 ${auditMoneyLabel(event, 'expectedCash')}` : null,
+    auditMetadataLabel(event, 'openOrderCount') ? `未交付 ${auditMetadataLabel(event, 'openOrderCount')}` : null,
+    auditMetadataLabel(event, 'failedPaymentCount') ? `付款異常 ${auditMetadataLabel(event, 'failedPaymentCount')}` : null,
+    auditMetadataLabel(event, 'failedPrintCount') ? `列印失敗 ${auditMetadataLabel(event, 'failedPrintCount')}` : null,
+    auditMetadataLabel(event, 'voidedOrderCount') ? `作廢 ${auditMetadataLabel(event, 'voidedOrderCount')}` : null,
+    auditMetadataLabel(event, 'force') === '是' ? '強制鎖單' : null,
+  ].filter(Boolean)
+
+  return parts.length > 0 ? parts.join('、') : '無附加資料'
+}
+
 const loadAdminData = async (): Promise<void> => {
   if (!adminPin.value.trim()) {
     adminMessage.value = '請輸入管理 PIN'
@@ -234,18 +337,40 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    const [products, settings] = await Promise.all([
+    const [products, settings, events] = await Promise.all([
       fetchAdminProducts(adminPin.value.trim()),
       fetchAdminSettings(adminPin.value.trim()),
+      fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
     ])
     productDrafts.value = products.map(toDraft)
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
-    adminMessage.value = `已載入 ${products.length} 個商品、${settings.printerSettings.rules.length} 條出單規則`
+    auditEvents.value = events
+    adminMessage.value = `已載入 ${products.length} 個商品、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
     isLoading.value = false
+  }
+}
+
+const loadAuditEvents = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isAuditLoading.value = true
+  adminMessage.value = '讀取稽核紀錄中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    auditEvents.value = await fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value)
+    adminMessage.value = `已載入 ${auditEvents.value.length} 筆稽核紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '稽核紀錄讀取失敗'
+  } finally {
+    isAuditLoading.value = false
   }
 }
 
@@ -451,6 +576,10 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>權限角色</span>
         <strong>{{ roleCount }}</strong>
+      </article>
+      <article>
+        <span>稽核紀錄</span>
+        <strong>{{ auditEventCount }}</strong>
       </article>
     </section>
 
@@ -753,6 +882,70 @@ const saveAccessControl = async (): Promise<void> => {
               </div>
             </article>
           </section>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'audit'" class="admin-tab-panel" aria-label="操作稽核">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Audit</p>
+            <h2>操作稽核</h2>
+            <span class="panel-note">追查收款、作廢、鎖單與開關班紀錄</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              筆數
+              <input v-model.number="auditLimit" type="number" min="1" max="100" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isAuditLoading" @click="loadAuditEvents">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isAuditLoading ? '讀取中' : '刷新稽核' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="segmented-control admin-filter admin-audit-filter" aria-label="稽核類型">
+          <button
+            class="segment-button"
+            :class="{ 'segment-button--active': auditActionFilter === 'all' }"
+            type="button"
+            @click="auditActionFilter = 'all'"
+          >
+            全部
+          </button>
+          <button
+            v-for="action in auditActionOptions"
+            :key="action.value"
+            class="segment-button"
+            :class="{ 'segment-button--active': auditActionFilter === action.value }"
+            type="button"
+            @click="auditActionFilter = action.value"
+          >
+            {{ action.label }}
+          </button>
+        </div>
+
+        <div class="admin-audit-list">
+          <article v-for="event in filteredAuditEvents" :key="event.id" class="admin-audit-row">
+            <header class="admin-row-header">
+              <div class="admin-audit-primary">
+                <strong>{{ auditActionLabel(event.action) }}</strong>
+                <span>{{ auditSubject(event) }}</span>
+              </div>
+              <time :datetime="event.createdAt">{{ formatAuditTime(event.createdAt) }}</time>
+            </header>
+
+            <div class="admin-audit-meta">
+              <span>{{ event.stationId || '未標記平板' }}</span>
+              <span>{{ event.actor || 'pos-api' }}</span>
+              <span>{{ auditMetadataSummary(event) }}</span>
+            </div>
+          </article>
+
+          <div v-if="filteredAuditEvents.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無符合條件的稽核紀錄</span>
+          </div>
         </div>
       </section>
 

@@ -7,6 +7,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   PosAdminSettings,
+  PosAuditEvent,
   PosOrder,
   RegisterSession,
   PrintJob,
@@ -116,6 +117,21 @@ interface ApiRegisterSession {
 
 interface RegisterSessionResponse {
   session: ApiRegisterSession | null
+}
+
+interface ApiAuditEvent {
+  id: string
+  action: string
+  order_id: string | null
+  register_session_id: string | null
+  station_id: string | null
+  actor: string | null
+  metadata: unknown
+  created_at: string
+}
+
+interface AuditEventsResponse {
+  events: ApiAuditEvent[]
 }
 
 interface ApiSettingRow {
@@ -265,6 +281,25 @@ const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession 
   note: session.note,
 })
 
+const normalizeMetadata = (metadata: unknown): Record<string, unknown> => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {}
+  }
+
+  return metadata as Record<string, unknown>
+}
+
+const normalizeAuditEvent = (event: ApiAuditEvent): PosAuditEvent => ({
+  id: event.id,
+  action: event.action,
+  orderId: event.order_id,
+  registerSessionId: event.register_session_id,
+  stationId: event.station_id ?? '',
+  actor: event.actor ?? '',
+  metadata: normalizeMetadata(event.metadata),
+  createdAt: event.created_at,
+})
+
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   id: product.id,
   sku: product.sku,
@@ -383,6 +418,18 @@ export const fetchAdminSettings = async (adminPin: string): Promise<PosAdminSett
   })
 
   return normalizeAdminSettings(data.settings)
+}
+
+export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promise<PosAuditEvent[]> => {
+  const rawLimit = Number.isFinite(limit) ? limit : 50
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`, {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return data.events.map(normalizeAuditEvent)
 }
 
 export const updateAdminSetting = async <SettingValue>(

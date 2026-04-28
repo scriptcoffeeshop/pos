@@ -36,7 +36,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `transaction_ledger`：儲值、扣款、退款與調帳流水。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、作廢、開班與關班。
+- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、作廢、開班與關班，並由後台以 PIN 查詢。
 
 ## 邊界
 
@@ -72,6 +72,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
+- 後台稽核端點：`/functions/v1/pos-api/admin/audit-events`
 
 ## 前端同步邊界
 
@@ -86,6 +87,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
+- 後台稽核讀取走 `GET /admin/audit-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆。
 
 ## 後台 PIN
 
