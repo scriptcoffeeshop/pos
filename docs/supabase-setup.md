@@ -88,7 +88,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。
 - 已收款退款會走 `POST /orders/:id/refund`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=authorized|paid`，後端以 `refund_pos_order()` 在同一個 transaction 更新訂單、寫入 `transaction_ledger`，並回傳 `payment_status=refunded`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
-- 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。
+- 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 - 後台稽核讀取走 `GET /admin/audit-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆。

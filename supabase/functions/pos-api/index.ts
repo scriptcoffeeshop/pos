@@ -95,6 +95,7 @@ interface CloseRegisterInput {
   closingCash?: number;
   note?: string;
   stationId?: string;
+  force?: boolean;
 }
 
 interface ProductUpdateInput {
@@ -421,6 +422,23 @@ api.post("/register/close", async (c) => {
   } catch (error) {
     return c.json({ error: toPosApiError(error).message }, 500);
   }
+
+  const hasCloseoutExceptions =
+    summary.open_order_count > 0 ||
+    summary.failed_payment_count > 0 ||
+    summary.failed_print_count > 0;
+  if (hasCloseoutExceptions && input.force !== true) {
+    return c.json({
+      error: "Closeout has unresolved exceptions",
+      summary: {
+        openOrderCount: summary.open_order_count,
+        failedPaymentCount: summary.failed_payment_count,
+        failedPrintCount: summary.failed_print_count,
+        voidedOrderCount: summary.voided_order_count,
+      },
+    }, 409);
+  }
+
   const note = sanitizeText(input.note, openSession.session.note).slice(0, 500);
   const { data, error } = await supabase
     .from("register_sessions")
@@ -462,6 +480,7 @@ api.post("/register/close", async (c) => {
       failedPaymentCount: summary.failed_payment_count,
       failedPrintCount: summary.failed_print_count,
       voidedOrderCount: summary.voided_order_count,
+      forced: input.force === true,
     },
   });
 

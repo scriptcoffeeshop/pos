@@ -1040,6 +1040,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     adminPin: string,
     closingCashValue: number,
     note: string,
+    force = false,
   ): Promise<void> => {
     if (!adminPin) {
       registerMessage.value = '請先輸入管理 PIN'
@@ -1061,7 +1062,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '關班結算中'
 
     try {
-      const session = await closeRegisterSession(adminPin, closingCash, note)
+      const session = await closeRegisterSession(adminPin, closingCash, note, force)
       applyRegisterSession(session)
       const variance = closingCash - session.expectedCash
       registerMessage.value = `已關班，現金差額 ${variance}`

@@ -485,13 +485,14 @@ export const closeRegisterSession = async (
   adminPin: string,
   closingCash: number,
   note = '',
+  force = false,
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/close', {
     method: 'POST',
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
     },
-    body: JSON.stringify({ closingCash, note, stationId: currentStationId() }),
+    body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force }),
   })
 
   if (!data.session) {

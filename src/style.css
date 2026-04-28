@@ -1436,6 +1436,18 @@ h3 {
   box-shadow: 0 0 0 3px rgba(11, 107, 99, 0.12);
 }
 
+.register-force-close {
+  min-height: 38px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #dfc58e;
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
 .register-action-button {
   display: inline-flex;
   min-height: 42px;

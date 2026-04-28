@@ -318,6 +318,7 @@ const registerPin = ref('')
 const registerOpeningCash = ref(0)
 const registerClosingCash = ref(0)
 const registerNote = ref('')
+const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -336,6 +337,14 @@ const pageSubtitle = computed(() => {
   return isNativeApp ? '櫃台點餐 · 線上接單 · 商品暫停 · LAN 出單' : '櫃台點餐 · 線上訂單 · LAN 列印'
 })
 const registerIsOpen = computed(() => registerSession.value?.status === 'open')
+const registerHasCloseoutExceptions = computed(() =>
+  registerIsOpen.value &&
+  (
+    (registerSession.value?.openOrderCount ?? 0) > 0 ||
+    (registerSession.value?.failedPaymentCount ?? 0) > 0 ||
+    (registerSession.value?.failedPrintCount ?? 0) > 0
+  ),
+)
 const registerStatusLabel = computed(() => {
   if (!registerSession.value) {
     return '未開班'
@@ -635,7 +644,12 @@ const openRegisterSessionAction = (): void => {
 }
 
 const closeRegisterSessionAction = (): void => {
-  void closeRegisterSessionForStation(registerPin.value.trim(), registerClosingCash.value, registerNote.value.trim())
+  void closeRegisterSessionForStation(
+    registerPin.value.trim(),
+    registerClosingCash.value,
+    registerNote.value.trim(),
+    forceCloseRegister.value,
+  )
 }
 
 watch(
@@ -643,6 +657,7 @@ watch(
   (session) => {
     if (session?.status === 'open') {
       registerClosingCash.value = session.expectedCash
+      forceCloseRegister.value = false
     }
   },
   { immediate: true },
@@ -1266,6 +1281,11 @@ onBeforeUnmount(() => {
                 </label>
               </div>
 
+              <label v-if="registerHasCloseoutExceptions" class="toggle-row register-force-close">
+                <input v-model="forceCloseRegister" type="checkbox" />
+                異常仍要關班
+              </label>
+
               <button
                 v-if="registerIsOpen"
                 class="register-action-button register-action-button--close"
@@ -1274,7 +1294,7 @@ onBeforeUnmount(() => {
                 @click="closeRegisterSessionAction"
               >
                 <WalletCards :size="18" aria-hidden="true" />
-                {{ isRegisterBusy ? '關班中' : '關班' }}
+                {{ isRegisterBusy ? '關班中' : forceCloseRegister ? '強制關班' : '關班' }}
               </button>
               <button
                 v-else

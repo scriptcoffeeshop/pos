@@ -24,7 +24,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - `pos-api` 對公開前台提供依 channel 過濾的商品與建單端點，對 POS 提供訂單、收款確認、未收款作廢與 runtime 出單機設定端點，對後台提供 PIN 保護的商品與設定端點。
 - 商品資料除了人工上架/停售，也保存 `inventory_count`、`low_stock_threshold` 與 `sold_out_until`；前台以這些欄位決定低庫存提示、售完與暫停供應狀態。
 - 訂單保存 `claimed_by`、`claimed_at`、`claim_expires_at` 作為多平板 claim lease；POS 改狀態或建立 `print_jobs` 前必須持有有效 lease，避免兩台平板同時出單或處理同一張訂單。
-- 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需 `POS_ADMIN_PIN`，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。
+- 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需 `POS_ADMIN_PIN`，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。有未交付、付款異常或列印失敗時，關班必須送 `force=true`。
 - `pos_audit_events` 保存 POS 關鍵操作事件；claim、釋放、狀態更新、收款、退款、作廢、開班與關班都由 Edge Function 以 service role 寫入，後台只能透過 PIN 保護的 `/admin/audit-events` 讀取，前端不能直接改。
 - 已收款退款由 `refund_pos_order()` 處理，單一資料庫 transaction 會把訂單改成 `status=voided`、`payment_status=refunded`，並寫入 `transaction_ledger.entry_type=refund` 的負數流水。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位，方便後續接 Logflare 或 Datadog。

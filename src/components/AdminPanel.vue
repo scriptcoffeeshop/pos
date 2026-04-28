@@ -323,6 +323,7 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'voidedOrderCount') ? `作廢 ${auditMetadataLabel(event, 'voidedOrderCount')}` : null,
     auditMoneyLabel(event, 'refundAmount') ? `退款 ${auditMoneyLabel(event, 'refundAmount')}` : null,
     auditMetadataLabel(event, 'force') === '是' ? '強制鎖單' : null,
+    auditMetadataLabel(event, 'forced') === '是' ? '強制關班' : null,
   ].filter(Boolean)
 
   return parts.length > 0 ? parts.join('、') : '無附加資料'
