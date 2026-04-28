@@ -21,15 +21,16 @@ import {
   Trash2,
   Wifi,
 } from 'lucide-vue-next'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import AdminPanel from './components/AdminPanel.vue'
 import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
-import { formatCurrency, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
+import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, ServiceMode } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
+type QueueFilter = 'active' | 'ready' | 'all'
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -63,6 +64,7 @@ const readInitialView = (): AppView => {
 
 const {
   addItem,
+  appendCustomerNote,
   backendStatus,
   cartLines,
   cartQuantity,
@@ -84,6 +86,7 @@ const {
   printStation,
   productStatusCatalog,
   productStatusMessage,
+  quickAddItems,
   refreshBackendData,
   searchTerm,
   selectedCategory,
@@ -162,9 +165,38 @@ const printStatusLabels = {
   failed: '失敗',
 } as const
 
+const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需要袋子']
+
 const activeOrder = computed(() => pendingOrders.value[0] ?? orderQueue.value[0] ?? null)
 const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
 const readyOrders = computed(() => pendingOrders.value.filter((order) => order.status === 'ready').length)
+const queueFilterOptions = computed(() => [
+  { value: 'active' as const, label: '待處理', count: pendingOrders.value.length },
+  { value: 'ready' as const, label: '可交付', count: readyOrders.value },
+  { value: 'all' as const, label: '全部', count: orderQueue.value.length },
+])
+const visibleQueueOrders = computed(() => {
+  if (queueFilter.value === 'ready') {
+    return pendingOrders.value.filter((order) => order.status === 'ready')
+  }
+
+  if (queueFilter.value === 'active') {
+    return pendingOrders.value
+  }
+
+  return orderQueue.value
+})
+const queueFilterNote = computed(() => {
+  if (queueFilter.value === 'ready') {
+    return '只顯示可交付訂單'
+  }
+
+  if (queueFilter.value === 'active') {
+    return '隱藏已交付訂單'
+  }
+
+  return '顯示全部訂單'
+})
 const activeOrderItemCount = computed(
   () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
 )
@@ -175,9 +207,22 @@ const stationProducts = computed(() =>
 )
 const availableStationProducts = computed(() => stationProducts.value.filter((product) => product.available).length)
 const stoppedStationProducts = computed(() => stationProducts.value.length - availableStationProducts.value)
-const todayRevenue = computed(() => orderQueue.value.reduce((total, order) => total + order.subtotal, 0))
+const todayRevenue = computed(() => {
+  const todayKey = formatDateKey(new Date())
+
+  return orderQueue.value.reduce((total, order) => {
+    const orderDate = new Date(order.createdAt)
+    if (Number.isNaN(orderDate.getTime()) || formatDateKey(orderDate) !== todayKey) {
+      return total
+    }
+
+    return total + order.subtotal
+  }, 0)
+})
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
+const queueFilter = ref<QueueFilter>('active')
+const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -197,6 +242,65 @@ const pageSubtitle = computed(() => {
 })
 
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
+
+const lineQuantityByItem = (itemId: string): number =>
+  cartLines.value.find((line) => line.itemId === itemId)?.quantity ?? 0
+
+const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable
+}
+
+const focusMenuSearch = (): void => {
+  void nextTick(() => {
+    searchInput.value?.focus()
+  })
+}
+
+const handlePosShortcut = (event: KeyboardEvent): void => {
+  if (activeView.value !== 'pos') {
+    return
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault()
+    void submitCounterOrder()
+    return
+  }
+
+  const isEditing = isEditableKeyboardTarget(event.target)
+  if (isEditing) {
+    if (event.key === 'Escape' && event.target === searchInput.value && searchTerm.value) {
+      event.preventDefault()
+      searchTerm.value = ''
+    }
+
+    return
+  }
+
+  if (event.key === '/') {
+    event.preventDefault()
+    focusMenuSearch()
+    return
+  }
+
+  if (event.key === 'Escape' && searchTerm.value) {
+    event.preventDefault()
+    searchTerm.value = ''
+    return
+  }
+
+  if (/^[1-6]$/.test(event.key) && !event.altKey && !event.metaKey && !event.ctrlKey) {
+    const item = quickAddItems.value[Number(event.key) - 1]
+    if (item) {
+      event.preventDefault()
+      addItem(item)
+    }
+  }
+}
 
 const setActiveView = (view: AppView): void => {
   if (isNativeApp) {
@@ -223,6 +327,14 @@ const loadStationProducts = (): void => {
 const toggleStationProduct = (product: MenuItem): void => {
   void updateProductAvailability(stationPin.value.trim(), product.id, !product.available)
 }
+
+onMounted(() => {
+  globalThis.addEventListener('keydown', handlePosShortcut)
+})
+
+onBeforeUnmount(() => {
+  globalThis.removeEventListener('keydown', handlePosShortcut)
+})
 </script>
 
 <template>
@@ -335,7 +447,7 @@ const toggleStationProduct = (product: MenuItem): void => {
             </div>
             <label class="search-box">
               <Search :size="18" aria-hidden="true" />
-              <input v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
+              <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
             </label>
           </div>
 
@@ -349,6 +461,23 @@ const toggleStationProduct = (product: MenuItem): void => {
               @click="selectedCategory = category.value"
             >
               {{ category.label }}
+            </button>
+          </div>
+
+          <div v-if="quickAddItems.length > 0" class="quick-add-strip" aria-label="快速加購">
+            <button
+              v-for="(item, index) in quickAddItems"
+              :key="item.id"
+              class="quick-add-button"
+              type="button"
+              @click="addItem(item)"
+            >
+              <span class="quick-add-rank">{{ index + 1 }}</span>
+              <span class="quick-add-name">{{ item.name }}</span>
+              <strong>{{ formatCurrency(item.price) }}</strong>
+              <span v-if="lineQuantityByItem(item.id) > 0" class="quick-add-count">
+                x{{ lineQuantityByItem(item.id) }}
+              </span>
             </button>
           </div>
 
@@ -367,7 +496,7 @@ const toggleStationProduct = (product: MenuItem): void => {
               <span class="product-name">{{ item.name }}</span>
               <span class="product-meta">
                 <strong>{{ formatCurrency(item.price) }}</strong>
-                <span>點選加入</span>
+                <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
               </span>
               <span class="product-tags">{{ item.tags.join(' / ') }}</span>
             </button>
@@ -438,6 +567,12 @@ const toggleStationProduct = (product: MenuItem): void => {
             </label>
           </div>
 
+          <div class="note-shortcuts" aria-label="常用備註">
+            <button v-for="note in noteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
+              {{ note }}
+            </button>
+          </div>
+
           <div class="payment-list" aria-label="付款方式">
             <button
               v-for="payment in visiblePaymentOptions"
@@ -475,12 +610,26 @@ const toggleStationProduct = (product: MenuItem): void => {
               <div>
                 <p class="eyebrow">Orders</p>
                 <h2 id="queue-title">訂單佇列</h2>
-                <span class="panel-note">依建立時間排序</span>
+                <span class="panel-note">{{ queueFilterNote }}</span>
               </div>
               <span class="queue-count">{{ pendingOrders.length }}</span>
             </div>
 
-            <article v-for="order in orderQueue" :key="order.id" class="order-row" :class="`order-row--${order.status}`">
+            <div class="segmented-control queue-filter" aria-label="訂單篩選">
+              <button
+                v-for="filter in queueFilterOptions"
+                :key="filter.value"
+                class="segment-button queue-filter-button"
+                :class="{ 'segment-button--active': queueFilter === filter.value }"
+                type="button"
+                @click="queueFilter = filter.value"
+              >
+                <span>{{ filter.label }}</span>
+                <strong>{{ filter.count }}</strong>
+              </button>
+            </div>
+
+            <article v-for="order in visibleQueueOrders" :key="order.id" class="order-row" :class="`order-row--${order.status}`">
               <div class="order-row-main">
                 <div class="order-row-title">
                   <span class="order-id">{{ order.id }}</span>
@@ -519,6 +668,11 @@ const toggleStationProduct = (product: MenuItem): void => {
                 </button>
               </div>
             </article>
+
+            <div v-if="visibleQueueOrders.length === 0" class="empty-state queue-empty-state">
+              <ReceiptText :size="24" aria-hidden="true" />
+              <span>目前沒有符合條件的訂單</span>
+            </div>
           </section>
 
           <section v-if="isNativeApp" class="station-section" aria-labelledby="station-title">

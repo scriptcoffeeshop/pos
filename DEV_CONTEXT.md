@@ -7,6 +7,7 @@
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
+- 櫃台效率操作：POS 工作台已有最近/常用品項快速加購、常用備註 chip、待處理/可交付/全部佇列篩選與鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、POS/線上/掃碼可見性、備餐站、出單機規則與角色權限；寫入需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。

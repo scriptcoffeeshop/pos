@@ -163,6 +163,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const menuCatalog = ref<MenuItem[]>([...menuItems])
   const productStatusCatalog = ref<MenuItem[]>([...menuItems])
   const cartLines = ref<CartLine[]>([])
+  const recentItemIds = ref<string[]>([])
   const orderQueue = ref<PosOrder[]>([...initialOrders])
   const lastPrintPreview = ref('尚未送出列印資料')
   const nextSequence = ref(nextSequenceFromOrders(initialOrders))
@@ -243,6 +244,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     })
   })
 
+  const quickAddItems = computed(() => {
+    const availableItems = menuCatalog.value.filter((item) => item.available && item.posVisible)
+    const recentItems = recentItemIds.value
+      .map((itemId) => availableItems.find((item) => item.id === itemId))
+      .filter((item): item is MenuItem => Boolean(item))
+    const priorityItems = availableItems.filter((item) =>
+      item.tags.some((tag) => ['熱賣', '可加購', '限量'].includes(tag)),
+    )
+    const seenItemIds = new Set<string>()
+
+    return [...recentItems, ...priorityItems, ...availableItems]
+      .filter((item) => {
+        if (seenItemIds.has(item.id)) {
+          return false
+        }
+
+        seenItemIds.add(item.id)
+        return true
+      })
+      .slice(0, 6)
+  })
+
   const cartTotal = computed(() =>
     cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0),
   )
@@ -254,6 +277,40 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     backendStatus.mode = mode
     backendStatus.label = label
     backendStatus.detail = detail
+  }
+
+  const rememberRecentItem = (itemId: string): void => {
+    recentItemIds.value = [itemId, ...recentItemIds.value.filter((entry) => entry !== itemId)].slice(0, 6)
+  }
+
+  const resetCustomerDraft = (): void => {
+    customer.name = '現場客'
+    customer.phone = ''
+    customer.note = ''
+  }
+
+  const appendCustomerNote = (note: string): void => {
+    const nextNote = note.trim()
+    if (!nextNote) {
+      return
+    }
+
+    const currentNote = customer.note.trim()
+    if (!currentNote) {
+      customer.note = nextNote
+      return
+    }
+
+    const existingNotes = currentNote
+      .split(/[、，,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+
+    if (existingNotes.includes(nextNote)) {
+      return
+    }
+
+    customer.note = `${currentNote}、${nextNote}`
   }
 
   const replaceOrder = (orderId: string, nextOrder: PosOrder): void => {
@@ -331,6 +388,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const addItem = (item: MenuItem): void => {
     const existing = cartLines.value.find((line) => line.itemId === item.id)
+    rememberRecentItem(item.id)
+
     if (existing) {
       existing.quantity += 1
       return
@@ -569,6 +628,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       printStation.lastPrintAt = now.toISOString()
     }
     clearCart()
+    resetCustomerDraft()
 
     if (!isPosApiConfigured) {
       if (printPlan.jobs.length > 0) {
@@ -656,6 +716,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
 
   return {
+    appendCustomerNote,
     backendStatus,
     cartLines,
     cartQuantity,
@@ -677,6 +738,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printStation,
     productStatusCatalog,
     productStatusMessage,
+    quickAddItems,
     searchTerm,
     selectedCategory,
     serviceMode,
