@@ -18,6 +18,7 @@ import {
   Settings2,
   ShoppingBag,
   ShoppingCart,
+  WalletCards,
   Trash2,
   Wifi,
 } from 'lucide-vue-next'
@@ -27,7 +28,7 @@ import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, ServiceMode } from './types/pos'
+import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PosOrder, PrintJob, ServiceMode } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
 type QueueFilter = 'active' | 'ready' | 'all'
@@ -170,6 +171,14 @@ const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需�
 const activeOrder = computed(() => pendingOrders.value[0] ?? orderQueue.value[0] ?? null)
 const queueHealth = computed(() => `${pendingOrders.value.length} 張待處理`)
 const readyOrders = computed(() => pendingOrders.value.filter((order) => order.status === 'ready').length)
+const todayOrders = computed(() => {
+  const todayKey = formatDateKey(new Date())
+
+  return orderQueue.value.filter((order) => {
+    const orderDate = new Date(order.createdAt)
+    return Number.isFinite(orderDate.getTime()) && formatDateKey(orderDate) === todayKey
+  })
+})
 const queueFilterOptions = computed(() => [
   { value: 'active' as const, label: '待處理', count: pendingOrders.value.length },
   { value: 'ready' as const, label: '可交付', count: readyOrders.value },
@@ -207,18 +216,61 @@ const stationProducts = computed(() =>
 )
 const availableStationProducts = computed(() => stationProducts.value.filter((product) => product.available).length)
 const stoppedStationProducts = computed(() => stationProducts.value.length - availableStationProducts.value)
-const todayRevenue = computed(() => {
-  const todayKey = formatDateKey(new Date())
+const lowStockStationProducts = computed(() =>
+  stationProducts.value.filter((product) =>
+    product.inventoryCount !== null &&
+    product.lowStockThreshold !== null &&
+    product.inventoryCount > 0 &&
+    product.inventoryCount <= product.lowStockThreshold,
+  ),
+)
+const todayRevenue = computed(() => todayOrders.value.reduce((total, order) => total + order.subtotal, 0))
+const closeoutSummary = computed(() => {
+  const collectedStatuses = new Set(['authorized', 'paid'])
 
-  return orderQueue.value.reduce((total, order) => {
-    const orderDate = new Date(order.createdAt)
-    if (Number.isNaN(orderDate.getTime()) || formatDateKey(orderDate) !== todayKey) {
-      return total
-    }
+  return todayOrders.value.reduce(
+    (summary, order) => {
+      if (collectedStatuses.has(order.paymentStatus)) {
+        summary.collectedTotal += order.subtotal
+      }
 
-    return total + order.subtotal
-  }, 0)
+      if (order.paymentStatus === 'pending') {
+        summary.pendingTotal += order.subtotal
+        summary.pendingCount += 1
+      }
+
+      if (order.paymentStatus === 'failed' || order.paymentStatus === 'expired') {
+        summary.failedPaymentCount += 1
+      }
+
+      if (order.printStatus === 'failed') {
+        summary.failedPrintCount += 1
+      }
+
+      return summary
+    },
+    {
+      collectedTotal: 0,
+      pendingTotal: 0,
+      pendingCount: 0,
+      failedPaymentCount: 0,
+      failedPrintCount: 0,
+    },
+  )
 })
+const paymentCloseoutRows = computed(() =>
+  paymentOptions
+    .map((payment) => {
+      const matchingOrders = todayOrders.value.filter((order) => order.paymentMethod === payment.value)
+      return {
+        ...payment,
+        count: matchingOrders.length,
+        total: matchingOrders.reduce((sum, order) => sum + order.subtotal, 0),
+        pending: matchingOrders.filter((order) => order.paymentStatus === 'pending').length,
+      }
+    })
+    .filter((payment) => payment.count > 0 || payment.visible),
+)
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
 const queueFilter = ref<QueueFilter>('active')
@@ -245,6 +297,81 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 
 const lineQuantityByItem = (itemId: string): number =>
   cartLines.value.find((line) => line.itemId === itemId)?.quantity ?? 0
+
+const isProductTemporarilyStopped = (product: MenuItem): boolean => {
+  if (!product.soldOutUntil) {
+    return false
+  }
+
+  const stoppedUntil = new Date(product.soldOutUntil).getTime()
+  return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
+}
+
+const productStockLabel = (product: MenuItem): string => {
+  if (isProductTemporarilyStopped(product)) {
+    return `暫停至 ${formatOrderTime(product.soldOutUntil ?? '')}`
+  }
+
+  if (product.inventoryCount === 0) {
+    return '售完'
+  }
+
+  if (product.inventoryCount === null) {
+    return ''
+  }
+
+  if (product.lowStockThreshold !== null && product.inventoryCount <= product.lowStockThreshold) {
+    return `低庫存 ${product.inventoryCount}`
+  }
+
+  return `剩 ${product.inventoryCount}`
+}
+
+const productStockClass = (product: MenuItem): string => {
+  if (product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
+    return 'product-stock-badge--stopped'
+  }
+
+  if (
+    product.inventoryCount !== null &&
+    product.lowStockThreshold !== null &&
+    product.inventoryCount <= product.lowStockThreshold
+  ) {
+    return 'product-stock-badge--low'
+  }
+
+  return 'product-stock-badge--ok'
+}
+
+const printAttemptCount = (order: PosOrder): number =>
+  order.printJobs.reduce((total, printJob) => total + printJob.attempts, 0)
+
+const latestPrintJob = (order: PosOrder): PrintJob | null =>
+  [...order.printJobs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+
+const printSummary = (order: PosOrder): string => {
+  const latestJob = latestPrintJob(order)
+  const attempts = printAttemptCount(order)
+
+  if (!latestJob) {
+    return printStatusLabels[order.printStatus]
+  }
+
+  const attemptText = attempts > 0 ? ` · ${attempts} 次` : ''
+  if (latestJob.lastError) {
+    return `${printStatusLabels[order.printStatus]}${attemptText} · ${latestJob.lastError}`
+  }
+
+  return `${printStatusLabels[order.printStatus]}${attemptText}`
+}
+
+const printActionLabel = (order: PosOrder): string => {
+  if (printingOrderId.value === order.id) {
+    return '出單中'
+  }
+
+  return order.printJobs.length > 0 ? '重印' : '出單'
+}
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof HTMLElement)) {
@@ -424,6 +551,10 @@ onBeforeUnmount(() => {
           <strong>{{ formatCurrency(todayRevenue) }}</strong>
         </article>
         <article>
+          <span>已收款</span>
+          <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
+        </article>
+        <article>
           <span>待處理</span>
           <strong>{{ pendingOrders.length }}</strong>
         </article>
@@ -497,6 +628,9 @@ onBeforeUnmount(() => {
               <span class="product-meta">
                 <strong>{{ formatCurrency(item.price) }}</strong>
                 <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
+              </span>
+              <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
+                {{ productStockLabel(item) }}
               </span>
               <span class="product-tags">{{ item.tags.join(' / ') }}</span>
             </button>
@@ -644,7 +778,9 @@ onBeforeUnmount(() => {
               <div class="order-row-meta">
                 <span>{{ formatCurrency(order.subtotal) }}</span>
                 <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
-                <span>{{ printStatusLabels[order.printStatus] }}</span>
+                <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
+                  {{ printSummary(order) }}
+                </span>
               </div>
               <div class="order-actions">
                 <button
@@ -654,7 +790,7 @@ onBeforeUnmount(() => {
                   @click="printOrder(order.id)"
                 >
                   <Printer :size="16" aria-hidden="true" />
-                  {{ printingOrderId === order.id ? '出單中' : '出單' }}
+                  {{ printActionLabel(order) }}
                 </button>
                 <button
                   v-for="action in statusActions"
@@ -681,7 +817,8 @@ onBeforeUnmount(() => {
                 <p class="eyebrow">Station</p>
                 <h2 id="station-title">前台操作</h2>
                 <span class="panel-note">
-                  {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停
+                  {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停 ·
+                  {{ lowStockStationProducts.length }} 個低庫存
                 </span>
               </div>
             </div>
@@ -704,7 +841,10 @@ onBeforeUnmount(() => {
                 <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
                 <span>
                   <strong>{{ product.name }}</strong>
-                  <small>{{ categoryLabels[product.category] }} · {{ formatCurrency(product.price) }}</small>
+                  <small>
+                    {{ categoryLabels[product.category] }} · {{ formatCurrency(product.price) }}
+                    <template v-if="productStockLabel(product)"> · {{ productStockLabel(product) }}</template>
+                  </small>
                 </span>
                 <button
                   type="button"
@@ -747,6 +887,46 @@ onBeforeUnmount(() => {
             </label>
 
             <pre class="print-preview">{{ lastPrintPreview }}</pre>
+          </section>
+
+          <section class="closeout-section" aria-labelledby="closeout-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Closeout</p>
+                <h2 id="closeout-title">關帳摘要</h2>
+                <span class="panel-note">
+                  {{ todayOrders.length }} 張單 · 待收 {{ closeoutSummary.pendingCount }} 張
+                </span>
+              </div>
+              <WalletCards :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="closeout-grid">
+              <article>
+                <span>已收</span>
+                <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
+              </article>
+              <article>
+                <span>待收</span>
+                <strong>{{ formatCurrency(closeoutSummary.pendingTotal) }}</strong>
+              </article>
+              <article>
+                <span>付款異常</span>
+                <strong>{{ closeoutSummary.failedPaymentCount }}</strong>
+              </article>
+              <article>
+                <span>列印異常</span>
+                <strong>{{ closeoutSummary.failedPrintCount }}</strong>
+              </article>
+            </div>
+
+            <div class="payment-closeout-list" aria-label="付款方式對帳">
+              <article v-for="payment in paymentCloseoutRows" :key="payment.value">
+                <span>{{ payment.label }}</span>
+                <strong>{{ formatCurrency(payment.total) }}</strong>
+                <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
+              </article>
+            </div>
           </section>
 
           <section v-if="activeOrder" class="active-order">

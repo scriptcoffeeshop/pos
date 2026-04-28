@@ -28,6 +28,7 @@ import type {
   OrderStatus,
   PaymentMethod,
   PosOrder,
+  PrintJob,
   PrinterSettings,
   PrintStation,
   PrintStatus,
@@ -136,7 +137,25 @@ const productToUpdateInput = (product: MenuItem, isAvailable = product.available
   qrVisible: product.qrVisible,
   prepStation: product.prepStation,
   printLabel: product.printLabel,
+  inventoryCount: product.inventoryCount,
+  lowStockThreshold: product.lowStockThreshold,
+  soldOutUntil: product.soldOutUntil,
 })
+
+const isProductTemporarilyStopped = (product: MenuItem): boolean => {
+  if (!product.soldOutUntil) {
+    return false
+  }
+
+  const stoppedUntil = new Date(product.soldOutUntil).getTime()
+  return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
+}
+
+const isProductOrderable = (product: MenuItem): boolean =>
+  product.available &&
+  product.posVisible &&
+  product.inventoryCount !== 0 &&
+  !isProductTemporarilyStopped(product)
 
 const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
   if (statuses.length === 0) {
@@ -240,12 +259,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         keyword.length === 0 ||
         item.name.toLowerCase().includes(keyword) ||
         item.tags.some((tag) => tag.toLowerCase().includes(keyword))
-      return item.available && matchesCategory && matchesKeyword
+      return isProductOrderable(item) && matchesCategory && matchesKeyword
     })
   })
 
   const quickAddItems = computed(() => {
-    const availableItems = menuCatalog.value.filter((item) => item.available && item.posVisible)
+    const availableItems = menuCatalog.value.filter(isProductOrderable)
     const recentItems = recentItemIds.value
       .map((itemId) => availableItems.find((item) => item.id === itemId))
       .filter((item): item is MenuItem => Boolean(item))
@@ -313,6 +332,21 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.note = `${currentNote}、${nextNote}`
   }
 
+  const mergePrintJobs = (order: PosOrder, printJobs: PrintJob[]): PrintJob[] => {
+    const mergedPrintJobs = new Map<string, PrintJob>()
+    for (const printJob of order.printJobs) {
+      mergedPrintJobs.set(printJob.id, printJob)
+    }
+
+    for (const printJob of printJobs) {
+      mergedPrintJobs.set(printJob.id, printJob)
+    }
+
+    return [...mergedPrintJobs.values()].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
+  }
+
   const replaceOrder = (orderId: string, nextOrder: PosOrder): void => {
     orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
   }
@@ -324,7 +358,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         : [...productStatusCatalog.value, product],
     )
 
-    const shouldShowInPos = product.available && product.posVisible
+    const shouldShowInPos = isProductOrderable(product)
     if (!shouldShowInPos) {
       menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== product.id)
       cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id)
@@ -489,6 +523,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     printStation.lastPrintAt = new Date().toISOString()
     const printStatuses: PrintStatus[] = []
+    const createdPrintJobs: PrintJob[] = []
 
     try {
       for (const job of printPlan.jobs) {
@@ -499,6 +534,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
           const printJob = await createPrintJob(order, job.payload, job.station)
           jobStatus = printJob.status
           printJobId = printJob.id
+          createdPrintJobs.push(printJob)
         }
 
         if (isNativeLanPrinterAvailable()) {
@@ -512,6 +548,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
               printResult.ok ? undefined : printResult.error,
             )
             jobStatus = updatedPrintJob.status
+            createdPrintJobs.push(updatedPrintJob)
           }
         }
 
@@ -519,7 +556,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       }
 
       const nextPrintStatus = summarizePrintStatuses(printStatuses)
-      replaceOrder(order.id, { ...order, printStatus: nextPrintStatus })
+      replaceOrder(order.id, {
+        ...order,
+        printStatus: nextPrintStatus,
+        printJobs: mergePrintJobs(order, createdPrintJobs),
+      })
 
       if (!isNativeLanPrinterAvailable()) {
         appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已準備 ${printPlan.jobs.length} 筆出單資料`)
@@ -533,7 +574,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
           : `${order.id} 出單狀態：${nextPrintStatus}`,
       )
     } catch (error) {
-      replaceOrder(order.id, { ...order, printStatus: 'failed' })
+      replaceOrder(order.id, {
+        ...order,
+        printStatus: 'failed',
+        printJobs: mergePrintJobs(order, createdPrintJobs),
+      })
       setBackendStatus('fallback', '出單失敗', `${order.id} 出單失敗：${getErrorMessage(error)}`)
     } finally {
       printingOrderId.value = null
@@ -617,6 +662,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       status: 'new',
       createdAt: now.toISOString(),
       printStatus: 'skipped',
+      printJobs: [],
     }
     const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
     order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
@@ -657,11 +703,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       if (printPlan.jobs.length > 0) {
         const printStatuses: PrintStatus[] = []
+        const createdPrintJobs: PrintJob[] = []
 
         try {
           for (const job of printPlan.jobs) {
             const printJob = await createPrintJob(nextOrder, job.payload, job.station)
             let jobStatus: PrintStatus = printJob.status
+            createdPrintJobs.push(printJob)
 
             if (isNativeLanPrinterAvailable()) {
               const printResult = await tryNativeLanPrint(job.payload, job.station)
@@ -671,12 +719,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
                 printResult.ok ? undefined : printResult.error,
               )
               jobStatus = updatedPrintJob.status
+              createdPrintJobs.push(updatedPrintJob)
             }
 
             printStatuses.push(jobStatus)
           }
 
           nextOrder.printStatus = summarizePrintStatuses(printStatuses)
+          nextOrder.printJobs = mergePrintJobs(nextOrder, createdPrintJobs)
           if (!isNativeLanPrinterAvailable()) {
             appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已建立 ${printPlan.jobs.length} 筆 print_jobs`)
           }
@@ -686,6 +736,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
           replaceOrder(order.id, nextOrder)
         } catch (error) {
           nextOrder.printStatus = 'failed'
+          nextOrder.printJobs = mergePrintJobs(nextOrder, createdPrintJobs)
           replaceOrder(order.id, nextOrder)
           backendDetail = `${order.id} 已建立，列印工作建立失敗：${getErrorMessage(error)}`
         }

@@ -36,6 +36,7 @@ import type {
 
 interface ProductDraft extends MenuItem {
   tagsText: string
+  soldOutUntilInput: string
 }
 
 type AdminTab = 'products' | 'printing' | 'access'
@@ -133,6 +134,14 @@ const adminMessage = ref('尚未載入後台資料')
 
 const visibleProducts = computed(() => productDrafts.value.filter((product) => product.available && product.posVisible).length)
 const onlineProducts = computed(() => productDrafts.value.filter((product) => product.onlineVisible || product.qrVisible).length)
+const lowStockProducts = computed(() =>
+  productDrafts.value.filter((product) =>
+    product.inventoryCount !== null &&
+    product.lowStockThreshold !== null &&
+    product.inventoryCount > 0 &&
+    product.inventoryCount <= product.lowStockThreshold,
+  ).length,
+)
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
 const stationOptions = computed(() => {
@@ -171,6 +180,7 @@ const toDraft = (product: MenuItem): ProductDraft => ({
   ...product,
   tags: [...product.tags],
   tagsText: product.tags.join('，'),
+  soldOutUntilInput: toDatetimeLocalInput(product.soldOutUntil),
 })
 
 const tagsFromText = (tagsText: string): string[] =>
@@ -180,6 +190,38 @@ const tagsFromText = (tagsText: string): string[] =>
     .filter(Boolean)
 
 const buildId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}`
+
+const numberOrNull = (value: unknown): number | null => {
+  if (value === '' || value === null || value === undefined) {
+    return null
+  }
+
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? Math.max(0, Math.trunc(numberValue)) : null
+}
+
+const toDatetimeLocalInput = (iso: string | null): string => {
+  if (!iso) {
+    return ''
+  }
+
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
+  return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+}
+
+const fromDatetimeLocalInput = (value: string): string | null => {
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
 
 const loadAdminData = async (): Promise<void> => {
   if (!adminPin.value.trim()) {
@@ -224,6 +266,9 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
     qrVisible: product.qrVisible,
     prepStation: product.prepStation,
     printLabel: product.printLabel,
+    inventoryCount: numberOrNull(product.inventoryCount),
+    lowStockThreshold: numberOrNull(product.lowStockThreshold),
+    soldOutUntil: fromDatetimeLocalInput(product.soldOutUntilInput),
   }
 
   try {
@@ -396,6 +441,10 @@ const saveAccessControl = async (): Promise<void> => {
         <strong>{{ onlineProducts }}</strong>
       </article>
       <article>
+        <span>低庫存</span>
+        <strong>{{ lowStockProducts }}</strong>
+      </article>
+      <article>
         <span>出單規則</span>
         <strong>{{ printRuleCount }}</strong>
       </article>
@@ -513,6 +562,23 @@ const saveAccessControl = async (): Promise<void> => {
               <label class="admin-product-tags">
                 標籤
                 <input v-model="product.tagsText" type="text" />
+              </label>
+            </div>
+
+            <div class="admin-product-stock-grid">
+              <label>
+                今日庫存
+                <input v-model.number="product.inventoryCount" type="number" min="0" step="1" placeholder="不追蹤" />
+              </label>
+
+              <label>
+                低庫存提醒
+                <input v-model.number="product.lowStockThreshold" type="number" min="0" step="1" placeholder="不提醒" />
+              </label>
+
+              <label>
+                暫停供應至
+                <input v-model="product.soldOutUntilInput" type="datetime-local" />
               </label>
             </div>
 

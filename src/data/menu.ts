@@ -6,6 +6,9 @@ const defaultChannelState = {
   qrVisible: false,
   prepStation: 'bar',
   printLabel: true,
+  inventoryCount: null,
+  lowStockThreshold: null,
+  soldOutUntil: null,
 }
 
 export const menuItems: MenuItem[] = [

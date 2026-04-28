@@ -21,6 +21,9 @@ export interface MenuItem {
   qrVisible: boolean
   prepStation: string
   printLabel: boolean
+  inventoryCount: number | null
+  lowStockThreshold: number | null
+  soldOutUntil: string | null
 }
 
 export interface CartLine {
@@ -57,6 +60,16 @@ export interface PosOrder {
   status: OrderStatus
   createdAt: string
   printStatus: PrintStatus
+  printJobs: PrintJob[]
+}
+
+export interface PrintJob {
+  id: string
+  status: PrintStatus
+  printedAt: string | null
+  createdAt: string
+  attempts: number
+  lastError: string | null
 }
 
 export interface PrintStation {

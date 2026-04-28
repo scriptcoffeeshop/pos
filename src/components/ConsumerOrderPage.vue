@@ -76,7 +76,7 @@ const itemMatchesFilter = (item: MenuItem): boolean => {
     item.name.toLowerCase().includes(keyword) ||
     item.tags.some((tag) => tag.toLowerCase().includes(keyword))
 
-  return item.available && item.onlineVisible && matchesCategory && matchesKeyword
+  return isProductOrderable(item) && item.onlineVisible && matchesCategory && matchesKeyword
 }
 
 const filteredMenu = computed(() => menuCatalog.value.filter(itemMatchesFilter))
@@ -144,7 +144,33 @@ const clearCart = (): void => {
   cartLines.value = []
 }
 
-const productDescription = (item: MenuItem): string => item.tags.join('、') || categoryLabels[item.category]
+const isProductTemporarilyStopped = (item: MenuItem): boolean => {
+  if (!item.soldOutUntil) {
+    return false
+  }
+
+  const stoppedUntil = new Date(item.soldOutUntil).getTime()
+  return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
+}
+
+const isProductOrderable = (item: MenuItem): boolean =>
+  item.available &&
+  item.inventoryCount !== 0 &&
+  !isProductTemporarilyStopped(item)
+
+const productDescription = (item: MenuItem): string => {
+  const description = item.tags.join('、') || categoryLabels[item.category]
+  if (
+    item.inventoryCount !== null &&
+    item.lowStockThreshold !== null &&
+    item.inventoryCount > 0 &&
+    item.inventoryCount <= item.lowStockThreshold
+  ) {
+    return `${description} · 剩 ${item.inventoryCount}`
+  }
+
+  return description
+}
 
 const buildOnlineOrderNumber = (date: Date): string => {
   const time = `${date.getHours().toString().padStart(2, '0')}${date.getMinutes().toString().padStart(2, '0')}`
@@ -203,6 +229,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     status: 'new',
     createdAt: now.toISOString(),
     printStatus: 'skipped',
+    printJobs: [],
   }
 
   try {

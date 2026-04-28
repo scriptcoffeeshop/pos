@@ -32,6 +32,16 @@ export const initialOrders: PosOrder[] = [
     status: 'preparing',
     createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
     printStatus: 'printed',
+    printJobs: [
+      {
+        id: 'demo-print-002',
+        status: 'printed',
+        printedAt: new Date(Date.now() - 1000 * 60 * 7).toISOString(),
+        createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+        attempts: 1,
+        lastError: null,
+      },
+    ],
   },
   {
     id: 'POS-20260427-001',
@@ -56,5 +66,15 @@ export const initialOrders: PosOrder[] = [
     status: 'new',
     createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
     printStatus: 'queued',
+    printJobs: [
+      {
+        id: 'demo-print-001',
+        status: 'queued',
+        printedAt: null,
+        createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
+        attempts: 0,
+        lastError: null,
+      },
+    ],
   },
 ]

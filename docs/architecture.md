@@ -21,6 +21,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - PostgreSQL 保存商品、訂單、會員、付款、交易日誌與列印任務。
 - Deno/Hono Edge Functions 處理商業邏輯、金流回呼與訂單狀態。
 - `pos-api` 對公開前台提供依 channel 過濾的商品與建單端點，對 POS 提供訂單與 runtime 出單機設定端點，對後台提供 PIN 保護的商品與設定端點。
+- 商品資料除了人工上架/停售，也保存 `inventory_count`、`low_stock_threshold` 與 `sold_out_until`；前台以這些欄位決定低庫存提示、售完與暫停供應狀態。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位，方便後續接 Logflare 或 Datadog。
 
 ## 整合
@@ -36,3 +37,4 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 3. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、貼紙/收據模式與份數建立列印計畫。
 4. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
 5. 列印成功或失敗後回寫列印任務狀態。
+6. POS 依當日訂單彙整關帳摘要，提供付款方式小計、待收款與列印異常提示；正式班別關帳需再新增 register session。

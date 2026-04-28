@@ -8,6 +8,7 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosOrder,
+  PrintJob,
   PrintStatus,
   PrinterSettings,
   PrintStation,
@@ -29,6 +30,9 @@ interface ApiProduct {
   qr_visible: boolean
   prep_station: string | null
   print_label: boolean
+  inventory_count?: number | null
+  low_stock_threshold?: number | null
+  sold_out_until?: string | null
 }
 
 interface ApiOrderItem {
@@ -83,15 +87,6 @@ interface PrintJobResponse {
   printJob: ApiPrintJob
 }
 
-export interface PrintJob {
-  id: string
-  status: PrintStatus
-  printedAt: string | null
-  createdAt: string
-  attempts: number
-  lastError: string | null
-}
-
 interface ApiSettingRow {
   key: string
   value: unknown
@@ -118,6 +113,9 @@ export interface ProductUpdateInput {
   qrVisible: boolean
   prepStation: string
   printLabel: boolean
+  inventoryCount: number | null
+  lowStockThreshold: number | null
+  soldOutUntil: string | null
 }
 
 interface ProductResponse {
@@ -209,6 +207,9 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   qrVisible: product.qr_visible,
   prepStation: product.prep_station ?? 'bar',
   printLabel: product.print_label,
+  inventoryCount: product.inventory_count ?? null,
+  lowStockThreshold: product.low_stock_threshold ?? null,
+  soldOutUntil: product.sold_out_until ?? null,
 })
 
 const isPrinterSettings = (value: unknown): value is PrinterSettings => {
@@ -253,6 +254,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => ({
   status: order.status,
   createdAt: order.created_at,
   printStatus: normalizePrintStatus(order),
+  printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
   lines: (order.order_items ?? []).map((line) => {
     const cartLine = {
       itemId: line.product_id ?? line.product_sku,

@@ -67,6 +67,9 @@ interface ProductUpdateInput {
   qrVisible?: boolean;
   prepStation?: string;
   printLabel?: boolean;
+  inventoryCount?: number | null;
+  lowStockThreshold?: number | null;
+  soldOutUntil?: string | null;
 }
 
 interface PrintStationSetting {
@@ -128,7 +131,7 @@ const orderSelect =
   "*, order_items(*), print_jobs(id, status, printed_at, created_at, attempts, last_error)";
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
-  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label";
+  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
 
 const defaultPrinterSettings: PrinterSettings = {
   stations: [
@@ -677,6 +680,40 @@ const validateProductUpdateInput = (
     return { payload, error: "printLabel must be a boolean" };
   }
   payload.print_label = input.printLabel;
+
+  if (input.inventoryCount === null || input.inventoryCount === undefined) {
+    payload.inventory_count = null;
+  } else if (
+    typeof input.inventoryCount !== "number" ||
+    !Number.isInteger(input.inventoryCount) ||
+    input.inventoryCount < 0
+  ) {
+    return { payload, error: "inventoryCount must be null or a non-negative integer" };
+  } else {
+    payload.inventory_count = input.inventoryCount;
+  }
+
+  if (input.lowStockThreshold === null || input.lowStockThreshold === undefined) {
+    payload.low_stock_threshold = null;
+  } else if (
+    typeof input.lowStockThreshold !== "number" ||
+    !Number.isInteger(input.lowStockThreshold) ||
+    input.lowStockThreshold < 0
+  ) {
+    return { payload, error: "lowStockThreshold must be null or a non-negative integer" };
+  } else {
+    payload.low_stock_threshold = input.lowStockThreshold;
+  }
+
+  if (input.soldOutUntil === null || input.soldOutUntil === undefined || input.soldOutUntil === "") {
+    payload.sold_out_until = null;
+  } else {
+    const soldOutUntil = new Date(input.soldOutUntil);
+    if (Number.isNaN(soldOutUntil.getTime())) {
+      return { payload, error: "soldOutUntil must be null or an ISO datetime" };
+    }
+    payload.sold_out_until = soldOutUntil.toISOString();
+  }
 
   return { payload, error: null };
 };
