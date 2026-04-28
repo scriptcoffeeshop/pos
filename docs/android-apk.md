@@ -21,6 +21,8 @@
 rtk npm run apk:debug
 ```
 
+`apk:debug` 會先跑 `cap:sync`，再執行 Android `assembleDebug`。若 macOS arm64 的本機 JDK 在 JVM 啟動階段崩潰，腳本會自動下載暫存的 x86_64 Temurin 21 JDK 到 `~/.cache/script-coffee-pos/`，並透過 Rosetta 完成 Gradle build。
+
 APK 位置：
 
 ```text

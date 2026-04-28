@@ -48,11 +48,15 @@ SUPABASE_DB_PASSWORD=<database-password>
 - Advisor 修正：`20260427161000_fix_advisor_security_warnings.sql`
 - Admin 設定擴充：`20260428102000_add_pos_admin_settings.sql`
 - 外送出單規則補強：`20260428193000_add_delivery_print_rule.sql`
+- 商品庫存控管：`20260429110000_add_product_inventory_controls.sql`
+- 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
 - 訂單端點：`/functions/v1/pos-api/orders`
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
+- 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
+- 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
 - 列印工作端點：`/functions/v1/pos-api/print-jobs`
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
@@ -63,6 +67,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders` 與 `/settings/runtime`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
+- 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 
