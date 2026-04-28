@@ -53,6 +53,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
 - 收銀班別：`20260429133000_add_register_sessions.sql`
 - 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
+- 關帳異常計數：`20260429140500_add_register_closeout_exception_counts.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -80,6 +81,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢，已收款訂單需等待退款流程。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
+- 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 

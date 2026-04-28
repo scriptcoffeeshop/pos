@@ -161,7 +161,7 @@ const printJobSelect = "id, status, printed_at, created_at, attempts, last_error
 const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
 const registerSessionSelect =
-  "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, note";
+  "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 
@@ -405,6 +405,10 @@ api.post("/register/close", async (c) => {
       non_cash_sales: summary.non_cash_sales,
       pending_total: summary.pending_total,
       order_count: summary.order_count,
+      open_order_count: summary.open_order_count,
+      failed_payment_count: summary.failed_payment_count,
+      failed_print_count: summary.failed_print_count,
+      voided_order_count: summary.voided_order_count,
       note,
     })
     .eq("id", openSession.session.id)
@@ -913,6 +917,10 @@ interface RegisterSessionRow {
   non_cash_sales: number;
   pending_total: number;
   order_count: number;
+  open_order_count: number;
+  failed_payment_count: number;
+  failed_print_count: number;
+  voided_order_count: number;
   note: string;
 }
 
@@ -921,6 +929,7 @@ interface RegisterOrderSummaryRow {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   status: OrderStatus;
+  print_jobs?: Array<{ status: PrintStatus }>;
 }
 
 const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
@@ -987,11 +996,19 @@ const summarizeRegisterOrders = async (
   openingCash: number,
 ): Promise<Pick<
   RegisterSessionRow,
-  "expected_cash" | "cash_sales" | "non_cash_sales" | "pending_total" | "order_count"
+  | "expected_cash"
+  | "cash_sales"
+  | "non_cash_sales"
+  | "pending_total"
+  | "order_count"
+  | "open_order_count"
+  | "failed_payment_count"
+  | "failed_print_count"
+  | "voided_order_count"
 >> => {
   const { data, error } = await supabase
     .from("orders")
-    .select("subtotal, payment_method, payment_status, status")
+    .select("subtotal, payment_method, payment_status, status, print_jobs(status)")
     .gte("created_at", openedAt)
     .lte("created_at", closedAt.toISOString());
 
@@ -1002,11 +1019,29 @@ const summarizeRegisterOrders = async (
   const rows = (data ?? []) as RegisterOrderSummaryRow[];
   const summary = rows.reduce(
     (current, order) => {
-      if (order.status === "failed" || order.status === "voided") {
+      const subtotal = Math.max(Number(order.subtotal) || 0, 0);
+
+      if (order.status === "voided") {
+        current.voided_order_count += 1;
         return current;
       }
 
-      const subtotal = Math.max(Number(order.subtotal) || 0, 0);
+      if (order.status !== "served" && order.status !== "failed") {
+        current.open_order_count += 1;
+      }
+
+      if (order.payment_status === "failed" || order.payment_status === "expired") {
+        current.failed_payment_count += 1;
+      }
+
+      if (order.print_jobs?.some((printJob) => printJob.status === "failed")) {
+        current.failed_print_count += 1;
+      }
+
+      if (order.status === "failed") {
+        return current;
+      }
+
       current.order_count += 1;
 
       if (order.payment_status === "pending") {
@@ -1031,6 +1066,10 @@ const summarizeRegisterOrders = async (
       non_cash_sales: 0,
       pending_total: 0,
       order_count: 0,
+      open_order_count: 0,
+      failed_payment_count: 0,
+      failed_print_count: 0,
+      voided_order_count: 0,
     },
   );
 

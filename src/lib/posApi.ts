@@ -107,6 +107,10 @@ interface ApiRegisterSession {
   non_cash_sales: number
   pending_total: number
   order_count: number
+  open_order_count: number
+  failed_payment_count: number
+  failed_print_count: number
+  voided_order_count: number
   note: string
 }
 
@@ -254,6 +258,10 @@ const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession 
   nonCashSales: session.non_cash_sales,
   pendingTotal: session.pending_total,
   orderCount: session.order_count,
+  openOrderCount: session.open_order_count,
+  failedPaymentCount: session.failed_payment_count,
+  failedPrintCount: session.failed_print_count,
+  voidedOrderCount: session.voided_order_count,
   note: session.note,
 })
 

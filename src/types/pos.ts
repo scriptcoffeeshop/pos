@@ -88,6 +88,10 @@ export interface RegisterSession {
   nonCashSales: number
   pendingTotal: number
   orderCount: number
+  openOrderCount: number
+  failedPaymentCount: number
+  failedPrintCount: number
+  voidedOrderCount: number
   note: string
 }
 

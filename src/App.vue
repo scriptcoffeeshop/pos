@@ -204,7 +204,7 @@ const todayOrders = computed(() => {
     return Number.isFinite(orderDate.getTime()) && formatDateKey(orderDate) === todayKey
   })
 })
-const closeoutOrders = computed(() =>
+const salesCloseoutOrders = computed(() =>
   todayOrders.value.filter((order) => order.status !== 'failed' && order.status !== 'voided'),
 )
 const queueFilterOptions = computed(() => [
@@ -252,27 +252,33 @@ const lowStockStationProducts = computed(() =>
     product.inventoryCount <= product.lowStockThreshold,
   ),
 )
-const todayRevenue = computed(() => closeoutOrders.value.reduce((total, order) => total + order.subtotal, 0))
+const todayRevenue = computed(() => salesCloseoutOrders.value.reduce((total, order) => total + order.subtotal, 0))
 const closeoutSummary = computed(() => {
   const collectedStatuses = new Set(['authorized', 'paid'])
 
-  return closeoutOrders.value.reduce(
+  return todayOrders.value.reduce(
     (summary, order) => {
-      if (collectedStatuses.has(order.paymentStatus)) {
+      const isSaleOrder = order.status !== 'failed' && order.status !== 'voided'
+
+      if (isSaleOrder && collectedStatuses.has(order.paymentStatus)) {
         summary.collectedTotal += order.subtotal
       }
 
-      if (order.paymentStatus === 'pending') {
+      if (isSaleOrder && order.paymentStatus === 'pending') {
         summary.pendingTotal += order.subtotal
         summary.pendingCount += 1
       }
 
-      if (order.paymentStatus === 'failed' || order.paymentStatus === 'expired') {
+      if (order.status !== 'voided' && (order.paymentStatus === 'failed' || order.paymentStatus === 'expired')) {
         summary.failedPaymentCount += 1
       }
 
-      if (order.printStatus === 'failed') {
+      if (order.status !== 'voided' && order.printStatus === 'failed') {
         summary.failedPrintCount += 1
+      }
+
+      if (order.status === 'voided') {
+        summary.voidedCount += 1
       }
 
       return summary
@@ -283,13 +289,14 @@ const closeoutSummary = computed(() => {
       pendingCount: 0,
       failedPaymentCount: 0,
       failedPrintCount: 0,
+      voidedCount: 0,
     },
   )
 })
 const paymentCloseoutRows = computed(() =>
   paymentOptions
     .map((payment) => {
-      const matchingOrders = closeoutOrders.value.filter((order) => order.paymentMethod === payment.value)
+      const matchingOrders = salesCloseoutOrders.value.filter((order) => order.paymentMethod === payment.value)
       return {
         ...payment,
         count: matchingOrders.length,
@@ -1139,6 +1146,10 @@ onBeforeUnmount(() => {
                 <span>列印異常</span>
                 <strong>{{ closeoutSummary.failedPrintCount }}</strong>
               </article>
+              <article>
+                <span>作廢</span>
+                <strong>{{ closeoutSummary.voidedCount }}</strong>
+              </article>
             </div>
 
             <div class="payment-closeout-list" aria-label="付款方式對帳">
@@ -1187,6 +1198,22 @@ onBeforeUnmount(() => {
                 <article>
                   <span>單數</span>
                   <strong>{{ registerSession.orderCount }}</strong>
+                </article>
+                <article>
+                  <span>未交付</span>
+                  <strong>{{ registerSession.openOrderCount }}</strong>
+                </article>
+                <article>
+                  <span>付款異常</span>
+                  <strong>{{ registerSession.failedPaymentCount }}</strong>
+                </article>
+                <article>
+                  <span>列印失敗</span>
+                  <strong>{{ registerSession.failedPrintCount }}</strong>
+                </article>
+                <article>
+                  <span>作廢</span>
+                  <strong>{{ registerSession.voidedOrderCount }}</strong>
                 </article>
                 <article :class="registerVarianceClass">
                   <span>現金差額</span>
