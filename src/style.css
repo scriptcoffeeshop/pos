@@ -2133,12 +2133,14 @@ h3 {
   gap: 10px;
 }
 
-.admin-audit-list {
+.admin-audit-list,
+.admin-station-heartbeat-list {
   display: grid;
   gap: 8px;
 }
 
-.admin-audit-row {
+.admin-audit-row,
+.admin-station-heartbeat-row {
   display: grid;
   gap: 8px;
   padding: 11px;

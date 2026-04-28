@@ -57,6 +57,14 @@ interface RefundOrderInput {
   note?: string;
 }
 
+interface StationHeartbeatInput {
+  stationId?: string;
+  stationLabel?: string;
+  platform?: string;
+  appVersion?: string;
+  userAgent?: string;
+}
+
 interface AuditEventInput {
   action: string;
   orderId?: string | null;
@@ -180,6 +188,8 @@ const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
   "id, action, order_id, register_session_id, station_id, actor, metadata, created_at";
+const stationHeartbeatSelect =
+  "station_id, station_label, platform, app_version, user_agent, last_seen_at, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 
@@ -325,6 +335,33 @@ api.get("/settings/runtime", async (c) => {
   );
 
   return c.json({ printerSettings });
+});
+
+api.post("/station/heartbeat", async (c) => {
+  const input: StationHeartbeatInput = await c.req.json<StationHeartbeatInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId);
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("pos_station_heartbeats")
+    .upsert({
+      station_id: stationId,
+      station_label: sanitizeText(input.stationLabel, stationId).slice(0, 80),
+      platform: sanitizeText(input.platform, "").slice(0, 40),
+      app_version: sanitizeText(input.appVersion, "").slice(0, 40),
+      user_agent: sanitizeText(input.userAgent, "").slice(0, 160),
+      last_seen_at: new Date().toISOString(),
+    }, { onConflict: "station_id" })
+    .select(stationHeartbeatSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ station: data });
 });
 
 api.get("/register/current", async (c) => {
@@ -579,6 +616,25 @@ api.get("/admin/audit-events", async (c) => {
   }
 
   return c.json({ events: data });
+});
+
+api.get("/admin/stations", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { data, error } = await supabase
+    .from("pos_station_heartbeats")
+    .select(stationHeartbeatSelect)
+    .order("last_seen_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ stations: data });
 });
 
 api.patch("/admin/settings/:key", async (c) => {

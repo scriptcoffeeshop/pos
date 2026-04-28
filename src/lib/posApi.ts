@@ -9,6 +9,7 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   PosOrder,
+  PosStationHeartbeat,
   RegisterSession,
   PrintJob,
   PrintStatus,
@@ -132,6 +133,24 @@ interface ApiAuditEvent {
 
 interface AuditEventsResponse {
   events: ApiAuditEvent[]
+}
+
+interface ApiStationHeartbeat {
+  station_id: string
+  station_label: string | null
+  platform: string | null
+  app_version: string | null
+  user_agent: string | null
+  last_seen_at: string
+  created_at: string
+}
+
+interface StationHeartbeatResponse {
+  station: ApiStationHeartbeat
+}
+
+interface StationHeartbeatsResponse {
+  stations: ApiStationHeartbeat[]
 }
 
 interface ApiSettingRow {
@@ -300,6 +319,16 @@ const normalizeAuditEvent = (event: ApiAuditEvent): PosAuditEvent => ({
   createdAt: event.created_at,
 })
 
+const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHeartbeat => ({
+  stationId: station.station_id,
+  stationLabel: station.station_label ?? station.station_id,
+  platform: station.platform ?? '',
+  appVersion: station.app_version ?? '',
+  userAgent: station.user_agent ?? '',
+  lastSeenAt: station.last_seen_at,
+  createdAt: station.created_at,
+})
+
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   id: product.id,
   sku: product.sku,
@@ -430,6 +459,31 @@ export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promi
   })
 
   return data.events.map(normalizeAuditEvent)
+}
+
+export const fetchAdminStations = async (adminPin: string): Promise<PosStationHeartbeat[]> => {
+  const data = await request<StationHeartbeatsResponse>('/admin/stations', {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return data.stations.map(normalizeStationHeartbeat)
+}
+
+export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {
+  const data = await request<StationHeartbeatResponse>('/station/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({
+      stationId: currentStationId(),
+      stationLabel: currentStationLabel(),
+      platform: globalThis.navigator?.platform ?? '',
+      appVersion: import.meta.env.VITE_APP_VERSION ?? '',
+      userAgent: globalThis.navigator?.userAgent ?? '',
+    }),
+  })
+
+  return normalizeStationHeartbeat(data.station)
 }
 
 export const updateAdminSetting = async <SettingValue>(

@@ -19,6 +19,7 @@ import {
   isPosApiConfigured,
   releaseOrderClaim,
   refundOrder,
+  sendStationHeartbeat,
   updateProduct,
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
@@ -51,6 +52,7 @@ type CategoryFilter = 'all' | MenuCategory
 type BackendMode = 'syncing' | 'connected' | 'fallback'
 
 const queueSyncIntervalMs = 20_000
+const stationHeartbeatIntervalMs = 30_000
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -222,6 +224,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
   const registerSession = ref<RegisterSession | null>(null)
   const registerMessage = ref('尚未載入開班資料')
+  const stationHeartbeatMessage = ref('尚未回報平板在線狀態')
   const isRegisterBusy = ref(false)
   const backendStatus = reactive<BackendStatus>({
     mode: isPosApiConfigured ? 'syncing' : 'fallback',
@@ -247,6 +250,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
   let queueSyncTimer: number | null = null
+  let stationHeartbeatTimer: number | null = null
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -1212,18 +1216,37 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     await tryNativeLanPrint(lastPrintPreview.value)
   }
 
+  const syncStationHeartbeat = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      stationHeartbeatMessage.value = '本機模式未回報平板在線狀態'
+      return
+    }
+
+    try {
+      const station = await sendStationHeartbeat()
+      stationHeartbeatMessage.value = `${station.stationLabel} 在線`
+    } catch (error) {
+      stationHeartbeatMessage.value = `平板心跳失敗：${getErrorMessage(error)}`
+    }
+  }
+
   const handleVisibilitySync = (): void => {
     if (globalThis.document?.visibilityState === 'visible') {
       void refreshQueueState(true)
+      void syncStationHeartbeat()
     }
   }
 
   onMounted(() => {
     if (autoLoad) {
       void refreshBackendData()
+      void syncStationHeartbeat()
       queueSyncTimer = globalThis.setInterval(() => {
         void refreshQueueState(true)
       }, queueSyncIntervalMs)
+      stationHeartbeatTimer = globalThis.setInterval(() => {
+        void syncStationHeartbeat()
+      }, stationHeartbeatIntervalMs)
       globalThis.document?.addEventListener('visibilitychange', handleVisibilitySync)
     }
   })
@@ -1231,6 +1254,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   onBeforeUnmount(() => {
     if (queueSyncTimer !== null) {
       globalThis.clearInterval(queueSyncTimer)
+    }
+
+    if (stationHeartbeatTimer !== null) {
+      globalThis.clearInterval(stationHeartbeatTimer)
     }
 
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
@@ -1283,6 +1310,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     serviceMode,
     stationClaimId,
     stationClaimLabel,
+    stationHeartbeatMessage,
     togglingProductId,
     updatingPaymentOrderId,
     addItem,

@@ -170,3 +170,13 @@ export interface PosAuditEvent {
   metadata: Record<string, unknown>
   createdAt: string
 }
+
+export interface PosStationHeartbeat {
+  stationId: string
+  stationLabel: string
+  platform: string
+  appVersion: string
+  userAgent: string
+  lastSeenAt: string
+  createdAt: string
+}

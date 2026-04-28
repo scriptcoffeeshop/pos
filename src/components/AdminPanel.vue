@@ -19,6 +19,7 @@ import {
   fetchAdminAuditEvents,
   fetchAdminProducts,
   fetchAdminSettings,
+  fetchAdminStations,
   type ProductUpdateInput,
   updateAdminSetting,
   updateProduct,
@@ -30,6 +31,7 @@ import type {
   MenuItem,
   PrinterSettings,
   PosAuditEvent,
+  PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
   RoleSetting,
@@ -41,7 +43,7 @@ interface ProductDraft extends MenuItem {
   soldOutUntilInput: string
 }
 
-type AdminTab = 'products' | 'printing' | 'access' | 'audit'
+type AdminTab = 'products' | 'printing' | 'access' | 'audit' | 'stations'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -51,6 +53,7 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
+  { value: 'stations', label: '平板' },
   { value: 'audit', label: '稽核' },
 ]
 
@@ -109,6 +112,11 @@ const auditTimeFormatter = new Intl.DateTimeFormat('zh-TW', {
 
 const auditActionLabel = (action: string): string => auditActionLabels[action] ?? action
 
+const isStationOnline = (iso: string): boolean => {
+  const lastSeenAt = new Date(iso).getTime()
+  return Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < 90_000
+}
+
 const readStoredPin = (): string => {
   try {
     return sessionStorage.getItem('script-coffee-pos-admin-pin') ?? ''
@@ -151,10 +159,12 @@ const productDrafts = ref<ProductDraft[]>([])
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const auditEvents = ref<PosAuditEvent[]>([])
+const stationHeartbeats = ref<PosStationHeartbeat[]>([])
 const auditLimit = ref(50)
 const auditActionFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
+const isStationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
@@ -172,6 +182,9 @@ const lowStockProducts = computed(() =>
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
 const auditEventCount = computed(() => auditEvents.value.length)
+const onlineStationCount = computed(() =>
+  stationHeartbeats.value.filter((station) => isStationOnline(station.lastSeenAt)).length,
+)
 const auditActionOptions = computed(() =>
   Array.from(new Set(auditEvents.value.map((event) => event.action))).map((action) => ({
     value: action,
@@ -267,6 +280,12 @@ const formatAuditTime = (iso: string): string => {
   return Number.isNaN(date.getTime()) ? '時間未知' : auditTimeFormatter.format(date)
 }
 
+const stationStatusLabel = (station: PosStationHeartbeat): string =>
+  isStationOnline(station.lastSeenAt) ? '在線' : '離線'
+
+const stationStatusClass = (station: PosStationHeartbeat): string =>
+  isStationOnline(station.lastSeenAt) ? 'status-pill--success' : 'status-pill--danger'
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -340,16 +359,18 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    const [products, settings, events] = await Promise.all([
+    const [products, settings, events, stations] = await Promise.all([
       fetchAdminProducts(adminPin.value.trim()),
       fetchAdminSettings(adminPin.value.trim()),
       fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
+      fetchAdminStations(adminPin.value.trim()),
     ])
     productDrafts.value = products.map(toDraft)
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     auditEvents.value = events
-    adminMessage.value = `已載入 ${products.length} 個商品、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核`
+    stationHeartbeats.value = stations
+    adminMessage.value = `已載入 ${products.length} 個商品、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -374,6 +395,26 @@ const loadAuditEvents = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '稽核紀錄讀取失敗'
   } finally {
     isAuditLoading.value = false
+  }
+}
+
+const loadStationHeartbeats = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isStationLoading.value = true
+  adminMessage.value = '讀取平板在線狀態中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    stationHeartbeats.value = await fetchAdminStations(adminPin.value.trim())
+    adminMessage.value = `已載入 ${stationHeartbeats.value.length} 台平板狀態`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
+  } finally {
+    isStationLoading.value = false
   }
 }
 
@@ -579,6 +620,10 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>權限角色</span>
         <strong>{{ roleCount }}</strong>
+      </article>
+      <article>
+        <span>在線平板</span>
+        <strong>{{ onlineStationCount }}</strong>
       </article>
       <article>
         <span>稽核紀錄</span>
@@ -885,6 +930,45 @@ const saveAccessControl = async (): Promise<void> => {
               </div>
             </article>
           </section>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'stations'" class="admin-tab-panel" aria-label="平板在線">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Stations</p>
+            <h2>平板在線</h2>
+            <span class="panel-note">檢查平板最後心跳與使用環境</span>
+          </div>
+          <button class="primary-button" type="button" :disabled="isStationLoading" @click="loadStationHeartbeats">
+            <RefreshCw :size="18" aria-hidden="true" />
+            {{ isStationLoading ? '讀取中' : '刷新平板' }}
+          </button>
+        </div>
+
+        <div class="admin-station-heartbeat-list">
+          <article v-for="station in stationHeartbeats" :key="station.stationId" class="admin-station-heartbeat-row">
+            <header class="admin-row-header">
+              <div class="admin-audit-primary">
+                <strong>{{ station.stationLabel || station.stationId }}</strong>
+                <span>{{ station.stationId }}</span>
+              </div>
+              <span class="status-pill" :class="stationStatusClass(station)">
+                {{ stationStatusLabel(station) }}
+              </span>
+            </header>
+
+            <div class="admin-audit-meta">
+              <span>最後 {{ formatAuditTime(station.lastSeenAt) }}</span>
+              <span>{{ station.platform || '未標記平台' }}</span>
+              <span>{{ station.appVersion || '未標記版本' }}</span>
+            </div>
+          </article>
+
+          <div v-if="stationHeartbeats.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無平板心跳紀錄</span>
+          </div>
         </div>
       </section>
 

@@ -37,6 +37,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
 - `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、退款、作廢、開班與關班，並由後台以 PIN 查詢。
+- `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
 
 ## 邊界
 
@@ -58,6 +59,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 操作稽核：`20260429142000_add_pos_audit_events.sql`
 - 退款狀態：`20260429143000_add_refunded_payment_status.sql`
 - 退款交易函式：`20260429143500_add_refund_pos_order_function.sql`
+- 平板心跳：`20260429144500_add_pos_station_heartbeats.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -76,12 +78,15 @@ SUPABASE_DB_PASSWORD=<database-password>
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
 - 後台稽核端點：`/functions/v1/pos-api/admin/audit-events`
+- 平板心跳端點：`/functions/v1/pos-api/station/heartbeat`
+- 後台平板端點：`/functions/v1/pos-api/admin/stations`
 
 ## 前端同步邊界
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；手動刷新才會重新載入商品與 runtime 出單設定。
+- POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。

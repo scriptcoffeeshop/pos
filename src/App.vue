@@ -108,6 +108,7 @@ const {
   sendPrinterHealthcheck,
   serviceMode,
   stationClaimLabel,
+  stationHeartbeatMessage,
   submitCounterOrder,
   togglingProductId,
   openRegisterSessionForStation,
@@ -726,7 +727,7 @@ onBeforeUnmount(() => {
         </span>
 
         <div v-if="activeView !== 'online'" class="topbar-status" aria-label="POS 狀態">
-          <span class="status-pill status-pill--neutral">
+          <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
             <LockKeyhole :size="18" aria-hidden="true" />
             {{ stationClaimLabel }}
           </span>
