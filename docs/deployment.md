@@ -33,6 +33,7 @@ POS 後端會使用另一個全新的 Supabase 專案，不沿用咖啡訂購專
 - `SUPABASE_PROJECT_REF`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `SUPABASE_URL` / `SUPABASE_ANON_KEY`（可選；Keep Supabase Alive 會優先讀這組 secrets，未設定時使用 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` variables）
 
 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 放 GitHub Secrets 或 `.env.supabase.local`。前端公開值使用 `.env.local` 與部署環境變數管理。
 
@@ -46,6 +47,15 @@ rtk npm run supabase:functions:deploy
 ```
 
 `main` 分支的 GitHub Actions 會在 verify 通過後自動執行 Supabase migration 與 `pos-api` Edge Function deploy。
+
+### Keep Supabase Alive
+
+`.github/workflows/keep-alive.yml` 會每 3 天執行一次，也可在 Actions 手動觸發。它會 ping `${SUPABASE_URL}/auth/v1/health`，沿用咖啡訂購專案的 non-fatal 設定檢查：若沒有 Supabase URL 或 anon key，workflow 會輸出 warning 並成功結束，避免因尚未回填 secrets 讓 Actions 長期報錯。
+
+設定來源順序：
+
+1. GitHub Secrets：`SUPABASE_URL`、`SUPABASE_ANON_KEY`
+2. GitHub Variables：`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`
 
 ## Android APK
 

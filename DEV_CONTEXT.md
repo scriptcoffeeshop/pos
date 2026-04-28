@@ -1,6 +1,6 @@
 # 開發交接紀錄
 
-更新日期：2026-04-28
+更新日期：2026-04-29
 
 ## 目前狀態
 
@@ -17,13 +17,14 @@
 - 後端決策：POS 使用獨立 Supabase 專案 `uuzwcmceotooocyrtnao`，不沿用咖啡訂購專案的資料庫。
 - 本機 env：`.env.local` 與 `.env.supabase.local` 已建立並被 `.gitignore` 保護，不提交真實值。
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
+- Keep Supabase Alive：已加入 `.github/workflows/keep-alive.yml`，沿用咖啡訂購專案語意，每 3 天或手動觸發 ping `/auth/v1/health`；缺少 Supabase URL 或 anon key 時只 warning 並跳過。
 - Pages 網域：`order.scriptcoffee.com.tw` 已綁定 GitHub Pages；2026-04-28 使用者回報 HTTPS 已完成。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
 - POS API 同步：商品、訂單與 runtime 出單機設定會從 `/products?channel=pos`、`/orders`、`/settings/runtime` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。
 - APK 測試：已加入 Capacitor Android 專案、`Android APK` workflow 與 Android `LanPrinter` TCP socket plugin；本機若未安裝 Node.js 22+、JDK / Android SDK，可先用 GitHub Actions artifact 下載 debug APK。
 - 列印計畫：`src/lib/printing.ts` 會依 `printer_settings` 的服務方式、品項分類、貼紙/收據模式與 copies 建立多筆 EZPL payload；`usePosSession()` 逐筆建立/回寫 print job，Android APK 逐筆送 TCP。
-- 本機驗證：2026-04-28 已跑 `rtk npm run ci-local` 通過；`rtk npm run pages:check` 在 Codex 沙盒內因 `dig` socket 與 GitHub API 網路限制無法二次驗證 HTTPS，需以一般終端、GitHub Pages UI 或 GitHub Actions 為準。
+- 本機驗證：2026-04-29 已跑 `rtk npm run ci-local` 通過；`rtk npm run pages:check` 在 Codex 沙盒內因 `dig` socket 與 GitHub API 網路限制無法二次驗證 HTTPS，需以一般終端、GitHub Pages UI 或 GitHub Actions 為準。
 
 ## 來源藍圖
 
