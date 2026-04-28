@@ -42,6 +42,11 @@ interface UpdateStatusInput {
   stationId?: string;
 }
 
+interface UpdatePaymentInput {
+  paymentStatus: PaymentStatus;
+  stationId?: string;
+}
+
 interface ClaimOrderInput {
   stationId?: string;
   force?: boolean;
@@ -697,6 +702,59 @@ api.patch("/orders/:id/status", async (c) => {
   return c.json({ order: savedOrder });
 });
 
+api.patch("/orders/:id/payment", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<UpdatePaymentInput>();
+  const stationId = sanitizeStationId(input.stationId);
+
+  if (!isPaymentStatus(input.paymentStatus)) {
+    return c.json({ error: "Invalid payment status" }, 400);
+  }
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const now = new Date();
+  const shouldFailOrder = input.paymentStatus === "failed" || input.paymentStatus === "expired";
+  const payload = shouldFailOrder
+    ? {
+      payment_status: input.paymentStatus,
+      status: "failed",
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    }
+    : {
+      payment_status: input.paymentStatus,
+      ...buildClaimPayload(stationId, now),
+    };
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update(payload)
+    .eq("id", orderId)
+    .neq("status", "served")
+    .or(buildLeaseAvailableFilter(stationId, now))
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  if (!data) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(data.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  return c.json({ order: savedOrder });
+});
+
 api.post("/print-jobs", async (c) => {
   const input = await c.req.json<PrintJobInput>();
   const stationId = sanitizeStationId(input.stationId);
@@ -1087,6 +1145,10 @@ const readProductChannel = (channel: string | undefined): ProductChannel => {
 const isPrintStatus = (status: unknown): status is PrintStatus =>
   status === "queued" || status === "printed" || status === "skipped" ||
   status === "failed";
+
+const isPaymentStatus = (status: unknown): status is PaymentStatus =>
+  status === "pending" || status === "authorized" || status === "paid" ||
+  status === "expired" || status === "failed";
 
 const requireAdmin = (c: Context): Response | null => {
   if (!adminPin) {

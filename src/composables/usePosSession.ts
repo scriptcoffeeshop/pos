@@ -20,6 +20,7 @@ import {
   releaseOrderClaim,
   updateProduct,
   updatePrintJobStatus,
+  updateOrderPaymentStatus as persistOrderPaymentStatus,
   updateOrderStatus as persistOrderStatus,
 } from '../lib/posApi'
 import type { ProductUpdateInput } from '../lib/posApi'
@@ -34,6 +35,7 @@ import type {
   MenuItem,
   OrderStatus,
   PaymentMethod,
+  PaymentStatus,
   PosOrder,
   PrintJob,
   PrinterSettings,
@@ -210,6 +212,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
   const claimingOrderId = ref<string | null>(null)
+  const updatingPaymentOrderId = ref<string | null>(null)
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
   const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
@@ -559,7 +562,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (isSubmitting.value || printingOrderId.value || claimingOrderId.value) {
+    if (isSubmitting.value || printingOrderId.value || claimingOrderId.value || updatingPaymentOrderId.value) {
       return
     }
 
@@ -666,6 +669,47 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } catch (error) {
       claimedOrder.status = previousStatus
       setBackendStatus('fallback', '本機模式', `訂單狀態同步失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const updatePaymentStatus = async (orderId: string, paymentStatus: PaymentStatus): Promise<void> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
+
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    const previousPaymentStatus = claimedOrder.paymentStatus
+    claimedOrder.paymentStatus = paymentStatus
+    updatingPaymentOrderId.value = orderId
+
+    if (!isPosApiConfigured || !claimedOrder.remoteId) {
+      updatingPaymentOrderId.value = null
+      return
+    }
+
+    try {
+      const persistedOrder = await persistOrderPaymentStatus(claimedOrder, paymentStatus)
+      replaceOrder(orderId, {
+        ...persistedOrder,
+        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : claimedOrder.lines,
+        printStatus: persistedOrder.printStatus === 'skipped' ? claimedOrder.printStatus : persistedOrder.printStatus,
+      })
+      setBackendStatus('connected', '收款已同步', `${orderId} 已更新為 ${paymentStatus}`)
+      void loadRegisterSession()
+    } catch (error) {
+      claimedOrder.paymentStatus = previousPaymentStatus
+      setBackendStatus('fallback', '收款失敗', `付款狀態同步失敗：${getErrorMessage(error)}`)
+    } finally {
+      updatingPaymentOrderId.value = null
     }
   }
 
@@ -1126,6 +1170,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationClaimId,
     stationClaimLabel,
     togglingProductId,
+    updatingPaymentOrderId,
     addItem,
     openRegisterSessionForStation,
     refreshBackendData: refreshPosData,
@@ -1133,6 +1178,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,
+    updatePaymentStatus,
     updateProductAvailability,
   }
 }

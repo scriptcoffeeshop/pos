@@ -56,6 +56,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
 - 訂單端點：`/functions/v1/pos-api/orders`
+- 付款狀態端點：`/functions/v1/pos-api/orders/:id/payment`
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
@@ -74,6 +75,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；手動刷新才會重新載入商品與 runtime 出單設定。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
+- 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。

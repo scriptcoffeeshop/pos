@@ -28,7 +28,7 @@ import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PosOrder, PrintJob, ServiceMode } from './types/pos'
+import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PaymentStatus, PosOrder, PrintJob, ServiceMode } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
 type QueueFilter = 'active' | 'ready' | 'all'
@@ -110,7 +110,9 @@ const {
   togglingProductId,
   openRegisterSessionForStation,
   updateOrderStatus,
+  updatePaymentStatus,
   updateProductAvailability,
+  updatingPaymentOrderId,
 } = usePosSession({ autoLoad: !isConsumerDomain })
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
@@ -476,6 +478,33 @@ const claimOrderAction = (order: PosOrder): void => {
 const claimActionDisabled = (order: PosOrder): boolean =>
   claimingOrderId.value === order.id ||
   (orderClaimedByOtherStation(order) && !orderClaimExpired(order, currentTime.value))
+
+const payableStatuses: PaymentStatus[] = ['pending', 'authorized']
+
+const paymentActionLabel = (order: PosOrder): string => {
+  if (updatingPaymentOrderId.value === order.id) {
+    return '收款中'
+  }
+
+  if (order.paymentStatus === 'pending') {
+    return '收款'
+  }
+
+  if (order.paymentStatus === 'authorized') {
+    return '入帳'
+  }
+
+  return ''
+}
+
+const paymentActionDisabled = (order: PosOrder): boolean =>
+  updatingPaymentOrderId.value === order.id ||
+  orderClaimedByOtherStation(order) ||
+  !payableStatuses.includes(order.paymentStatus)
+
+const confirmPaymentAction = (order: PosOrder): void => {
+  void updatePaymentStatus(order.id, 'paid')
+}
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof HTMLElement)) {
@@ -927,6 +956,16 @@ onBeforeUnmount(() => {
               </div>
               <div class="order-actions">
                 <button
+                  v-if="paymentActionLabel(order)"
+                  class="order-action--payment"
+                  type="button"
+                  :disabled="paymentActionDisabled(order)"
+                  @click="confirmPaymentAction(order)"
+                >
+                  <CreditCard :size="16" aria-hidden="true" />
+                  {{ paymentActionLabel(order) }}
+                </button>
+                <button
                   class="order-action--print"
                   type="button"
                   :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
@@ -1183,6 +1222,16 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
+            <button
+              v-if="paymentActionLabel(activeOrder)"
+              class="active-order-payment-button"
+              type="button"
+              :disabled="paymentActionDisabled(activeOrder)"
+              @click="confirmPaymentAction(activeOrder)"
+            >
+              <CreditCard :size="16" aria-hidden="true" />
+              {{ paymentActionLabel(activeOrder) }}
+            </button>
             <button
               class="active-order-print-button"
               type="button"
