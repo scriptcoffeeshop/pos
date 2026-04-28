@@ -1,4 +1,4 @@
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
@@ -45,6 +45,8 @@ import type {
 
 type CategoryFilter = 'all' | MenuCategory
 type BackendMode = 'syncing' | 'connected' | 'fallback'
+
+const queueSyncIntervalMs = 20_000
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -237,6 +239,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
+  let queueSyncTimer: number | null = null
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -321,6 +324,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     backendStatus.mode = mode
     backendStatus.label = label
     backendStatus.detail = detail
+  }
+
+  const applyRegisterSession = (session: RegisterSession | null): void => {
+    registerSession.value = session
+    registerMessage.value = session
+      ? `目前班別：${session.status === 'open' ? '營業中' : '已關班'}`
+      : '尚未開班'
   }
 
   const rememberRecentItem = (itemId: string): void => {
@@ -533,14 +543,41 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
       orderQueue.value = remoteOrders
-      registerSession.value = currentRegisterSession
-      registerMessage.value = currentRegisterSession
-        ? `目前班別：${currentRegisterSession.status === 'open' ? '營業中' : '已關班'}`
-        : '尚未開班'
+      applyRegisterSession(currentRegisterSession)
       nextSequence.value = nextSequenceFromOrders(remoteOrders)
       setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
     } catch (error) {
       setBackendStatus('fallback', '本機模式', `POS API 載入失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const refreshQueueState = async (quiet = false): Promise<void> => {
+    if (!isPosApiConfigured) {
+      if (!quiet) {
+        setBackendStatus('fallback', '本機模式', '尚未設定 Supabase URL 或 anon key')
+      }
+      return
+    }
+
+    if (isSubmitting.value || printingOrderId.value || claimingOrderId.value) {
+      return
+    }
+
+    if (!quiet) {
+      setBackendStatus('syncing', 'API 同步中', '正在更新訂單佇列')
+    }
+
+    try {
+      const [remoteOrders, currentRegisterSession] = await Promise.all([
+        fetchOrders(),
+        fetchCurrentRegisterSession(),
+      ])
+      orderQueue.value = remoteOrders
+      applyRegisterSession(currentRegisterSession)
+      nextSequence.value = nextSequenceFromOrders(remoteOrders)
+      setBackendStatus('connected', quiet ? '自動同步完成' : 'API 已同步', `已更新 ${remoteOrders.length} 張訂單`)
+    } catch (error) {
+      setBackendStatus('fallback', '同步失敗', `訂單佇列同步失敗：${getErrorMessage(error)}`)
     }
   }
 
@@ -798,7 +835,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     try {
-      registerSession.value = await fetchCurrentRegisterSession()
+      applyRegisterSession(await fetchCurrentRegisterSession())
       registerMessage.value = registerSession.value
         ? `已載入${registerSession.value.status === 'open' ? '營業中' : '已關班'}班別`
         : '尚未開班'
@@ -832,8 +869,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '開班中'
 
     try {
-      registerSession.value = await openRegisterSession(adminPin, openingCash, note)
-      registerMessage.value = `已開班，預期現金 ${registerSession.value.expectedCash}`
+      const session = await openRegisterSession(adminPin, openingCash, note)
+      applyRegisterSession(session)
+      registerMessage.value = `已開班，預期現金 ${session.expectedCash}`
       setBackendStatus('connected', '班別已開啟', `${stationClaimLabel} 已開班`)
     } catch (error) {
       registerMessage.value = `開班失敗：${getErrorMessage(error)}`
@@ -868,8 +906,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '關班結算中'
 
     try {
-      registerSession.value = await closeRegisterSession(adminPin, closingCash, note)
-      const variance = closingCash - registerSession.value.expectedCash
+      const session = await closeRegisterSession(adminPin, closingCash, note)
+      applyRegisterSession(session)
+      const variance = closingCash - session.expectedCash
       registerMessage.value = `已關班，現金差額 ${variance}`
       setBackendStatus('connected', '班別已關閉', `${stationClaimLabel} 已完成關班`)
     } catch (error) {
@@ -1017,11 +1056,33 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     await tryNativeLanPrint(lastPrintPreview.value)
   }
 
+  const handleVisibilitySync = (): void => {
+    if (globalThis.document?.visibilityState === 'visible') {
+      void refreshQueueState(true)
+    }
+  }
+
   onMounted(() => {
     if (autoLoad) {
       void refreshBackendData()
+      queueSyncTimer = globalThis.setInterval(() => {
+        void refreshQueueState(true)
+      }, queueSyncIntervalMs)
+      globalThis.document?.addEventListener('visibilitychange', handleVisibilitySync)
     }
   })
+
+  onBeforeUnmount(() => {
+    if (queueSyncTimer !== null) {
+      globalThis.clearInterval(queueSyncTimer)
+    }
+
+    globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
+  })
+
+  const refreshPosData = async (): Promise<void> => {
+    await refreshBackendData()
+  }
 
   return {
     appendCustomerNote,
@@ -1067,7 +1128,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     togglingProductId,
     addItem,
     openRegisterSessionForStation,
-    refreshBackendData,
+    refreshBackendData: refreshPosData,
+    refreshQueueState,
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,

@@ -13,6 +13,7 @@
 - 所有互動都由 Vue component event 與 composable 管理。
 - 禁止新增 inline event handler、`data-action` bridge、`window.*` API 與手動 `innerHTML` 資料渲染。
 - Web 內部工作區可切換 POS / 線上點餐 / 後台；APK 只保留前台點餐、線上訂單接單、立即出單與商品暫停供應等門市操作。完整商品菜單、出單規則與權限管理仍在 Web 後台，寫入必須經 `POS_ADMIN_PIN` 保護的 Edge Function。
+- POS 工作台會每 20 秒短輪詢訂單佇列與收銀班別；平板回到前景時會立即補同步一次，避免多平板 claim lease 釋放或逾時後仍顯示舊狀態。
 
 ## 後端
 
@@ -36,8 +37,9 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 1. 櫃台或線上來源建立訂單。
 2. POS 訂單佇列即時顯示新訂單。
-3. POS 平板先對訂單建立 3 分鐘 claim lease；同一張單若被其他平板持有且未逾時，前端會停用出單/狀態按鈕，後端也會拒絕狀態與 print job 寫入。
-4. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、貼紙/收據模式與份數建立列印計畫。
-5. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
-6. 列印成功或失敗後回寫列印任務狀態。
-7. POS 依目前 `register_sessions` 彙整開班後訂單，提供預期現金、現金銷售、非現金、待收款、單數與現金差額，關班時把彙總值寫回 Supabase。
+3. POS 平板每 20 秒同步訂單佇列與班別摘要；操作中若正在建單、出單或鎖單，會略過該輪背景同步。
+4. POS 平板先對訂單建立 3 分鐘 claim lease；同一張單若被其他平板持有且未逾時，前端會停用出單/狀態按鈕，後端也會拒絕狀態與 print job 寫入。
+5. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、貼紙/收據模式與份數建立列印計畫。
+6. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
+7. 列印成功或失敗後回寫列印任務狀態。
+8. POS 依目前 `register_sessions` 彙整開班後訂單，提供預期現金、現金銷售、非現金、待收款、單數與現金差額，關班時把彙總值寫回 Supabase。

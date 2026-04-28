@@ -20,7 +20,7 @@
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - Pages 網域：`order.scriptcoffee.com.tw` 已綁定 GitHub Pages；2026-04-28 使用者回報 HTTPS 已完成。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
-- POS API 同步：商品、訂單、runtime 出單機設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，平板接單先走 `POST /orders/:id/claim`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`。
+- POS API 同步：商品、訂單、runtime 出單機設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；消費者線上菜單讀 `/products?channel=online`；櫃台與線上建單都走 `POST /orders`，平板接單先走 `POST /orders/:id/claim`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`。POS 啟動後每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次。
 - 商品庫存欄位：`products.inventory_count`、`low_stock_threshold`、`sold_out_until` 由 `20260429110000_add_product_inventory_controls.sql` 新增；前端仍保留 `is_available` 作為人工上架/停售開關，庫存為 0 或暫停到期前會在 POS 端視為不可點。
 - 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 會在狀態更新與 print job 建立前檢查 lease，已交付/異常單會釋放 lease。
 - 收銀班別欄位：`register_sessions` 由 `20260429133000_add_register_sessions.sql` 新增；`pos-api` 提供 `/register/current`、`/register/open`、`/register/close`，開班/關班寫入需 `POS_ADMIN_PIN`。
@@ -54,5 +54,5 @@
 ## 下一步
 
 1. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label、櫃台訂單列印與關班流程實測。
-2. 多平板鎖定後續：接 Supabase realtime 或短輪詢，讓另一台平板釋放/逾時後不用手動重新整理也能立刻更新佇列狀態。
+2. 多平板鎖定後續：短輪詢已接第一版；若需要更低延遲，再接 Supabase realtime 或平板在線心跳。
 3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook 與付款逾期狀態測試。

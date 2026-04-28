@@ -71,6 +71,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
+- POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；手動刷新才會重新載入商品與 runtime 出單設定。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
