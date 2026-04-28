@@ -8,7 +8,7 @@ type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
 type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided";
-type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed";
+type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | "refunded";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
@@ -48,6 +48,11 @@ interface UpdatePaymentInput {
 }
 
 interface VoidOrderInput {
+  stationId?: string;
+  note?: string;
+}
+
+interface RefundOrderInput {
   stationId?: string;
   note?: string;
 }
@@ -934,6 +939,55 @@ api.post("/orders/:id/void", async (c) => {
     stationId,
     metadata: {
       orderNumber: savedOrder.order_number,
+      previousStatus: currentOrder.status,
+      previousPaymentStatus: currentOrder.payment_status,
+    },
+  });
+
+  return c.json({ order: savedOrder });
+});
+
+api.post("/orders/:id/refund", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const orderId = c.req.param("id");
+  const input: RefundOrderInput = await c.req.json<RefundOrderInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const { data: currentOrder, error: currentOrderError } = await loadOrder(orderId);
+  if (currentOrderError) {
+    return c.json({ error: currentOrderError.message }, 404);
+  }
+
+  const { error } = await supabase.rpc("refund_pos_order", {
+    p_order_id: orderId,
+    p_station_id: stationId,
+    p_note: sanitizeText(input.note, "").slice(0, 240),
+  });
+
+  if (error) {
+    return c.json({ error: error.message }, 409);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(orderId);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.refund",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      refundAmount: savedOrder.subtotal,
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
     },

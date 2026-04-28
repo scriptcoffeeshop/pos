@@ -100,6 +100,8 @@ const {
   refreshBackendData,
   registerMessage,
   registerSession,
+  refundingOrderId,
+  refundOrderForStation,
   releaseOrderClaimForStation,
   searchTerm,
   selectedCategory,
@@ -167,6 +169,7 @@ const paymentStatusLabels = {
   paid: '已付款',
   expired: '逾期',
   failed: '失敗',
+  refunded: '已退款',
 } as const
 
 const statusLabels: Record<OrderStatus, string> = {
@@ -524,12 +527,25 @@ const orderCanBeVoided = (order: PosOrder): boolean =>
   !['served', 'failed', 'voided'].includes(order.status) &&
   !orderClaimedByOtherStation(order)
 
+const orderCanBeRefunded = (order: PosOrder): boolean =>
+  ['authorized', 'paid'].includes(order.paymentStatus) &&
+  !['failed', 'voided'].includes(order.status) &&
+  !orderClaimedByOtherStation(order)
+
 const voidActionLabel = (order: PosOrder): string => (
   voidingOrderId.value === order.id ? '作廢中' : '作廢'
 )
 
+const refundActionLabel = (order: PosOrder): string => (
+  refundingOrderId.value === order.id ? '退款中' : '退款'
+)
+
 const voidOrderAction = (order: PosOrder): void => {
   void voidOrderForStation(stationPin.value.trim(), order.id)
+}
+
+const refundOrderAction = (order: PosOrder): void => {
+  void refundOrderForStation(stationPin.value.trim(), order.id)
 }
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -1021,6 +1037,16 @@ onBeforeUnmount(() => {
                   {{ voidActionLabel(order) }}
                 </button>
                 <button
+                  v-if="orderCanBeRefunded(order)"
+                  class="order-action--refund"
+                  type="button"
+                  :disabled="refundingOrderId === order.id"
+                  @click="refundOrderAction(order)"
+                >
+                  <WalletCards :size="16" aria-hidden="true" />
+                  {{ refundActionLabel(order) }}
+                </button>
+                <button
                   v-for="action in statusActions"
                   :key="action.value"
                   :class="{ 'order-action--active': order.status === action.value }"
@@ -1297,6 +1323,16 @@ onBeforeUnmount(() => {
             >
               <Trash2 :size="16" aria-hidden="true" />
               {{ voidActionLabel(activeOrder) }}
+            </button>
+            <button
+              v-if="orderCanBeRefunded(activeOrder)"
+              class="active-order-refund-button"
+              type="button"
+              :disabled="refundingOrderId === activeOrder.id"
+              @click="refundOrderAction(activeOrder)"
+            >
+              <WalletCards :size="16" aria-hidden="true" />
+              {{ refundActionLabel(activeOrder) }}
             </button>
             <button
               class="active-order-print-button"

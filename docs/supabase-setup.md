@@ -33,10 +33,10 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `orders`：訂單主檔、來源、服務方式、付款狀態、製作狀態。
 - `order_items`：訂單品項、數量、單價、客製選項。
 - `members`：LINE Login profile 與會員錢包摘要。
-- `transaction_ledger`：儲值、扣款、退款與調帳流水。
+- `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、作廢、開班與關班，並由後台以 PIN 查詢。
+- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、退款、作廢、開班與關班，並由後台以 PIN 查詢。
 
 ## 邊界
 
@@ -56,12 +56,15 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
 - 關帳異常計數：`20260429140500_add_register_closeout_exception_counts.sql`
 - 操作稽核：`20260429142000_add_pos_audit_events.sql`
+- 退款狀態：`20260429143000_add_refunded_payment_status.sql`
+- 退款交易函式：`20260429143500_add_refund_pos_order_function.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
 - 訂單端點：`/functions/v1/pos-api/orders`
 - 付款狀態端點：`/functions/v1/pos-api/orders/:id/payment`
 - 未收款作廢端點：`/functions/v1/pos-api/orders/:id/void`
+- 已收款退款端點：`/functions/v1/pos-api/orders/:id/refund`
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
@@ -82,7 +85,8 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
-- 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢，已收款訂單需等待退款流程。
+- 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。
+- 已收款退款會走 `POST /orders/:id/refund`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=authorized|paid`，後端以 `refund_pos_order()` 在同一個 transaction 更新訂單、寫入 `transaction_ledger`，並回傳 `payment_status=refunded`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。

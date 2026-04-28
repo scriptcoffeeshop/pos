@@ -3,7 +3,7 @@ export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 'voided'
-export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed'
+export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 export type RegisterSessionStatus = 'open' | 'closed'
 

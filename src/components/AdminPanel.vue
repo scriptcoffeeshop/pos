@@ -97,6 +97,7 @@ const auditActionLabels: Record<string, string> = {
   'order.status.update': '訂單狀態',
   'order.payment.update': '收款狀態',
   'order.void': '訂單作廢',
+  'order.refund': '訂單退款',
 }
 
 const auditTimeFormatter = new Intl.DateTimeFormat('zh-TW', {
@@ -320,6 +321,7 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'failedPaymentCount') ? `付款異常 ${auditMetadataLabel(event, 'failedPaymentCount')}` : null,
     auditMetadataLabel(event, 'failedPrintCount') ? `列印失敗 ${auditMetadataLabel(event, 'failedPrintCount')}` : null,
     auditMetadataLabel(event, 'voidedOrderCount') ? `作廢 ${auditMetadataLabel(event, 'voidedOrderCount')}` : null,
+    auditMoneyLabel(event, 'refundAmount') ? `退款 ${auditMoneyLabel(event, 'refundAmount')}` : null,
     auditMetadataLabel(event, 'force') === '是' ? '強制鎖單' : null,
   ].filter(Boolean)
 

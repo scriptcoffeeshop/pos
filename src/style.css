@@ -1095,6 +1095,17 @@ h3 {
   color: var(--danger);
 }
 
+.order-action--refund {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  gap: 6px;
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
 .order-action--claim {
   display: inline-flex;
   align-items: center;
@@ -1467,6 +1478,13 @@ h3 {
   border-color: #e4b1aa;
   background: var(--surface-raised);
   color: var(--danger);
+}
+
+.active-order-refund-button {
+  width: 100%;
+  border-color: #dfc58e;
+  background: var(--surface-raised);
+  color: var(--amber);
 }
 
 .consumer-shell {
