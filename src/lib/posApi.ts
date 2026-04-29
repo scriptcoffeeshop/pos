@@ -8,6 +8,7 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosAuditEvent,
+  DailySalesReport,
   PosMember,
   PosOrder,
   PosStationHeartbeat,
@@ -194,6 +195,10 @@ interface AdminSettingsResponse {
 
 interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
+}
+
+interface DailyReportResponse {
+  report: DailySalesReport
 }
 
 export interface ProductUpdateInput {
@@ -550,6 +555,21 @@ export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = 
   })
 
   return data.members.map(normalizeMember)
+}
+
+export const fetchAdminDailyReport = async (adminPin: string, date: string): Promise<DailySalesReport> => {
+  const params = new URLSearchParams()
+  if (date.trim()) {
+    params.set('date', date.trim())
+  }
+
+  const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`, {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return data.report
 }
 
 export const createAdminMember = async (

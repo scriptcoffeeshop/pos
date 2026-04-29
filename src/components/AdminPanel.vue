@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  BarChart3,
   Eye,
   EyeOff,
   KeyRound,
@@ -22,6 +23,7 @@ import {
   adjustMemberWallet,
   createAdminMember,
   fetchAdminAuditEvents,
+  fetchAdminDailyReport,
   fetchAdminMembers,
   fetchAdminProducts,
   fetchAdminSettings,
@@ -33,6 +35,7 @@ import {
 import type {
   AccessControlSettings,
   AdminPermission,
+  DailySalesReport,
   MenuCategory,
   MenuItem,
   PrinterSettings,
@@ -62,7 +65,7 @@ interface WalletAdjustmentDraft {
   note: string
 }
 
-type AdminTab = 'products' | 'members' | 'printing' | 'access' | 'audit' | 'stations'
+type AdminTab = 'products' | 'members' | 'reports' | 'printing' | 'access' | 'audit' | 'stations'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -71,6 +74,7 @@ const emit = defineEmits<{
 const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'members', label: '會員錢包' },
+  { value: 'reports', label: '營運報表' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
   { value: 'stations', label: '平板' },
@@ -195,6 +199,11 @@ const cloneAccessControl = (settings: AccessControlSettings): AccessControlSetti
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
 })
 
+const toDateInput = (date = new Date()): string => {
+  const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
+  return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 10)
+}
+
 const adminPin = ref(readStoredPin())
 const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
@@ -209,6 +218,8 @@ const newMember = ref<MemberDraft>({
   note: '',
 })
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
+const reportDate = ref(toDateInput())
+const dailyReport = ref<DailySalesReport | null>(null)
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const auditEvents = ref<PosAuditEvent[]>([])
@@ -218,6 +229,7 @@ const auditActionFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
 const isMemberLoading = ref(false)
+const isReportLoading = ref(false)
 const isStationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
@@ -239,6 +251,14 @@ const roleCount = computed(() => accessControl.value.roles.length)
 const auditEventCount = computed(() => auditEvents.value.length)
 const memberCount = computed(() => members.value.length)
 const walletBalanceTotal = computed(() => members.value.reduce((total, member) => total + member.walletBalance, 0))
+const reportPeakHour = computed(() => {
+  const report = dailyReport.value
+  if (!report) {
+    return null
+  }
+
+  return [...report.hourly].sort((a, b) => b.total - a.total || b.count - a.count)[0] ?? null
+})
 const onlineStationCount = computed(() =>
   stationHeartbeats.value.filter((station) => isStationOnline(station.lastSeenAt)).length,
 )
@@ -387,6 +407,32 @@ const stationStatusLabel = (station: PosStationHeartbeat): string =>
 
 const stationStatusClass = (station: PosStationHeartbeat): string =>
   isStationOnline(station.lastSeenAt) ? 'status-pill--success' : 'status-pill--danger'
+
+const reportBreakdownLabel = (key: string): string => {
+  const labels: Record<string, string> = {
+    cash: '現金',
+    card: '刷卡',
+    'line-pay': 'LINE Pay',
+    jkopay: '街口',
+    transfer: '轉帳',
+    counter: '櫃台',
+    online: '線上',
+    qr: '掃碼',
+    'dine-in': '內用',
+    takeout: '外帶',
+    delivery: '外送',
+    new: '新單',
+    preparing: '製作中',
+    ready: '可交付',
+    served: '已交付',
+    failed: '異常',
+    voided: '已作廢',
+  }
+
+  return labels[key] ?? key
+}
+
+const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
 
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
@@ -543,20 +589,22 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    const [products, memberRows, settings, events, stations] = await Promise.all([
+    const [products, memberRows, report, settings, events, stations] = await Promise.all([
       fetchAdminProducts(adminPin.value.trim()),
       fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value),
+      fetchAdminDailyReport(adminPin.value.trim(), reportDate.value),
       fetchAdminSettings(adminPin.value.trim()),
       fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
       fetchAdminStations(adminPin.value.trim()),
     ])
     productDrafts.value = products.map(toDraft)
     members.value = memberRows
+    dailyReport.value = report
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     auditEvents.value = events
     stationHeartbeats.value = stations
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -621,6 +669,26 @@ const loadMembers = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '會員錢包讀取失敗'
   } finally {
     isMemberLoading.value = false
+  }
+}
+
+const loadDailyReport = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isReportLoading.value = true
+  adminMessage.value = '讀取營運日報中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    dailyReport.value = await fetchAdminDailyReport(adminPin.value.trim(), reportDate.value)
+    adminMessage.value = `已載入 ${dailyReport.value.date} 日報，營收 ${formatCurrency(dailyReport.value.collectedTotal)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
+  } finally {
+    isReportLoading.value = false
   }
 }
 
@@ -886,6 +954,10 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>錢包餘額</span>
         <strong>{{ formatCurrency(walletBalanceTotal) }}</strong>
+      </article>
+      <article>
+        <span>日報營收</span>
+        <strong>{{ dailyReport ? formatCurrency(dailyReport.collectedTotal) : '$0' }}</strong>
       </article>
       <article>
         <span>出單規則</span>
@@ -1171,6 +1243,138 @@ const saveAccessControl = async (): Promise<void> => {
             <Search :size="24" aria-hidden="true" />
             <span>尚無符合條件的會員</span>
           </div>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'reports'" class="admin-tab-panel" aria-label="營運報表">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Reports</p>
+            <h2>營運日報</h2>
+            <span class="panel-note">依台灣營業日統計營收、付款方式、來源與熱門商品</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              日期
+              <input v-model="reportDate" type="date" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isReportLoading" @click="loadDailyReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isReportLoading ? '讀取中' : '刷新日報' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="dailyReport" class="admin-report-grid">
+          <article class="admin-report-card admin-report-card--primary">
+            <span>實收營收</span>
+            <strong>{{ formatCurrency(dailyReport.collectedTotal) }}</strong>
+            <small>{{ dailyReport.collectedOrders }} 張已收 · 平均 {{ formatCurrency(dailyReport.averageTicket) }}</small>
+          </article>
+          <article class="admin-report-card">
+            <span>待收款</span>
+            <strong>{{ formatCurrency(dailyReport.pendingTotal) }}</strong>
+            <small>{{ dailyReport.openOrderCount }} 張未交付</small>
+          </article>
+          <article class="admin-report-card">
+            <span>退款</span>
+            <strong>{{ formatCurrency(dailyReport.refundTotal) }}</strong>
+            <small>{{ dailyReport.voidedOrderCount }} 張作廢</small>
+          </article>
+          <article class="admin-report-card">
+            <span>異常</span>
+            <strong>{{ dailyReport.failedPaymentCount + dailyReport.failedPrintCount }}</strong>
+            <small>付款 {{ dailyReport.failedPaymentCount }} · 列印 {{ dailyReport.failedPrintCount }}</small>
+          </article>
+          <article class="admin-report-card">
+            <span>尖峰時段</span>
+            <strong>{{ reportPeakHour ? reportHourLabel(reportPeakHour.hour) : '--:--' }}</strong>
+            <small>{{ reportPeakHour ? `${reportPeakHour.count} 張 · ${formatCurrency(reportPeakHour.total)}` : '尚無資料' }}</small>
+          </article>
+        </div>
+
+        <div v-if="dailyReport" class="admin-section-grid admin-report-sections">
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Payment</p>
+                <h3>付款方式</h3>
+              </div>
+              <BarChart3 :size="22" aria-hidden="true" />
+            </div>
+            <article v-for="row in dailyReport.byPaymentMethod" :key="row.key" class="admin-report-row">
+              <span>{{ reportBreakdownLabel(row.key) }}</span>
+              <strong>{{ formatCurrency(row.total) }}</strong>
+              <small>{{ row.count }} 張</small>
+            </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Channel</p>
+                <h3>來源與服務</h3>
+              </div>
+              <BarChart3 :size="22" aria-hidden="true" />
+            </div>
+            <article v-for="row in dailyReport.bySource" :key="row.key" class="admin-report-row">
+              <span>{{ reportBreakdownLabel(row.key) }}</span>
+              <strong>{{ formatCurrency(row.total) }}</strong>
+              <small>{{ row.count }} 張</small>
+            </article>
+            <article v-for="row in dailyReport.byServiceMode" :key="`mode-${row.key}`" class="admin-report-row">
+              <span>{{ reportBreakdownLabel(row.key) }}</span>
+              <strong>{{ formatCurrency(row.total) }}</strong>
+              <small>{{ row.count }} 張</small>
+            </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Products</p>
+                <h3>熱門商品</h3>
+              </div>
+              <BarChart3 :size="22" aria-hidden="true" />
+            </div>
+            <article v-for="product in dailyReport.topProducts" :key="product.sku" class="admin-report-row">
+              <span>{{ product.name }}</span>
+              <strong>{{ formatCurrency(product.total) }}</strong>
+              <small>{{ product.quantity }} 件</small>
+            </article>
+            <div v-if="dailyReport.topProducts.length === 0" class="empty-state">
+              <Search :size="24" aria-hidden="true" />
+              <span>尚無已收款商品</span>
+            </div>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Hourly</p>
+                <h3>時段分布</h3>
+              </div>
+              <BarChart3 :size="22" aria-hidden="true" />
+            </div>
+            <article
+              v-for="row in dailyReport.hourly.filter((entry) => entry.count > 0)"
+              :key="row.hour"
+              class="admin-report-row"
+            >
+              <span>{{ reportHourLabel(row.hour) }}</span>
+              <strong>{{ formatCurrency(row.total) }}</strong>
+              <small>{{ row.count }} 張</small>
+            </article>
+            <div v-if="dailyReport.hourly.every((entry) => entry.count === 0)" class="empty-state">
+              <Search :size="24" aria-hidden="true" />
+              <span>當日尚無訂單</span>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="!dailyReport" class="empty-state">
+          <BarChart3 :size="24" aria-hidden="true" />
+          <span>載入後台後會顯示日報</span>
         </div>
       </section>
 

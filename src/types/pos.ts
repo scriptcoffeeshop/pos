@@ -183,6 +183,47 @@ export interface PosMember {
   ledger: TransactionLedgerEntry[]
 }
 
+export interface ReportBreakdownRow {
+  key: string
+  count: number
+  total: number
+}
+
+export interface TopProductReportRow {
+  sku: string
+  name: string
+  quantity: number
+  total: number
+}
+
+export interface HourlyReportRow {
+  hour: number
+  count: number
+  total: number
+}
+
+export interface DailySalesReport {
+  date: string
+  rangeStart: string
+  rangeEnd: string
+  totalOrders: number
+  collectedOrders: number
+  collectedTotal: number
+  pendingTotal: number
+  refundTotal: number
+  averageTicket: number
+  openOrderCount: number
+  failedPaymentCount: number
+  failedPrintCount: number
+  voidedOrderCount: number
+  byPaymentMethod: ReportBreakdownRow[]
+  bySource: ReportBreakdownRow[]
+  byServiceMode: ReportBreakdownRow[]
+  byStatus: ReportBreakdownRow[]
+  hourly: HourlyReportRow[]
+  topProducts: TopProductReportRow[]
+}
+
 export interface PosAuditEvent {
   id: string
   action: string

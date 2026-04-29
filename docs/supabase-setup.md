@@ -79,6 +79,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
 - 後台會員端點：`/functions/v1/pos-api/admin/members`
 - 後台錢包調整端點：`/functions/v1/pos-api/admin/members/:id/wallet-adjustments`
+- 後台營運日報端點：`/functions/v1/pos-api/admin/reports/daily`
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
 - 後台稽核端點：`/functions/v1/pos-api/admin/audit-events`
@@ -101,6 +102,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`，需 `X-POS-ADMIN-PIN`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
+- 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，需 `X-POS-ADMIN-PIN`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 - 後台稽核讀取走 `GET /admin/audit-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆。
 

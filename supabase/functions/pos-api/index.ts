@@ -73,6 +73,25 @@ interface WalletAdjustmentInput {
   stationId?: string;
 }
 
+interface ReportBreakdownRow {
+  key: string;
+  count: number;
+  total: number;
+}
+
+interface HourlyReportRow {
+  hour: number;
+  count: number;
+  total: number;
+}
+
+interface TopProductReportRow {
+  sku: string;
+  name: string;
+  quantity: number;
+  total: number;
+}
+
 interface StationHeartbeatInput {
   stationId?: string;
   stationLabel?: string;
@@ -213,6 +232,7 @@ const stationHeartbeatSelect =
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 const defaultPaymentExpiryMinutes = 20;
+const reportTimezoneOffsetMinutes = 8 * 60;
 const paymentExpiryMinutes = (() => {
   const value = Number(Deno.env.get("POS_PAYMENT_EXPIRY_MINUTES") ?? defaultPaymentExpiryMinutes);
   if (!Number.isFinite(value) || value <= 0) {
@@ -799,6 +819,33 @@ api.get("/admin/members", async (c) => {
       ledger: ledgerByMember.get(member.id) ?? [],
     })),
   });
+});
+
+api.get("/admin/reports/daily", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const range = parseReportDate(c.req.query("date"));
+  if (!range) {
+    return c.json({ error: "date must use YYYY-MM-DD" }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, subtotal, payment_method, payment_status, status, created_at, order_items(product_sku, name, quantity, line_total), print_jobs(status)",
+    )
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString())
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ report: buildDailyReport(range, (data ?? []) as DailyReportOrderRow[]) });
 });
 
 api.post("/admin/members", async (c) => {
@@ -1517,6 +1564,22 @@ interface RegisterOrderSummaryRow {
   print_jobs?: Array<{ status: PrintStatus }>;
 }
 
+interface DailyReportOrderItemRow {
+  product_sku: string;
+  name: string;
+  quantity: number;
+  line_total: number;
+}
+
+interface DailyReportOrderRow extends RegisterOrderSummaryRow {
+  id: string;
+  order_number: string;
+  source: OrderSource;
+  service_mode: ServiceMode;
+  created_at: string;
+  order_items?: DailyReportOrderItemRow[];
+}
+
 const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
 
 const loadOpenRegisterSession = async (): Promise<{
@@ -1661,6 +1724,166 @@ const summarizeRegisterOrders = async (
   return {
     ...summary,
     expected_cash: openingCash + summary.cash_sales,
+  };
+};
+
+const parseReportDate = (dateInput: string | undefined): {
+  date: string;
+  start: Date;
+  end: Date;
+} | null => {
+  const now = new Date(Date.now() + reportTimezoneOffsetMinutes * 60_000);
+  const defaultDate = now.toISOString().slice(0, 10);
+  const date = dateInput?.trim() || defaultDate;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) {
+    return null;
+  }
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const validationDate = new Date(Date.UTC(year, month - 1, day));
+  const startTime = Date.UTC(year, month - 1, day) - reportTimezoneOffsetMinutes * 60_000;
+  const start = new Date(startTime);
+  const end = new Date(startTime + 24 * 60 * 60_000);
+
+  if (
+    validationDate.getUTCFullYear() !== year ||
+    validationDate.getUTCMonth() !== month - 1 ||
+    validationDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return { date, start, end };
+};
+
+const emptyBreakdown = (key: string): ReportBreakdownRow => ({
+  key,
+  count: 0,
+  total: 0,
+});
+
+const addBreakdown = (
+  map: Map<string, ReportBreakdownRow>,
+  key: string,
+  amount: number,
+): void => {
+  const row = map.get(key) ?? emptyBreakdown(key);
+  row.count += 1;
+  row.total += amount;
+  map.set(key, row);
+};
+
+const buildDailyReport = (
+  range: { date: string; start: Date; end: Date },
+  rows: DailyReportOrderRow[],
+) => {
+  const paymentMap = new Map<string, ReportBreakdownRow>();
+  const sourceMap = new Map<string, ReportBreakdownRow>();
+  const serviceModeMap = new Map<string, ReportBreakdownRow>();
+  const statusMap = new Map<string, ReportBreakdownRow>();
+  const productMap = new Map<string, TopProductReportRow>();
+  const hourly: HourlyReportRow[] = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    count: 0,
+    total: 0,
+  }));
+
+  let collectedOrders = 0;
+  let collectedTotal = 0;
+  let pendingTotal = 0;
+  let refundTotal = 0;
+  let openOrderCount = 0;
+  let failedPaymentCount = 0;
+  let failedPrintCount = 0;
+  let voidedOrderCount = 0;
+
+  for (const order of rows) {
+    const subtotal = Math.max(Number(order.subtotal) || 0, 0);
+    const isVoided = order.status === "voided";
+    const isFailed = order.status === "failed";
+    const isCollected = !isVoided && !isFailed && collectedPaymentStatuses.has(order.payment_status);
+    const saleAmount = isCollected ? subtotal : 0;
+    const reportHour = new Date(
+      new Date(order.created_at).getTime() + reportTimezoneOffsetMinutes * 60_000,
+    ).getUTCHours();
+
+    addBreakdown(paymentMap, order.payment_method, saleAmount);
+    addBreakdown(sourceMap, order.source, saleAmount);
+    addBreakdown(serviceModeMap, order.service_mode, saleAmount);
+    addBreakdown(statusMap, order.status, saleAmount);
+
+    hourly[reportHour].count += 1;
+    hourly[reportHour].total += saleAmount;
+
+    if (isCollected) {
+      collectedOrders += 1;
+      collectedTotal += subtotal;
+
+      for (const item of order.order_items ?? []) {
+        const key = item.product_sku || item.name;
+        const row = productMap.get(key) ?? {
+          sku: item.product_sku,
+          name: item.name,
+          quantity: 0,
+          total: 0,
+        };
+        row.quantity += Math.max(Number(item.quantity) || 0, 0);
+        row.total += Math.max(Number(item.line_total) || 0, 0);
+        productMap.set(key, row);
+      }
+    }
+
+    if (!isVoided && !isFailed && order.payment_status === "pending") {
+      pendingTotal += subtotal;
+    }
+
+    if (!isVoided && order.status !== "served" && !isFailed) {
+      openOrderCount += 1;
+    }
+
+    if (!isVoided && (order.payment_status === "failed" || order.payment_status === "expired")) {
+      failedPaymentCount += 1;
+    }
+
+    if (order.payment_status === "refunded") {
+      refundTotal += subtotal;
+    }
+
+    if (order.print_jobs?.some((printJob) => printJob.status === "failed")) {
+      failedPrintCount += 1;
+    }
+
+    if (isVoided) {
+      voidedOrderCount += 1;
+    }
+  }
+
+  return {
+    date: range.date,
+    rangeStart: range.start.toISOString(),
+    rangeEnd: range.end.toISOString(),
+    totalOrders: rows.length,
+    collectedOrders,
+    collectedTotal,
+    pendingTotal,
+    refundTotal,
+    averageTicket: collectedOrders > 0 ? Math.round(collectedTotal / collectedOrders) : 0,
+    openOrderCount,
+    failedPaymentCount,
+    failedPrintCount,
+    voidedOrderCount,
+    byPaymentMethod: Array.from(paymentMap.values()).sort((a, b) => b.total - a.total || b.count - a.count),
+    bySource: Array.from(sourceMap.values()).sort((a, b) => b.total - a.total || b.count - a.count),
+    byServiceMode: Array.from(serviceModeMap.values()).sort((a, b) => b.total - a.total || b.count - a.count),
+    byStatus: Array.from(statusMap.values()).sort((a, b) => b.count - a.count || b.total - a.total),
+    hourly,
+    topProducts: Array.from(productMap.values())
+      .sort((a, b) => b.total - a.total || b.quantity - a.quantity)
+      .slice(0, 8),
   };
 };
 

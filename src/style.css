@@ -2170,6 +2170,72 @@ h3 {
   grid-template-columns: 140px minmax(220px, 1fr) auto;
 }
 
+.admin-report-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-report-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-report-card--primary {
+  border-color: #a8cbc4;
+  background: var(--primary-soft);
+}
+
+.admin-report-card span,
+.admin-report-card small,
+.admin-report-row span,
+.admin-report-row small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-report-card strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-report-sections {
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+}
+
+.admin-report-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-report-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-report-row strong {
+  color: var(--primary-dark);
+  white-space: nowrap;
+}
+
 .admin-member-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -2414,6 +2480,8 @@ h3 {
   .admin-member-create-grid,
   .admin-member-adjust-grid,
   .admin-section-grid,
+  .admin-report-grid,
+  .admin-report-sections,
   .admin-station-grid,
   .admin-rule-grid,
   .admin-role-header {
