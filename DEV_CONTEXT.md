@@ -24,7 +24,7 @@
 - 商品庫存欄位：`products.inventory_count`、`low_stock_threshold`、`sold_out_until` 由 `20260429110000_add_product_inventory_controls.sql` 新增；前端仍保留 `is_available` 作為人工上架/停售開關，庫存為 0 或暫停到期前會在 POS 端視為不可點。
 - 下單扣庫存：`20260429150000_add_create_pos_order_function.sql` 新增 `create_pos_order()`，`POST /orders` 會透過 DB function 原子建單與扣庫存；庫存不足時整筆 rollback，POS 會移除暫存單並把品項還回購物車。
 - 外送/履約欄位：`20260429161000_add_order_fulfillment_fields.sql` 新增 `orders.delivery_address` 與 `requested_fulfillment_at`，線上與櫃台建單都會寫入，POS 佇列與收據 payload 會顯示希望時間與地址。
-- 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 會在狀態更新與 print job 建立前檢查 lease，已交付/異常單會釋放 lease。
+- 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 只允許未鎖定、本機持有或已逾時的進行中訂單取得 claim，已交付/失敗/作廢單不可再 claim，狀態更新、收款與 print job 建立前都會檢查 lease，已交付/異常單會釋放 lease。
 - 收銀班別欄位：`register_sessions` 由 `20260429133000_add_register_sessions.sql` 新增；`pos-api` 提供 `/register/current`、`/register/open`、`/register/close`，開班/關班寫入需 `POS_ADMIN_PIN`。
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。有未交付、付款異常或列印失敗時，`/register/close` 需送 `force=true` 才能關班。
 - 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班事件。商品異動會寫入庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。

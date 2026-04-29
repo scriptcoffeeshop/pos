@@ -535,9 +535,16 @@ const printActionLabel = (order: PosOrder): string => {
   return order.printJobs.length > 0 ? '重印' : '出單'
 }
 
+const claimableStatuses: OrderStatus[] = ['new', 'preparing', 'ready']
+const orderCanBeClaimed = (order: PosOrder): boolean => claimableStatuses.includes(order.status)
+
 const claimActionLabel = (order: PosOrder): string => {
   if (claimingOrderId.value === order.id) {
     return '鎖定中'
+  }
+
+  if (!orderCanBeClaimed(order)) {
+    return '已結束'
   }
 
   if (orderClaimedByCurrentStation(order)) {
@@ -572,6 +579,10 @@ const claimChipClass = (order: PosOrder): string => {
 }
 
 const claimOrderAction = (order: PosOrder): void => {
+  if (!orderCanBeClaimed(order)) {
+    return
+  }
+
   if (orderClaimedByCurrentStation(order)) {
     void releaseOrderClaimForStation(order.id)
     return
@@ -582,6 +593,7 @@ const claimOrderAction = (order: PosOrder): void => {
 
 const claimActionDisabled = (order: PosOrder): boolean =>
   claimingOrderId.value === order.id ||
+  !orderCanBeClaimed(order) ||
   (orderClaimedByOtherStation(order) && !orderClaimExpired(order, currentTime.value))
 
 const payableStatuses: PaymentStatus[] = ['pending', 'authorized']

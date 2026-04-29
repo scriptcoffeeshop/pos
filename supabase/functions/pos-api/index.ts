@@ -249,6 +249,7 @@ const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 const defaultPaymentExpiryMinutes = 20;
 const reportTimezoneOffsetMinutes = 8 * 60;
+const terminalOrderStatuses = new Set<OrderStatus>(["served", "failed", "voided"]);
 const paymentExpiryMinutes = (() => {
   const value = Number(Deno.env.get("POS_PAYMENT_EXPIRY_MINUTES") ?? defaultPaymentExpiryMinutes);
   if (!Number.isFinite(value) || value <= 0) {
@@ -1243,11 +1244,10 @@ api.post("/orders/:id/claim", async (c) => {
     .from("orders")
     .update(claimPayload)
     .eq("id", orderId)
-    .neq("status", "served");
-
-  if (!input.force) {
-    query = query.or(buildLeaseAvailableFilter(stationId, now));
-  }
+    .neq("status", "served")
+    .neq("status", "failed")
+    .neq("status", "voided")
+    .or(buildLeaseAvailableFilter(stationId, now));
 
   const { data, error } = await query.select("*").maybeSingle();
   if (error) {
@@ -1355,6 +1355,8 @@ api.patch("/orders/:id/status", async (c) => {
     .update(payload)
     .eq("id", orderId)
     .neq("status", "served")
+    .neq("status", "failed")
+    .neq("status", "voided")
     .or(buildLeaseAvailableFilter(stationId, now))
     .select("*")
     .maybeSingle();
@@ -1409,6 +1411,8 @@ api.patch("/orders/:id/payment", async (c) => {
     .update(payload)
     .eq("id", orderId)
     .neq("status", "served")
+    .neq("status", "failed")
+    .neq("status", "voided")
     .or(buildLeaseAvailableFilter(stationId, now))
     .select("*")
     .maybeSingle();
@@ -2071,6 +2075,10 @@ const claimConflictResponse = async (c: Context, orderId: string, stationId: str
   }
 
   const claimedBy = typeof data?.claimed_by === "string" ? data.claimed_by : "其他平板";
+  if (terminalOrderStatuses.has(data?.status as OrderStatus)) {
+    return c.json({ error: "Completed or voided orders cannot be claimed", order: data }, 409);
+  }
+
   const message = isLeaseActiveForOtherStation(data as Record<string, unknown>, stationId)
     ? `Order is already claimed by ${claimedBy}`
     : "Order could not be claimed";
@@ -2107,6 +2115,10 @@ const requireOrderClaim = async (c: Context, orderId: string, stationId: string)
 
   if (!data?.claimed_by || data.claimed_by !== stationId) {
     return claimConflictResponse(c, orderId, stationId);
+  }
+
+  if (terminalOrderStatuses.has(data.status as OrderStatus)) {
+    return c.json({ error: "Completed or voided orders cannot be updated", order: data }, 409);
   }
 
   const expiresAt = typeof data.claim_expires_at === "string" ? new Date(data.claim_expires_at) : null;

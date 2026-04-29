@@ -99,7 +99,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；後端用 `create_pos_order()` 在同一個 transaction 建單、寫入希望取餐/送達時間、外送地址、品項並扣 `products.inventory_count`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
-- 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
+- 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。
 - 已收款退款會走 `POST /orders/:id/refund`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=authorized|paid`，後端以 `refund_pos_order()` 在同一個 transaction 更新訂單、寫入 `transaction_ledger`，並回傳 `payment_status=refunded`。
