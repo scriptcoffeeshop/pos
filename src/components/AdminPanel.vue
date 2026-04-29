@@ -106,6 +106,24 @@ const auditActionLabels: Record<string, string> = {
   'order.refund': '訂單退款',
 }
 
+const auditFieldLabels: Record<string, string> = {
+  name: '名稱',
+  category: '分類',
+  price: '售價',
+  tags: '標籤',
+  accent: '色票',
+  is_available: '上下架',
+  sort_order: '排序',
+  pos_visible: 'POS 顯示',
+  online_visible: '線上顯示',
+  qr_visible: '掃碼顯示',
+  prep_station: '備餐站',
+  print_label: '貼紙',
+  inventory_count: '庫存',
+  low_stock_threshold: '低庫存',
+  sold_out_until: '暫停供應',
+}
+
 const auditTimeFormatter = new Intl.DateTimeFormat('zh-TW', {
   month: '2-digit',
   day: '2-digit',
@@ -311,6 +329,42 @@ const auditMoneyLabel = (event: PosAuditEvent, key: string): string | null => {
   return typeof value === 'number' && Number.isFinite(value) ? `$${value.toLocaleString('zh-TW')}` : null
 }
 
+const auditSignedNumberLabel = (event: PosAuditEvent, key: string): string | null => {
+  const value = event.metadata[key]
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null
+  }
+
+  return value > 0 ? `+${value.toLocaleString('zh-TW')}` : value.toLocaleString('zh-TW')
+}
+
+const auditChangeLabel = (
+  event: PosAuditEvent,
+  beforeKey: string,
+  afterKey: string,
+  emptyLabel = '未追蹤',
+): string | null => {
+  const before = auditMetadataLabel(event, beforeKey) ?? emptyLabel
+  const after = auditMetadataLabel(event, afterKey) ?? emptyLabel
+  return before === emptyLabel && after === emptyLabel ? null : `${before}→${after}`
+}
+
+const auditMoneyChangeLabel = (event: PosAuditEvent, beforeKey: string, afterKey: string): string | null => {
+  const before = auditMoneyLabel(event, beforeKey)
+  const after = auditMoneyLabel(event, afterKey)
+  return before && after ? `${before}→${after}` : null
+}
+
+const auditAvailabilityChangeLabel = (event: PosAuditEvent): string | null => {
+  const before = event.metadata.availableBefore
+  const after = event.metadata.availableAfter
+  if (typeof before !== 'boolean' || typeof after !== 'boolean') {
+    return null
+  }
+
+  return `${before ? '上架' : '停售'}→${after ? '上架' : '停售'}`
+}
+
 const auditListLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (!Array.isArray(value)) {
@@ -319,6 +373,7 @@ const auditListLabel = (event: PosAuditEvent, key: string): string | null => {
 
   const items = value
     .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => (key === 'changedFields' ? auditFieldLabels[entry] ?? entry : entry))
     .slice(0, 4)
 
   return items.length > 0 ? items.join('/') : null
@@ -349,6 +404,21 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'lineCount') ? `品項 ${auditMetadataLabel(event, 'lineCount')}` : null,
     auditMetadataLabel(event, 'sku') ? `SKU ${auditMetadataLabel(event, 'sku')}` : null,
     auditMetadataLabel(event, 'key') ? `設定 ${auditMetadataLabel(event, 'key')}` : null,
+    auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')
+      ? `庫存 ${auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')}`
+      : null,
+    auditSignedNumberLabel(event, 'inventoryDelta') ? `庫存差額 ${auditSignedNumberLabel(event, 'inventoryDelta')}` : null,
+    auditChangeLabel(event, 'lowStockThresholdBefore', 'lowStockThresholdAfter')
+      ? `低庫存 ${auditChangeLabel(event, 'lowStockThresholdBefore', 'lowStockThresholdAfter')}`
+      : null,
+    auditMoneyChangeLabel(event, 'priceBefore', 'priceAfter')
+      ? `售價 ${auditMoneyChangeLabel(event, 'priceBefore', 'priceAfter')}`
+      : null,
+    auditSignedNumberLabel(event, 'priceDelta') ? `價差 ${auditSignedNumberLabel(event, 'priceDelta')}` : null,
+    auditAvailabilityChangeLabel(event) ? `上下架 ${auditAvailabilityChangeLabel(event)}` : null,
+    auditChangeLabel(event, 'soldOutUntilBefore', 'soldOutUntilAfter', '未設定')
+      ? `暫停 ${auditChangeLabel(event, 'soldOutUntilBefore', 'soldOutUntilAfter', '未設定')}`
+      : null,
     auditListLabel(event, 'changedFields') ? `欄位 ${auditListLabel(event, 'changedFields')}` : null,
     auditMetadataLabel(event, 'previousStatus') ? `原狀態 ${auditMetadataLabel(event, 'previousStatus')}` : null,
     auditMetadataLabel(event, 'previousPaymentStatus')

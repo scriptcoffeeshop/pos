@@ -194,6 +194,14 @@ const stationHeartbeatSelect =
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 
+const areAuditValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  }
+
+  return left === right;
+};
+
 const defaultPrinterSettings: PrinterSettings = {
   stations: [
     {
@@ -556,6 +564,20 @@ api.patch("/admin/products/:id", async (c) => {
     return c.json({ error: validationError }, 400);
   }
 
+  const { data: previousProduct, error: previousProductError } = await supabase
+    .from("products")
+    .select(productSelect)
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (previousProductError) {
+    return c.json({ error: previousProductError.message }, 500);
+  }
+
+  if (!previousProduct) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+
   const { data, error } = await supabase
     .from("products")
     .update(payload)
@@ -567,16 +589,53 @@ api.patch("/admin/products/:id", async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
-  await writeAuditEvent({
-    action: "product.update",
-    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
-    metadata: {
-      productId,
-      sku: data.sku,
-      name: data.name,
-      changedFields: Object.keys(payload),
-    },
-  });
+  const previousProductRecord = previousProduct as Record<string, unknown>;
+  const changedFields = Object.entries(payload)
+    .filter(([field, value]) => !areAuditValuesEqual(previousProductRecord[field], value))
+    .map(([field]) => field);
+  const auditMetadata: Record<string, unknown> = {
+    productId,
+    sku: data.sku,
+    name: data.name,
+    changedFields,
+  };
+
+  if (changedFields.includes("inventory_count")) {
+    auditMetadata.inventoryBefore = previousProduct.inventory_count;
+    auditMetadata.inventoryAfter = data.inventory_count;
+    if (typeof previousProduct.inventory_count === "number" && typeof data.inventory_count === "number") {
+      auditMetadata.inventoryDelta = data.inventory_count - previousProduct.inventory_count;
+    }
+  }
+
+  if (changedFields.includes("low_stock_threshold")) {
+    auditMetadata.lowStockThresholdBefore = previousProduct.low_stock_threshold;
+    auditMetadata.lowStockThresholdAfter = data.low_stock_threshold;
+  }
+
+  if (changedFields.includes("price")) {
+    auditMetadata.priceBefore = previousProduct.price;
+    auditMetadata.priceAfter = data.price;
+    auditMetadata.priceDelta = data.price - previousProduct.price;
+  }
+
+  if (changedFields.includes("is_available")) {
+    auditMetadata.availableBefore = previousProduct.is_available;
+    auditMetadata.availableAfter = data.is_available;
+  }
+
+  if (changedFields.includes("sold_out_until")) {
+    auditMetadata.soldOutUntilBefore = previousProduct.sold_out_until;
+    auditMetadata.soldOutUntilAfter = data.sold_out_until;
+  }
+
+  if (changedFields.length > 0) {
+    await writeAuditEvent({
+      action: "product.update",
+      stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+      metadata: auditMetadata,
+    });
+  }
 
   return c.json({ product: data });
 });
