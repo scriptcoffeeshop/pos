@@ -767,6 +767,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const orderClaimedByOtherStation = (order: PosOrder): boolean =>
     Boolean(order.claimedBy) && order.claimedBy !== stationClaimId && !isClaimExpired(order)
 
+  const orderPendingSync = (order: PosOrder): boolean =>
+    pendingLocalOrders.value.some((entry) => entry.id === order.id)
+
   const claimLabelFor = (order: PosOrder): string => {
     if (!order.claimedBy) {
       return ''
@@ -1703,6 +1706,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     loadProductStatusCatalog,
     loadRegisterSession,
     orderQueue,
+    orderPendingSync,
     orderClaimExpired: isClaimExpired,
     orderClaimedByCurrentStation,
     orderClaimedByOtherStation,

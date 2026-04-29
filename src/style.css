@@ -1044,6 +1044,25 @@ h3 {
   color: #806018;
 }
 
+.sync-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #c9b88d;
+  border-radius: 999px;
+  background: #fff8e8;
+  color: #806018;
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.sync-chip svg {
+  flex: 0 0 auto;
+}
+
 .order-row-meta {
   display: grid;
   grid-template-columns: 0.72fr 1fr auto;

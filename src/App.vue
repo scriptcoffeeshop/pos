@@ -89,6 +89,7 @@ const {
   orderClaimExpired,
   orderClaimedByCurrentStation,
   orderClaimedByOtherStation,
+  orderPendingSync,
   orderQueue,
   paymentMethod,
   pendingOrders,
@@ -1119,6 +1120,10 @@ onBeforeUnmount(() => {
                       <LockKeyhole :size="13" aria-hidden="true" />
                       {{ claimLabelFor(order) }}
                     </span>
+                    <span v-if="orderPendingSync(order)" class="sync-chip">
+                      <Clock3 :size="13" aria-hidden="true" />
+                      本機待同步
+                    </span>
                     <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                   </span>
                 </div>
@@ -1477,6 +1482,10 @@ onBeforeUnmount(() => {
                 <span v-if="claimLabelFor(activeOrder)" class="claim-chip" :class="claimChipClass(activeOrder)">
                   <LockKeyhole :size="13" aria-hidden="true" />
                   {{ claimLabelFor(activeOrder) }}
+                </span>
+                <span v-if="orderPendingSync(activeOrder)" class="sync-chip">
+                  <Clock3 :size="13" aria-hidden="true" />
+                  本機待同步
                 </span>
                 <span class="status-chip" :class="statusClass(activeOrder.status)">
                   {{ statusLabels[activeOrder.status] }}
