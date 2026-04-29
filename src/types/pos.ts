@@ -239,6 +239,21 @@ export interface PosAuditEvent {
   createdAt: string
 }
 
+export interface PosPaymentEvent {
+  id: string
+  provider: string
+  eventId: string
+  orderId: string
+  orderNumber: string
+  eventType: string
+  paymentStatus: PaymentStatus
+  amount: number | null
+  applied: boolean
+  duplicate: boolean
+  processedAt: string | null
+  createdAt: string
+}
+
 export interface PosStationHeartbeat {
   stationId: string
   stationLabel: string

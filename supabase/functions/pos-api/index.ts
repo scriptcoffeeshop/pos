@@ -241,6 +241,8 @@ const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
   "id, action, order_id, register_session_id, station_id, actor, metadata, created_at";
+const paymentEventSelect =
+  "id, provider, event_id, order_id, order_number, event_type, payment_status, amount, applied, duplicate, processed_at, created_at";
 const stationHeartbeatSelect =
   "station_id, station_label, platform, app_version, user_agent, last_seen_at, created_at";
 const defaultOrderLeaseSeconds = 180;
@@ -1052,6 +1054,37 @@ api.get("/admin/audit-events", async (c) => {
 
   if (action) {
     query = query.eq("action", action);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ events: data });
+});
+
+api.get("/admin/payment-events", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 50);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+    : 50;
+  const provider = sanitizePaymentProvider(c.req.query("provider"));
+
+  let query = supabase
+    .from("payment_events")
+    .select(paymentEventSelect)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (provider !== "unknown") {
+    query = query.eq("provider", provider);
   }
 
   const { data, error } = await query;

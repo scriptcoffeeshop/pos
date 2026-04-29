@@ -9,7 +9,7 @@
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
 - 櫃台效率操作：POS 工作台已有最近/常用品項快速加購、常用備註 chip、待處理/可交付/全部佇列篩選、訂單明細展開、庫存/低庫存提示、下單原子扣庫存、多平板訂單鎖定、收款確認、未收款訂單作廢、已收款退款沖銷、列印重印紀錄、正式開班/關班、關帳摘要、關帳異常檢查與強制確認、鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
-- 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、會員錢包、營運日報、出單機規則、角色權限、平板在線與操作稽核；讀取稽核/平板狀態與寫入設定需 Supabase secret `POS_ADMIN_PIN`。
+- 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、會員錢包、營運日報、金流回呼事件、出單機規則、角色權限、平板在線與操作稽核；讀取金流事件、稽核、平板狀態與寫入設定需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
 - GitHub repo：`scriptcoffeeshop/pos`，目前為 public。
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
@@ -29,7 +29,7 @@
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。有未交付、付款異常或列印失敗時，`/register/close` 需送 `force=true` 才能關班。
 - 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班事件。商品異動會寫入庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。
 - 會員錢包：`20260429154000_add_member_wallet_functions.sql` 新增 `create_pos_member()` 與 `adjust_pos_member_wallet()`；後台 `GET/POST /admin/members` 可建立/查詢會員，`POST /admin/members/:id/wallet-adjustments` 會在單一 DB transaction 內更新 `members.wallet_balance` 並寫入 `transaction_ledger`。
-- 金流 webhook：`20260429172000_add_payment_webhook_events.sql` 新增 `payment_events` 與 `record_pos_payment_event()`；`POST /payments/webhook/:provider` 需 `POS_PAYMENT_WEBHOOK_SECRET`，以 provider + event id 做冪等，金額不符只記錄不改單，已付款訂單不會被失敗/逾期回呼降級，退款回呼會寫負數交易流水。
+- 金流 webhook：`20260429172000_add_payment_webhook_events.sql` 新增 `payment_events` 與 `record_pos_payment_event()`；`POST /payments/webhook/:provider` 需 `POS_PAYMENT_WEBHOOK_SECRET`，以 provider + event id 做冪等，金額不符只記錄不改單，已付款訂單不會被失敗/逾期回呼降級，退款回呼會寫負數交易流水。後台 `GET /admin/payment-events` 可用管理 PIN 讀最近回呼、重送與未套用事件，方便正式串 LINE Pay / 街口前排錯。
 - 營運日報：`GET /admin/reports/daily?date=YYYY-MM-DD` 依台灣日界線彙總當日訂單，回傳實收、待收、退款、異常、付款方式、訂單來源、服務方式、時段分布與熱門商品；後台報表頁直接讀此端點。
 - 退款沖銷：`20260429143000_add_refunded_payment_status.sql` 新增 `payment_status=refunded`；`20260429143500_add_refund_pos_order_function.sql` 新增 `refund_pos_order()`，讓退款在同一個資料庫 transaction 內更新訂單並寫入 `transaction_ledger`。
 - 平板心跳：`pos_station_heartbeats` 由 `20260429144500_add_pos_station_heartbeats.sql` 新增；POS 工作台每 30 秒 upsert 一次，後台 `/admin/stations` 可看最後在線時間。
@@ -64,4 +64,4 @@
 
 1. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label、櫃台訂單列印與關班流程實測。
 2. 多平板鎖定後續：短輪詢與平板在線心跳已接第一版；若需要更低延遲，再接 Supabase realtime。
-3. 接 LINE Login / LINE Pay / 街口支付時，把 provider 簽章驗證與 payload mapping 接到既有 `/payments/webhook/:provider` 契約。
+3. 接 LINE Login / LINE Pay / 街口支付時，把 provider 簽章驗證與 payload mapping 接到既有 `/payments/webhook/:provider` 契約，並用後台「支付事件」追查重送、金額不符與未套用回呼。

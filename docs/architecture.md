@@ -30,7 +30,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需 `POS_ADMIN_PIN`，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。有未交付、付款異常或列印失敗時，關班必須送 `force=true`。
 - 營運日報由 `pos-api` 以 service role 讀取當日 `orders`、`order_items` 與 `print_jobs` 即時計算，不另建快照表；目前依台灣日界線彙總實收、待收、退款、異常、付款方式、來源、服務方式、時段與熱門商品。
 - `pos_audit_events` 保存 POS 關鍵操作事件；建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班都由 Edge Function 以 service role 寫入。商品稽核會附上庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，後台只能透過 PIN 保護的 `/admin/audit-events` 讀取，前端不能直接改。
-- 金流 webhook 先落在 provider-neutral 契約：`payment_events(provider, event_id)` 保證冪等，`record_pos_payment_event()` 在同一個 transaction 內決定是否更新訂單付款狀態、釋放 claim lease 與寫入交易流水。
+- 金流 webhook 先落在 provider-neutral 契約：`payment_events(provider, event_id)` 保證冪等，`record_pos_payment_event()` 在同一個 transaction 內決定是否更新訂單付款狀態、釋放 claim lease 與寫入交易流水；後台以 PIN 保護的 `/admin/payment-events` 顯示最近回呼、重送與未套用原因。
 - 已收款退款由 `refund_pos_order()` 處理，單一資料庫 transaction 會把訂單改成 `status=voided`、`payment_status=refunded`，並寫入 `transaction_ledger.entry_type=refund` 的負數流水。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位，方便後續接 Logflare 或 Datadog。
 

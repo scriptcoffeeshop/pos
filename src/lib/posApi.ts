@@ -11,6 +11,7 @@ import type {
   DailySalesReport,
   PosMember,
   PosOrder,
+  PosPaymentEvent,
   PosStationHeartbeat,
   RegisterSession,
   PrintJob,
@@ -135,6 +136,21 @@ interface ApiAuditEvent {
   created_at: string
 }
 
+interface ApiPaymentEvent {
+  id: string
+  provider: string
+  event_id: string
+  order_id: string
+  order_number: string
+  event_type: string
+  payment_status: PaymentStatus
+  amount: number | null
+  applied: boolean
+  duplicate: boolean
+  processed_at: string | null
+  created_at: string
+}
+
 interface ApiTransactionLedgerEntry {
   id: string
   member_id: string | null
@@ -158,6 +174,10 @@ interface ApiMember {
 
 interface AuditEventsResponse {
   events: ApiAuditEvent[]
+}
+
+interface PaymentEventsResponse {
+  events: ApiPaymentEvent[]
 }
 
 interface MembersResponse {
@@ -368,6 +388,21 @@ const normalizeAuditEvent = (event: ApiAuditEvent): PosAuditEvent => ({
   createdAt: event.created_at,
 })
 
+const normalizePaymentEvent = (event: ApiPaymentEvent): PosPaymentEvent => ({
+  id: event.id,
+  provider: event.provider,
+  eventId: event.event_id,
+  orderId: event.order_id,
+  orderNumber: event.order_number,
+  eventType: event.event_type,
+  paymentStatus: event.payment_status,
+  amount: event.amount,
+  applied: event.applied,
+  duplicate: event.duplicate,
+  processedAt: event.processed_at,
+  createdAt: event.created_at,
+})
+
 const normalizeLedgerEntry = (entry: ApiTransactionLedgerEntry) => ({
   id: entry.id,
   memberId: entry.member_id,
@@ -532,6 +567,18 @@ export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promi
   })
 
   return data.events.map(normalizeAuditEvent)
+}
+
+export const fetchAdminPaymentEvents = async (adminPin: string, limit = 50): Promise<PosPaymentEvent[]> => {
+  const rawLimit = Number.isFinite(limit) ? limit : 50
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+  const data = await request<PaymentEventsResponse>(`/admin/payment-events?limit=${cappedLimit}`, {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return data.events.map(normalizePaymentEvent)
 }
 
 export const fetchAdminStations = async (adminPin: string): Promise<PosStationHeartbeat[]> => {

@@ -25,6 +25,7 @@ import {
   fetchAdminAuditEvents,
   fetchAdminDailyReport,
   fetchAdminMembers,
+  fetchAdminPaymentEvents,
   fetchAdminProducts,
   fetchAdminSettings,
   fetchAdminStations,
@@ -41,6 +42,7 @@ import type {
   PrinterSettings,
   PosAuditEvent,
   PosMember,
+  PosPaymentEvent,
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
@@ -65,7 +67,7 @@ interface WalletAdjustmentDraft {
   note: string
 }
 
-type AdminTab = 'products' | 'members' | 'reports' | 'printing' | 'access' | 'audit' | 'stations'
+type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'audit' | 'stations'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -75,6 +77,7 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'members', label: '會員錢包' },
   { value: 'reports', label: '營運報表' },
+  { value: 'payments', label: '支付事件' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
   { value: 'stations', label: '平板' },
@@ -131,7 +134,17 @@ const auditActionLabels: Record<string, string> = {
   'order.payment.expired': '付款逾期',
   'order.void': '訂單作廢',
   'order.refund': '訂單退款',
+  'payment.webhook.record': '金流回呼',
 }
+
+const paymentStatusLabels = {
+  pending: '待收款',
+  authorized: '已授權',
+  paid: '已付款',
+  expired: '逾期',
+  failed: '失敗',
+  refunded: '已退款',
+} as const
 
 const auditFieldLabels: Record<string, string> = {
   name: '名稱',
@@ -223,11 +236,14 @@ const dailyReport = ref<DailySalesReport | null>(null)
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const auditEvents = ref<PosAuditEvent[]>([])
+const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
 const auditLimit = ref(50)
+const paymentEventLimit = ref(50)
 const auditActionFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
+const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isStationLoading = ref(false)
@@ -249,6 +265,8 @@ const lowStockProducts = computed(() =>
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
 const auditEventCount = computed(() => auditEvents.value.length)
+const paymentEventCount = computed(() => paymentEvents.value.length)
+const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
 const memberCount = computed(() => members.value.length)
 const walletBalanceTotal = computed(() => members.value.reduce((total, member) => total + member.walletBalance, 0))
 const reportPeakHour = computed(() => {
@@ -434,6 +452,22 @@ const reportBreakdownLabel = (key: string): string => {
 
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
 
+const paymentEventStatusClass = (event: PosPaymentEvent): string => {
+  if (event.duplicate) {
+    return 'status-pill--neutral'
+  }
+
+  return event.applied ? 'status-pill--success' : 'status-pill--danger'
+}
+
+const paymentEventStatusLabel = (event: PosPaymentEvent): string => {
+  if (event.duplicate) {
+    return '重送'
+  }
+
+  return event.applied ? '已套用' : '未套用'
+}
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -589,12 +623,13 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    const [products, memberRows, report, settings, events, stations] = await Promise.all([
+    const [products, memberRows, report, settings, events, paymentRows, stations] = await Promise.all([
       fetchAdminProducts(adminPin.value.trim()),
       fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value),
       fetchAdminDailyReport(adminPin.value.trim(), reportDate.value),
       fetchAdminSettings(adminPin.value.trim()),
       fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
+      fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value),
       fetchAdminStations(adminPin.value.trim()),
     ])
     productDrafts.value = products.map(toDraft)
@@ -603,12 +638,33 @@ const loadAdminData = async (): Promise<void> => {
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     auditEvents.value = events
+    paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
     isLoading.value = false
+  }
+}
+
+const loadPaymentEvents = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isPaymentEventLoading.value = true
+  adminMessage.value = '讀取支付事件中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    paymentEvents.value = await fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value)
+    adminMessage.value = `已載入 ${paymentEvents.value.length} 筆支付事件`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '支付事件讀取失敗'
+  } finally {
+    isPaymentEventLoading.value = false
   }
 }
 
@@ -958,6 +1014,14 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>日報營收</span>
         <strong>{{ dailyReport ? formatCurrency(dailyReport.collectedTotal) : '$0' }}</strong>
+      </article>
+      <article>
+        <span>支付事件</span>
+        <strong>{{ paymentEventCount }}</strong>
+      </article>
+      <article>
+        <span>未套用支付</span>
+        <strong>{{ unappliedPaymentEventCount }}</strong>
       </article>
       <article>
         <span>出單規則</span>
@@ -1375,6 +1439,50 @@ const saveAccessControl = async (): Promise<void> => {
         <div v-if="!dailyReport" class="empty-state">
           <BarChart3 :size="24" aria-hidden="true" />
           <span>載入後台後會顯示日報</span>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'payments'" class="admin-tab-panel" aria-label="支付事件">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Payments</p>
+            <h2>金流回呼事件</h2>
+            <span class="panel-note">追查 LINE Pay、街口與未來金流 provider 的冪等處理</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              筆數
+              <input v-model.number="paymentEventLimit" type="number" min="1" max="100" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isPaymentEventLoading" @click="loadPaymentEvents">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isPaymentEventLoading ? '讀取中' : '刷新支付' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-audit-list">
+          <article v-for="event in paymentEvents" :key="event.id" class="admin-audit-row">
+            <header class="admin-row-header">
+              <div class="admin-audit-primary">
+                <strong>{{ event.provider }} · {{ event.orderNumber }}</strong>
+                <span>{{ event.eventType || 'payment.webhook' }} · {{ event.eventId }}</span>
+              </div>
+              <time :datetime="event.createdAt">{{ formatAuditTime(event.createdAt) }}</time>
+            </header>
+
+            <div class="admin-audit-meta">
+              <span class="status-pill" :class="paymentEventStatusClass(event)">{{ paymentEventStatusLabel(event) }}</span>
+              <span>{{ paymentStatusLabels[event.paymentStatus] }}</span>
+              <span>{{ event.amount === null ? '金額未帶入' : formatCurrency(event.amount) }}</span>
+              <span>{{ event.processedAt ? `處理 ${formatAuditTime(event.processedAt)}` : '未處理' }}</span>
+            </div>
+          </article>
+
+          <div v-if="paymentEvents.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無金流回呼事件</span>
+          </div>
         </div>
       </section>
 

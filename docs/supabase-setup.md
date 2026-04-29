@@ -87,6 +87,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
 - 後台稽核端點：`/functions/v1/pos-api/admin/audit-events`
+- 後台支付事件端點：`/functions/v1/pos-api/admin/payment-events`
 - 平板心跳端點：`/functions/v1/pos-api/station/heartbeat`
 - 後台平板端點：`/functions/v1/pos-api/admin/stations`
 
@@ -110,6 +111,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，需 `X-POS-ADMIN-PIN`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 - 後台稽核讀取走 `GET /admin/audit-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆。
+- 後台支付事件讀取走 `GET /admin/payment-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆；可用 `provider=line-pay` 之類 query 篩選 provider。
 
 ## 後台 PIN
 

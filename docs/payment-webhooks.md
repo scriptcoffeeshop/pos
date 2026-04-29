@@ -41,6 +41,22 @@ Payload：
 - `failed` / `expired` can only apply while the order is `pending` or `authorized`, so an already paid order is not downgraded.
 - `refunded` can only apply while the order is `authorized` or `paid`, then marks the order `voided`, releases the claim lease, and writes a refund ledger entry.
 
+## Admin Inspection
+
+The Web admin panel reads recent webhook rows through the PIN-protected endpoint:
+
+```bash
+GET /functions/v1/pos-api/admin/payment-events?limit=50
+```
+
+Header:
+
+- `Authorization: Bearer <SUPABASE_ANON_KEY>`
+- `apikey: <SUPABASE_ANON_KEY>`
+- `X-POS-ADMIN-PIN: <POS_ADMIN_PIN>`
+
+`limit` is clamped to 1-100. Add `provider=line-pay` or another normalized provider key to inspect one provider only. The response shows whether each event was applied, ignored as a duplicate, or recorded without changing the order, which is the first place to check when a provider retry or amount mismatch happens.
+
 ## Secret Setup
 
 ```bash
