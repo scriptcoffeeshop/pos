@@ -164,6 +164,12 @@ const paymentLabels: Record<PaymentMethod, string> = {
   transfer: '轉帳',
 }
 
+const sourceLabels = {
+  counter: '櫃台',
+  qr: '掃碼',
+  online: '線上',
+} as const
+
 const paymentStatusLabels = {
   pending: '待收款',
   authorized: '已授權',
@@ -313,6 +319,7 @@ const paymentCloseoutRows = computed(() =>
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
 const queueFilter = ref<QueueFilter>('active')
+const expandedOrderId = ref<string | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
 const registerPin = ref('')
@@ -571,6 +578,10 @@ const voidOrderAction = (order: PosOrder): void => {
 
 const refundOrderAction = (order: PosOrder): void => {
   void refundOrderForStation(stationPin.value.trim(), order.id)
+}
+
+const toggleOrderDetail = (order: PosOrder): void => {
+  expandedOrderId.value = expandedOrderId.value === order.id ? null : order.id
 }
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -1089,6 +1100,15 @@ onBeforeUnmount(() => {
                   {{ refundActionLabel(order) }}
                 </button>
                 <button
+                  class="order-action--detail"
+                  type="button"
+                  :class="{ 'order-action--active': expandedOrderId === order.id }"
+                  @click="toggleOrderDetail(order)"
+                >
+                  <ReceiptText :size="16" aria-hidden="true" />
+                  明細
+                </button>
+                <button
                   v-for="action in statusActions"
                   :key="action.value"
                   :class="{ 'order-action--active': order.status === action.value }"
@@ -1098,6 +1118,30 @@ onBeforeUnmount(() => {
                 >
                   {{ action.label }}
                 </button>
+              </div>
+              <div v-if="expandedOrderId === order.id" class="order-detail-panel">
+                <div class="order-detail-grid">
+                  <span>來源</span>
+                  <strong>{{ sourceLabels[order.source] }}</strong>
+                  <span>電話</span>
+                  <strong>{{ order.customerPhone || '未留' }}</strong>
+                  <span>付款</span>
+                  <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                  <span>履約</span>
+                  <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
+                  <span>備註</span>
+                  <strong>{{ order.note || '無' }}</strong>
+                </div>
+                <div class="order-detail-lines">
+                  <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
+                    <div>
+                      <strong>{{ line.name }}</strong>
+                      <span>{{ line.options.join(' / ') || '標準' }}</span>
+                    </div>
+                    <span>x{{ line.quantity }}</span>
+                    <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                  </article>
+                </div>
               </div>
             </article>
 
