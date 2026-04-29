@@ -759,6 +759,7 @@ h3 {
 }
 
 .order-essential-grid article,
+.order-essential-action,
 .payment-summary-grid article {
   display: grid;
   min-width: 0;
@@ -769,11 +770,32 @@ h3 {
   background: var(--surface-muted);
 }
 
+.order-essential-action {
+  appearance: none;
+  text-align: left;
+}
+
+.order-essential-action--active {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+}
+
 .order-essential-grid span,
 .payment-summary-grid span {
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 900;
+}
+
+.order-essential-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.order-essential-action--active .order-essential-label,
+.order-essential-action--active strong {
+  color: var(--primary-dark);
 }
 
 .order-essential-grid strong,
@@ -784,6 +806,63 @@ h3 {
   font-weight: 950;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cart-inline-editor {
+  margin-top: 9px;
+}
+
+.cart-inline-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #b7d7cd;
+  border-radius: var(--radius);
+  background: #eef8f4;
+}
+
+.cart-inline-panel--customer {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.cart-inline-panel label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.cart-inline-panel input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.cart-inline-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cart-inline-options--payment {
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+}
+
+.cart-inline-done {
+  justify-content: center;
+  min-height: 38px;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: white;
+  font-weight: 950;
 }
 
 .cart-lines {
@@ -2805,8 +2884,11 @@ h3 {
 .payment-button:focus-visible,
 .primary-button:focus-visible,
 .icon-button:focus-visible,
+.order-essential-action:focus-visible,
+.cart-inline-done:focus-visible,
 .quantity-stepper button:focus-visible,
 .order-actions button:focus-visible,
+.cart-inline-panel input:focus,
 .admin-access-grid input:focus,
 .admin-limit-field input:focus,
 .admin-limit-field select:focus,
@@ -2932,6 +3014,10 @@ h3 {
 
   .cart-line {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cart-inline-panel--customer {
+    grid-template-columns: 1fr;
   }
 
   .cart-line strong {

@@ -20,6 +20,7 @@ import {
   ShoppingCart,
   WalletCards,
   Trash2,
+  UserRound,
   Wifi,
 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -32,6 +33,7 @@ import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PaymentStatus,
 
 type AppView = 'pos' | 'admin' | 'online'
 type WorkspaceTab = 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
+type CartQuickEditor = 'customer' | 'service' | 'payment' | null
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 
@@ -449,7 +451,9 @@ const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
+const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
+const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
 const registerPin = ref('')
 const registerOpeningCash = ref(0)
@@ -874,6 +878,31 @@ const focusMenuSearch = (): void => {
   })
 }
 
+const toggleCartQuickEditor = (editor: Exclude<CartQuickEditor, null>): void => {
+  activeCartQuickEditor.value = activeCartQuickEditor.value === editor ? null : editor
+
+  if (activeCartQuickEditor.value === 'customer') {
+    void nextTick(() => {
+      customerNameInput.value?.focus()
+      customerNameInput.value?.select()
+    })
+  }
+}
+
+const closeCartQuickEditor = (): void => {
+  activeCartQuickEditor.value = null
+}
+
+const selectCartServiceMode = (mode: ServiceMode): void => {
+  serviceMode.value = mode
+  activeCartQuickEditor.value = null
+}
+
+const selectCartPaymentMethod = (method: PaymentMethod): void => {
+  paymentMethod.value = method
+  activeCartQuickEditor.value = null
+}
+
 const handlePosShortcut = (event: KeyboardEvent): void => {
   if (activeView.value !== 'pos' || activeWorkspaceTab.value !== 'order') {
     return
@@ -917,6 +946,7 @@ const handlePosShortcut = (event: KeyboardEvent): void => {
 }
 
 const setWorkspaceTab = (tab: WorkspaceTab): void => {
+  activeCartQuickEditor.value = null
   activeWorkspaceTab.value = tab
 }
 
@@ -1246,22 +1276,123 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="order-essential-grid" aria-label="訂單必要資訊">
-              <article>
-                <span>顧客</span>
+              <button
+                class="order-essential-action"
+                :class="{ 'order-essential-action--active': activeCartQuickEditor === 'customer' }"
+                type="button"
+                aria-controls="cart-customer-editor"
+                :aria-expanded="activeCartQuickEditor === 'customer'"
+                @click="toggleCartQuickEditor('customer')"
+              >
+                <span class="order-essential-label">
+                  <UserRound :size="15" aria-hidden="true" />
+                  顧客
+                </span>
                 <strong>{{ customer.name || '現場客' }}</strong>
-              </article>
-              <article>
-                <span>方式</span>
+              </button>
+              <button
+                class="order-essential-action"
+                :class="{ 'order-essential-action--active': activeCartQuickEditor === 'service' }"
+                type="button"
+                aria-controls="cart-service-editor"
+                :aria-expanded="activeCartQuickEditor === 'service'"
+                @click="toggleCartQuickEditor('service')"
+              >
+                <span class="order-essential-label">
+                  <ShoppingBag :size="15" aria-hidden="true" />
+                  方式
+                </span>
                 <strong>{{ serviceModeLabels[serviceMode] }}</strong>
-              </article>
-              <article>
-                <span>付款</span>
+              </button>
+              <button
+                class="order-essential-action"
+                :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
+                type="button"
+                aria-controls="cart-payment-editor"
+                :aria-expanded="activeCartQuickEditor === 'payment'"
+                @click="toggleCartQuickEditor('payment')"
+              >
+                <span class="order-essential-label">
+                  <CreditCard :size="15" aria-hidden="true" />
+                  付款
+                </span>
                 <strong>{{ paymentLabels[paymentMethod] }}</strong>
-              </article>
+              </button>
               <article>
                 <span>備註</span>
                 <strong>{{ customer.note ? '有備註' : '無' }}</strong>
               </article>
+            </div>
+
+            <div v-if="activeCartQuickEditor" class="cart-inline-editor" aria-live="polite">
+              <div
+                v-if="activeCartQuickEditor === 'customer'"
+                id="cart-customer-editor"
+                class="cart-inline-panel cart-inline-panel--customer"
+              >
+                <label>
+                  姓名
+                  <input
+                    ref="customerNameInput"
+                    v-model="customer.name"
+                    type="text"
+                    autocomplete="name"
+                    @keydown.enter="closeCartQuickEditor"
+                    @keydown.escape="closeCartQuickEditor"
+                  />
+                </label>
+                <label>
+                  電話
+                  <input
+                    v-model="customer.phone"
+                    type="tel"
+                    autocomplete="tel"
+                    @keydown.enter="closeCartQuickEditor"
+                    @keydown.escape="closeCartQuickEditor"
+                  />
+                </label>
+                <button class="cart-inline-done" type="button" @click="closeCartQuickEditor">
+                  <CheckCircle2 :size="18" aria-hidden="true" />
+                  完成
+                </button>
+              </div>
+
+              <div
+                v-else-if="activeCartQuickEditor === 'service'"
+                id="cart-service-editor"
+                class="cart-inline-panel cart-inline-options"
+                aria-label="直接修改服務方式"
+              >
+                <button
+                  v-for="mode in serviceModeOptions"
+                  :key="`cart-${mode.value}`"
+                  class="segment-button"
+                  :class="{ 'segment-button--active': serviceMode === mode.value }"
+                  type="button"
+                  @click="selectCartServiceMode(mode.value)"
+                >
+                  {{ mode.label }}
+                </button>
+              </div>
+
+              <div
+                v-else-if="activeCartQuickEditor === 'payment'"
+                id="cart-payment-editor"
+                class="cart-inline-panel cart-inline-options cart-inline-options--payment"
+                aria-label="直接修改付款方式"
+              >
+                <button
+                  v-for="payment in visiblePaymentOptions"
+                  :key="`cart-${payment.value}`"
+                  class="payment-button"
+                  :class="{ 'payment-button--active': paymentMethod === payment.value }"
+                  type="button"
+                  @click="selectCartPaymentMethod(payment.value)"
+                >
+                  <CreditCard :size="18" aria-hidden="true" />
+                  {{ payment.label }}
+                </button>
+              </div>
             </div>
 
             <div class="cart-lines" aria-live="polite">
