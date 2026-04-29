@@ -7,6 +7,7 @@ import {
   createOrder,
   createPrintJob,
   closeRegisterSession,
+  deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
   fetchOrders,
@@ -466,7 +467,19 @@ const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
     return 'printed'
   }
 
-  return 'queued'
+  if (statuses.some((status) => status === 'queued')) {
+    return 'queued'
+  }
+
+  return 'skipped'
+}
+
+const summarizePrintJobs = (printJobs: PrintJob[]): PrintStatus => {
+  if (printJobs.length === 0) {
+    return 'skipped'
+  }
+
+  return summarizePrintStatuses(printJobs.map((printJob) => printJob.status))
 }
 
 const claimExpiresIn = (seconds = 180): string => new Date(Date.now() + seconds * 1000).toISOString()
@@ -498,6 +511,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const nextSequence = ref(nextSequenceFromOrders(orderQueue.value))
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
+  const deletingPrintJobId = ref<string | null>(null)
   const claimingOrderId = ref<string | null>(null)
   const updatingPaymentOrderId = ref<string | null>(null)
   const voidingOrderId = ref<string | null>(null)
@@ -1314,6 +1328,43 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const deletePrintJobForOrder = async (orderId: string, printJobId: string): Promise<void> => {
+    if (deletingPrintJobId.value) {
+      return
+    }
+
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+
+    deletingPrintJobId.value = printJobId
+
+    try {
+      if (isPosApiConfigured && order.remoteId) {
+        await deletePrintJob(printJobId)
+      }
+
+      const currentOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+      const nextPrintJobs = currentOrder.printJobs.filter((printJob) => printJob.id !== printJobId)
+      replaceOrder(order.id, {
+        ...currentOrder,
+        printJobs: nextPrintJobs,
+        printStatus: summarizePrintJobs(nextPrintJobs),
+      })
+      setBackendStatus('connected', '列印單已刪除', `${order.id} 已移除 1 筆列印單`)
+    } catch (error) {
+      setBackendStatus('fallback', '列印單刪除失敗', `${order.id} 刪除失敗：${getErrorMessage(error)}`)
+    } finally {
+      deletingPrintJobId.value = null
+    }
+  }
+
   const loadProductStatusCatalog = async (adminPin: string): Promise<void> => {
     if (!adminPin) {
       productStatusMessage.value = '請先輸入管理 PIN'
@@ -1693,7 +1744,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     clearCart,
     closeRegisterSessionForStation,
     customer,
+    deletingPrintJobId,
     decreaseLine,
+    deletePrintJobForOrder,
     filteredMenu,
     increaseLine,
     isSubmitting,

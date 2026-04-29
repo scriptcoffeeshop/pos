@@ -79,7 +79,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
-- 列印工作端點：`/functions/v1/pos-api/print-jobs`
+- 列印工作端點：`/functions/v1/pos-api/print-jobs`、`/functions/v1/pos-api/print-jobs/:id`
 - 收銀班別端點：`/functions/v1/pos-api/register/current`
 - 開班端點：`/functions/v1/pos-api/register/open`
 - 關班端點：`/functions/v1/pos-api/register/close`

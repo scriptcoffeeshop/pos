@@ -41,9 +41,24 @@ interface SavedQueueView {
   searchTerm: string
 }
 
+interface PrintJobRow {
+  key: string
+  order: PosOrder
+  job: PrintJob
+}
+
+interface SwipeState {
+  key: string
+  startX: number
+  startY: number
+  currentX: number
+}
+
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
+const maxSwipeOffset = 104
+const swipeActionThreshold = 72
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -120,7 +135,9 @@ const {
   claimingOrderId,
   closeRegisterSessionForStation,
   customer,
+  deletingPrintJobId,
   decreaseLine,
+  deletePrintJobForOrder,
   filteredMenu,
   increaseLine,
   isSubmitting,
@@ -327,6 +344,15 @@ const visibleQueueOrders = computed(() => {
   const keyword = queueSearchTerm.value.trim().toLowerCase()
   return queueBaseOrders.value.filter((order) => orderMatchesQueueSearch(order, keyword) && orderMatchesQueuePayment(order))
 })
+const printJobRows = computed<PrintJobRow[]>(() =>
+  orderQueue.value
+    .flatMap((order) => order.printJobs.map((job) => ({
+      key: `print:${order.id}:${job.id}`,
+      order,
+      job,
+    })))
+    .sort((a, b) => new Date(b.job.createdAt).getTime() - new Date(a.job.createdAt).getTime()),
+)
 const queueFilterNote = computed(() => {
   const filtersApplied = queueSearchTerm.value.trim().length > 0 || queuePaymentFilter.value !== 'all'
   if (filtersApplied) {
@@ -423,6 +449,7 @@ const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
+const swipeState = ref<SwipeState | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
 const registerPin = ref('')
@@ -699,6 +726,133 @@ const voidOrderAction = (order: PosOrder): void => {
 
 const refundOrderAction = (order: PosOrder): void => {
   void refundOrderForStation(stationPin.value.trim(), order.id)
+}
+
+const orderSwipeKey = (order: PosOrder): string => `order:${order.id}`
+
+const orderSwipeDeleteLabel = (order: PosOrder): string => {
+  if (orderCanBeVoided(order)) {
+    return voidActionLabel(order)
+  }
+
+  if (orderCanBeRefunded(order)) {
+    return refundActionLabel(order)
+  }
+
+  return '不可刪除'
+}
+
+const orderSwipeDeleteDisabled = (order: PosOrder): boolean =>
+  (!orderCanBeVoided(order) && !orderCanBeRefunded(order)) ||
+  voidingOrderId.value === order.id ||
+  refundingOrderId.value === order.id
+
+const orderSwipeDeleteAction = (order: PosOrder): void => {
+  if (orderSwipeDeleteDisabled(order)) {
+    return
+  }
+
+  if (orderCanBeVoided(order)) {
+    voidOrderAction(order)
+    return
+  }
+
+  refundOrderAction(order)
+}
+
+const printJobDeleteDisabled = (row: PrintJobRow): boolean =>
+  deletingPrintJobId.value === row.job.id || orderClaimedByOtherStation(row.order)
+
+const printJobDeleteLabel = (row: PrintJobRow): string =>
+  deletingPrintJobId.value === row.job.id ? '刪除中' : '刪除'
+
+const printJobDeleteAction = (row: PrintJobRow): void => {
+  if (printJobDeleteDisabled(row)) {
+    return
+  }
+
+  void deletePrintJobForOrder(row.order.id, row.job.id)
+}
+
+const swipeOffsetFor = (key: string): number => {
+  if (swipeState.value?.key !== key) {
+    return 0
+  }
+
+  const deltaX = swipeState.value.currentX - swipeState.value.startX
+  return Math.max(-maxSwipeOffset, Math.min(0, deltaX))
+}
+
+const swipeCardStyle = (key: string): { transform: string } => ({
+  transform: `translateX(${swipeOffsetFor(key)}px)`,
+})
+
+const swipeRowClass = (key: string): Record<string, boolean> => ({
+  'swipe-row--dragging': swipeState.value?.key === key,
+})
+
+const startSwipe = (key: string, event: PointerEvent): void => {
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return
+  }
+
+  if (event.target instanceof HTMLElement && event.target.closest('button, input, textarea, select, a')) {
+    return
+  }
+
+  swipeState.value = {
+    key,
+    startX: event.clientX,
+    startY: event.clientY,
+    currentX: event.clientX,
+  }
+
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+}
+
+const moveSwipe = (key: string, event: PointerEvent): void => {
+  if (swipeState.value?.key !== key) {
+    return
+  }
+
+  const deltaX = event.clientX - swipeState.value.startX
+  const deltaY = event.clientY - swipeState.value.startY
+
+  if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 12) {
+    swipeState.value = null
+    return
+  }
+
+  if (deltaX < 0) {
+    event.preventDefault()
+  }
+
+  swipeState.value.currentX = event.clientX
+}
+
+const endSwipe = (key: string, action: () => void): void => {
+  const offset = swipeOffsetFor(key)
+  swipeState.value = null
+
+  if (offset <= -swipeActionThreshold) {
+    action()
+  }
+}
+
+const cancelSwipe = (key: string): void => {
+  if (swipeState.value?.key === key) {
+    swipeState.value = null
+  }
+}
+
+const endOrderSwipe = (order: PosOrder): void => {
+  endSwipe(orderSwipeKey(order), () => orderSwipeDeleteAction(order))
+}
+
+const endPrintJobSwipe = (row: PrintJobRow): void => {
+  endSwipe(row.key, () => printJobDeleteAction(row))
 }
 
 const toggleOrderDetail = (order: PosOrder): void => {
@@ -1230,138 +1384,160 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <article
+            <div
               v-for="order in visibleQueueOrders"
               :key="order.id"
-              class="order-row"
-              :class="[`order-row--${order.status}`, { 'order-row--claimed-other': orderClaimedByOtherStation(order) }]"
+              class="swipe-row order-swipe-row"
+              :class="swipeRowClass(orderSwipeKey(order))"
             >
-              <div class="order-row-main">
-                <div class="order-row-title">
-                  <span class="order-id">{{ order.id }}</span>
-                  <span class="order-row-title-chips">
-                    <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
-                      <LockKeyhole :size="13" aria-hidden="true" />
-                      {{ claimLabelFor(order) }}
+              <div
+                class="swipe-action swipe-action--danger"
+                aria-hidden="true"
+                inert
+                :class="{ 'swipe-action--disabled': orderSwipeDeleteDisabled(order) }"
+              >
+                <Trash2 :size="18" aria-hidden="true" />
+                {{ orderSwipeDeleteLabel(order) }}
+              </div>
+              <article
+                class="order-row swipe-card"
+                :class="[
+                  `order-row--${order.status}`,
+                  { 'order-row--claimed-other': orderClaimedByOtherStation(order) },
+                ]"
+                :style="swipeCardStyle(orderSwipeKey(order))"
+                @pointerdown="startSwipe(orderSwipeKey(order), $event)"
+                @pointermove="moveSwipe(orderSwipeKey(order), $event)"
+                @pointerup="endOrderSwipe(order)"
+                @pointercancel="cancelSwipe(orderSwipeKey(order))"
+              >
+                <div class="order-row-main">
+                  <div class="order-row-title">
+                    <span class="order-id">{{ order.id }}</span>
+                    <span class="order-row-title-chips">
+                      <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
+                        <LockKeyhole :size="13" aria-hidden="true" />
+                        {{ claimLabelFor(order) }}
+                      </span>
+                      <span v-if="orderPendingSync(order)" class="sync-chip">
+                        <Clock3 :size="13" aria-hidden="true" />
+                        本機待同步
+                      </span>
+                      <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                     </span>
-                    <span v-if="orderPendingSync(order)" class="sync-chip">
-                      <Clock3 :size="13" aria-hidden="true" />
-                      本機待同步
-                    </span>
-                    <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+                  </div>
+                  <strong>{{ order.customerName }}</strong>
+                  <span>
+                    {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
+                    {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
+                  </span>
+                  <small v-if="fulfillmentLabel(order)" class="order-fulfillment">
+                    {{ fulfillmentLabel(order) }}
+                  </small>
+                </div>
+                <div class="order-row-meta">
+                  <span>{{ formatCurrency(order.subtotal) }}</span>
+                  <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
+                  <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
+                    {{ printSummary(order) }}
                   </span>
                 </div>
-                <strong>{{ order.customerName }}</strong>
-                <span>
-                  {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
-                  {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
-                </span>
-                <small v-if="fulfillmentLabel(order)" class="order-fulfillment">
-                  {{ fulfillmentLabel(order) }}
-                </small>
-              </div>
-              <div class="order-row-meta">
-                <span>{{ formatCurrency(order.subtotal) }}</span>
-                <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
-                <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
-                  {{ printSummary(order) }}
-                </span>
-              </div>
-              <div class="order-actions">
-                <button
-                  v-if="paymentActionLabel(order)"
-                  class="order-action--payment"
-                  type="button"
-                  :disabled="paymentActionDisabled(order)"
-                  @click="confirmPaymentAction(order)"
-                >
-                  <CreditCard :size="16" aria-hidden="true" />
-                  {{ paymentActionLabel(order) }}
-                </button>
-                <button
-                  class="order-action--print"
-                  type="button"
-                  :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
-                  @click="printOrder(order.id)"
-                >
-                  <Printer :size="16" aria-hidden="true" />
-                  {{ printActionLabel(order) }}
-                </button>
-                <button
-                  class="order-action--claim"
-                  type="button"
-                  :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
-                  :disabled="claimActionDisabled(order)"
-                  @click="claimOrderAction(order)"
-                >
-                  <LockKeyhole :size="16" aria-hidden="true" />
-                  {{ claimActionLabel(order) }}
-                </button>
-                <button
-                  v-if="orderCanBeVoided(order)"
-                  class="order-action--void"
-                  type="button"
-                  :disabled="voidingOrderId === order.id"
-                  @click="voidOrderAction(order)"
-                >
-                  <Trash2 :size="16" aria-hidden="true" />
-                  {{ voidActionLabel(order) }}
-                </button>
-                <button
-                  v-if="orderCanBeRefunded(order)"
-                  class="order-action--refund"
-                  type="button"
-                  :disabled="refundingOrderId === order.id"
-                  @click="refundOrderAction(order)"
-                >
-                  <WalletCards :size="16" aria-hidden="true" />
-                  {{ refundActionLabel(order) }}
-                </button>
-                <button
-                  class="order-action--detail"
-                  type="button"
-                  :class="{ 'order-action--active': expandedOrderId === order.id }"
-                  @click="toggleOrderDetail(order)"
-                >
-                  <ReceiptText :size="16" aria-hidden="true" />
-                  明細
-                </button>
-                <button
-                  v-for="action in statusActions"
-                  :key="action.value"
-                  :class="{ 'order-action--active': order.status === action.value }"
-                  type="button"
-                  :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
-                  @click="updateOrderStatus(order.id, action.value)"
-                >
-                  {{ action.label }}
-                </button>
-              </div>
-              <div v-if="expandedOrderId === order.id" class="order-detail-panel">
-                <div class="order-detail-grid">
-                  <span>來源</span>
-                  <strong>{{ sourceLabels[order.source] }}</strong>
-                  <span>電話</span>
-                  <strong>{{ order.customerPhone || '未留' }}</strong>
-                  <span>付款</span>
-                  <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
-                  <span>履約</span>
-                  <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
-                  <span>備註</span>
-                  <strong>{{ order.note || '無' }}</strong>
+                <div class="order-actions">
+                  <button
+                    v-if="paymentActionLabel(order)"
+                    class="order-action--payment"
+                    type="button"
+                    :disabled="paymentActionDisabled(order)"
+                    @click="confirmPaymentAction(order)"
+                  >
+                    <CreditCard :size="16" aria-hidden="true" />
+                    {{ paymentActionLabel(order) }}
+                  </button>
+                  <button
+                    class="order-action--print"
+                    type="button"
+                    :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
+                    @click="printOrder(order.id)"
+                  >
+                    <Printer :size="16" aria-hidden="true" />
+                    {{ printActionLabel(order) }}
+                  </button>
+                  <button
+                    class="order-action--claim"
+                    type="button"
+                    :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
+                    :disabled="claimActionDisabled(order)"
+                    @click="claimOrderAction(order)"
+                  >
+                    <LockKeyhole :size="16" aria-hidden="true" />
+                    {{ claimActionLabel(order) }}
+                  </button>
+                  <button
+                    v-if="orderCanBeVoided(order)"
+                    class="order-action--void"
+                    type="button"
+                    :disabled="voidingOrderId === order.id"
+                    @click="voidOrderAction(order)"
+                  >
+                    <Trash2 :size="16" aria-hidden="true" />
+                    {{ voidActionLabel(order) }}
+                  </button>
+                  <button
+                    v-if="orderCanBeRefunded(order)"
+                    class="order-action--refund"
+                    type="button"
+                    :disabled="refundingOrderId === order.id"
+                    @click="refundOrderAction(order)"
+                  >
+                    <WalletCards :size="16" aria-hidden="true" />
+                    {{ refundActionLabel(order) }}
+                  </button>
+                  <button
+                    class="order-action--detail"
+                    type="button"
+                    :class="{ 'order-action--active': expandedOrderId === order.id }"
+                    @click="toggleOrderDetail(order)"
+                  >
+                    <ReceiptText :size="16" aria-hidden="true" />
+                    明細
+                  </button>
+                  <button
+                    v-for="action in statusActions"
+                    :key="action.value"
+                    :class="{ 'order-action--active': order.status === action.value }"
+                    type="button"
+                    :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
+                    @click="updateOrderStatus(order.id, action.value)"
+                  >
+                    {{ action.label }}
+                  </button>
                 </div>
-                <div class="order-detail-lines">
-                  <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
-                    <div>
-                      <strong>{{ line.name }}</strong>
-                      <span>{{ line.options.join(' / ') || '標準' }}</span>
-                    </div>
-                    <span>x{{ line.quantity }}</span>
-                    <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
-                  </article>
+                <div v-if="expandedOrderId === order.id" class="order-detail-panel">
+                  <div class="order-detail-grid">
+                    <span>來源</span>
+                    <strong>{{ sourceLabels[order.source] }}</strong>
+                    <span>電話</span>
+                    <strong>{{ order.customerPhone || '未留' }}</strong>
+                    <span>付款</span>
+                    <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                    <span>履約</span>
+                    <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
+                    <span>備註</span>
+                    <strong>{{ order.note || '無' }}</strong>
+                  </div>
+                  <div class="order-detail-lines">
+                    <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
+                      <div>
+                        <strong>{{ line.name }}</strong>
+                        <span>{{ line.options.join(' / ') || '標準' }}</span>
+                      </div>
+                      <span>x{{ line.quantity }}</span>
+                      <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                    </article>
+                  </div>
                 </div>
-              </div>
-            </article>
+              </article>
+            </div>
 
             <div v-if="visibleQueueOrders.length === 0" class="empty-state queue-empty-state">
               <ReceiptText :size="24" aria-hidden="true" />
@@ -1443,6 +1619,64 @@ onBeforeUnmount(() => {
               <input v-model="printStation.autoPrint" type="checkbox" />
               自動列印新訂單
             </label>
+
+            <div class="print-job-panel" aria-label="列印單列表">
+              <div class="print-job-heading">
+                <strong>列印單</strong>
+                <span>{{ printJobRows.length }} 筆</span>
+              </div>
+
+              <div v-if="printJobRows.length > 0" class="print-job-list">
+                <div
+                  v-for="row in printJobRows"
+                  :key="row.key"
+                  class="swipe-row print-job-swipe-row"
+                  :class="swipeRowClass(row.key)"
+                >
+                  <div
+                    class="swipe-action swipe-action--danger"
+                    aria-hidden="true"
+                    inert
+                    :class="{ 'swipe-action--disabled': printJobDeleteDisabled(row) }"
+                  >
+                    <Trash2 :size="18" aria-hidden="true" />
+                    {{ printJobDeleteLabel(row) }}
+                  </div>
+                  <article
+                    class="print-job-row swipe-card"
+                    :style="swipeCardStyle(row.key)"
+                    @pointerdown="startSwipe(row.key, $event)"
+                    @pointermove="moveSwipe(row.key, $event)"
+                    @pointerup="endPrintJobSwipe(row)"
+                    @pointercancel="cancelSwipe(row.key)"
+                  >
+                    <div class="print-job-main">
+                      <strong>{{ row.order.id }}</strong>
+                      <span>{{ row.order.customerName }} · {{ formatOrderTime(row.job.createdAt) }}</span>
+                      <small v-if="row.job.lastError">{{ row.job.lastError }}</small>
+                    </div>
+                    <span class="print-job-status" :class="`print-job-status--${row.job.status}`">
+                      {{ printStatusLabels[row.job.status] }}
+                    </span>
+                    <span class="print-job-attempts">{{ row.job.attempts }}</span>
+                    <button
+                      class="print-job-delete-button"
+                      type="button"
+                      title="刪除列印單"
+                      :disabled="printJobDeleteDisabled(row)"
+                      @click="printJobDeleteAction(row)"
+                    >
+                      <Trash2 :size="16" aria-hidden="true" />
+                    </button>
+                  </article>
+                </div>
+              </div>
+
+              <div v-else class="empty-state print-job-empty-state">
+                <Printer :size="22" aria-hidden="true" />
+                <span>尚無列印單</span>
+              </div>
+            </div>
 
             <pre class="print-preview">{{ lastPrintPreview }}</pre>
           </section>

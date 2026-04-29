@@ -131,6 +131,10 @@ interface UpdatePrintJobStatusInput {
   error?: string;
 }
 
+interface DeletePrintJobInput {
+  stationId?: string;
+}
+
 interface PrintJobInput {
   orderId: string;
   stationId?: string;
@@ -1645,6 +1649,58 @@ api.patch("/print-jobs/:id/status", async (c) => {
   if (error) {
     return c.json({ error: error.message }, 500);
   }
+
+  return c.json({ printJob: data });
+});
+
+api.delete("/print-jobs/:id", async (c) => {
+  const printJobId = c.req.param("id");
+  const input: DeletePrintJobInput = await c.req.json<DeletePrintJobInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  const { data: currentJob, error: currentJobError } = await supabase
+    .from("print_jobs")
+    .select("id, order_id, status")
+    .eq("id", printJobId)
+    .single();
+
+  if (currentJobError) {
+    return c.json({ error: currentJobError.message }, 404);
+  }
+
+  const { data: currentOrder, error: currentOrderError } = await loadOrder(currentJob.order_id);
+  if (currentOrderError) {
+    return c.json({ error: currentOrderError.message }, 404);
+  }
+
+  if (isLeaseActiveForOtherStation(currentOrder as Record<string, unknown>, stationId)) {
+    return claimConflictResponse(c, currentJob.order_id, stationId);
+  }
+
+  const { data, error } = await supabase
+    .from("print_jobs")
+    .delete()
+    .eq("id", printJobId)
+    .select(printJobSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "print_job.delete",
+    orderId: currentJob.order_id,
+    stationId,
+    metadata: {
+      printJobId,
+      previousStatus: currentJob.status,
+    },
+  });
 
   return c.json({ printJob: data });
 });

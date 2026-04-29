@@ -896,3 +896,12 @@ export const updatePrintJobStatus = async (
 
   return normalizePrintJob(data.printJob)
 }
+
+export const deletePrintJob = async (printJobId: string): Promise<PrintJob> => {
+  const data = await request<PrintJobResponse>(`/print-jobs/${printJobId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ stationId: currentStationId() }),
+  })
+
+  return normalizePrintJob(data.printJob)
+}
