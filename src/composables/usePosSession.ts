@@ -55,6 +55,7 @@ type BackendMode = 'syncing' | 'connected' | 'fallback'
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
+const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -197,6 +198,35 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
     }
 
     globalThis.localStorage?.setItem(counterDraftStorageKey, JSON.stringify(draft))
+  } catch {
+    return
+  }
+}
+
+const readRecentItemIds = (): string[] => {
+  try {
+    const rawItems = globalThis.localStorage?.getItem(recentItemsStorageKey)
+    if (!rawItems) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawItems)
+    return Array.isArray(parsed)
+      ? parsed.filter((itemId): itemId is string => typeof itemId === 'string' && itemId.trim().length > 0).slice(0, 6)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeRecentItemIds = (itemIds: string[]): void => {
+  try {
+    if (itemIds.length === 0) {
+      globalThis.localStorage?.removeItem(recentItemsStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(recentItemsStorageKey, JSON.stringify(itemIds.slice(0, 6)))
   } catch {
     return
   }
@@ -359,7 +389,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const menuCatalog = ref<MenuItem[]>([...menuItems])
   const productStatusCatalog = ref<MenuItem[]>([...menuItems])
   const cartLines = ref<CartLine[]>(savedCounterDraft?.cartLines ?? [])
-  const recentItemIds = ref<string[]>([])
+  const recentItemIds = ref<string[]>(readRecentItemIds())
   const orderQueue = ref<PosOrder[]>([...initialOrders])
   const lastPrintPreview = ref('尚未送出列印資料')
   const nextSequence = ref(nextSequenceFromOrders(initialOrders))
@@ -505,6 +535,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const rememberRecentItem = (itemId: string): void => {
     recentItemIds.value = [itemId, ...recentItemIds.value.filter((entry) => entry !== itemId)].slice(0, 6)
+    writeRecentItemIds(recentItemIds.value)
   }
 
   const resetCustomerDraft = (): void => {
