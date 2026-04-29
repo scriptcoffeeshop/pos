@@ -29,6 +29,7 @@ import {
 import type { ProductUpdateInput } from '../lib/posApi'
 import {
   buildOrderPrintPlan,
+  buildPrinterHealthcheckPayload,
   buildPrinterHealthcheckPreview,
 } from '../lib/printing'
 import type {
@@ -1237,10 +1238,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const sendPrinterHealthcheck = async (): Promise<void> => {
     const now = new Date()
-    printStation.online = true
-    printStation.lastPrintAt = now.toISOString()
-    lastPrintPreview.value = buildPrinterHealthcheckPreview(printStation)
-    await tryNativeLanPrint(lastPrintPreview.value)
+    const payload = buildPrinterHealthcheckPayload(printStation, now)
+    lastPrintPreview.value = buildPrinterHealthcheckPreview(printStation, payload)
+    const result = await tryNativeLanPrint(payload, printStation)
+    if (result.ok) {
+      printStation.online = true
+      printStation.lastPrintAt = now.toISOString()
+    }
   }
 
   const syncStationHeartbeat = async (): Promise<void> => {

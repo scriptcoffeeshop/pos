@@ -14,7 +14,7 @@
 
 - 封裝 Android APK。已完成 Capacitor Android 專案與 debug APK workflow。
 - 建立 GitHub Actions debug APK artifact，讓平板可先測 POS app 外殼。
-- 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。已加入 Android `LanPrinter` TCP socket plugin，待實機驗證。
+- 對 GODEX DT2X 固定 IP 送出 EZPL 測試 payload。已加入 Android `LanPrinter` TCP socket plugin，POS 列印站按鈕會送出純 EZPL healthcheck label，待實機驗證。
 - 驗證列印成功後的狀態回寫。已接 `print_jobs` 的 `printed` / `failed` 回寫流程，待實機確認。
 - POS 佇列已顯示列印 job 次數、重印入口與失敗訊息；待實機確認 GODEX TCP 回寫穩定性。
 - 多平板共用出單機的鎖定策略已進入第一版：`orders` 會保存 claim lease，狀態更新與 `print_jobs` 建立前都需要同一台平板持有有效 lease；平板在線心跳已寫入 `pos_station_heartbeats`，後續可再補 realtime 訂閱。

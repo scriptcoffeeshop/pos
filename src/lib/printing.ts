@@ -239,13 +239,28 @@ export const buildPrintPlanPreview = (plan: OrderPrintPlan): string => {
 export const buildEzplTicketPreview = (order: PosOrder, station: PrintStation): string =>
   buildReceiptPayload(order, station, order.lines)
 
-export const buildPrinterHealthcheckPreview = (station: PrintStation): string =>
+export const buildPrinterHealthcheckPayload = (station: PrintStation, testedAt = new Date()): string =>
+  [
+    '^Q60,3',
+    '^W80',
+    '^H10',
+    '^P1',
+    '^S2',
+    'A20,18,0,3,1,1,N,"Script Coffee POS TEST"',
+    `A20,54,0,2,1,1,N,"${escapeEzplText(station.name)}"`,
+    `A20,80,0,2,1,1,N,"${escapeEzplText(`${station.host}:${station.port}`)}"`,
+    `A20,106,0,2,1,1,N,"${escapeEzplText(testedAt.toISOString())}"`,
+    'E',
+  ].join('\n')
+
+export const buildPrinterHealthcheckPreview = (
+  station: PrintStation,
+  payload = buildPrinterHealthcheckPayload(station),
+): string =>
   [
     `PRINTER ${station.name}`,
     `HOST ${station.host}:${station.port}`,
     `PROTOCOL ${station.protocol}`,
-    'PAYLOAD ^Q40,3',
-    'PAYLOAD ^W80',
-    'PAYLOAD A20,20,0,3,1,1,N,"Script Coffee POS TEST"',
-    'PAYLOAD E',
+    'PAYLOAD',
+    payload,
   ].join('\n')
