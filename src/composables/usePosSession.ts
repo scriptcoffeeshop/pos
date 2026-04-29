@@ -37,6 +37,7 @@ import type {
   CustomerDraft,
   MenuCategory,
   MenuItem,
+  OrderSource,
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
@@ -56,6 +57,7 @@ const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
+const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -77,6 +79,10 @@ interface CounterDraftState {
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const paymentMethods: PaymentMethod[] = ['cash', 'card', 'line-pay', 'jkopay', 'transfer']
 const menuCategories: MenuCategory[] = ['coffee', 'tea', 'food', 'retail']
+const orderSources: OrderSource[] = ['counter', 'qr', 'online']
+const orderStatuses: OrderStatus[] = ['new', 'preparing', 'ready', 'served', 'failed', 'voided']
+const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expired', 'failed', 'refunded']
+const printStatuses: PrintStatus[] = ['queued', 'printed', 'skipped', 'failed']
 
 const defaultCustomerDraft = (): CustomerDraft => ({
   name: '現場客',
@@ -94,6 +100,18 @@ const isPaymentMethod = (value: unknown): value is PaymentMethod =>
 
 const isMenuCategory = (value: unknown): value is MenuCategory =>
   typeof value === 'string' && menuCategories.includes(value as MenuCategory)
+
+const isOrderSource = (value: unknown): value is OrderSource =>
+  typeof value === 'string' && orderSources.includes(value as OrderSource)
+
+const isOrderStatus = (value: unknown): value is OrderStatus =>
+  typeof value === 'string' && orderStatuses.includes(value as OrderStatus)
+
+const isPaymentStatus = (value: unknown): value is PaymentStatus =>
+  typeof value === 'string' && paymentStatuses.includes(value as PaymentStatus)
+
+const isPrintStatus = (value: unknown): value is PrintStatus =>
+  typeof value === 'string' && printStatuses.includes(value as PrintStatus)
 
 const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
   if (!line || typeof line !== 'object') {
@@ -230,6 +248,89 @@ const writeRecentItemIds = (itemIds: string[]): void => {
   } catch {
     return
   }
+}
+
+const nullableString = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+
+const sanitizePendingLocalOrder = (value: unknown): PosOrder | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const order = value as Partial<PosOrder>
+  const lines = Array.isArray(order.lines)
+    ? order.lines.map(sanitizeCounterDraftLine).filter((line): line is CartLine => Boolean(line))
+    : []
+
+  if (
+    typeof order.id !== 'string' ||
+    order.id.trim().length === 0 ||
+    lines.length === 0 ||
+    typeof order.subtotal !== 'number' ||
+    typeof order.customerName !== 'string' ||
+    typeof order.customerPhone !== 'string' ||
+    typeof order.deliveryAddress !== 'string' ||
+    typeof order.note !== 'string' ||
+    typeof order.createdAt !== 'string'
+  ) {
+    return null
+  }
+
+  return {
+    id: order.id,
+    source: isOrderSource(order.source) ? order.source : 'counter',
+    mode: isServiceMode(order.mode) ? order.mode : 'takeout',
+    customerName: order.customerName.trim() || '現場客',
+    customerPhone: order.customerPhone,
+    deliveryAddress: order.deliveryAddress,
+    requestedFulfillmentAt: nullableString(order.requestedFulfillmentAt),
+    note: order.note,
+    lines,
+    subtotal: Math.max(0, Math.trunc(order.subtotal)),
+    paymentMethod: isPaymentMethod(order.paymentMethod) ? order.paymentMethod : 'cash',
+    paymentStatus: isPaymentStatus(order.paymentStatus) ? order.paymentStatus : 'pending',
+    status: isOrderStatus(order.status) ? order.status : 'new',
+    createdAt: order.createdAt,
+    claimedBy: nullableString(order.claimedBy),
+    claimedAt: nullableString(order.claimedAt),
+    claimExpiresAt: nullableString(order.claimExpiresAt),
+    printStatus: isPrintStatus(order.printStatus) ? order.printStatus : 'skipped',
+    printJobs: [],
+  }
+}
+
+const readPendingLocalOrders = (): PosOrder[] => {
+  try {
+    const rawOrders = globalThis.localStorage?.getItem(pendingLocalOrdersStorageKey)
+    if (!rawOrders) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawOrders)
+    return Array.isArray(parsed)
+      ? parsed.map(sanitizePendingLocalOrder).filter((order): order is PosOrder => Boolean(order)).slice(0, 50)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writePendingLocalOrders = (orders: PosOrder[]): void => {
+  try {
+    if (orders.length === 0) {
+      globalThis.localStorage?.removeItem(pendingLocalOrdersStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(pendingLocalOrdersStorageKey, JSON.stringify(orders.slice(0, 50)))
+  } catch {
+    return
+  }
+}
+
+const mergeLocalPendingOrders = (pendingOrders: PosOrder[], baseOrders: PosOrder[]): PosOrder[] => {
+  const baseIds = new Set(baseOrders.map((order) => order.id))
+  return [...pendingOrders.filter((order) => !baseIds.has(order.id)), ...baseOrders]
 }
 
 const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
@@ -382,6 +483,7 @@ const isClaimExpired = (order: PosOrder, now = Date.now()): boolean => {
 export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const autoLoad = options.autoLoad ?? true
   const savedCounterDraft = readCounterDraft()
+  const savedPendingLocalOrders = readPendingLocalOrders()
   const selectedCategory = ref<CategoryFilter>('all')
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
@@ -390,9 +492,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const productStatusCatalog = ref<MenuItem[]>([...menuItems])
   const cartLines = ref<CartLine[]>(savedCounterDraft?.cartLines ?? [])
   const recentItemIds = ref<string[]>(readRecentItemIds())
-  const orderQueue = ref<PosOrder[]>([...initialOrders])
+  const pendingLocalOrders = ref<PosOrder[]>(savedPendingLocalOrders)
+  const orderQueue = ref<PosOrder[]>(mergeLocalPendingOrders(savedPendingLocalOrders, initialOrders))
   const lastPrintPreview = ref('尚未送出列印資料')
-  const nextSequence = ref(nextSequenceFromOrders(initialOrders))
+  const nextSequence = ref(nextSequenceFromOrders(orderQueue.value))
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
   const claimingOrderId = ref<string | null>(null)
@@ -588,7 +691,75 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const replaceOrder = (orderId: string, nextOrder: PosOrder): void => {
     orderQueue.value = orderQueue.value.map((order) => (order.id === orderId ? nextOrder : order))
+
+    if (pendingLocalOrders.value.some((order) => order.id === orderId)) {
+      pendingLocalOrders.value = pendingLocalOrders.value.map((order) => (order.id === orderId ? nextOrder : order))
+      writePendingLocalOrders(pendingLocalOrders.value)
+    }
   }
+
+  const rememberPendingLocalOrder = (order: PosOrder): void => {
+    if (order.remoteId) {
+      return
+    }
+
+    pendingLocalOrders.value = [
+      order,
+      ...pendingLocalOrders.value.filter((entry) => entry.id !== order.id),
+    ].slice(0, 50)
+    writePendingLocalOrders(pendingLocalOrders.value)
+    orderQueue.value = mergeLocalPendingOrders(pendingLocalOrders.value, orderQueue.value)
+  }
+
+  const applyRemoteOrders = (remoteOrders: PosOrder[]): void => {
+    const remoteOrderIds = new Set(remoteOrders.map((order) => order.id))
+    const nextPendingOrders = pendingLocalOrders.value.filter((order) => !remoteOrderIds.has(order.id))
+
+    if (nextPendingOrders.length !== pendingLocalOrders.value.length) {
+      pendingLocalOrders.value = nextPendingOrders
+      writePendingLocalOrders(pendingLocalOrders.value)
+    }
+
+    orderQueue.value = mergeLocalPendingOrders(pendingLocalOrders.value, remoteOrders)
+  }
+
+  const syncPendingLocalOrders = async (): Promise<number> => {
+    if (!isPosApiConfigured || pendingLocalOrders.value.length === 0) {
+      return 0
+    }
+
+    const stillPendingOrders: PosOrder[] = []
+    let syncedCount = 0
+
+    for (const order of pendingLocalOrders.value) {
+      if (order.status === 'voided') {
+        stillPendingOrders.push(order)
+        continue
+      }
+
+      try {
+        const persistedOrder = await createOrder(order)
+        if (order.status !== 'new') {
+          await persistOrderStatus(persistedOrder, order.status)
+        }
+        syncedCount += 1
+      } catch {
+        stillPendingOrders.push(order)
+      }
+    }
+
+    if (syncedCount > 0 || stillPendingOrders.length !== pendingLocalOrders.value.length) {
+      pendingLocalOrders.value = stillPendingOrders
+      writePendingLocalOrders(pendingLocalOrders.value)
+    }
+
+    return syncedCount
+  }
+
+  const pendingLocalOrderDetail = (): string =>
+    pendingLocalOrders.value.length > 0 ? `，另有 ${pendingLocalOrders.value.length} 張本機待同步` : ''
+
+  const syncedLocalOrderDetail = (count: number): string => (count > 0 ? `，已補同步 ${count} 張本機訂單` : '')
 
   const orderClaimedByCurrentStation = (order: PosOrder): boolean =>
     Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !isClaimExpired(order)
@@ -738,6 +909,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     setBackendStatus('syncing', 'API 同步中', '正在載入商品與訂單')
 
     try {
+      const syncedLocalCount = await syncPendingLocalOrders()
       const [remoteProducts, remoteOrders, currentRegisterSession] = await Promise.all([
         fetchProducts(),
         fetchOrders(),
@@ -746,10 +918,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       await applyRuntimePrinterSettings()
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
-      orderQueue.value = remoteOrders
+      applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(remoteOrders)
-      setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
+      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      setBackendStatus(
+        'connected',
+        'API 已同步',
+        `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張遠端訂單${syncedLocalOrderDetail(syncedLocalCount)}${pendingLocalOrderDetail()}`,
+      )
     } catch (error) {
       setBackendStatus('fallback', '本機模式', `POS API 載入失敗：${getErrorMessage(error)}`)
     }
@@ -793,14 +969,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     try {
+      const syncedLocalCount = await syncPendingLocalOrders()
       const [remoteOrders, currentRegisterSession] = await Promise.all([
         fetchOrders(),
         fetchCurrentRegisterSession(),
       ])
-      orderQueue.value = remoteOrders
+      applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(remoteOrders)
-      setBackendStatus('connected', quiet ? '自動同步完成' : 'API 已同步', `已更新 ${remoteOrders.length} 張訂單`)
+      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      setBackendStatus(
+        'connected',
+        quiet ? '自動同步完成' : 'API 已同步',
+        `已更新 ${remoteOrders.length} 張遠端訂單${syncedLocalOrderDetail(syncedLocalCount)}${pendingLocalOrderDetail()}`,
+      )
     } catch (error) {
       setBackendStatus('fallback', '同步失敗', `訂單佇列同步失敗：${getErrorMessage(error)}`)
     }
@@ -1332,9 +1513,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     resetCustomerDraft()
 
     if (!isPosApiConfigured) {
+      rememberPendingLocalOrder(order)
       if (printPlan.jobs.length > 0) {
         appendPrintPreviewStatus('STATUS 本機模式已產生列印 payload，尚未建立雲端 print_jobs')
       }
+      setBackendStatus('fallback', '本機待同步', `${order.id} 已保留在平板，待 POS API 恢復後補同步`)
       isSubmitting.value = false
       return order
     }
@@ -1369,6 +1552,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       }
 
       replaceOrder(order.id, nextOrder)
+      pendingLocalOrders.value = pendingLocalOrders.value.filter((entry) => entry.id !== order.id)
+      writePendingLocalOrders(pendingLocalOrders.value)
 
       if (printPlan.jobs.length > 0 && claimSucceeded) {
         const printStatuses: PrintStatus[] = []
@@ -1411,7 +1596,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         }
       }
 
-      setBackendStatus('connected', 'API 已同步', backendDetail)
+      setBackendStatus('connected', 'API 已同步', `${backendDetail}${pendingLocalOrderDetail()}`)
       void loadRegisterSession()
       void refreshProductCatalog()
       return nextOrder
@@ -1426,6 +1611,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         return null
       }
 
+      rememberPendingLocalOrder(order)
       setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${errorMessage}`)
       return order
     } finally {
