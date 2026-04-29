@@ -44,6 +44,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - 會員 LINE profile 名稱固定保存，不被訂單收件人姓名覆蓋。
 - 線上/QR 待付款新單會在 `GET /orders` 時依 `POS_PAYMENT_EXPIRY_MINUTES`（預設 20 分鐘）自動寫入 `status=failed` 與 `payment_status=expired`。
+- `create_pos_order()`、`refund_pos_order()`、`create_pos_member()`、`adjust_pos_member_wallet()` 與 `record_pos_payment_event()` 是 `SECURITY DEFINER` 交易函式，只授權 `service_role` 執行；外部請一律走 `pos-api` Edge Function，不從 anon/authenticated REST RPC 直呼。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位。
 
 ## 已部署項目
@@ -65,6 +66,8 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 會員錢包交易函式：`20260429154000_add_member_wallet_functions.sql`
 - 訂單履約欄位：`20260429161000_add_order_fulfillment_fields.sql`
 - 金流 webhook 事件：`20260429172000_add_payment_webhook_events.sql`
+- SECURITY DEFINER RPC 執行權收斂：`20260429183000_lock_down_pos_security_definer_rpc.sql`
+- 金流 webhook 事件 RLS policy：`20260429183500_lock_down_payment_events_rls.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`

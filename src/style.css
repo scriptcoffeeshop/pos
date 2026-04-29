@@ -136,6 +136,7 @@ button:disabled {
 
 .topbar,
 .overview-strip,
+.workstation-tabs,
 .workspace {
   width: min(100%, 1640px);
   margin-inline: auto;
@@ -353,11 +354,88 @@ h3 {
   line-height: 1.1;
 }
 
+.workstation-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.workstation-tab {
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: left;
+  box-shadow: var(--shadow-tight);
+}
+
+.workstation-tab svg {
+  flex: 0 0 auto;
+}
+
+.workstation-tab span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.workstation-tab strong,
+.workstation-tab small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workstation-tab strong {
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+  font-weight: 950;
+}
+
+.workstation-tab small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.workstation-tab--active {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.workstation-tab--active strong,
+.workstation-tab--active small {
+  color: var(--primary-dark);
+}
+
 .workspace {
   display: grid;
-  grid-template-columns: minmax(440px, 1.08fr) minmax(390px, 0.86fr) minmax(360px, 0.74fr);
   gap: 12px;
   align-items: start;
+}
+
+.workspace--order {
+  grid-template-columns: minmax(0, 1.12fr) minmax(360px, 0.78fr);
+}
+
+.workspace--queue .workstation-panel-stack {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.38fr);
+  align-items: start;
+}
+
+.workspace--printing .workstation-panel-stack {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.workspace--closeout .workstation-panel-stack {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .menu-panel,
@@ -386,7 +464,7 @@ h3 {
 .cart-panel {
   display: flex;
   flex-direction: column;
-  min-height: calc(100svh - 132px);
+  min-height: calc(100svh - 214px);
 }
 
 .queue-panel {
@@ -2439,6 +2517,7 @@ h3 {
 .note-shortcuts button:focus-visible,
 .segment-button:focus-visible,
 .view-switch-button:focus-visible,
+.workstation-tab:focus-visible,
 .payment-button:focus-visible,
 .primary-button:focus-visible,
 .icon-button:focus-visible,
@@ -2477,13 +2556,12 @@ h3 {
 }
 
 @media (max-width: 1260px) {
-  .workspace {
-    grid-template-columns: minmax(420px, 1fr) minmax(380px, 0.92fr);
+  .workspace--order {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
   }
 
-  .queue-panel {
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.54fr);
+  .workspace--queue .workstation-panel-stack {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.46fr);
     align-items: start;
   }
 
@@ -2491,9 +2569,6 @@ h3 {
     max-height: none;
   }
 
-  .active-order {
-    grid-column: 1 / -1;
-  }
 }
 
 @media (max-width: 900px) {
@@ -2505,6 +2580,10 @@ h3 {
   .workspace,
   .queue-panel {
     grid-template-columns: 1fr;
+  }
+
+  .workstation-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {
@@ -2598,6 +2677,16 @@ h3 {
 
   .primary-button {
     width: 100%;
+  }
+}
+
+@media (min-width: 720px) and (max-width: 900px) {
+  .workspace--order {
+    grid-template-columns: minmax(0, 1fr) minmax(310px, 0.72fr);
+  }
+
+  .workspace--printing .workstation-panel-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
