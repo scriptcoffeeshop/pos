@@ -58,6 +58,21 @@ interface RefundOrderInput {
   note?: string;
 }
 
+interface CreateMemberInput {
+  lineUserId?: string;
+  displayName?: string;
+  openingBalance?: number;
+  note?: string;
+  stationId?: string;
+}
+
+interface WalletAdjustmentInput {
+  amount?: number;
+  entryType?: "top_up" | "adjustment";
+  note?: string;
+  stationId?: string;
+}
+
 interface StationHeartbeatInput {
   stationId?: string;
   stationLabel?: string;
@@ -185,6 +200,10 @@ const orderSelect =
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
   "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
+const memberSelect =
+  "id, line_user_id, line_display_name, wallet_balance, created_at, updated_at";
+const transactionLedgerSelect =
+  "id, member_id, order_id, entry_type, amount, balance_after, note, created_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
@@ -292,6 +311,31 @@ const loadOrder = (orderId: string) =>
     .select(orderSelect)
     .eq("id", orderId)
     .single();
+
+const loadMemberWithLedger = async (memberId: string) => {
+  const { data: member, error: memberError } = await supabase
+    .from("members")
+    .select(memberSelect)
+    .eq("id", memberId)
+    .single();
+
+  if (memberError || !member) {
+    return { data: null, error: memberError };
+  }
+
+  const { data: ledger, error: ledgerError } = await supabase
+    .from("transaction_ledger")
+    .select(transactionLedgerSelect)
+    .eq("member_id", memberId)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (ledgerError) {
+    return { data: null, error: ledgerError };
+  }
+
+  return { data: { ...member, ledger: ledger ?? [] }, error: null };
+};
 
 const expireStalePendingOnlineOrders = async (): Promise<void> => {
   const now = new Date();
@@ -693,6 +737,161 @@ api.patch("/admin/products/:id", async (c) => {
   }
 
   return c.json({ product: data });
+});
+
+api.get("/admin/members", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 50);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+    : 50;
+  const keyword = sanitizeText(c.req.query("q"), "").slice(0, 80);
+
+  let query = supabase
+    .from("members")
+    .select(memberSelect)
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (keyword) {
+    const pattern = `%${keyword.replace(/[%_]/g, "\\$&")}%`;
+    query = query.or(`line_display_name.ilike.${pattern},line_user_id.ilike.${pattern}`);
+  }
+
+  const { data: members, error } = await query;
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const memberIds = (members ?? []).map((member) => member.id);
+  let ledgerByMember = new Map<string, unknown[]>();
+  if (memberIds.length > 0) {
+    const { data: ledger, error: ledgerError } = await supabase
+      .from("transaction_ledger")
+      .select(transactionLedgerSelect)
+      .in("member_id", memberIds)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(memberIds.length * 5, 500));
+
+    if (ledgerError) {
+      return c.json({ error: ledgerError.message }, 500);
+    }
+
+    ledgerByMember = (ledger ?? []).reduce((map, entry) => {
+      const memberId = entry.member_id as string;
+      const current = map.get(memberId) ?? [];
+      if (current.length < 5) {
+        current.push(entry);
+        map.set(memberId, current);
+      }
+      return map;
+    }, new Map<string, unknown[]>());
+  }
+
+  return c.json({
+    members: (members ?? []).map((member) => ({
+      ...member,
+      ledger: ledgerByMember.get(member.id) ?? [],
+    })),
+  });
+});
+
+api.post("/admin/members", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<CreateMemberInput>();
+  const { payload, error: validationError } = validateCreateMemberInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data: memberId, error } = await supabase.rpc("create_pos_member", {
+    p_line_user_id: payload.lineUserId,
+    p_line_display_name: payload.displayName,
+    p_opening_balance: payload.openingBalance,
+    p_note: payload.note,
+  });
+
+  if (error || typeof memberId !== "string") {
+    const status = /duplicate|unique/i.test(error?.message ?? "") ? 409 : 500;
+    return c.json({ error: error?.message ?? "Member could not be created" }, status);
+  }
+
+  const { data: member, error: memberError } = await loadMemberWithLedger(memberId);
+  if (memberError || !member) {
+    return c.json({ error: memberError?.message ?? "Member not found after create" }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "member.create",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      memberId,
+      displayName: payload.displayName,
+      lineUserId: payload.lineUserId,
+      openingBalance: payload.openingBalance,
+    },
+  });
+
+  return c.json({ member }, 201);
+});
+
+api.post("/admin/members/:id/wallet-adjustments", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const memberId = c.req.param("id");
+  const input = await c.req.json<WalletAdjustmentInput>();
+  const { payload, error: validationError } = validateWalletAdjustmentInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data: balanceAfter, error } = await supabase.rpc("adjust_pos_member_wallet", {
+    p_member_id: memberId,
+    p_amount: payload.amount,
+    p_entry_type: payload.entryType,
+    p_note: payload.note,
+  });
+
+  if (error || typeof balanceAfter !== "number") {
+    const status = /not found/i.test(error?.message ?? "")
+      ? 404
+      : /insufficient/i.test(error?.message ?? "")
+        ? 409
+        : 500;
+    return c.json({ error: error?.message ?? "Wallet could not be adjusted" }, status);
+  }
+
+  const { data: member, error: memberError } = await loadMemberWithLedger(memberId);
+  if (memberError || !member) {
+    return c.json({ error: memberError?.message ?? "Member not found after wallet adjustment" }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "member.wallet.adjust",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      memberId,
+      displayName: member.line_display_name,
+      amount: payload.amount,
+      entryType: payload.entryType,
+      balanceAfter,
+      note: payload.note,
+    },
+  });
+
+  return c.json({ member });
 });
 
 api.get("/admin/settings", async (c) => {
@@ -1779,6 +1978,83 @@ const validateProductUpdateInput = (
     }
     payload.sold_out_until = soldOutUntil.toISOString();
   }
+
+  return { payload, error: null };
+};
+
+const validateCreateMemberInput = (
+  input: CreateMemberInput,
+): {
+  payload: {
+    lineUserId: string | null;
+    displayName: string;
+    openingBalance: number;
+    note: string;
+  };
+  error: string | null;
+} => {
+  const payload = {
+    lineUserId: null as string | null,
+    displayName: "",
+    openingBalance: 0,
+    note: "",
+  };
+
+  if (input.lineUserId !== undefined && input.lineUserId !== null && typeof input.lineUserId !== "string") {
+    return { payload, error: "lineUserId must be a string" };
+  }
+  payload.lineUserId = input.lineUserId?.trim() ? input.lineUserId.trim().slice(0, 160) : null;
+
+  if (typeof input.displayName !== "string" || input.displayName.trim().length === 0) {
+    return { payload, error: "displayName is required" };
+  }
+  payload.displayName = input.displayName.trim().slice(0, 120);
+
+  const openingBalance = input.openingBalance ?? 0;
+  if (!Number.isInteger(openingBalance) || openingBalance < 0) {
+    return { payload, error: "openingBalance must be a non-negative integer" };
+  }
+  payload.openingBalance = openingBalance;
+
+  if (input.note !== undefined && input.note !== null && typeof input.note !== "string") {
+    return { payload, error: "note must be a string" };
+  }
+  payload.note = input.note?.trim().slice(0, 500) ?? "";
+
+  return { payload, error: null };
+};
+
+const validateWalletAdjustmentInput = (
+  input: WalletAdjustmentInput,
+): {
+  payload: {
+    amount: number;
+    entryType: "top_up" | "adjustment";
+    note: string;
+  };
+  error: string | null;
+} => {
+  const payload = {
+    amount: 0,
+    entryType: "adjustment" as "top_up" | "adjustment",
+    note: "",
+  };
+
+  const amount = input.amount;
+  if (!Number.isInteger(amount) || amount === undefined || amount === 0) {
+    return { payload, error: "amount must be a non-zero integer" };
+  }
+  payload.amount = amount;
+
+  if (input.entryType !== undefined && input.entryType !== "top_up" && input.entryType !== "adjustment") {
+    return { payload, error: "entryType must be top_up or adjustment" };
+  }
+  payload.entryType = input.entryType ?? (amount > 0 ? "top_up" : "adjustment");
+
+  if (input.note !== undefined && input.note !== null && typeof input.note !== "string") {
+    return { payload, error: "note must be a string" };
+  }
+  payload.note = input.note?.trim().slice(0, 500) ?? "";
 
   return { payload, error: null };
 };

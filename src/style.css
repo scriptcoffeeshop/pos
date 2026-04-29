@@ -1900,6 +1900,8 @@ h3 {
 .admin-limit-field,
 .admin-product-row label,
 .admin-product-stock-grid label,
+.admin-member-create label,
+.admin-member-row label,
 .admin-station-row label,
 .admin-rule-row label,
 .admin-role-row label {
@@ -1915,6 +1917,8 @@ h3 {
 .admin-product-row input,
 .admin-product-row select,
 .admin-product-stock-grid input,
+.admin-member-create input,
+.admin-member-row input,
 .admin-station-row input,
 .admin-rule-row input,
 .admin-rule-row select,
@@ -2134,12 +2138,14 @@ h3 {
 }
 
 .admin-audit-list,
+.admin-member-list,
 .admin-station-heartbeat-list {
   display: grid;
   gap: 8px;
 }
 
 .admin-audit-row,
+.admin-member-row,
 .admin-station-heartbeat-row {
   display: grid;
   gap: 8px;
@@ -2147,6 +2153,58 @@ h3 {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
+}
+
+.admin-member-create-grid,
+.admin-member-adjust-grid {
+  display: grid;
+  gap: 9px;
+  align-items: end;
+}
+
+.admin-member-create-grid {
+  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 118px minmax(220px, 1.2fr) auto;
+}
+
+.admin-member-adjust-grid {
+  grid-template-columns: 140px minmax(220px, 1fr) auto;
+}
+
+.admin-member-identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.admin-member-identity svg {
+  color: var(--primary-dark);
+}
+
+.admin-member-identity div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-member-identity strong,
+.admin-member-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-member-identity span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.admin-wallet-balance {
+  color: var(--primary-dark);
+  font-size: 1.15rem;
+  white-space: nowrap;
 }
 
 .admin-audit-primary {
@@ -2230,6 +2288,8 @@ h3 {
 .admin-limit-field input:focus,
 .admin-product-row input:focus,
 .admin-product-row select:focus,
+.admin-member-create input:focus,
+.admin-member-row input:focus,
 .admin-station-row input:focus,
 .admin-rule-row input:focus,
 .admin-rule-row select:focus,
@@ -2351,6 +2411,8 @@ h3 {
   .admin-access-grid,
   .admin-product-edit-grid,
   .admin-product-stock-grid,
+  .admin-member-create-grid,
+  .admin-member-adjust-grid,
   .admin-section-grid,
   .admin-station-grid,
   .admin-rule-grid,

@@ -32,11 +32,11 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `pos_settings`：出單機/印單規則與角色權限等後台設定。
 - `orders`：訂單主檔、來源、服務方式、付款狀態、製作狀態。
 - `order_items`：訂單品項、數量、單價、客製選項。
-- `members`：LINE Login profile 與會員錢包摘要。
+- `members`：LINE Login profile 與會員錢包摘要，後台可先建立手動會員，未來再綁定 LINE UID。
 - `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台以 PIN 查詢。
+- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台以 PIN 查詢。
 - `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
 
 ## 邊界
@@ -61,6 +61,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 退款交易函式：`20260429143500_add_refund_pos_order_function.sql`
 - 平板心跳：`20260429144500_add_pos_station_heartbeats.sql`
 - 原子建單扣庫存：`20260429150000_add_create_pos_order_function.sql`
+- 會員錢包交易函式：`20260429154000_add_member_wallet_functions.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -76,6 +77,8 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 開班端點：`/functions/v1/pos-api/register/open`
 - 關班端點：`/functions/v1/pos-api/register/close`
 - 後台商品端點：`/functions/v1/pos-api/admin/products`
+- 後台會員端點：`/functions/v1/pos-api/admin/members`
+- 後台錢包調整端點：`/functions/v1/pos-api/admin/members/:id/wallet-adjustments`
 - Runtime 設定端點：`/functions/v1/pos-api/settings/runtime`
 - 後台設定端點：`/functions/v1/pos-api/admin/settings`
 - 後台稽核端點：`/functions/v1/pos-api/admin/audit-events`
@@ -97,6 +100,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
+- 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`，需 `X-POS-ADMIN-PIN`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台出單機與權限修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`。
 - 後台稽核讀取走 `GET /admin/audit-events?limit=50`，需在 request header 帶 `X-POS-ADMIN-PIN`，最多一次回傳 100 筆。
 

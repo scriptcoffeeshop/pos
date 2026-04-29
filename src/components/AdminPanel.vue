@@ -12,11 +12,17 @@ import {
   SlidersHorizontal,
   Store,
   Trash2,
+  UserPlus,
+  Wallet,
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 import { categoryLabels } from '../data/menu'
+import { formatCurrency } from '../lib/formatters'
 import {
+  adjustMemberWallet,
+  createAdminMember,
   fetchAdminAuditEvents,
+  fetchAdminMembers,
   fetchAdminProducts,
   fetchAdminSettings,
   fetchAdminStations,
@@ -31,6 +37,7 @@ import type {
   MenuItem,
   PrinterSettings,
   PosAuditEvent,
+  PosMember,
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
@@ -43,7 +50,19 @@ interface ProductDraft extends MenuItem {
   soldOutUntilInput: string
 }
 
-type AdminTab = 'products' | 'printing' | 'access' | 'audit' | 'stations'
+interface MemberDraft {
+  lineUserId: string
+  displayName: string
+  openingBalance: number
+  note: string
+}
+
+interface WalletAdjustmentDraft {
+  amount: number
+  note: string
+}
+
+type AdminTab = 'products' | 'members' | 'printing' | 'access' | 'audit' | 'stations'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -51,6 +70,7 @@ const emit = defineEmits<{
 
 const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
+  { value: 'members', label: '會員錢包' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
   { value: 'stations', label: '平板' },
@@ -97,6 +117,8 @@ const auditActionLabels: Record<string, string> = {
   'register.close': '關班',
   'product.update': '商品更新',
   'setting.update': '設定更新',
+  'member.create': '建立會員',
+  'member.wallet.adjust': '錢包調整',
   'order.create': '建立訂單',
   'order.claim': '鎖單',
   'order.release_claim': '釋放鎖單',
@@ -178,6 +200,15 @@ const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
 const productDrafts = ref<ProductDraft[]>([])
+const members = ref<PosMember[]>([])
+const memberSearchTerm = ref('')
+const newMember = ref<MemberDraft>({
+  lineUserId: '',
+  displayName: '',
+  openingBalance: 0,
+  note: '',
+})
+const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const auditEvents = ref<PosAuditEvent[]>([])
@@ -186,8 +217,10 @@ const auditLimit = ref(50)
 const auditActionFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
+const isMemberLoading = ref(false)
 const isStationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
+const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
 
@@ -204,6 +237,8 @@ const lowStockProducts = computed(() =>
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
 const auditEventCount = computed(() => auditEvents.value.length)
+const memberCount = computed(() => members.value.length)
+const walletBalanceTotal = computed(() => members.value.reduce((total, member) => total + member.walletBalance, 0))
 const onlineStationCount = computed(() =>
   stationHeartbeats.value.filter((station) => isStationOnline(station.lastSeenAt)).length,
 )
@@ -248,6 +283,18 @@ const filteredProducts = computed(() => {
 
     return matchesCategory && matchesKeyword
   })
+})
+
+const filteredMembers = computed(() => {
+  const keyword = memberSearchTerm.value.trim().toLowerCase()
+  if (!keyword) {
+    return members.value
+  }
+
+  return members.value.filter((member) =>
+    member.displayName.toLowerCase().includes(keyword) ||
+    (member.lineUserId ?? '').toLowerCase().includes(keyword),
+  )
 })
 
 const toDraft = (product: MenuItem): ProductDraft => ({
@@ -295,6 +342,39 @@ const fromDatetimeLocalInput = (value: string): string | null => {
 
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+const resetNewMember = (): void => {
+  newMember.value = {
+    lineUserId: '',
+    displayName: '',
+    openingBalance: 0,
+    note: '',
+  }
+}
+
+const walletAdjustmentDraft = (memberId: string): WalletAdjustmentDraft => {
+  const currentDraft = walletAdjustmentDrafts.value[memberId]
+  if (currentDraft) {
+    return currentDraft
+  }
+
+  const nextDraft = { amount: 0, note: '' }
+  walletAdjustmentDrafts.value = {
+    ...walletAdjustmentDrafts.value,
+    [memberId]: nextDraft,
+  }
+  return nextDraft
+}
+
+const updateWalletAdjustmentAmount = (memberId: string, event: Event): void => {
+  const target = event.target as HTMLInputElement | null
+  walletAdjustmentDraft(memberId).amount = Number(target?.value ?? 0)
+}
+
+const updateWalletAdjustmentNote = (memberId: string, event: Event): void => {
+  const target = event.target as HTMLInputElement | null
+  walletAdjustmentDraft(memberId).note = target?.value ?? ''
 }
 
 const formatAuditTime = (iso: string): string => {
@@ -386,6 +466,11 @@ const auditSubject = (event: PosAuditEvent): string => {
     return `訂單 ${orderNumber}`
   }
 
+  const displayName = auditMetadataLabel(event, 'displayName')
+  if (displayName) {
+    return `會員 ${displayName}`
+  }
+
   if (event.orderId) {
     return `訂單 ${event.orderId.slice(0, 8)}`
   }
@@ -409,6 +494,9 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'expiredAfterMinutes')
       ? `逾時 ${auditMetadataLabel(event, 'expiredAfterMinutes')} 分`
       : null,
+    auditMoneyLabel(event, 'openingBalance') ? `開通 ${auditMoneyLabel(event, 'openingBalance')}` : null,
+    auditMoneyLabel(event, 'amount') ? `錢包 ${auditMoneyLabel(event, 'amount')}` : null,
+    auditMoneyLabel(event, 'balanceAfter') ? `餘額 ${auditMoneyLabel(event, 'balanceAfter')}` : null,
     auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')
       ? `庫存 ${auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')}`
       : null,
@@ -455,18 +543,20 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    const [products, settings, events, stations] = await Promise.all([
+    const [products, memberRows, settings, events, stations] = await Promise.all([
       fetchAdminProducts(adminPin.value.trim()),
+      fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value),
       fetchAdminSettings(adminPin.value.trim()),
       fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
       fetchAdminStations(adminPin.value.trim()),
     ])
     productDrafts.value = products.map(toDraft)
+    members.value = memberRows
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     auditEvents.value = events
     stationHeartbeats.value = stations
-    adminMessage.value = `已載入 ${products.length} 個商品、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -511,6 +601,86 @@ const loadStationHeartbeats = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
   } finally {
     isStationLoading.value = false
+  }
+}
+
+const loadMembers = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isMemberLoading.value = true
+  adminMessage.value = '讀取會員錢包中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    members.value = await fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value)
+    adminMessage.value = `已載入 ${members.value.length} 位會員`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '會員錢包讀取失敗'
+  } finally {
+    isMemberLoading.value = false
+  }
+}
+
+const addMember = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  savingMemberId.value = 'new'
+  adminMessage.value = '建立會員中'
+
+  try {
+    const member = await createAdminMember(adminPin.value.trim(), {
+      lineUserId: newMember.value.lineUserId.trim(),
+      displayName: newMember.value.displayName.trim(),
+      openingBalance: Math.max(0, Math.trunc(Number(newMember.value.openingBalance) || 0)),
+      note: newMember.value.note.trim(),
+    })
+    members.value = [member, ...members.value.filter((entry) => entry.id !== member.id)]
+    resetNewMember()
+    adminMessage.value = `${member.displayName} 已建立`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '會員建立失敗'
+  } finally {
+    savingMemberId.value = null
+  }
+}
+
+const saveWalletAdjustment = async (member: PosMember): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  const draft = walletAdjustmentDraft(member.id)
+  const amount = Math.trunc(Number(draft.amount) || 0)
+  if (amount === 0) {
+    adminMessage.value = '錢包調整金額不可為 0'
+    return
+  }
+
+  savingMemberId.value = member.id
+  adminMessage.value = `調整 ${member.displayName} 錢包`
+
+  try {
+    const savedMember = await adjustMemberWallet(adminPin.value.trim(), member.id, {
+      amount,
+      note: draft.note.trim(),
+    })
+    members.value = members.value.map((entry) => (entry.id === savedMember.id ? savedMember : entry))
+    walletAdjustmentDrafts.value = {
+      ...walletAdjustmentDrafts.value,
+      [member.id]: { amount: 0, note: '' },
+    }
+    adminMessage.value = `${savedMember.displayName} 餘額 ${formatCurrency(savedMember.walletBalance)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '錢包調整失敗'
+  } finally {
+    savingMemberId.value = null
   }
 }
 
@@ -710,6 +880,14 @@ const saveAccessControl = async (): Promise<void> => {
         <strong>{{ lowStockProducts }}</strong>
       </article>
       <article>
+        <span>會員</span>
+        <strong>{{ memberCount }}</strong>
+      </article>
+      <article>
+        <span>錢包餘額</span>
+        <strong>{{ formatCurrency(walletBalanceTotal) }}</strong>
+      </article>
+      <article>
         <span>出單規則</span>
         <strong>{{ printRuleCount }}</strong>
       </article>
@@ -885,6 +1063,113 @@ const saveAccessControl = async (): Promise<void> => {
           <div v-if="filteredProducts.length === 0" class="empty-state">
             <Search :size="24" aria-hidden="true" />
             <span>沒有符合條件的商品</span>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'members'" class="admin-tab-panel" aria-label="會員錢包">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Members</p>
+            <h2>會員錢包</h2>
+            <span class="panel-note">建立會員、查餘額與寫入儲值/扣款流水</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions">
+            <label class="search-box">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="memberSearchTerm" type="search" placeholder="搜尋會員或 LINE UID" @keyup.enter="loadMembers" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isMemberLoading" @click="loadMembers">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isMemberLoading ? '讀取中' : '刷新會員' }}
+            </button>
+          </div>
+        </div>
+
+        <section class="admin-subpanel admin-member-create">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Create</p>
+              <h3>新增會員</h3>
+            </div>
+            <UserPlus :size="22" aria-hidden="true" />
+          </div>
+
+          <div class="admin-member-create-grid">
+            <label>
+              顯示名稱
+              <input v-model="newMember.displayName" type="text" placeholder="例如 林小姐" />
+            </label>
+            <label>
+              LINE UID
+              <input v-model="newMember.lineUserId" type="text" placeholder="可留空，之後綁定" />
+            </label>
+            <label>
+              開通餘額
+              <input v-model.number="newMember.openingBalance" type="number" min="0" step="1" />
+            </label>
+            <label>
+              備註
+              <input v-model="newMember.note" type="text" placeholder="開卡、儲值來源或人工調整原因" />
+            </label>
+            <button class="primary-button" type="button" :disabled="savingMemberId === 'new'" @click="addMember">
+              <Save :size="18" aria-hidden="true" />
+              {{ savingMemberId === 'new' ? '建立中' : '建立會員' }}
+            </button>
+          </div>
+        </section>
+
+        <div class="admin-member-list">
+          <article v-for="member in filteredMembers" :key="member.id" class="admin-member-row">
+            <header class="admin-row-header">
+              <div class="admin-member-identity">
+                <Wallet :size="22" aria-hidden="true" />
+                <div>
+                  <strong>{{ member.displayName }}</strong>
+                  <span>{{ member.lineUserId || '手動會員' }}</span>
+                </div>
+              </div>
+              <strong class="admin-wallet-balance">{{ formatCurrency(member.walletBalance) }}</strong>
+            </header>
+
+            <div class="admin-member-adjust-grid">
+              <label>
+                調整金額
+                <input
+                  :value="walletAdjustmentDraft(member.id).amount"
+                  type="number"
+                  step="1"
+                  placeholder="正數儲值，負數扣款"
+                  @input="updateWalletAdjustmentAmount(member.id, $event)"
+                />
+              </label>
+              <label>
+                原因
+                <input
+                  :value="walletAdjustmentDraft(member.id).note"
+                  type="text"
+                  placeholder="例如 現金儲值、活動補點、人工扣款"
+                  @input="updateWalletAdjustmentNote(member.id, $event)"
+                />
+              </label>
+              <button class="primary-button" type="button" :disabled="savingMemberId === member.id" @click="saveWalletAdjustment(member)">
+                <Save :size="18" aria-hidden="true" />
+                {{ savingMemberId === member.id ? '儲存中' : '寫入流水' }}
+              </button>
+            </div>
+
+            <div class="admin-audit-meta">
+              <span v-for="entry in member.ledger" :key="entry.id">
+                {{ formatAuditTime(entry.createdAt) }} · {{ formatCurrency(entry.amount) }} · 餘額
+                {{ entry.balanceAfter === null ? '未知' : formatCurrency(entry.balanceAfter) }}
+              </span>
+              <span v-if="member.ledger.length === 0">尚無交易流水</span>
+            </div>
+          </article>
+
+          <div v-if="filteredMembers.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無符合條件的會員</span>
           </div>
         </div>
       </section>

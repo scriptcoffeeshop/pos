@@ -8,6 +8,7 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosAuditEvent,
+  PosMember,
   PosOrder,
   PosStationHeartbeat,
   RegisterSession,
@@ -131,8 +132,37 @@ interface ApiAuditEvent {
   created_at: string
 }
 
+interface ApiTransactionLedgerEntry {
+  id: string
+  member_id: string | null
+  order_id: string | null
+  entry_type: 'top_up' | 'payment' | 'refund' | 'adjustment'
+  amount: number
+  balance_after: number | null
+  note: string
+  created_at: string
+}
+
+interface ApiMember {
+  id: string
+  line_user_id: string | null
+  line_display_name: string
+  wallet_balance: number
+  created_at: string
+  updated_at: string
+  ledger?: ApiTransactionLedgerEntry[]
+}
+
 interface AuditEventsResponse {
   events: ApiAuditEvent[]
+}
+
+interface MembersResponse {
+  members: ApiMember[]
+}
+
+interface MemberResponse {
+  member: ApiMember
 }
 
 interface ApiStationHeartbeat {
@@ -182,6 +212,18 @@ export interface ProductUpdateInput {
   inventoryCount: number | null
   lowStockThreshold: number | null
   soldOutUntil: string | null
+}
+
+export interface CreateMemberInput {
+  lineUserId: string
+  displayName: string
+  openingBalance: number
+  note: string
+}
+
+export interface WalletAdjustmentInput {
+  amount: number
+  note: string
 }
 
 interface ProductResponse {
@@ -317,6 +359,27 @@ const normalizeAuditEvent = (event: ApiAuditEvent): PosAuditEvent => ({
   actor: event.actor ?? '',
   metadata: normalizeMetadata(event.metadata),
   createdAt: event.created_at,
+})
+
+const normalizeLedgerEntry = (entry: ApiTransactionLedgerEntry) => ({
+  id: entry.id,
+  memberId: entry.member_id,
+  orderId: entry.order_id,
+  entryType: entry.entry_type,
+  amount: entry.amount,
+  balanceAfter: entry.balance_after,
+  note: entry.note,
+  createdAt: entry.created_at,
+})
+
+const normalizeMember = (member: ApiMember): PosMember => ({
+  id: member.id,
+  lineUserId: member.line_user_id,
+  displayName: member.line_display_name,
+  walletBalance: member.wallet_balance,
+  createdAt: member.created_at,
+  updatedAt: member.updated_at,
+  ledger: (member.ledger ?? []).map(normalizeLedgerEntry),
 })
 
 const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHeartbeat => ({
@@ -470,6 +533,62 @@ export const fetchAdminStations = async (adminPin: string): Promise<PosStationHe
   })
 
   return data.stations.map(normalizeStationHeartbeat)
+}
+
+export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = ''): Promise<PosMember[]> => {
+  const rawLimit = Number.isFinite(limit) ? limit : 50
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+  const params = new URLSearchParams({ limit: String(cappedLimit) })
+  if (keyword.trim()) {
+    params.set('q', keyword.trim())
+  }
+
+  const data = await request<MembersResponse>(`/admin/members?${params.toString()}`, {
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+    },
+  })
+
+  return data.members.map(normalizeMember)
+}
+
+export const createAdminMember = async (
+  adminPin: string,
+  input: CreateMemberInput,
+): Promise<PosMember> => {
+  const data = await request<MemberResponse>('/admin/members', {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeMember(data.member)
+}
+
+export const adjustMemberWallet = async (
+  adminPin: string,
+  memberId: string,
+  input: WalletAdjustmentInput,
+): Promise<PosMember> => {
+  const data = await request<MemberResponse>(`/admin/members/${memberId}/wallet-adjustments`, {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeMember(data.member)
 }
 
 export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {

@@ -160,6 +160,29 @@ export interface PosAdminSettings {
   accessControl: AccessControlSettings
 }
 
+export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'
+
+export interface TransactionLedgerEntry {
+  id: string
+  memberId: string | null
+  orderId: string | null
+  entryType: TransactionLedgerEntryType
+  amount: number
+  balanceAfter: number | null
+  note: string
+  createdAt: string
+}
+
+export interface PosMember {
+  id: string
+  lineUserId: string | null
+  displayName: string
+  walletBalance: number
+  createdAt: string
+  updatedAt: string
+  ledger: TransactionLedgerEntry[]
+}
+
 export interface PosAuditEvent {
   id: string
   action: string
