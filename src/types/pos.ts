@@ -2,9 +2,10 @@ export type MenuCategory = 'coffee' | 'tea' | 'food' | 'retail'
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'
-export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed'
-export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed'
+export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 'voided'
+export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
+export type RegisterSessionStatus = 'open' | 'closed'
 
 export interface MenuItem {
   id: string
@@ -21,6 +22,9 @@ export interface MenuItem {
   qrVisible: boolean
   prepStation: string
   printLabel: boolean
+  inventoryCount: number | null
+  lowStockThreshold: number | null
+  soldOutUntil: string | null
 }
 
 export interface CartLine {
@@ -39,6 +43,8 @@ export interface CartLine {
 export interface CustomerDraft {
   name: string
   phone: string
+  deliveryAddress: string
+  requestedFulfillmentAt: string
   note: string
 }
 
@@ -49,6 +55,8 @@ export interface PosOrder {
   mode: ServiceMode
   customerName: string
   customerPhone: string
+  deliveryAddress: string
+  requestedFulfillmentAt: string | null
   note: string
   lines: CartLine[]
   subtotal: number
@@ -56,7 +64,39 @@ export interface PosOrder {
   paymentStatus: PaymentStatus
   status: OrderStatus
   createdAt: string
+  claimedBy: string | null
+  claimedAt: string | null
+  claimExpiresAt: string | null
   printStatus: PrintStatus
+  printJobs: PrintJob[]
+}
+
+export interface PrintJob {
+  id: string
+  status: PrintStatus
+  printedAt: string | null
+  createdAt: string
+  attempts: number
+  lastError: string | null
+}
+
+export interface RegisterSession {
+  id: string
+  status: RegisterSessionStatus
+  openedAt: string
+  closedAt: string | null
+  openingCash: number
+  closingCash: number | null
+  expectedCash: number
+  cashSales: number
+  nonCashSales: number
+  pendingTotal: number
+  orderCount: number
+  openOrderCount: number
+  failedPaymentCount: number
+  failedPrintCount: number
+  voidedOrderCount: number
+  note: string
 }
 
 export interface PrintStation {
@@ -122,4 +162,104 @@ export interface AccessControlSettings {
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
+}
+
+export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'
+
+export interface TransactionLedgerEntry {
+  id: string
+  memberId: string | null
+  orderId: string | null
+  entryType: TransactionLedgerEntryType
+  amount: number
+  balanceAfter: number | null
+  note: string
+  createdAt: string
+}
+
+export interface PosMember {
+  id: string
+  lineUserId: string | null
+  displayName: string
+  walletBalance: number
+  createdAt: string
+  updatedAt: string
+  ledger: TransactionLedgerEntry[]
+}
+
+export interface ReportBreakdownRow {
+  key: string
+  count: number
+  total: number
+}
+
+export interface TopProductReportRow {
+  sku: string
+  name: string
+  quantity: number
+  total: number
+}
+
+export interface HourlyReportRow {
+  hour: number
+  count: number
+  total: number
+}
+
+export interface DailySalesReport {
+  date: string
+  rangeStart: string
+  rangeEnd: string
+  totalOrders: number
+  collectedOrders: number
+  collectedTotal: number
+  pendingTotal: number
+  refundTotal: number
+  averageTicket: number
+  openOrderCount: number
+  failedPaymentCount: number
+  failedPrintCount: number
+  voidedOrderCount: number
+  byPaymentMethod: ReportBreakdownRow[]
+  bySource: ReportBreakdownRow[]
+  byServiceMode: ReportBreakdownRow[]
+  byStatus: ReportBreakdownRow[]
+  hourly: HourlyReportRow[]
+  topProducts: TopProductReportRow[]
+}
+
+export interface PosAuditEvent {
+  id: string
+  action: string
+  orderId: string | null
+  registerSessionId: string | null
+  stationId: string
+  actor: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export interface PosPaymentEvent {
+  id: string
+  provider: string
+  eventId: string
+  orderId: string
+  orderNumber: string
+  eventType: string
+  paymentStatus: PaymentStatus
+  amount: number | null
+  applied: boolean
+  duplicate: boolean
+  processedAt: string | null
+  createdAt: string
+}
+
+export interface PosStationHeartbeat {
+  stationId: string
+  stationLabel: string
+  platform: string
+  appVersion: string
+  userAgent: string
+  lastSeenAt: string
+  createdAt: string
 }

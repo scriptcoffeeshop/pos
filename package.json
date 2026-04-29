@@ -14,7 +14,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "tablet:url": "bash scripts/show_tablet_url.sh",
     "cap:sync": "npm run build && cap sync android",
-    "apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "apk:debug": "bash scripts/build_debug_apk.sh",
     "apk:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
     "apk:install:fresh": "adb uninstall com.scriptcoffeeshop.pos || true && adb install android/app/build/outputs/apk/debug/app-debug.apk",
     "apk:open": "open android/app/build/outputs/apk/debug",

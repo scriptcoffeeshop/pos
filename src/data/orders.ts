@@ -7,6 +7,8 @@ export const initialOrders: PosOrder[] = [
     mode: 'takeout',
     customerName: '林小姐',
     customerPhone: '0912-000-128',
+    deliveryAddress: '',
+    requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
     note: '拿鐵少冰，15 分鐘後取餐',
     lines: [
       {
@@ -31,7 +33,20 @@ export const initialOrders: PosOrder[] = [
     paymentStatus: 'paid',
     status: 'preparing',
     createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+    claimedBy: null,
+    claimedAt: null,
+    claimExpiresAt: null,
     printStatus: 'printed',
+    printJobs: [
+      {
+        id: 'demo-print-002',
+        status: 'printed',
+        printedAt: new Date(Date.now() - 1000 * 60 * 7).toISOString(),
+        createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
+        attempts: 1,
+        lastError: null,
+      },
+    ],
   },
   {
     id: 'POS-20260427-001',
@@ -39,7 +54,9 @@ export const initialOrders: PosOrder[] = [
     mode: 'delivery',
     customerName: '王先生',
     customerPhone: '0988-100-555',
-    note: '外送地址待 Supabase 訂單欄位接入',
+    deliveryAddress: '台北市大安區復興南路一段 100 號',
+    requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 30).toISOString(),
+    note: '送到一樓櫃台',
     lines: [
       {
         itemId: 'americano-ice',
@@ -55,6 +72,19 @@ export const initialOrders: PosOrder[] = [
     paymentStatus: 'authorized',
     status: 'new',
     createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
+    claimedBy: '平板 2F91',
+    claimedAt: new Date(Date.now() - 1000 * 60 * 3).toISOString(),
+    claimExpiresAt: new Date(Date.now() - 1000 * 30).toISOString(),
     printStatus: 'queued',
+    printJobs: [
+      {
+        id: 'demo-print-001',
+        status: 'queued',
+        printedAt: null,
+        createdAt: new Date(Date.now() - 1000 * 60 * 17).toISOString(),
+        attempts: 0,
+        lastError: null,
+      },
+    ],
   },
 ]
