@@ -7,7 +7,7 @@
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台，包含菜單、購物車、付款、訂單佇列與列印站狀態；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
-- 櫃台效率操作：POS 工作台已有最近/常用品項快速加購並跨重啟保留、常用備註 chip、未送出櫃台草稿自動恢復、待處理/可交付/全部佇列篩選、付款狀態篩選、訂單搜尋、訂單明細展開、庫存/低庫存提示、下單原子扣庫存、多平板訂單鎖定、收款確認、未收款訂單作廢、已收款退款沖銷、列印重印紀錄、正式開班/關班、關帳摘要、關帳異常檢查與強制確認、鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
+- 櫃台效率操作：POS 工作台已有最近/常用品項快速加購並跨重啟保留、常用備註 chip、未送出櫃台草稿自動恢復、待處理/可交付/全部佇列篩選、付款狀態篩選、訂單搜尋與篩選狀態跨重啟保留、訂單明細展開、庫存/低庫存提示、下單原子扣庫存、多平板訂單鎖定、收款確認、未收款訂單作廢、已收款退款沖銷、列印重印紀錄、正式開班/關班、關帳摘要、關帳異常檢查與強制確認、鍵盤捷徑；建立櫃台訂單後會清空購物車並重置顧客電話/備註，避免帶到下一張單。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、會員錢包與 CSV 匯出、營運日報與 CSV 匯出、金流回呼事件篩選/匯出、出單機規則、角色權限、平板在線與操作稽核匯出；讀取金流事件、稽核、平板狀態與寫入設定需 Supabase secret `POS_ADMIN_PIN`。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。

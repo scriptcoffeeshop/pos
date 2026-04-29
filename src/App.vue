@@ -34,6 +34,16 @@ type AppView = 'pos' | 'admin' | 'online'
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 
+interface SavedQueueView {
+  filter: QueueFilter
+  paymentFilter: QueuePaymentFilter
+  searchTerm: string
+}
+
+const queueFilterStorageKey = 'script-coffee-pos-queue-view'
+const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
+const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
+
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
   globalThis.location?.hostname === 'online.scriptcoffee.com.tw'
@@ -62,6 +72,38 @@ const readInitialView = (): AppView => {
   }
 
   return 'pos'
+}
+
+const isQueueFilter = (value: unknown): value is QueueFilter =>
+  typeof value === 'string' && queueFilterValues.includes(value as QueueFilter)
+
+const isQueuePaymentFilter = (value: unknown): value is QueuePaymentFilter =>
+  typeof value === 'string' && queuePaymentFilterValues.includes(value as QueuePaymentFilter)
+
+const readSavedQueueView = (): SavedQueueView => {
+  try {
+    const rawView = globalThis.localStorage?.getItem(queueFilterStorageKey)
+    if (!rawView) {
+      return { filter: 'active', paymentFilter: 'all', searchTerm: '' }
+    }
+
+    const parsed = JSON.parse(rawView) as Partial<SavedQueueView>
+    return {
+      filter: isQueueFilter(parsed.filter) ? parsed.filter : 'active',
+      paymentFilter: isQueuePaymentFilter(parsed.paymentFilter) ? parsed.paymentFilter : 'all',
+      searchTerm: typeof parsed.searchTerm === 'string' ? parsed.searchTerm.slice(0, 80) : '',
+    }
+  } catch {
+    return { filter: 'active', paymentFilter: 'all', searchTerm: '' }
+  }
+}
+
+const writeSavedQueueView = (view: SavedQueueView): void => {
+  try {
+    globalThis.localStorage?.setItem(queueFilterStorageKey, JSON.stringify(view))
+  } catch {
+    return
+  }
 }
 
 const {
@@ -374,9 +416,10 @@ const paymentCloseoutRows = computed(() =>
 )
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
-const queueFilter = ref<QueueFilter>('active')
-const queuePaymentFilter = ref<QueuePaymentFilter>('all')
-const queueSearchTerm = ref('')
+const savedQueueView = readSavedQueueView()
+const queueFilter = ref<QueueFilter>(savedQueueView.filter)
+const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
+const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -759,6 +802,14 @@ watch(
   },
   { immediate: true },
 )
+
+watch([queueFilter, queuePaymentFilter, queueSearchTerm], ([filter, paymentFilter, searchTerm]) => {
+  writeSavedQueueView({
+    filter,
+    paymentFilter,
+    searchTerm: searchTerm.trim().slice(0, 80),
+  })
+})
 
 onMounted(() => {
   globalThis.addEventListener('keydown', handlePosShortcut)
