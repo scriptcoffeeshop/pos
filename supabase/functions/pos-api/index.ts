@@ -34,6 +34,7 @@ interface CreateOrderInput {
   subtotal: number;
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
+  stationId?: string;
   lines: OrderLineInput[];
 }
 
@@ -689,48 +690,48 @@ api.post("/orders", async (c) => {
     return c.json({ error: validationError }, 400);
   }
 
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      order_number: input.orderNumber,
-      source: input.source ?? "counter",
-      service_mode: input.serviceMode ?? "takeout",
-      customer_name: input.customerName?.trim() || "現場客",
-      customer_phone: input.customerPhone?.trim() ?? "",
-      note: input.note?.trim() ?? "",
-      subtotal: input.subtotal,
-      payment_method: input.paymentMethod ?? "cash",
-      payment_status: input.paymentStatus ?? "pending",
-      status: "new",
-    })
-    .select("*")
-    .single();
+  const stationId = sanitizeStationId(input.stationId);
+  const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
+    p_order_number: input.orderNumber,
+    p_source: input.source ?? "counter",
+    p_service_mode: input.serviceMode ?? "takeout",
+    p_customer_name: input.customerName?.trim() || "現場客",
+    p_customer_phone: input.customerPhone?.trim() ?? "",
+    p_note: input.note?.trim() ?? "",
+    p_subtotal: input.subtotal,
+    p_payment_method: input.paymentMethod ?? "cash",
+    p_payment_status: input.paymentStatus ?? "pending",
+    p_lines: input.lines.map((line) => ({
+      productId: line.productId ?? null,
+      productSku: line.productSku,
+      name: line.name,
+      unitPrice: line.unitPrice,
+      quantity: line.quantity,
+      options: line.options ?? [],
+    })),
+  });
 
   if (orderError) {
-    return c.json({ error: orderError.message }, 500);
+    const status = /inventory|Product not found|quantity/i.test(orderError.message) ? 409 : 500;
+    return c.json({ error: orderError.message }, status);
   }
 
-  const orderItems = input.lines.map((line) => ({
-    order_id: order.id,
-    product_id: line.productId ?? null,
-    product_sku: line.productSku,
-    name: line.name,
-    unit_price: line.unitPrice,
-    quantity: line.quantity,
-    options: line.options ?? [],
-  }));
-
-  const { error: itemError } = await supabase.from("order_items").insert(
-    orderItems,
-  );
-  if (itemError) {
-    return c.json({ error: itemError.message }, 500);
-  }
-
-  const { data: savedOrder, error: savedOrderError } = await loadOrder(order.id);
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(String(orderId));
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "order.create",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      subtotal: savedOrder.subtotal,
+      lineCount: input.lines.length,
+      paymentStatus: savedOrder.payment_status,
+    },
+  });
 
   return c.json({ order: savedOrder }, 201);
 });

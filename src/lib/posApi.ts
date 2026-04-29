@@ -569,6 +569,7 @@ export const createOrder = async (order: PosOrder): Promise<PosOrder> => {
       subtotal: order.subtotal,
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
+      stationId: currentStationId(),
       lines: order.lines.map((line) => ({
         productId: line.productId,
         productSku: line.productSku,

@@ -127,6 +127,8 @@ const getErrorMessage = (error: unknown): string => {
   return '未知錯誤'
 }
 
+const isInventoryError = (message: string): boolean => /inventory|Product not found|quantity/i.test(message)
+
 const nextSequenceFromOrders = (orders: PosOrder[]): number => {
   const maxSequence = orders.reduce((currentMax, order) => {
     const match = order.id.match(/-(\d{3,})$/)
@@ -559,6 +561,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       setBackendStatus('connected', 'API 已同步', `已載入 ${remoteProducts.length} 個商品、${remoteOrders.length} 張訂單`)
     } catch (error) {
       setBackendStatus('fallback', '本機模式', `POS API 載入失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const refreshProductCatalog = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      return
+    }
+
+    try {
+      const remoteProducts = await fetchProducts()
+      menuCatalog.value = sortProducts(remoteProducts)
+      productStatusCatalog.value = sortProducts(remoteProducts)
+    } catch {
+      return
     }
   }
 
@@ -1199,9 +1215,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       setBackendStatus('connected', 'API 已同步', backendDetail)
       void loadRegisterSession()
+      void refreshProductCatalog()
       return nextOrder
     } catch (error) {
-      setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${getErrorMessage(error)}`)
+      const errorMessage = getErrorMessage(error)
+      if (isInventoryError(errorMessage)) {
+        orderQueue.value = orderQueue.value.filter((entry) => entry.id !== order.id)
+        cartLines.value = order.lines.map((line) => ({ ...line, options: [...line.options] }))
+        nextSequence.value = Math.max(1, nextSequence.value - 1)
+        setBackendStatus('fallback', '庫存不足', `訂單未建立：${errorMessage}`)
+        void refreshProductCatalog()
+        return null
+      }
+
+      setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${errorMessage}`)
       return order
     } finally {
       isSubmitting.value = false

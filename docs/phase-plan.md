@@ -7,7 +7,7 @@
 - 建立 Supabase schema：商品、訂單、訂單明細、會員、交易日誌、列印任務。
 - 建立 Edge Function skeleton，先支援訂單建立與狀態更新。
 - 建立 PIN 保護的後台商品管理入口，先支援前台商品顯示、價格、排序與停售。
-- 補齊後台商品菜單通路、庫存/低庫存欄位、暫停供應至、出單機規則與角色權限模型，作為 iCHEF/肚肚式營運後台基礎。
+- 補齊後台商品菜單通路、庫存/低庫存欄位、暫停供應至、出單機規則與角色權限模型，作為 iCHEF/肚肚式營運後台基礎；建單已透過 `create_pos_order()` 原子扣庫存，避免多平板超賣。
 - 規劃 LINE Login profile 與會員資料邊界。
 
 ## Phase 2：Capacitor LAN Printing POC

@@ -28,7 +28,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ## 初始 schema 草案
 
-- `products`：商品、分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站與標籤列印設定。
+- `products`：商品、分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與庫存。
 - `pos_settings`：出單機/印單規則與角色權限等後台設定。
 - `orders`：訂單主檔、來源、服務方式、付款狀態、製作狀態。
 - `order_items`：訂單品項、數量、單價、客製選項。
@@ -60,6 +60,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 退款狀態：`20260429143000_add_refunded_payment_status.sql`
 - 退款交易函式：`20260429143500_add_refund_pos_order_function.sql`
 - 平板心跳：`20260429144500_add_pos_station_heartbeats.sql`
+- 原子建單扣庫存：`20260429150000_add_create_pos_order_function.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -87,7 +88,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；手動刷新才會重新載入商品與 runtime 出單設定。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
-- 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
+- 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；後端用 `create_pos_order()` 在同一個 transaction 建單、寫入品項與扣 `products.inventory_count`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。

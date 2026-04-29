@@ -95,6 +95,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
 const auditActionLabels: Record<string, string> = {
   'register.open': '開班',
   'register.close': '關班',
+  'order.create': '建立訂單',
   'order.claim': '鎖單',
   'order.release_claim': '釋放鎖單',
   'order.status.update': '訂單狀態',
@@ -329,6 +330,8 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
   const parts = [
     auditMetadataLabel(event, 'status') ? `狀態 ${auditMetadataLabel(event, 'status')}` : null,
     auditMetadataLabel(event, 'paymentStatus') ? `付款 ${auditMetadataLabel(event, 'paymentStatus')}` : null,
+    auditMoneyLabel(event, 'subtotal') ? `金額 ${auditMoneyLabel(event, 'subtotal')}` : null,
+    auditMetadataLabel(event, 'lineCount') ? `品項 ${auditMetadataLabel(event, 'lineCount')}` : null,
     auditMetadataLabel(event, 'previousStatus') ? `原狀態 ${auditMetadataLabel(event, 'previousStatus')}` : null,
     auditMetadataLabel(event, 'previousPaymentStatus')
       ? `原付款 ${auditMetadataLabel(event, 'previousPaymentStatus')}`
