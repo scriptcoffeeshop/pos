@@ -75,6 +75,15 @@ const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
 const buildOrderId = (date: Date, sequence: number): string =>
   `POS-${formatDateKey(date)}-${String(sequence).padStart(3, '0')}`
 
+const toRequestedFulfillmentIso = (value: string): string | null => {
+  if (!value.trim()) {
+    return null
+  }
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
 const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => ({
   stations: [
     {
@@ -237,6 +246,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const customer = reactive<CustomerDraft>({
     name: '現場客',
     phone: '',
+    deliveryAddress: '',
+    requestedFulfillmentAt: '',
     note: '',
   })
   const printStation = reactive<PrintStation>({
@@ -354,6 +365,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const resetCustomerDraft = (): void => {
     customer.name = '現場客'
     customer.phone = ''
+    customer.deliveryAddress = ''
+    customer.requestedFulfillmentAt = ''
     customer.note = ''
   }
 
@@ -1101,6 +1114,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return null
     }
 
+    if (serviceMode.value === 'delivery' && !customer.deliveryAddress.trim()) {
+      setBackendStatus('fallback', '外送地址未填', '外送訂單需要地址，避免交付資訊只留在備註')
+      return null
+    }
+
     isSubmitting.value = true
     const now = new Date()
     const order: PosOrder = {
@@ -1109,6 +1127,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       mode: serviceMode.value,
       customerName: customer.name.trim() || '現場客',
       customerPhone: customer.phone.trim(),
+      deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
+      requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
       subtotal: cartTotal.value,

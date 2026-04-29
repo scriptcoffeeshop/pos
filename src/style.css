@@ -917,6 +917,12 @@ h3 {
   gap: 4px;
 }
 
+.order-fulfillment {
+  color: var(--primary);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
 .order-row-title {
   justify-content: space-between;
   gap: 10px;

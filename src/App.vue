@@ -448,6 +448,21 @@ const printSummary = (order: PosOrder): string => {
   return `${printStatusLabels[order.printStatus]}${attemptText}`
 }
 
+const fulfillmentLabel = (order: PosOrder): string => {
+  const parts: string[] = []
+
+  if (order.requestedFulfillmentAt) {
+    const action = order.mode === 'delivery' ? '送達' : '取餐'
+    parts.push(`${action} ${formatOrderTime(order.requestedFulfillmentAt)}`)
+  }
+
+  if (order.deliveryAddress) {
+    parts.push(order.deliveryAddress)
+  }
+
+  return parts.join(' · ')
+}
+
 const printActionLabel = (order: PosOrder): string => {
   if (printingOrderId.value === order.id) {
     return '出單中'
@@ -914,6 +929,14 @@ onBeforeUnmount(() => {
               電話
               <input v-model="customer.phone" type="tel" autocomplete="tel" />
             </label>
+            <label>
+              預計時間
+              <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+            </label>
+            <label v-if="serviceMode === 'delivery'" class="wide-field">
+              外送地址
+              <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" />
+            </label>
             <label class="wide-field">
               備註
               <textarea v-model="customer.note" rows="3" />
@@ -1004,6 +1027,9 @@ onBeforeUnmount(() => {
                   {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
                   {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
                 </span>
+                <small v-if="fulfillmentLabel(order)" class="order-fulfillment">
+                  {{ fulfillmentLabel(order) }}
+                </small>
               </div>
               <div class="order-row-meta">
                 <span>{{ formatCurrency(order.subtotal) }}</span>
@@ -1325,6 +1351,9 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
+            <p v-if="fulfillmentLabel(activeOrder)" class="order-fulfillment">
+              {{ fulfillmentLabel(activeOrder) }}
+            </p>
             <button
               v-if="paymentActionLabel(activeOrder)"
               class="active-order-payment-button"

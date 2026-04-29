@@ -30,6 +30,8 @@ interface CreateOrderInput {
   serviceMode?: ServiceMode;
   customerName?: string;
   customerPhone?: string;
+  deliveryAddress?: string;
+  requestedFulfillmentAt?: string | null;
   note?: string;
   subtotal: number;
   paymentMethod?: PaymentMethod;
@@ -1072,12 +1074,16 @@ api.post("/orders", async (c) => {
   }
 
   const stationId = sanitizeStationId(input.stationId);
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
     p_order_number: input.orderNumber,
     p_source: input.source ?? "counter",
     p_service_mode: input.serviceMode ?? "takeout",
     p_customer_name: input.customerName?.trim() || "現場客",
     p_customer_phone: input.customerPhone?.trim() ?? "",
+    p_delivery_address: deliveryAddress,
+    p_requested_fulfillment_at: requestedFulfillmentAt,
     p_note: input.note?.trim() ?? "",
     p_subtotal: input.subtotal,
     p_payment_method: input.paymentMethod ?? "cash",
@@ -1111,6 +1117,8 @@ api.post("/orders", async (c) => {
       subtotal: savedOrder.subtotal,
       lineCount: input.lines.length,
       paymentStatus: savedOrder.payment_status,
+      deliveryAddress: savedOrder.delivery_address,
+      requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
     },
   });
 
@@ -2017,6 +2025,14 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
     return "orderNumber is required";
   }
 
+  if (input.serviceMode === "delivery" && !input.deliveryAddress?.trim()) {
+    return "deliveryAddress is required for delivery orders";
+  }
+
+  if (input.requestedFulfillmentAt && !normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt)) {
+    return "requestedFulfillmentAt must be a valid ISO datetime";
+  }
+
   if (!Number.isInteger(input.subtotal) || input.subtotal < 0) {
     return "subtotal must be a non-negative integer";
   }
@@ -2038,6 +2054,15 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
   }
 
   return null;
+};
+
+const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
 const productCategories: MenuCategory[] = ["coffee", "tea", "food", "retail"];

@@ -33,6 +33,7 @@ const categoryOptions: Array<{ value: CategoryFilter; label: string }> = [
 const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
   { value: 'takeout', label: '自取' },
   { value: 'dine-in', label: '內用' },
+  { value: 'delivery', label: '外送' },
 ]
 
 const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
@@ -57,6 +58,8 @@ const lastOrder = ref<PosOrder | null>(null)
 const customer = reactive<CustomerDraft>({
   name: '',
   phone: '',
+  deliveryAddress: '',
+  requestedFulfillmentAt: '',
   note: '',
 })
 
@@ -92,8 +95,13 @@ const menuGroups = computed(() =>
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
-const canSubmit = computed(
-  () => cartLines.value.length > 0 && customer.name.trim().length > 0 && customer.phone.trim().length > 0 && !isSubmitting.value,
+const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
+const canSubmit = computed(() =>
+  cartLines.value.length > 0 &&
+  customer.name.trim().length > 0 &&
+  customer.phone.trim().length > 0 &&
+  (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
+  !isSubmitting.value,
 )
 
 const addItem = (item: MenuItem): void => {
@@ -178,6 +186,15 @@ const buildOnlineOrderNumber = (date: Date): string => {
   return `WEB-${formatDateKey(date)}-${time}${suffix}`
 }
 
+const toRequestedFulfillmentIso = (value: string): string | null => {
+  if (!value.trim()) {
+    return null
+  }
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
 const loadOnlineMenu = async (): Promise<void> => {
   isLoading.value = true
   formError.value = ''
@@ -202,7 +219,9 @@ const loadOnlineMenu = async (): Promise<void> => {
 
 const submitOnlineOrder = async (): Promise<void> => {
   if (!canSubmit.value) {
-    formError.value = '請填寫姓名、電話並加入品項'
+    formError.value = requiresDeliveryAddress.value
+      ? '請填寫姓名、電話、外送地址並加入品項'
+      : '請填寫姓名、電話並加入品項'
     return
   }
 
@@ -221,6 +240,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     mode: serviceMode.value,
     customerName: customer.name.trim(),
     customerPhone: customer.phone.trim(),
+    deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
+    requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
     note: customer.note.trim(),
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
     subtotal: cartTotal.value,
@@ -239,6 +260,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     lastOrder.value = await createOrder(order)
     orderMessage.value = `${order.id} 已送出`
     clearCart()
+    customer.deliveryAddress = ''
+    customer.requestedFulfillmentAt = ''
     customer.note = ''
   } catch (error) {
     formError.value = error instanceof Error ? error.message : '訂單送出失敗'
@@ -420,6 +443,14 @@ onMounted(() => {
         <label>
           電話
           <input v-model="customer.phone" type="tel" autocomplete="tel" placeholder="聯絡電話" />
+        </label>
+        <label>
+          希望時間
+          <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+        </label>
+        <label v-if="requiresDeliveryAddress" class="wide-field">
+          外送地址
+          <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" placeholder="外送地址" />
         </label>
         <label class="wide-field">
           備註

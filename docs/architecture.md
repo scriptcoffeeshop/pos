@@ -24,6 +24,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - `pos-api` 對公開前台提供依 channel 過濾的商品與建單端點，對 POS 提供訂單、收款確認、未收款作廢與 runtime 出單機設定端點，對後台提供 PIN 保護的商品與設定端點；讀取訂單時會自動將逾時的線上/QR 待付款新單標成付款逾期。
 - 會員錢包由 `members.wallet_balance` 保存摘要，所有儲值/扣款走 `transaction_ledger`；後台 API 透過 DB function 在同一個 transaction 更新餘額與流水，避免兩者不一致。
 - 商品資料除了人工上架/停售，也保存 `inventory_count`、`low_stock_threshold` 與 `sold_out_until`；前台以這些欄位決定低庫存提示、售完與暫停供應狀態，建單時由 `create_pos_order()` 原子扣庫存。
+- 訂單主檔保存 `requested_fulfillment_at` 與 `delivery_address`，讓外送地址與希望取餐/送達時間進入正式欄位、POS 佇列與收據 payload，而不是混在備註裡。
 - 訂單保存 `claimed_by`、`claimed_at`、`claim_expires_at` 作為多平板 claim lease；POS 改狀態或建立 `print_jobs` 前必須持有有效 lease，避免兩台平板同時出單或處理同一張訂單。
 - 平板工作站每 30 秒 upsert `pos_station_heartbeats`，後台可查最後在線時間，輔助排查 claim lease 佔用與門市設備狀態。
 - 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需 `POS_ADMIN_PIN`，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。有未交付、付款異常或列印失敗時，關班必須送 `force=true`。

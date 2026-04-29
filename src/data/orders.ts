@@ -7,6 +7,8 @@ export const initialOrders: PosOrder[] = [
     mode: 'takeout',
     customerName: '林小姐',
     customerPhone: '0912-000-128',
+    deliveryAddress: '',
+    requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
     note: '拿鐵少冰，15 分鐘後取餐',
     lines: [
       {
@@ -52,7 +54,9 @@ export const initialOrders: PosOrder[] = [
     mode: 'delivery',
     customerName: '王先生',
     customerPhone: '0988-100-555',
-    note: '外送地址待 Supabase 訂單欄位接入',
+    deliveryAddress: '台北市大安區復興南路一段 100 號',
+    requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 30).toISOString(),
+    note: '送到一樓櫃台',
     lines: [
       {
         itemId: 'americano-ice',

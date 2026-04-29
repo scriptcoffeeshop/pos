@@ -66,6 +66,8 @@ interface ApiOrder {
   service_mode: ServiceMode
   customer_name: string
   customer_phone: string
+  delivery_address?: string | null
+  requested_fulfillment_at?: string | null
   note: string
   subtotal: number
   payment_method: PaymentMethod
@@ -452,6 +454,8 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => ({
   mode: order.service_mode,
   customerName: order.customer_name,
   customerPhone: order.customer_phone,
+  deliveryAddress: order.delivery_address ?? '',
+  requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
   note: order.note,
   subtotal: order.subtotal,
   paymentMethod: order.payment_method,
@@ -706,6 +710,8 @@ export const createOrder = async (order: PosOrder): Promise<PosOrder> => {
       serviceMode: order.mode,
       customerName: order.customerName,
       customerPhone: order.customerPhone,
+      deliveryAddress: order.deliveryAddress,
+      requestedFulfillmentAt: order.requestedFulfillmentAt,
       note: order.note,
       subtotal: order.subtotal,
       paymentMethod: order.paymentMethod,

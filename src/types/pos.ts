@@ -43,6 +43,8 @@ export interface CartLine {
 export interface CustomerDraft {
   name: string
   phone: string
+  deliveryAddress: string
+  requestedFulfillmentAt: string
   note: string
 }
 
@@ -53,6 +55,8 @@ export interface PosOrder {
   mode: ServiceMode
   customerName: string
   customerPhone: string
+  deliveryAddress: string
+  requestedFulfillmentAt: string | null
   note: string
   lines: CartLine[]
   subtotal: number

@@ -7,7 +7,7 @@ import type {
   PrintStation,
   PrintStationSetting,
 } from '../types/pos'
-import { formatCurrency } from './formatters'
+import { formatCurrency, formatOrderTime } from './formatters'
 
 const escapeEzplText = (value: string): string => value.replaceAll('"', "'").replace(/\s+/g, ' ').trim().slice(0, 42)
 
@@ -49,6 +49,21 @@ const stationSettingToRuntime = (station: PrintStationSetting): PrintStation => 
 const lineTotal = (lines: CartLine[]): number =>
   lines.reduce((total, line) => total + line.unitPrice * line.quantity, 0)
 
+const fulfillmentLinesForOrder = (order: PosOrder): string[] => {
+  const fulfillmentLines: string[] = []
+
+  if (order.requestedFulfillmentAt) {
+    const action = order.mode === 'delivery' ? 'DELIVER' : 'PICKUP'
+    fulfillmentLines.push(`${action} ${formatOrderTime(order.requestedFulfillmentAt)}`)
+  }
+
+  if (order.deliveryAddress) {
+    fulfillmentLines.push(`ADDR ${order.deliveryAddress}`)
+  }
+
+  return fulfillmentLines
+}
+
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
   if (rule.categories.length === 0 || !line.category) {
     return true
@@ -88,9 +103,14 @@ const buildReceiptPayload = (
 
   const totalY = 128 + lines.length * 28
   const note = escapeEzplText(order.note || '-')
+  const footerLines = [
+    `TOTAL ${formatCurrency(lineTotal(lines))}`,
+    ...fulfillmentLinesForOrder(order),
+    `NOTE ${note}`,
+  ]
 
   return [
-    '^Q120,3',
+    `^Q${Math.max(120, 70 + lines.length * 10 + footerLines.length * 9)},3`,
     '^W80',
     '^H10',
     '^P1',
@@ -99,8 +119,7 @@ const buildReceiptPayload = (
     `A20,58,0,2,1,1,N,"${escapeEzplText(order.id)}"`,
     `A20,84,0,2,1,1,N,"${escapeEzplText(`${order.mode} ${ruleName}`)}"`,
     ...itemCommands,
-    `A20,${totalY},0,2,1,1,N,"TOTAL ${escapeEzplText(formatCurrency(lineTotal(lines)))}"`,
-    `A20,${totalY + 28},0,2,1,1,N,"NOTE ${note}"`,
+    ...footerLines.map((line, index) => `A20,${totalY + index * 28},0,2,1,1,N,"${escapeEzplText(line)}"`),
     'E',
   ].join('\n')
 }
