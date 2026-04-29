@@ -56,6 +56,7 @@ type BackendMode = 'syncing' | 'connected' | 'fallback'
 
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
+const maxCartLineQuantity = 999
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
@@ -1004,22 +1005,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const addItem = (item: MenuItem): void => {
-    const existing = cartLines.value.find((line) => line.itemId === item.id)
-    rememberRecentItem(item.id)
-
-    if (existing) {
-      existing.quantity += 1
-      return
-    }
-
+  const createCartLine = (item: MenuItem, quantity: number): CartLine => {
     const nextLine: CartLine = {
       itemId: item.id,
       productSku: item.sku,
       category: item.category,
       name: item.name,
       unitPrice: item.price,
-      quantity: 1,
+      quantity,
       options: item.tags.slice(0, 1),
       prepStation: item.prepStation,
       printLabel: item.printLabel,
@@ -1029,13 +1022,59 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       nextLine.productId = item.id
     }
 
-    cartLines.value.push(nextLine)
+    return nextLine
+  }
+
+  const normalizeCartQuantity = (quantity: number): number => {
+    if (!Number.isFinite(quantity)) {
+      return 0
+    }
+
+    return Math.min(maxCartLineQuantity, Math.max(0, Math.trunc(quantity)))
+  }
+
+  const setItemQuantity = (item: MenuItem, quantity: number): void => {
+    const nextQuantity = normalizeCartQuantity(quantity)
+    const existing = cartLines.value.find((line) => line.itemId === item.id)
+
+    if (nextQuantity === 0) {
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== item.id)
+      return
+    }
+
+    rememberRecentItem(item.id)
+
+    if (existing) {
+      existing.quantity = nextQuantity
+      return
+    }
+
+    cartLines.value.push(createCartLine(item, nextQuantity))
+  }
+
+  const setLineQuantity = (itemId: string, quantity: number): void => {
+    const nextQuantity = normalizeCartQuantity(quantity)
+    const line = cartLines.value.find((entry) => entry.itemId === itemId)
+    if (!line) {
+      return
+    }
+
+    if (nextQuantity === 0) {
+      cartLines.value = cartLines.value.filter((entry) => entry.itemId !== itemId)
+      return
+    }
+
+    line.quantity = nextQuantity
+  }
+
+  const addItem = (item: MenuItem): void => {
+    setItemQuantity(item, (cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0) + 1)
   }
 
   const increaseLine = (itemId: string): void => {
     const line = cartLines.value.find((entry) => entry.itemId === itemId)
     if (line) {
-      line.quantity += 1
+      setLineQuantity(itemId, line.quantity + 1)
     }
   }
 
@@ -1045,12 +1084,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (line.quantity === 1) {
-      cartLines.value = cartLines.value.filter((entry) => entry.itemId !== itemId)
-      return
-    }
-
-    line.quantity -= 1
+    setLineQuantity(itemId, line.quantity - 1)
   }
 
   const clearCart = (): void => {
@@ -1779,6 +1813,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     searchTerm,
     selectedCategory,
     serviceMode,
+    setItemQuantity,
+    setLineQuantity,
     stationClaimId,
     stationClaimLabel,
     stationHeartbeatMessage,

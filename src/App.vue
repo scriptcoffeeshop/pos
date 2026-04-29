@@ -171,6 +171,8 @@ const {
   selectedCategory,
   sendPrinterHealthcheck,
   serviceMode,
+  setItemQuantity,
+  setLineQuantity,
   stationClaimLabel,
   stationHeartbeatMessage,
   submitCounterOrder,
@@ -528,6 +530,57 @@ const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 
 const lineQuantityByItem = (itemId: string): number =>
   cartLines.value.find((line) => line.itemId === itemId)?.quantity ?? 0
+
+const quantityFromInput = (event: Event): number | null => {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return null
+  }
+
+  const value = event.target.value.trim()
+  if (!value) {
+    return null
+  }
+
+  const quantity = Number(value)
+  return Number.isFinite(quantity) ? quantity : null
+}
+
+const committedQuantityFromInput = (event: Event): number => {
+  const quantity = quantityFromInput(event)
+  return quantity ?? 0
+}
+
+const updateProductQuantityInput = (item: MenuItem, event: Event): void => {
+  const quantity = quantityFromInput(event)
+  if (quantity === null) {
+    return
+  }
+
+  setItemQuantity(item, quantity)
+}
+
+const commitProductQuantityInput = (item: MenuItem, event: Event): void => {
+  setItemQuantity(item, committedQuantityFromInput(event))
+}
+
+const updateCartQuantityInput = (itemId: string, event: Event): void => {
+  const quantity = quantityFromInput(event)
+  if (quantity === null) {
+    return
+  }
+
+  setLineQuantity(itemId, quantity)
+}
+
+const commitCartQuantityInput = (itemId: string, event: Event): void => {
+  setLineQuantity(itemId, committedQuantityFromInput(event))
+}
+
+const blurQuantityInput = (event: KeyboardEvent): void => {
+  if (event.target instanceof HTMLInputElement) {
+    event.target.blur()
+  }
+}
 
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
   if (!product.soldOutUntil) {
@@ -1239,27 +1292,54 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="product-grid">
-              <button
+              <article
                 v-for="item in filteredMenu"
                 :key="item.id"
                 class="product-tile"
-                type="button"
-                @click="addItem(item)"
+                :class="{ 'product-tile--in-cart': lineQuantityByItem(item.id) > 0 }"
               >
-                <span class="product-tile-top">
-                  <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-                  <span class="product-category">{{ categoryLabels[item.category] }}</span>
-                </span>
-                <span class="product-name">{{ item.name }}</span>
-                <span class="product-meta">
-                  <strong>{{ formatCurrency(item.price) }}</strong>
-                  <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
-                </span>
-                <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
-                  {{ productStockLabel(item) }}
-                </span>
-                <span class="product-tags">{{ item.tags.join(' / ') }}</span>
-              </button>
+                <button class="product-tile-main" type="button" @click="addItem(item)">
+                  <span class="product-tile-top">
+                    <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
+                    <span class="product-category">{{ categoryLabels[item.category] }}</span>
+                  </span>
+                  <span class="product-name">{{ item.name }}</span>
+                  <span class="product-meta">
+                    <strong>{{ formatCurrency(item.price) }}</strong>
+                    <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
+                  </span>
+                  <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
+                    {{ productStockLabel(item) }}
+                  </span>
+                  <span class="product-tags">{{ item.tags.join(' / ') }}</span>
+                </button>
+                <div class="product-quantity-control" :aria-label="`${item.name} 數量`">
+                  <button
+                    type="button"
+                    title="減少數量"
+                    :disabled="lineQuantityByItem(item.id) === 0"
+                    @click="decreaseLine(item.id)"
+                  >
+                    <Minus :size="15" aria-hidden="true" />
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    max="999"
+                    inputmode="numeric"
+                    :aria-label="`${item.name} 數量`"
+                    :value="lineQuantityByItem(item.id) || ''"
+                    placeholder="0"
+                    @input="updateProductQuantityInput(item, $event)"
+                    @change="commitProductQuantityInput(item, $event)"
+                    @keydown.enter.stop="blurQuantityInput"
+                    @keydown.escape.stop="blurQuantityInput"
+                  />
+                  <button type="button" title="增加數量" @click="addItem(item)">
+                    <Plus :size="15" aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
             </div>
           </section>
 
@@ -1401,11 +1481,23 @@ onBeforeUnmount(() => {
                   <h3>{{ line.name }}</h3>
                   <p>{{ line.options.join(' / ') || '標準' }}</p>
                 </div>
-                <div class="quantity-stepper" aria-label="數量">
+                <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
                   <button type="button" title="減少" @click="decreaseLine(line.itemId)">
                     <Minus :size="16" aria-hidden="true" />
                   </button>
-                  <span>{{ line.quantity }}</span>
+                  <input
+                    class="quantity-input"
+                    type="number"
+                    min="0"
+                    max="999"
+                    inputmode="numeric"
+                    :aria-label="`${line.name} 數量`"
+                    :value="line.quantity"
+                    @input="updateCartQuantityInput(line.itemId, $event)"
+                    @change="commitCartQuantityInput(line.itemId, $event)"
+                    @keydown.enter.stop="blurQuantityInput"
+                    @keydown.escape.stop="blurQuantityInput"
+                  />
                   <button type="button" title="增加" @click="increaseLine(line.itemId)">
                     <Plus :size="16" aria-hidden="true" />
                   </button>
