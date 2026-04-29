@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
@@ -54,6 +54,7 @@ type BackendMode = 'syncing' | 'connected' | 'fallback'
 
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
+const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -63,6 +64,142 @@ interface BackendStatus {
   mode: BackendMode
   label: string
   detail: string
+}
+
+interface CounterDraftState {
+  cartLines: CartLine[]
+  customer: CustomerDraft
+  paymentMethod: PaymentMethod
+  serviceMode: ServiceMode
+}
+
+const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
+const paymentMethods: PaymentMethod[] = ['cash', 'card', 'line-pay', 'jkopay', 'transfer']
+const menuCategories: MenuCategory[] = ['coffee', 'tea', 'food', 'retail']
+
+const defaultCustomerDraft = (): CustomerDraft => ({
+  name: '現場客',
+  phone: '',
+  deliveryAddress: '',
+  requestedFulfillmentAt: '',
+  note: '',
+})
+
+const isServiceMode = (value: unknown): value is ServiceMode =>
+  typeof value === 'string' && serviceModes.includes(value as ServiceMode)
+
+const isPaymentMethod = (value: unknown): value is PaymentMethod =>
+  typeof value === 'string' && paymentMethods.includes(value as PaymentMethod)
+
+const isMenuCategory = (value: unknown): value is MenuCategory =>
+  typeof value === 'string' && menuCategories.includes(value as MenuCategory)
+
+const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
+  if (!line || typeof line !== 'object') {
+    return null
+  }
+
+  const entry = line as Partial<CartLine>
+  if (
+    typeof entry.itemId !== 'string' ||
+    typeof entry.productSku !== 'string' ||
+    typeof entry.name !== 'string' ||
+    typeof entry.unitPrice !== 'number' ||
+    typeof entry.quantity !== 'number'
+  ) {
+    return null
+  }
+
+  const nextLine: CartLine = {
+    itemId: entry.itemId,
+    productSku: entry.productSku,
+    name: entry.name,
+    unitPrice: Math.max(0, Math.trunc(entry.unitPrice)),
+    quantity: Math.max(1, Math.trunc(entry.quantity)),
+    options: Array.isArray(entry.options)
+      ? entry.options.filter((option): option is string => typeof option === 'string')
+      : [],
+  }
+
+  if (typeof entry.productId === 'string') {
+    nextLine.productId = entry.productId
+  }
+
+  if (isMenuCategory(entry.category)) {
+    nextLine.category = entry.category
+  }
+
+  if (typeof entry.prepStation === 'string') {
+    nextLine.prepStation = entry.prepStation
+  }
+
+  if (typeof entry.printLabel === 'boolean') {
+    nextLine.printLabel = entry.printLabel
+  }
+
+  return nextLine
+}
+
+const sanitizeCustomerDraft = (value: unknown): CustomerDraft => {
+  const fallback = defaultCustomerDraft()
+  if (!value || typeof value !== 'object') {
+    return fallback
+  }
+
+  const draft = value as Partial<CustomerDraft>
+  return {
+    name: typeof draft.name === 'string' && draft.name.trim() ? draft.name : fallback.name,
+    phone: typeof draft.phone === 'string' ? draft.phone : fallback.phone,
+    deliveryAddress: typeof draft.deliveryAddress === 'string' ? draft.deliveryAddress : fallback.deliveryAddress,
+    requestedFulfillmentAt: typeof draft.requestedFulfillmentAt === 'string'
+      ? draft.requestedFulfillmentAt
+      : fallback.requestedFulfillmentAt,
+    note: typeof draft.note === 'string' ? draft.note : fallback.note,
+  }
+}
+
+const readCounterDraft = (): CounterDraftState | null => {
+  try {
+    const rawDraft = globalThis.localStorage?.getItem(counterDraftStorageKey)
+    if (!rawDraft) {
+      return null
+    }
+
+    const parsed = JSON.parse(rawDraft) as Partial<CounterDraftState>
+    return {
+      cartLines: Array.isArray(parsed.cartLines)
+        ? parsed.cartLines.map(sanitizeCounterDraftLine).filter((line): line is CartLine => Boolean(line))
+        : [],
+      customer: sanitizeCustomerDraft(parsed.customer),
+      paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
+      serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
+    }
+  } catch {
+    return null
+  }
+}
+
+const writeCounterDraft = (draft: CounterDraftState): void => {
+  try {
+    const hasDraft =
+      draft.cartLines.length > 0 ||
+      draft.customer.phone.trim().length > 0 ||
+      draft.customer.deliveryAddress.trim().length > 0 ||
+      draft.customer.requestedFulfillmentAt.trim().length > 0 ||
+      draft.customer.note.trim().length > 0 ||
+      draft.customer.name.trim() !== '現場客' ||
+      draft.paymentMethod !== 'cash' ||
+      draft.serviceMode !== 'takeout'
+
+    if (!hasDraft) {
+      globalThis.localStorage?.removeItem(counterDraftStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(counterDraftStorageKey, JSON.stringify(draft))
+  } catch {
+    return
+  }
 }
 
 const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
@@ -214,13 +351,14 @@ const isClaimExpired = (order: PosOrder, now = Date.now()): boolean => {
 
 export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const autoLoad = options.autoLoad ?? true
+  const savedCounterDraft = readCounterDraft()
   const selectedCategory = ref<CategoryFilter>('all')
   const searchTerm = ref('')
-  const serviceMode = ref<ServiceMode>('takeout')
-  const paymentMethod = ref<PaymentMethod>('cash')
+  const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
+  const paymentMethod = ref<PaymentMethod>(savedCounterDraft?.paymentMethod ?? 'cash')
   const menuCatalog = ref<MenuItem[]>([...menuItems])
   const productStatusCatalog = ref<MenuItem[]>([...menuItems])
-  const cartLines = ref<CartLine[]>([])
+  const cartLines = ref<CartLine[]>(savedCounterDraft?.cartLines ?? [])
   const recentItemIds = ref<string[]>([])
   const orderQueue = ref<PosOrder[]>([...initialOrders])
   const lastPrintPreview = ref('尚未送出列印資料')
@@ -243,13 +381,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     label: isPosApiConfigured ? 'API 同步中' : '本機模式',
     detail: isPosApiConfigured ? '正在連線 POS API' : '尚未設定 Supabase URL 或 anon key',
   })
-  const customer = reactive<CustomerDraft>({
-    name: '現場客',
-    phone: '',
-    deliveryAddress: '',
-    requestedFulfillmentAt: '',
-    note: '',
-  })
+  const customer = reactive<CustomerDraft>(savedCounterDraft?.customer ?? defaultCustomerDraft())
   const printStation = reactive<PrintStation>({
     id: 'counter',
     name: 'GODEX DT2X',
@@ -265,6 +397,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const stationClaimLabel = currentStationLabel()
   let queueSyncTimer: number | null = null
   let stationHeartbeatTimer: number | null = null
+
+  watch(
+    [cartLines, serviceMode, paymentMethod, customer],
+    () => {
+      writeCounterDraft({
+        cartLines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
+        customer: { ...customer },
+        paymentMethod: paymentMethod.value,
+        serviceMode: serviceMode.value,
+      })
+    },
+    { deep: true, immediate: true },
+  )
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -363,11 +508,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const resetCustomerDraft = (): void => {
-    customer.name = '現場客'
-    customer.phone = ''
-    customer.deliveryAddress = ''
-    customer.requestedFulfillmentAt = ''
-    customer.note = ''
+    const nextDraft = defaultCustomerDraft()
+    customer.name = nextDraft.name
+    customer.phone = nextDraft.phone
+    customer.deliveryAddress = nextDraft.deliveryAddress
+    customer.requestedFulfillmentAt = nextDraft.requestedFulfillmentAt
+    customer.note = nextDraft.note
   }
 
   const appendCustomerNote = (note: string): void => {
