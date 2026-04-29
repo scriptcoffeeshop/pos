@@ -31,7 +31,7 @@ import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes }
 import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PaymentStatus, PosOrder, PrintJob, ServiceMode } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
-type WorkspaceTab = 'order' | 'queue' | 'printing' | 'closeout'
+type WorkspaceTab = 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 
@@ -387,7 +387,6 @@ const lowStockStationProducts = computed(() =>
     product.inventoryCount <= product.lowStockThreshold,
   ),
 )
-const todayRevenue = computed(() => salesCloseoutOrders.value.reduce((total, order) => total + order.subtotal, 0))
 const closeoutSummary = computed(() => {
   const collectedStatuses = new Set(['authorized', 'paid'])
 
@@ -496,6 +495,8 @@ const registerStatusLabel = computed(() => {
 })
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
+  details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
+  payment: paymentLabels[paymentMethod.value],
   queue: `${pendingOrders.value.length} 待處理`,
   printing: printStation.online ? '列印在線' : '列印離線',
   closeout: registerStatusLabel.value,
@@ -1081,32 +1082,9 @@ onBeforeUnmount(() => {
     <ConsumerOrderPage v-if="activeView === 'online'" />
 
     <template v-else-if="activeView === 'pos'">
-      <section class="overview-strip" aria-label="今日營運摘要">
-        <article>
-          <span>今日營收</span>
-          <strong>{{ formatCurrency(todayRevenue) }}</strong>
-        </article>
-        <article>
-          <span>已收款</span>
-          <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
-        </article>
-        <article>
-          <span>待處理</span>
-          <strong>{{ pendingOrders.length }}</strong>
-        </article>
-        <article>
-          <span>可交付</span>
-          <strong>{{ readyOrders }}</strong>
-        </article>
-        <article>
-          <span>列印狀態</span>
-          <strong>{{ printStation.online ? '在線' : '離線' }}</strong>
-        </article>
-      </section>
-
-      <nav class="workstation-tabs" aria-label="工作站頁籤">
+      <nav class="workstation-tabs quick-nav-bar" aria-label="快速導航列">
         <button
-          class="workstation-tab"
+          class="workstation-tab quick-nav-button"
           :class="{ 'workstation-tab--active': activeWorkspaceTab === 'order' }"
           type="button"
           :aria-current="activeWorkspaceTab === 'order' ? 'page' : undefined"
@@ -1119,7 +1097,33 @@ onBeforeUnmount(() => {
           </span>
         </button>
         <button
-          class="workstation-tab"
+          class="workstation-tab quick-nav-button"
+          :class="{ 'workstation-tab--active': activeWorkspaceTab === 'details' }"
+          type="button"
+          :aria-current="activeWorkspaceTab === 'details' ? 'page' : undefined"
+          @click="setWorkspaceTab('details')"
+        >
+          <Settings2 :size="20" aria-hidden="true" />
+          <span>
+            <strong>資訊</strong>
+            <small>{{ workspaceTabSummaries.details }}</small>
+          </span>
+        </button>
+        <button
+          class="workstation-tab quick-nav-button"
+          :class="{ 'workstation-tab--active': activeWorkspaceTab === 'payment' }"
+          type="button"
+          :aria-current="activeWorkspaceTab === 'payment' ? 'page' : undefined"
+          @click="setWorkspaceTab('payment')"
+        >
+          <CreditCard :size="20" aria-hidden="true" />
+          <span>
+            <strong>付款</strong>
+            <small>{{ workspaceTabSummaries.payment }}</small>
+          </span>
+        </button>
+        <button
+          class="workstation-tab quick-nav-button"
           :class="{ 'workstation-tab--active': activeWorkspaceTab === 'queue' }"
           type="button"
           :aria-current="activeWorkspaceTab === 'queue' ? 'page' : undefined"
@@ -1132,7 +1136,7 @@ onBeforeUnmount(() => {
           </span>
         </button>
         <button
-          class="workstation-tab"
+          class="workstation-tab quick-nav-button"
           :class="{ 'workstation-tab--active': activeWorkspaceTab === 'printing' }"
           type="button"
           :aria-current="activeWorkspaceTab === 'printing' ? 'page' : undefined"
@@ -1145,7 +1149,7 @@ onBeforeUnmount(() => {
           </span>
         </button>
         <button
-          class="workstation-tab"
+          class="workstation-tab quick-nav-button"
           :class="{ 'workstation-tab--active': activeWorkspaceTab === 'closeout' }"
           type="button"
           :aria-current="activeWorkspaceTab === 'closeout' ? 'page' : undefined"
@@ -1241,17 +1245,23 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="segmented-control" aria-label="服務方式">
-              <button
-                v-for="mode in serviceModeOptions"
-                :key="mode.value"
-                class="segment-button"
-                :class="{ 'segment-button--active': serviceMode === mode.value }"
-                type="button"
-                @click="serviceMode = mode.value"
-              >
-                {{ mode.label }}
-              </button>
+            <div class="order-essential-grid" aria-label="訂單必要資訊">
+              <article>
+                <span>顧客</span>
+                <strong>{{ customer.name || '現場客' }}</strong>
+              </article>
+              <article>
+                <span>方式</span>
+                <strong>{{ serviceModeLabels[serviceMode] }}</strong>
+              </article>
+              <article>
+                <span>付款</span>
+                <strong>{{ paymentLabels[paymentMethod] }}</strong>
+              </article>
+              <article>
+                <span>備註</span>
+                <strong>{{ customer.note ? '有備註' : '無' }}</strong>
+              </article>
             </div>
 
             <div class="cart-lines" aria-live="polite">
@@ -1278,49 +1288,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="customer-grid">
-              <label>
-                姓名
-                <input v-model="customer.name" type="text" autocomplete="name" />
-              </label>
-              <label>
-                電話
-                <input v-model="customer.phone" type="tel" autocomplete="tel" />
-              </label>
-              <label>
-                預計時間
-                <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
-              </label>
-              <label v-if="serviceMode === 'delivery'" class="wide-field">
-                外送地址
-                <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" />
-              </label>
-              <label class="wide-field">
-                備註
-                <textarea v-model="customer.note" rows="3" />
-              </label>
-            </div>
-
-            <div class="note-shortcuts" aria-label="常用備註">
-              <button v-for="note in noteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
-                {{ note }}
-              </button>
-            </div>
-
-            <div class="payment-list" aria-label="付款方式">
-              <button
-                v-for="payment in visiblePaymentOptions"
-                :key="payment.value"
-                class="payment-button"
-                :class="{ 'payment-button--active': paymentMethod === payment.value }"
-                type="button"
-                @click="paymentMethod = payment.value"
-              >
-                <CreditCard :size="18" aria-hidden="true" />
-                {{ payment.label }}
-              </button>
-            </div>
-
             <footer class="checkout-bar">
               <div>
                 <span>{{ cartQuantity }} 件</span>
@@ -1340,6 +1307,131 @@ onBeforeUnmount(() => {
         </template>
 
         <aside v-else class="queue-panel workstation-panel-stack" aria-label="工作站內容">
+          <section v-if="activeWorkspaceTab === 'details'" class="order-info-section" aria-labelledby="order-info-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Order Info</p>
+                <h2 id="order-info-title">訂單資訊</h2>
+                <span class="panel-note">顧客、履約與備註集中在這裡設定</span>
+              </div>
+              <Settings2 :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="segmented-control" aria-label="服務方式">
+              <button
+                v-for="mode in serviceModeOptions"
+                :key="mode.value"
+                class="segment-button"
+                :class="{ 'segment-button--active': serviceMode === mode.value }"
+                type="button"
+                @click="serviceMode = mode.value"
+              >
+                {{ mode.label }}
+              </button>
+            </div>
+
+            <div class="customer-grid order-info-grid">
+              <label>
+                姓名
+                <input v-model="customer.name" type="text" autocomplete="name" />
+              </label>
+              <label>
+                電話
+                <input v-model="customer.phone" type="tel" autocomplete="tel" />
+              </label>
+              <label>
+                預計時間
+                <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+              </label>
+              <label v-if="serviceMode === 'delivery'" class="wide-field">
+                外送地址
+                <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" />
+              </label>
+              <label class="wide-field">
+                備註
+                <textarea v-model="customer.note" rows="4" />
+              </label>
+            </div>
+
+            <div class="note-shortcuts" aria-label="常用備註">
+              <button v-for="note in noteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
+                {{ note }}
+              </button>
+            </div>
+          </section>
+
+          <section v-if="activeWorkspaceTab === 'payment'" class="payment-section" aria-labelledby="payment-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Payment</p>
+                <h2 id="payment-title">付款</h2>
+                <span class="panel-note">確認付款方式後送出目前訂單</span>
+              </div>
+              <CreditCard :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="payment-list payment-list--focused" aria-label="付款方式">
+              <button
+                v-for="payment in visiblePaymentOptions"
+                :key="payment.value"
+                class="payment-button"
+                :class="{ 'payment-button--active': paymentMethod === payment.value }"
+                type="button"
+                @click="paymentMethod = payment.value"
+              >
+                <CreditCard :size="18" aria-hidden="true" />
+                {{ payment.label }}
+              </button>
+            </div>
+
+            <div class="payment-summary-grid" aria-label="付款摘要">
+              <article>
+                <span>品項</span>
+                <strong>{{ cartQuantity }} 件</strong>
+              </article>
+              <article>
+                <span>顧客</span>
+                <strong>{{ customer.name || '現場客' }}</strong>
+              </article>
+              <article>
+                <span>方式</span>
+                <strong>{{ serviceModeLabels[serviceMode] }}</strong>
+              </article>
+              <article>
+                <span>合計</span>
+                <strong>{{ formatCurrency(cartTotal) }}</strong>
+              </article>
+            </div>
+
+            <div class="payment-order-lines">
+              <article v-for="line in cartLines" :key="`payment-${line.itemId}`">
+                <span>{{ line.name }}</span>
+                <strong>x{{ line.quantity }}</strong>
+                <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+              </article>
+              <div v-if="cartLines.length === 0" class="empty-state payment-empty-state">
+                <ShoppingCart :size="24" aria-hidden="true" />
+                <span>尚未加入品項</span>
+              </div>
+            </div>
+
+            <footer class="checkout-bar checkout-bar--panel">
+              <div>
+                <span>{{ paymentLabels[paymentMethod] }}</span>
+                <strong>{{ formatCurrency(cartTotal) }}</strong>
+              </div>
+              <button
+                class="primary-button"
+                type="button"
+                :disabled="cartLines.length === 0 || isSubmitting"
+                @click="submitCounterOrder"
+              >
+                <ReceiptText :size="20" aria-hidden="true" />
+                {{ isSubmitting ? '建立中' : '建立訂單' }}
+              </button>
+            </footer>
+          </section>
+
           <section v-if="activeWorkspaceTab === 'queue'" class="queue-section">
             <div class="panel-heading">
               <div>
