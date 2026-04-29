@@ -593,6 +593,55 @@ const exportPaymentEventsCsv = (): void => {
   adminMessage.value = `已匯出 ${filteredPaymentEvents.value.length} 筆支付事件`
 }
 
+const exportMembersCsv = (): void => {
+  if (filteredMembers.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的會員'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['display_name', 'line_user_id', 'wallet_balance', 'ledger_count', 'last_ledger_at', 'last_ledger_amount'],
+    ...filteredMembers.value.map((member) => {
+      const latestLedger = member.ledger[0]
+      return [
+        member.displayName,
+        member.lineUserId ?? '',
+        member.walletBalance,
+        member.ledger.length,
+        latestLedger?.createdAt ?? '',
+        latestLedger?.amount ?? '',
+      ]
+    }),
+  ]
+
+  downloadCsv('script-coffee-members.csv', rows)
+  adminMessage.value = `已匯出 ${filteredMembers.value.length} 位會員`
+}
+
+const exportAuditEventsCsv = (): void => {
+  if (filteredAuditEvents.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的稽核紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['created_at', 'action', 'action_label', 'subject', 'station_id', 'actor', 'summary'],
+    ...filteredAuditEvents.value.map((event) => [
+      event.createdAt,
+      event.action,
+      auditActionLabel(event.action),
+      auditSubject(event),
+      event.stationId ?? '',
+      event.actor ?? 'pos-api',
+      auditMetadataSummary(event),
+    ]),
+  ]
+
+  const action = auditActionFilter.value === 'all' ? 'all' : auditActionFilter.value
+  downloadCsv(`script-coffee-audit-${action}.csv`, rows)
+  adminMessage.value = `已匯出 ${filteredAuditEvents.value.length} 筆稽核紀錄`
+}
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -1348,6 +1397,15 @@ const saveAccessControl = async (): Promise<void> => {
               <RefreshCw :size="18" aria-hidden="true" />
               {{ isMemberLoading ? '讀取中' : '刷新會員' }}
             </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="filteredMembers.length === 0"
+              @click="exportMembersCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
+            </button>
           </div>
         </div>
 
@@ -1839,6 +1897,15 @@ const saveAccessControl = async (): Promise<void> => {
             <button class="primary-button" type="button" :disabled="isAuditLoading" @click="loadAuditEvents">
               <RefreshCw :size="18" aria-hidden="true" />
               {{ isAuditLoading ? '讀取中' : '刷新稽核' }}
+            </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="filteredAuditEvents.length === 0"
+              @click="exportAuditEventsCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
             </button>
           </div>
         </div>
