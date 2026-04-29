@@ -36,7 +36,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含訂單 claim、釋放、狀態更新、收款、退款、作廢、開班與關班，並由後台以 PIN 查詢。
+- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、退款、作廢、商品/設定異動、開班與關班，並由後台以 PIN 查詢。
 - `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
 
 ## 邊界

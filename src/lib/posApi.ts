@@ -432,6 +432,7 @@ export const updateProduct = async (
     method: 'PATCH',
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(input),
   })
@@ -495,6 +496,7 @@ export const updateAdminSetting = async <SettingValue>(
     method: 'PATCH',
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(value),
   })

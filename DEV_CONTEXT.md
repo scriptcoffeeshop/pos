@@ -26,7 +26,7 @@
 - 多平板鎖定欄位：`orders.claimed_by`、`claimed_at`、`claim_expires_at` 由 `20260429123000_add_order_claim_lease.sql` 新增；`pos-api` 會在狀態更新與 print job 建立前檢查 lease，已交付/異常單會釋放 lease。
 - 收銀班別欄位：`register_sessions` 由 `20260429133000_add_register_sessions.sql` 新增；`pos-api` 提供 `/register/current`、`/register/open`、`/register/close`，開班/關班寫入需 `POS_ADMIN_PIN`。
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。有未交付、付款異常或列印失敗時，`/register/close` 需送 `force=true` 才能關班。
-- 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、退款、作廢、開班與關班事件，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。
+- 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、退款、作廢、商品/設定異動、開班與關班事件，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。
 - 退款沖銷：`20260429143000_add_refunded_payment_status.sql` 新增 `payment_status=refunded`；`20260429143500_add_refund_pos_order_function.sql` 新增 `refund_pos_order()`，讓退款在同一個資料庫 transaction 內更新訂單並寫入 `transaction_ledger`。
 - 平板心跳：`pos_station_heartbeats` 由 `20260429144500_add_pos_station_heartbeats.sql` 新增；POS 工作台每 30 秒 upsert 一次，後台 `/admin/stations` 可看最後在線時間。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。

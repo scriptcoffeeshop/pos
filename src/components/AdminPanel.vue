@@ -95,6 +95,8 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
 const auditActionLabels: Record<string, string> = {
   'register.open': '開班',
   'register.close': '關班',
+  'product.update': '商品更新',
+  'setting.update': '設定更新',
   'order.create': '建立訂單',
   'order.claim': '鎖單',
   'order.release_claim': '釋放鎖單',
@@ -309,6 +311,19 @@ const auditMoneyLabel = (event: PosAuditEvent, key: string): string | null => {
   return typeof value === 'number' && Number.isFinite(value) ? `$${value.toLocaleString('zh-TW')}` : null
 }
 
+const auditListLabel = (event: PosAuditEvent, key: string): string | null => {
+  const value = event.metadata[key]
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const items = value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .slice(0, 4)
+
+  return items.length > 0 ? items.join('/') : null
+}
+
 const auditSubject = (event: PosAuditEvent): string => {
   const orderNumber = auditMetadataLabel(event, 'orderNumber')
   if (orderNumber) {
@@ -332,6 +347,9 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'paymentStatus') ? `付款 ${auditMetadataLabel(event, 'paymentStatus')}` : null,
     auditMoneyLabel(event, 'subtotal') ? `金額 ${auditMoneyLabel(event, 'subtotal')}` : null,
     auditMetadataLabel(event, 'lineCount') ? `品項 ${auditMetadataLabel(event, 'lineCount')}` : null,
+    auditMetadataLabel(event, 'sku') ? `SKU ${auditMetadataLabel(event, 'sku')}` : null,
+    auditMetadataLabel(event, 'key') ? `設定 ${auditMetadataLabel(event, 'key')}` : null,
+    auditListLabel(event, 'changedFields') ? `欄位 ${auditListLabel(event, 'changedFields')}` : null,
     auditMetadataLabel(event, 'previousStatus') ? `原狀態 ${auditMetadataLabel(event, 'previousStatus')}` : null,
     auditMetadataLabel(event, 'previousPaymentStatus')
       ? `原付款 ${auditMetadataLabel(event, 'previousPaymentStatus')}`

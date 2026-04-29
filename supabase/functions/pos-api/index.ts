@@ -567,6 +567,17 @@ api.patch("/admin/products/:id", async (c) => {
     return c.json({ error: error.message }, 500);
   }
 
+  await writeAuditEvent({
+    action: "product.update",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      productId,
+      sku: data.sku,
+      name: data.name,
+      changedFields: Object.keys(payload),
+    },
+  });
+
   return c.json({ product: data });
 });
 
@@ -664,6 +675,14 @@ api.patch("/admin/settings/:key", async (c) => {
   if (error) {
     return c.json({ error: error.message }, 500);
   }
+
+  await writeAuditEvent({
+    action: "setting.update",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      key,
+    },
+  });
 
   return c.json({ setting: data });
 });
