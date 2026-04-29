@@ -102,6 +102,7 @@ const auditActionLabels: Record<string, string> = {
   'order.release_claim': '釋放鎖單',
   'order.status.update': '訂單狀態',
   'order.payment.update': '收款狀態',
+  'order.payment.expired': '付款逾期',
   'order.void': '訂單作廢',
   'order.refund': '訂單退款',
 }
@@ -404,6 +405,10 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMetadataLabel(event, 'lineCount') ? `品項 ${auditMetadataLabel(event, 'lineCount')}` : null,
     auditMetadataLabel(event, 'sku') ? `SKU ${auditMetadataLabel(event, 'sku')}` : null,
     auditMetadataLabel(event, 'key') ? `設定 ${auditMetadataLabel(event, 'key')}` : null,
+    auditMetadataLabel(event, 'source') ? `來源 ${auditMetadataLabel(event, 'source')}` : null,
+    auditMetadataLabel(event, 'expiredAfterMinutes')
+      ? `逾時 ${auditMetadataLabel(event, 'expiredAfterMinutes')} 分`
+      : null,
     auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')
       ? `庫存 ${auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')}`
       : null,

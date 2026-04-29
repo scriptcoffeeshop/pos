@@ -24,7 +24,7 @@
 
 - 商品展示、購物車、結帳流程。
 - LINE Pay 與街口支付正式環境串接。
-- 支付逾期自動標記 `status=failed`、`payment_status=expired`。
+- 支付逾期已在 `GET /orders` 自動標記線上/QR 待付款新單為 `status=failed`、`payment_status=expired`，後續正式金流回呼接入時需保留冪等。
 
 ## Phase 4：店內 POS 與進階功能
 

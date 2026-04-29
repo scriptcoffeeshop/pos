@@ -193,6 +193,15 @@ const stationHeartbeatSelect =
   "station_id, station_label, platform, app_version, user_agent, last_seen_at, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
+const defaultPaymentExpiryMinutes = 20;
+const paymentExpiryMinutes = (() => {
+  const value = Number(Deno.env.get("POS_PAYMENT_EXPIRY_MINUTES") ?? defaultPaymentExpiryMinutes);
+  if (!Number.isFinite(value) || value <= 0) {
+    return defaultPaymentExpiryMinutes;
+  }
+
+  return Math.min(Math.floor(value), 24 * 60);
+})();
 
 const areAuditValuesEqual = (left: unknown, right: unknown): boolean => {
   if (Array.isArray(left) || Array.isArray(right)) {
@@ -284,6 +293,51 @@ const loadOrder = (orderId: string) =>
     .eq("id", orderId)
     .single();
 
+const expireStalePendingOnlineOrders = async (): Promise<void> => {
+  const now = new Date();
+  const cutoffIso = new Date(now.getTime() - paymentExpiryMinutes * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      status: "failed",
+      payment_status: "expired",
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    })
+    .in("source", ["qr", "online"])
+    .eq("status", "new")
+    .eq("payment_status", "pending")
+    .lt("created_at", cutoffIso)
+    .or(`claimed_by.is.null,claim_expires_at.lt.${now.toISOString()}`)
+    .select("id, order_number, source, created_at");
+
+  if (error) {
+    console.error(JSON.stringify({
+      scope: "payment-expiry",
+      error: error.message,
+    }));
+    return;
+  }
+
+  await Promise.all((data ?? []).map((order) =>
+    writeAuditEvent({
+      action: "order.payment.expired",
+      orderId: order.id,
+      metadata: {
+        orderNumber: order.order_number,
+        source: order.source,
+        status: "failed",
+        paymentStatus: "expired",
+        previousStatus: "new",
+        previousPaymentStatus: "pending",
+        expiredAfterMinutes: paymentExpiryMinutes,
+        createdAt: order.created_at,
+      },
+    })
+  ));
+};
+
 api.use(
   "*",
   cors({
@@ -294,6 +348,7 @@ api.use(
       "apikey",
       "content-type",
       "x-pos-admin-pin",
+      "x-pos-station-id",
     ],
     allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   }),
@@ -748,6 +803,8 @@ api.patch("/admin/settings/:key", async (c) => {
 
 api.get("/orders", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 50), 100);
+  await expireStalePendingOnlineOrders();
+
   const { data, error } = await supabase
     .from("orders")
     .select(orderSelect)

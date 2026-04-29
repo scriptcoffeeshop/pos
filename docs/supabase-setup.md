@@ -36,13 +36,13 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、退款、作廢、商品/設定異動、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台以 PIN 查詢。
+- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台以 PIN 查詢。
 - `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
 
 ## 邊界
 
 - 會員 LINE profile 名稱固定保存，不被訂單收件人姓名覆蓋。
-- 線上付款逾期需要自動寫入 `status=failed` 與 `payment_status=expired`。
+- 線上/QR 待付款新單會在 `GET /orders` 時依 `POS_PAYMENT_EXPIRY_MINUTES`（預設 20 分鐘）自動寫入 `status=failed` 與 `payment_status=expired`。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位。
 
 ## 已部署項目
@@ -87,6 +87,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。
 - POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；手動刷新才會重新載入商品與 runtime 出單設定。
+- `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；後端用 `create_pos_order()` 在同一個 transaction 建單、寫入品項與扣 `products.inventory_count`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；`PATCH /orders/:id/status` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
