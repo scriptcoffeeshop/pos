@@ -55,7 +55,7 @@ Header:
 - `apikey: <SUPABASE_ANON_KEY>`
 - `X-POS-ADMIN-PIN: <POS_ADMIN_PIN>`
 
-`limit` is clamped to 1-100. Add `provider=line-pay` or another normalized provider key to inspect one provider only. The response shows whether each event was applied, ignored as a duplicate, or recorded without changing the order, which is the first place to check when a provider retry or amount mismatch happens.
+`limit` is clamped to 1-100. Add `provider=line-pay` or another normalized provider key to inspect one provider only. The admin UI can further filter applied, duplicate, and unapplied events, then export the visible rows as CSV. The response shows whether each event was applied, ignored as a duplicate, or recorded without changing the order, which is the first place to check when a provider retry or amount mismatch happens.
 
 ## Secret Setup
 

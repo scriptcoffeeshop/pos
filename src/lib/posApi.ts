@@ -569,10 +569,20 @@ export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promi
   return data.events.map(normalizeAuditEvent)
 }
 
-export const fetchAdminPaymentEvents = async (adminPin: string, limit = 50): Promise<PosPaymentEvent[]> => {
+export const fetchAdminPaymentEvents = async (
+  adminPin: string,
+  limit = 50,
+  provider = '',
+): Promise<PosPaymentEvent[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
-  const data = await request<PaymentEventsResponse>(`/admin/payment-events?limit=${cappedLimit}`, {
+  const params = new URLSearchParams({ limit: String(cappedLimit) })
+  const normalizedProvider = provider.trim()
+  if (normalizedProvider && normalizedProvider !== 'all') {
+    params.set('provider', normalizedProvider)
+  }
+
+  const data = await request<PaymentEventsResponse>(`/admin/payment-events?${params.toString()}`, {
     headers: {
       'X-POS-ADMIN-PIN': adminPin,
     },

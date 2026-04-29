@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   BarChart3,
+  Download,
   Eye,
   EyeOff,
   KeyRound,
@@ -68,6 +69,7 @@ interface WalletAdjustmentDraft {
 }
 
 type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'audit' | 'stations'
+type PaymentEventStatusFilter = 'all' | 'applied' | 'duplicate' | 'unapplied'
 
 const emit = defineEmits<{
   refreshPos: []
@@ -145,6 +147,13 @@ const paymentStatusLabels = {
   failed: '失敗',
   refunded: '已退款',
 } as const
+
+const paymentEventStatusOptions: Array<{ value: PaymentEventStatusFilter; label: string }> = [
+  { value: 'all', label: '全部狀態' },
+  { value: 'applied', label: '已套用' },
+  { value: 'duplicate', label: '重送' },
+  { value: 'unapplied', label: '未套用' },
+]
 
 const auditFieldLabels: Record<string, string> = {
   name: '名稱',
@@ -240,6 +249,8 @@ const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
 const auditLimit = ref(50)
 const paymentEventLimit = ref(50)
+const paymentProviderFilter = ref('all')
+const paymentEventStatusFilter = ref<PaymentEventStatusFilter>('all')
 const auditActionFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
@@ -290,6 +301,29 @@ const filteredAuditEvents = computed(() =>
   auditActionFilter.value === 'all'
     ? auditEvents.value
     : auditEvents.value.filter((event) => event.action === auditActionFilter.value),
+)
+const paymentProviderOptions = computed(() =>
+  Array.from(new Set(paymentEvents.value.map((event) => event.provider)))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+    .map((provider) => ({ value: provider, label: provider })),
+)
+const filteredPaymentEvents = computed(() =>
+  paymentEvents.value.filter((event) => {
+    if (paymentEventStatusFilter.value === 'duplicate') {
+      return event.duplicate
+    }
+
+    if (paymentEventStatusFilter.value === 'applied') {
+      return event.applied && !event.duplicate
+    }
+
+    if (paymentEventStatusFilter.value === 'unapplied') {
+      return !event.applied && !event.duplicate
+    }
+
+    return true
+  }),
 )
 const stationOptions = computed(() => {
   if (printerSettings.value.stations.length > 0) {
@@ -452,6 +486,59 @@ const reportBreakdownLabel = (key: string): string => {
 
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
 
+const csvCell = (value: unknown): string => {
+  const text = value === null || value === undefined ? '' : String(value)
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+const downloadCsv = (filename: string, rows: unknown[][]): void => {
+  const documentRef = globalThis.document
+  const urlApi = globalThis.URL
+  if (!documentRef || !urlApi || rows.length === 0) {
+    adminMessage.value = '目前環境無法匯出 CSV'
+    return
+  }
+
+  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+  const url = urlApi.createObjectURL(blob)
+  const link = documentRef.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  urlApi.revokeObjectURL(url)
+}
+
+const exportDailyReportCsv = (): void => {
+  const report = dailyReport.value
+  if (!report) {
+    adminMessage.value = '請先載入營運日報'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['section', 'label', 'count', 'total'],
+    ['summary', 'total_orders', report.totalOrders, ''],
+    ['summary', 'collected_orders', report.collectedOrders, report.collectedTotal],
+    ['summary', 'pending_total', '', report.pendingTotal],
+    ['summary', 'refund_total', '', report.refundTotal],
+    ['summary', 'average_ticket', '', report.averageTicket],
+    ['summary', 'open_orders', report.openOrderCount, ''],
+    ['summary', 'failed_payment', report.failedPaymentCount, ''],
+    ['summary', 'failed_print', report.failedPrintCount, ''],
+    ['summary', 'voided_orders', report.voidedOrderCount, ''],
+    ...report.byPaymentMethod.map((row) => ['payment_method', reportBreakdownLabel(row.key), row.count, row.total]),
+    ...report.bySource.map((row) => ['source', reportBreakdownLabel(row.key), row.count, row.total]),
+    ...report.byServiceMode.map((row) => ['service_mode', reportBreakdownLabel(row.key), row.count, row.total]),
+    ...report.byStatus.map((row) => ['status', reportBreakdownLabel(row.key), row.count, row.total]),
+    ...report.hourly.filter((row) => row.count > 0).map((row) => ['hourly', reportHourLabel(row.hour), row.count, row.total]),
+    ...report.topProducts.map((row) => ['top_product', `${row.sku} ${row.name}`, row.quantity, row.total]),
+  ]
+
+  downloadCsv(`script-coffee-daily-report-${report.date}.csv`, rows)
+  adminMessage.value = `${report.date} 日報 CSV 已匯出`
+}
+
 const paymentEventStatusClass = (event: PosPaymentEvent): string => {
   if (event.duplicate) {
     return 'status-pill--neutral'
@@ -466,6 +553,44 @@ const paymentEventStatusLabel = (event: PosPaymentEvent): string => {
   }
 
   return event.applied ? '已套用' : '未套用'
+}
+
+const exportPaymentEventsCsv = (): void => {
+  if (filteredPaymentEvents.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的支付事件'
+    return
+  }
+
+  const rows: unknown[][] = [
+    [
+      'provider',
+      'event_id',
+      'order_number',
+      'event_type',
+      'payment_status',
+      'amount',
+      'applied',
+      'duplicate',
+      'created_at',
+      'processed_at',
+    ],
+    ...filteredPaymentEvents.value.map((event) => [
+      event.provider,
+      event.eventId,
+      event.orderNumber,
+      event.eventType,
+      event.paymentStatus,
+      event.amount ?? '',
+      event.applied,
+      event.duplicate,
+      event.createdAt,
+      event.processedAt ?? '',
+    ]),
+  ]
+
+  const provider = paymentProviderFilter.value === 'all' ? 'all' : paymentProviderFilter.value
+  downloadCsv(`script-coffee-payment-events-${provider}.csv`, rows)
+  adminMessage.value = `已匯出 ${filteredPaymentEvents.value.length} 筆支付事件`
 }
 
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
@@ -629,7 +754,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminDailyReport(adminPin.value.trim(), reportDate.value),
       fetchAdminSettings(adminPin.value.trim()),
       fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
-      fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value),
+      fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value, paymentProviderFilter.value),
       fetchAdminStations(adminPin.value.trim()),
     ])
     productDrafts.value = products.map(toDraft)
@@ -659,7 +784,11 @@ const loadPaymentEvents = async (): Promise<void> => {
 
   try {
     writeStoredPin(adminPin.value.trim())
-    paymentEvents.value = await fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value)
+    paymentEvents.value = await fetchAdminPaymentEvents(
+      adminPin.value.trim(),
+      paymentEventLimit.value,
+      paymentProviderFilter.value,
+    )
     adminMessage.value = `已載入 ${paymentEvents.value.length} 筆支付事件`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '支付事件讀取失敗'
@@ -1326,6 +1455,10 @@ const saveAccessControl = async (): Promise<void> => {
               <RefreshCw :size="18" aria-hidden="true" />
               {{ isReportLoading ? '讀取中' : '刷新日報' }}
             </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!dailyReport" @click="exportDailyReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
+            </button>
           </div>
         </div>
 
@@ -1454,15 +1587,41 @@ const saveAccessControl = async (): Promise<void> => {
               筆數
               <input v-model.number="paymentEventLimit" type="number" min="1" max="100" step="1" />
             </label>
+            <label class="admin-limit-field">
+              Provider
+              <select v-model="paymentProviderFilter">
+                <option value="all">全部</option>
+                <option v-for="provider in paymentProviderOptions" :key="provider.value" :value="provider.value">
+                  {{ provider.label }}
+                </option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              狀態
+              <select v-model="paymentEventStatusFilter">
+                <option v-for="option in paymentEventStatusOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
             <button class="primary-button" type="button" :disabled="isPaymentEventLoading" @click="loadPaymentEvents">
               <RefreshCw :size="18" aria-hidden="true" />
               {{ isPaymentEventLoading ? '讀取中' : '刷新支付' }}
+            </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="filteredPaymentEvents.length === 0"
+              @click="exportPaymentEventsCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
             </button>
           </div>
         </div>
 
         <div class="admin-audit-list">
-          <article v-for="event in paymentEvents" :key="event.id" class="admin-audit-row">
+          <article v-for="event in filteredPaymentEvents" :key="event.id" class="admin-audit-row">
             <header class="admin-row-header">
               <div class="admin-audit-primary">
                 <strong>{{ event.provider }} · {{ event.orderNumber }}</strong>
@@ -1479,7 +1638,7 @@ const saveAccessControl = async (): Promise<void> => {
             </div>
           </article>
 
-          <div v-if="paymentEvents.length === 0" class="empty-state">
+          <div v-if="filteredPaymentEvents.length === 0" class="empty-state">
             <Search :size="24" aria-hidden="true" />
             <span>尚無金流回呼事件</span>
           </div>

@@ -1972,6 +1972,7 @@ h3 {
 
 .admin-access-grid input,
 .admin-limit-field input,
+.admin-limit-field select,
 .admin-product-row input,
 .admin-product-row select,
 .admin-product-stock-grid input,
@@ -2410,6 +2411,7 @@ h3 {
 .order-actions button:focus-visible,
 .admin-access-grid input:focus,
 .admin-limit-field input:focus,
+.admin-limit-field select:focus,
 .admin-product-row input:focus,
 .admin-product-row select:focus,
 .admin-member-create input:focus,
