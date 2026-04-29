@@ -34,6 +34,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `order_items`：訂單品項、數量、單價、客製選項。
 - `members`：LINE Login profile 與會員錢包摘要，後台可先建立手動會員，未來再綁定 LINE UID。
 - `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
+- `payment_events`：外部金流 webhook 事件，以 provider + event id 做冪等。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
 - `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台以 PIN 查詢。
@@ -63,6 +64,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 原子建單扣庫存：`20260429150000_add_create_pos_order_function.sql`
 - 會員錢包交易函式：`20260429154000_add_member_wallet_functions.sql`
 - 訂單履約欄位：`20260429161000_add_order_fulfillment_fields.sql`
+- 金流 webhook 事件：`20260429172000_add_payment_webhook_events.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -70,6 +72,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 付款狀態端點：`/functions/v1/pos-api/orders/:id/payment`
 - 未收款作廢端點：`/functions/v1/pos-api/orders/:id/void`
 - 已收款退款端點：`/functions/v1/pos-api/orders/:id/refund`
+- 金流 webhook 端點：`/functions/v1/pos-api/payments/webhook/:provider`
 - 狀態更新端點：`/functions/v1/pos-api/orders/:id/status`
 - 平板鎖定端點：`/functions/v1/pos-api/orders/:id/claim`
 - 平板釋放端點：`/functions/v1/pos-api/orders/:id/release-claim`
@@ -99,6 +102,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。
 - 已收款退款會走 `POST /orders/:id/refund`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=authorized|paid`，後端以 `refund_pos_order()` 在同一個 transaction 更新訂單、寫入 `transaction_ledger`，並回傳 `payment_status=refunded`。
+- 外部金流回呼走 `POST /payments/webhook/:provider`，需 `X-POS-PAYMENT-WEBHOOK-SECRET`。後端以 `record_pos_payment_event()` 寫入 `payment_events` 並做冪等狀態轉換；重複 event 不會二次入帳，金額不符不會改單，退款回呼會寫入負數 `transaction_ledger`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
 - 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
@@ -113,6 +117,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ```bash
 rtk supabase secrets set POS_ADMIN_PIN=<your-pin> --project-ref uuzwcmceotooocyrtnao
+rtk supabase secrets set POS_PAYMENT_WEBHOOK_SECRET=<random-secret> --project-ref uuzwcmceotooocyrtnao
 rtk npm run supabase:functions:deploy
 ```
 

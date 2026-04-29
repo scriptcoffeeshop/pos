@@ -29,6 +29,7 @@
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。有未交付、付款異常或列印失敗時，`/register/close` 需送 `force=true` 才能關班。
 - 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班事件。商品異動會寫入庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，並提供 PIN 保護的 `/admin/audit-events` 供後台追帳與排錯。
 - 會員錢包：`20260429154000_add_member_wallet_functions.sql` 新增 `create_pos_member()` 與 `adjust_pos_member_wallet()`；後台 `GET/POST /admin/members` 可建立/查詢會員，`POST /admin/members/:id/wallet-adjustments` 會在單一 DB transaction 內更新 `members.wallet_balance` 並寫入 `transaction_ledger`。
+- 金流 webhook：`20260429172000_add_payment_webhook_events.sql` 新增 `payment_events` 與 `record_pos_payment_event()`；`POST /payments/webhook/:provider` 需 `POS_PAYMENT_WEBHOOK_SECRET`，以 provider + event id 做冪等，金額不符只記錄不改單，已付款訂單不會被失敗/逾期回呼降級，退款回呼會寫負數交易流水。
 - 營運日報：`GET /admin/reports/daily?date=YYYY-MM-DD` 依台灣日界線彙總當日訂單，回傳實收、待收、退款、異常、付款方式、訂單來源、服務方式、時段分布與熱門商品；後台報表頁直接讀此端點。
 - 退款沖銷：`20260429143000_add_refunded_payment_status.sql` 新增 `payment_status=refunded`；`20260429143500_add_refund_pos_order_function.sql` 新增 `refund_pos_order()`，讓退款在同一個資料庫 transaction 內更新訂單並寫入 `transaction_ledger`。
 - 平板心跳：`pos_station_heartbeats` 由 `20260429144500_add_pos_station_heartbeats.sql` 新增；POS 工作台每 30 秒 upsert 一次，後台 `/admin/stations` 可看最後在線時間。
@@ -63,4 +64,4 @@
 
 1. 在 Samsung Tab A11+ 安裝最新版 debug APK，對 GODEX DT2X 做 healthcheck label、櫃台訂單列印與關班流程實測。
 2. 多平板鎖定後續：短輪詢與平板在線心跳已接第一版；若需要更低延遲，再接 Supabase realtime。
-3. 接 LINE Login / LINE Pay / 街口支付前，先補對應 webhook、付款逾期狀態測試與外部金流退款回呼。
+3. 接 LINE Login / LINE Pay / 街口支付時，把 provider 簽章驗證與 payload mapping 接到既有 `/payments/webhook/:provider` 契約。

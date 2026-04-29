@@ -23,8 +23,8 @@
 ## Phase 3：顧客端線上點餐與金流
 
 - 商品展示、購物車、結帳流程。
-- LINE Pay 與街口支付正式環境串接。
-- 支付逾期已在 `GET /orders` 自動標記線上/QR 待付款新單為 `status=failed`、`payment_status=expired`，後續正式金流回呼接入時需保留冪等。
+- LINE Pay 與街口支付正式環境串接。Webhook 冪等事件表與 provider-neutral `/payments/webhook/:provider` 已完成，後續只需接正式 provider 簽章驗證與 payload mapping。
+- 支付逾期已在 `GET /orders` 自動標記線上/QR 待付款新單為 `status=failed`、`payment_status=expired`；late paid webhook 可回復為已付款，失敗/逾期 webhook 不會覆蓋已付款單。
 
 ## Phase 4：店內 POS 與進階功能
 

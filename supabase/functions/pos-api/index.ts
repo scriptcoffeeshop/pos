@@ -75,6 +75,17 @@ interface WalletAdjustmentInput {
   stationId?: string;
 }
 
+interface PaymentWebhookInput {
+  eventId?: string;
+  orderId?: string | null;
+  orderNumber?: string;
+  paymentStatus?: PaymentStatus;
+  amount?: number | null;
+  eventType?: string;
+  occurredAt?: string;
+  payload?: Record<string, unknown>;
+}
+
 interface ReportBreakdownRow {
   key: string;
   count: number;
@@ -202,6 +213,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const adminPin = Deno.env.get("POS_ADMIN_PIN");
+const paymentWebhookSecret = Deno.env.get("POS_PAYMENT_WEBHOOK_SECRET");
 
 if (!supabaseUrl || !serviceRoleKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -415,6 +427,7 @@ api.use(
       "content-type",
       "x-pos-admin-pin",
       "x-pos-station-id",
+      "x-pos-payment-webhook-secret",
     ],
     allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   }),
@@ -426,6 +439,64 @@ api.get("/health", (c) =>
     scope: "pos-api",
     timestamp: new Date().toISOString(),
   }));
+
+api.post("/payments/webhook/:provider", async (c) => {
+  const authError = requirePaymentWebhookSecret(c);
+  if (authError) {
+    return authError;
+  }
+
+  const provider = sanitizePaymentProvider(c.req.param("provider"));
+  const input = await c.req.json<PaymentWebhookInput>();
+  const validationError = validatePaymentWebhookInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase.rpc("record_pos_payment_event", {
+    p_provider: provider,
+    p_event_id: input.eventId?.trim(),
+    p_order_id: normalizeUuid(input.orderId),
+    p_order_number: input.orderNumber?.trim() ?? "",
+    p_payment_status: input.paymentStatus,
+    p_amount: input.amount ?? null,
+    p_event_type: input.eventType?.trim() ?? "payment.webhook",
+    p_raw_payload: input.payload ?? input,
+  });
+
+  if (error) {
+    const status = /Order not found/i.test(error.message) ? 404 : 500;
+    return c.json({ error: error.message }, status);
+  }
+
+  const result = data as Record<string, unknown>;
+  const orderId = typeof result.orderId === "string" ? result.orderId : "";
+  const { data: savedOrder, error: savedOrderError } = orderId
+    ? await loadOrder(orderId)
+    : { data: null, error: null };
+
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  if (savedOrder) {
+    await writeAuditEvent({
+      action: "payment.webhook.record",
+      orderId: savedOrder.id,
+      stationId: provider,
+      metadata: {
+        provider,
+        eventId: input.eventId,
+        eventType: input.eventType ?? "payment.webhook",
+        paymentStatus: input.paymentStatus,
+        amount: input.amount ?? null,
+        result,
+      },
+    });
+  }
+
+  return c.json({ result, order: savedOrder });
+});
 
 api.get("/products", async (c) => {
   const channel = readProductChannel(c.req.query("channel"));
@@ -2111,6 +2182,12 @@ const isPrintStatus = (status: unknown): status is PrintStatus =>
 const isPosPaymentStatus = (status: unknown): status is Extract<PaymentStatus, "pending" | "authorized" | "paid"> =>
   status === "pending" || status === "authorized" || status === "paid";
 
+const isWebhookPaymentStatus = (
+  status: unknown,
+): status is Extract<PaymentStatus, "authorized" | "paid" | "failed" | "expired" | "refunded"> =>
+  status === "authorized" || status === "paid" || status === "failed" ||
+  status === "expired" || status === "refunded";
+
 const requireAdmin = (c: Context): Response | null => {
   if (!adminPin) {
     return c.json({ error: "POS_ADMIN_PIN is not configured" }, 503);
@@ -2118,6 +2195,56 @@ const requireAdmin = (c: Context): Response | null => {
 
   if (c.req.header("x-pos-admin-pin") !== adminPin) {
     return c.json({ error: "Invalid admin PIN" }, 401);
+  }
+
+  return null;
+};
+
+const requirePaymentWebhookSecret = (c: Context): Response | null => {
+  if (!paymentWebhookSecret) {
+    return c.json({ error: "POS_PAYMENT_WEBHOOK_SECRET is not configured" }, 503);
+  }
+
+  if (c.req.header("x-pos-payment-webhook-secret") !== paymentWebhookSecret) {
+    return c.json({ error: "Invalid payment webhook secret" }, 401);
+  }
+
+  return null;
+};
+
+const sanitizePaymentProvider = (value: unknown): string =>
+  sanitizeText(value, "unknown").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40) || "unknown";
+
+const normalizeUuid = (value: unknown): string | null => {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+    ? normalized
+    : null;
+};
+
+const validatePaymentWebhookInput = (input: PaymentWebhookInput): string | null => {
+  if (!input.eventId?.trim()) {
+    return "eventId is required";
+  }
+
+  if (!input.orderId?.trim() && !input.orderNumber?.trim()) {
+    return "orderId or orderNumber is required";
+  }
+
+  if (input.orderId && !normalizeUuid(input.orderId)) {
+    return "orderId must be a UUID";
+  }
+
+  if (!isWebhookPaymentStatus(input.paymentStatus)) {
+    return "paymentStatus must be authorized, paid, failed, expired, or refunded";
+  }
+
+  if (input.amount !== undefined && input.amount !== null && (!Number.isInteger(input.amount) || input.amount < 0)) {
+    return "amount must be a non-negative integer";
   }
 
   return null;
