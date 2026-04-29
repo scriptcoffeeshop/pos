@@ -32,6 +32,7 @@ import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PaymentStatus,
 
 type AppView = 'pos' | 'admin' | 'online'
 type QueueFilter = 'active' | 'ready' | 'all'
+type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -222,7 +223,7 @@ const queueFilterOptions = computed(() => [
   { value: 'ready' as const, label: '可交付', count: readyOrders.value },
   { value: 'all' as const, label: '全部', count: orderQueue.value.length },
 ])
-const visibleQueueOrders = computed(() => {
+const queueBaseOrders = computed(() => {
   if (queueFilter.value === 'ready') {
     return pendingOrders.value.filter((order) => order.status === 'ready')
   }
@@ -233,7 +234,61 @@ const visibleQueueOrders = computed(() => {
 
   return orderQueue.value
 })
+const queuePaymentFilterOptions = computed(() => {
+  const baseOrders = queueBaseOrders.value
+  return [
+    { value: 'all' as const, label: '全部付款', count: baseOrders.length },
+    { value: 'pending' as const, label: '待收', count: baseOrders.filter((order) => order.paymentStatus === 'pending').length },
+    { value: 'authorized' as const, label: '已授權', count: baseOrders.filter((order) => order.paymentStatus === 'authorized').length },
+    { value: 'paid' as const, label: '已付款', count: baseOrders.filter((order) => order.paymentStatus === 'paid').length },
+    {
+      value: 'issue' as const,
+      label: '異常',
+      count: baseOrders.filter((order) => order.paymentStatus === 'failed' || order.paymentStatus === 'expired').length,
+    },
+  ]
+})
+const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
+  if (!keyword) {
+    return true
+  }
+
+  const searchable = [
+    order.id,
+    order.customerName,
+    order.customerPhone,
+    order.note,
+    serviceModeLabels[order.mode],
+    paymentLabels[order.paymentMethod],
+    paymentStatusLabels[order.paymentStatus],
+    statusLabels[order.status],
+    fulfillmentLabel(order),
+    ...order.lines.map((line) => line.name),
+  ]
+
+  return searchable.some((value) => value.toLowerCase().includes(keyword))
+}
+const orderMatchesQueuePayment = (order: PosOrder): boolean => {
+  if (queuePaymentFilter.value === 'issue') {
+    return order.paymentStatus === 'failed' || order.paymentStatus === 'expired'
+  }
+
+  if (queuePaymentFilter.value === 'all') {
+    return true
+  }
+
+  return order.paymentStatus === queuePaymentFilter.value
+}
+const visibleQueueOrders = computed(() => {
+  const keyword = queueSearchTerm.value.trim().toLowerCase()
+  return queueBaseOrders.value.filter((order) => orderMatchesQueueSearch(order, keyword) && orderMatchesQueuePayment(order))
+})
 const queueFilterNote = computed(() => {
+  const filtersApplied = queueSearchTerm.value.trim().length > 0 || queuePaymentFilter.value !== 'all'
+  if (filtersApplied) {
+    return `顯示 ${visibleQueueOrders.value.length} 張符合條件訂單`
+  }
+
   if (queueFilter.value === 'ready') {
     return '只顯示可交付訂單'
   }
@@ -319,6 +374,8 @@ const paymentCloseoutRows = computed(() =>
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
 const queueFilter = ref<QueueFilter>('active')
+const queuePaymentFilter = ref<QueuePaymentFilter>('all')
+const queueSearchTerm = ref('')
 const expandedOrderId = ref<string | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -1014,6 +1071,26 @@ onBeforeUnmount(() => {
                 <span>{{ filter.label }}</span>
                 <strong>{{ filter.count }}</strong>
               </button>
+            </div>
+
+            <div class="queue-tools">
+              <label class="search-box queue-search">
+                <Search :size="18" aria-hidden="true" />
+                <input v-model="queueSearchTerm" type="search" placeholder="搜尋單號、客名、電話或品項" />
+              </label>
+              <div class="segmented-control queue-payment-filter" aria-label="付款狀態篩選">
+                <button
+                  v-for="filter in queuePaymentFilterOptions"
+                  :key="filter.value"
+                  class="segment-button queue-filter-button"
+                  :class="{ 'segment-button--active': queuePaymentFilter === filter.value }"
+                  type="button"
+                  @click="queuePaymentFilter = filter.value"
+                >
+                  <span>{{ filter.label }}</span>
+                  <strong>{{ filter.count }}</strong>
+                </button>
+              </div>
             </div>
 
             <article
