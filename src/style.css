@@ -1,26 +1,26 @@
 :root {
-  --bg: #f2f0ea;
-  --surface: #fffefa;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-muted: #f7f5ef;
-  --ink: #181a1b;
-  --ink-soft: #303638;
-  --muted: #697177;
-  --line: #d9ded5;
-  --line-strong: #c6cec4;
-  --primary: #0b6b63;
-  --primary-dark: #084f4a;
-  --primary-soft: #dceee8;
-  --secondary: #315f88;
-  --secondary-soft: #e2ecf4;
-  --amber: #9a681d;
-  --amber-soft: #f5ead6;
-  --danger: #a64035;
-  --danger-soft: #fae4df;
-  --success: #2c7652;
-  --success-soft: #dceee3;
-  --shadow: 0 12px 32px rgba(24, 26, 27, 0.08);
-  --shadow-tight: 0 6px 16px rgba(24, 26, 27, 0.08);
+  --surface-muted: #f7f8fa;
+  --ink: #1f2933;
+  --ink-soft: #394652;
+  --muted: #687480;
+  --line: #dfe4ea;
+  --line-strong: #c7d0d9;
+  --primary: #d95f3d;
+  --primary-dark: #b94527;
+  --primary-soft: #fff0ea;
+  --secondary: #2563eb;
+  --secondary-soft: #eaf1ff;
+  --amber: #a75c13;
+  --amber-soft: #fff5df;
+  --danger: #b42318;
+  --danger-soft: #ffebe8;
+  --success: #147a4c;
+  --success-soft: #e8f7ef;
+  --shadow: 0 14px 34px rgba(31, 41, 51, 0.09);
+  --shadow-tight: 0 6px 18px rgba(31, 41, 51, 0.08);
   --radius: 8px;
   --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   color: var(--ink);
@@ -132,6 +132,408 @@ button:disabled {
 
 .pos-shell--consumer {
   background: #fff4e3;
+}
+
+.pos-workbench {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  min-height: 100svh;
+  margin: -18px;
+  background: var(--bg);
+}
+
+.pos-side-rail {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  gap: 12px;
+  padding: 12px 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+  background: #bd4729;
+  color: #fff;
+}
+
+.side-brand {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 4px 2px 8px;
+  text-align: center;
+}
+
+.side-brand-logo {
+  width: 52px;
+  height: 52px;
+  border: 2px solid rgba(255, 255, 255, 0.65);
+  border-radius: var(--radius);
+  background: #fff;
+  object-fit: cover;
+}
+
+.side-brand div {
+  display: grid;
+  gap: 2px;
+}
+
+.side-brand span,
+.side-rail-footer span {
+  font-size: 0.72rem;
+  font-weight: 850;
+  opacity: 0.82;
+}
+
+.side-brand strong {
+  font-size: 0.92rem;
+  line-height: 1.18;
+}
+
+.side-mode-switch {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.side-mode-button,
+.side-station-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.side-mode-button--active {
+  border-color: #fff;
+  background: #fff;
+  color: var(--primary-dark);
+}
+
+.pos-side-rail .workstation-tabs {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  flex: 1;
+  gap: 7px;
+  margin: 0;
+}
+
+.pos-side-rail .workstation-tab {
+  display: grid;
+  justify-items: center;
+  min-height: 68px;
+  gap: 5px;
+  padding: 8px 5px;
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  text-align: center;
+  box-shadow: none;
+}
+
+.pos-side-rail .workstation-tab strong,
+.pos-side-rail .workstation-tab small {
+  color: inherit;
+}
+
+.pos-side-rail .workstation-tab small {
+  display: none;
+}
+
+.pos-side-rail .workstation-tab--active {
+  border-color: #fff;
+  background: #fff;
+  color: var(--primary-dark);
+}
+
+.side-rail-footer {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.side-rail-footer .icon-button {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.pos-main-surface {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 100svh;
+  gap: 12px;
+  padding: 12px;
+}
+
+.pos-command-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 74px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-tight);
+}
+
+.pos-command-bar h1 {
+  font-size: 1.48rem;
+}
+
+.pos-command-bar span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.pos-command-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.pos-main-surface .workspace {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.pos-main-surface .workspace--order {
+  grid-template-columns: minmax(0, 1fr) minmax(350px, 0.42fr);
+  min-height: calc(100svh - 110px);
+}
+
+.pos-main-surface .menu-panel,
+.pos-main-surface .cart-panel,
+.pos-main-surface .queue-section,
+.pos-main-surface .station-section,
+.pos-main-surface .printer-section,
+.pos-main-surface .closeout-section,
+.pos-main-surface .order-info-section,
+.pos-main-surface .payment-section,
+.pos-main-surface .active-order {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-tight);
+}
+
+.pos-main-surface .menu-panel,
+.pos-main-surface .cart-panel {
+  min-height: calc(100svh - 110px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.pos-main-surface .cart-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+}
+
+.pos-main-surface .product-grid {
+  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  gap: 9px;
+  margin: 0;
+  padding-right: 0;
+}
+
+.pos-main-surface .product-tile {
+  min-height: 150px;
+  padding: 10px;
+  border-color: #d8dee6;
+  background: #fff;
+  box-shadow: none;
+}
+
+.pos-main-surface .product-tile--in-cart {
+  border-color: var(--secondary);
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
+.pos-main-surface .product-name {
+  margin-top: 10px;
+  font-size: 1rem;
+}
+
+.pos-main-surface .product-meta strong {
+  color: var(--secondary);
+  font-size: 1.05rem;
+}
+
+.pos-main-surface .cart-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pos-main-surface .checkout-bar {
+  margin-top: 10px;
+}
+
+.menu-panel-heading,
+.ticket-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.menu-panel-heading {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.menu-search-box {
+  width: min(360px, 44%);
+}
+
+.menu-workarea {
+  display: grid;
+  grid-template-columns: 146px minmax(0, 1fr);
+  min-height: calc(100svh - 186px);
+}
+
+.category-rail {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  border-right: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.category-rail-button {
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font-weight: 950;
+  text-align: center;
+}
+
+.category-rail-button--active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.quick-add-stack {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.quick-add-title {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.catalog-panel {
+  min-width: 0;
+  padding: 10px;
+  overflow: auto;
+}
+
+.catalog-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.catalog-meta strong {
+  color: var(--secondary);
+}
+
+.ticket-topline {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: #fff;
+}
+
+.ticket-topline .eyebrow,
+.ticket-topline .panel-note,
+.ticket-topline h2,
+.ticket-topline > strong {
+  color: #fff;
+}
+
+.ticket-topline > strong {
+  font-size: 1.65rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ticket-topline .icon-button {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.ticket-service-mode {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.ticket-service-mode button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-weight: 950;
+}
+
+.ticket-service-mode-button--active {
+  border-color: #8ab4f8;
+  background: var(--secondary-soft);
+  color: var(--secondary);
+}
+
+.ticket-note-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.ticket-note-chips button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .topbar,
@@ -614,6 +1016,18 @@ h3 {
 .quick-add-button strong {
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.quick-add-stack .quick-add-button {
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 52px;
+}
+
+.quick-add-stack .quick-add-button strong {
+  grid-column: 2;
+  justify-self: start;
+  color: var(--secondary);
+  font-size: 0.82rem;
 }
 
 .product-grid {
@@ -2949,11 +3363,15 @@ h3 {
 .note-shortcuts button:focus-visible,
 .segment-button:focus-visible,
 .view-switch-button:focus-visible,
+.side-mode-button:focus-visible,
 .workstation-tab:focus-visible,
+.category-rail-button:focus-visible,
 .payment-button:focus-visible,
 .primary-button:focus-visible,
 .icon-button:focus-visible,
 .order-essential-action:focus-visible,
+.ticket-service-mode button:focus-visible,
+.ticket-note-chips button:focus-visible,
 .cart-inline-done:focus-visible,
 .quantity-stepper button:focus-visible,
 .quantity-input:focus,
@@ -3010,6 +3428,107 @@ h3 {
 @media (max-width: 900px) {
   .pos-shell {
     padding: 12px;
+  }
+
+  .pos-workbench {
+    grid-template-columns: 1fr;
+    margin: -12px;
+  }
+
+  .pos-side-rail {
+    position: static;
+    min-height: auto;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .side-brand {
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-items: start;
+    text-align: left;
+  }
+
+  .side-brand-logo {
+    width: 44px;
+    height: 44px;
+  }
+
+  .side-mode-switch {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .pos-side-rail .workstation-tabs {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(6, minmax(86px, 1fr));
+    overflow-x: auto;
+  }
+
+  .pos-side-rail .workstation-tab {
+    min-height: 56px;
+  }
+
+  .side-rail-footer {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .pos-main-surface {
+    min-height: auto;
+    padding: 10px;
+  }
+
+  .pos-command-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pos-command-status {
+    justify-content: flex-start;
+  }
+
+  .pos-main-surface .workspace--order {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .pos-main-surface .menu-panel,
+  .pos-main-surface .cart-panel {
+    min-height: auto;
+  }
+
+  .menu-workarea {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .category-rail {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(108px, 1fr);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .quick-add-stack {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(136px, 1fr);
+    margin-top: 0;
+    padding-top: 0;
+    padding-left: 10px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+
+  .quick-add-title {
+    align-self: center;
+  }
+
+  .catalog-panel {
+    overflow: visible;
   }
 
   .topbar,
@@ -3141,6 +3660,38 @@ h3 {
 @media (max-width: 520px) {
   .pos-shell {
     padding: 8px;
+  }
+
+  .pos-workbench {
+    margin: -8px;
+  }
+
+  .pos-side-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .side-mode-switch,
+  .pos-side-rail .workstation-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .side-rail-footer {
+    grid-template-columns: 1fr auto;
+    justify-items: start;
+  }
+
+  .menu-panel-heading,
+  .ticket-topline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .menu-search-box {
+    width: 100%;
+  }
+
+  .ticket-topline > strong {
+    font-size: 1.38rem;
   }
 
   .pos-shell--consumer .topbar {
