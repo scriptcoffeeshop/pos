@@ -142,6 +142,10 @@ button:disabled {
   background: var(--bg);
 }
 
+.pos-workbench--ordering {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pos-side-rail {
   position: sticky;
   top: 0;
@@ -282,6 +286,13 @@ button:disabled {
   padding: 12px;
 }
 
+.pos-main-surface--ordering {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  background: #ddd9d3;
+}
+
 .pos-command-bar {
   display: flex;
   align-items: center;
@@ -343,8 +354,8 @@ button:disabled {
 }
 
 .pos-main-surface .workspace--order {
-  grid-template-columns: minmax(0, 1fr) minmax(350px, 0.42fr);
-  min-height: calc(100svh - 110px);
+  grid-template-columns: minmax(340px, 0.34fr) minmax(0, 1fr);
+  min-height: 100svh;
 }
 
 .pos-main-surface .workspace--queue {
@@ -372,7 +383,7 @@ button:disabled {
 
 .pos-main-surface .menu-panel,
 .pos-main-surface .cart-panel {
-  min-height: calc(100svh - 110px);
+  min-height: 100svh;
   padding: 0;
   overflow: hidden;
 }
@@ -454,6 +465,10 @@ button:disabled {
   padding: 10px;
   border-right: 1px solid var(--line);
   background: var(--surface-muted);
+}
+
+.category-rail-icon {
+  display: none;
 }
 
 .category-rail-button {
@@ -571,6 +586,396 @@ button:disabled {
   color: var(--ink-soft);
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.pos-main-surface--ordering .workspace--order {
+  width: 100%;
+  max-width: none;
+  gap: 0;
+  align-items: stretch;
+  background: #ddd9d3;
+}
+
+.pos-main-surface--ordering .cart-panel,
+.pos-main-surface--ordering .menu-panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.pos-main-surface--ordering .cart-panel {
+  min-width: 0;
+  background: var(--surface-raised);
+}
+
+.pos-main-surface--ordering .menu-panel {
+  border-left: 1px solid var(--line-strong);
+  background: #ddd9d3;
+}
+
+.pos-main-surface--ordering .ticket-topline {
+  min-height: 96px;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 0;
+  background: var(--primary);
+}
+
+.ticket-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 56px;
+  flex: 0 0 auto;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+}
+
+.ticket-title-block {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.ticket-title-block h2 {
+  color: #fff;
+  font-size: clamp(2rem, 3.8vw, 3.25rem);
+  line-height: 1;
+}
+
+.ticket-title-block span {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1.02rem;
+  font-weight: 900;
+}
+
+.ticket-calendar-button {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+}
+
+.ticket-order-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 70px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--primary);
+  color: #fff;
+}
+
+.ticket-order-strip > div {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.ticket-order-strip strong {
+  color: #fff;
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.ticket-clear-button {
+  width: 40px;
+  height: 40px;
+  border-color: rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.13);
+  color: #fff;
+}
+
+.ticket-customer-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 78px;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-raised);
+  color: var(--muted);
+  text-align: left;
+}
+
+.ticket-customer-row svg {
+  color: var(--ink-soft);
+}
+
+.ticket-customer-row span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ticket-customer-row strong,
+.ticket-customer-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-customer-row strong {
+  color: var(--muted);
+  font-size: 1.05rem;
+  font-weight: 950;
+}
+
+.ticket-customer-row small {
+  color: #8a9297;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.ticket-customer-row--active {
+  background: var(--primary-soft);
+}
+
+.ticket-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.ticket-config-grid .order-essential-action {
+  min-height: 62px;
+}
+
+.ticket-config-grid .order-essential-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.ticket-config-grid strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-main-surface--ordering .ticket-service-mode {
+  padding: 10px 12px 0;
+  margin-top: 0;
+}
+
+.pos-main-surface--ordering .ticket-note-chips,
+.pos-main-surface--ordering .cart-inline-editor {
+  padding-inline: 12px;
+}
+
+.pos-main-surface--ordering .cart-lines {
+  flex: 1;
+  min-height: 0;
+  margin: 12px 0 0;
+  padding: 0 12px 12px;
+  overflow: auto;
+}
+
+.pos-main-surface--ordering .cart-line {
+  grid-template-columns: minmax(0, 1fr) 112px 72px;
+  border-color: var(--line);
+  background: var(--surface-muted);
+}
+
+.pos-main-surface--ordering .empty-state {
+  min-height: 240px;
+  border: 0;
+  background: transparent;
+}
+
+.pos-main-surface--ordering .checkout-bar--ticket {
+  min-height: 88px;
+  margin-top: 0;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.ticket-submit-button {
+  min-width: 150px;
+  min-height: 58px;
+  font-size: 1.08rem;
+}
+
+.ticket-total-summary {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+  text-align: center;
+}
+
+.ticket-total-summary span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.ticket-total-summary strong {
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.ticket-more-button {
+  width: 54px;
+  height: 54px;
+}
+
+.pos-main-surface--ordering .menu-panel-heading {
+  min-height: 78px;
+  padding: 0 18px;
+  border-bottom-color: var(--line-strong);
+  background: #e8e5df;
+}
+
+.pos-main-surface--ordering .menu-panel-heading h2 {
+  font-size: 1.1rem;
+}
+
+.pos-main-surface--ordering .menu-search-box {
+  width: min(300px, 34%);
+  background: var(--surface-raised);
+}
+
+.pos-main-surface--ordering .menu-workarea {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: calc(100svh - 78px);
+}
+
+.pos-main-surface--ordering .category-rail {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(132px, 1fr);
+  align-content: stretch;
+  gap: 0;
+  padding: 0 18px;
+  border-right: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: #e8e5df;
+  overflow-x: auto;
+}
+
+.pos-main-surface--ordering .category-rail-icon {
+  display: inline-grid;
+  min-width: 72px;
+  min-height: 66px;
+  place-items: center;
+  color: var(--secondary);
+}
+
+.pos-main-surface--ordering .category-rail-button {
+  min-height: 66px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.pos-main-surface--ordering .category-rail-button--active {
+  background: var(--surface-raised);
+  color: var(--primary-dark);
+  box-shadow: inset 0 -4px 0 var(--primary);
+}
+
+.pos-main-surface--ordering .catalog-panel {
+  padding: 20px 28px 40px;
+  background: #ddd9d3;
+}
+
+.pos-main-surface--ordering .catalog-meta {
+  min-height: 30px;
+  margin-bottom: 10px;
+}
+
+.pos-main-surface--ordering .quick-add-strip {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  margin: 0 0 14px;
+}
+
+.pos-main-surface--ordering .product-grid {
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 22px;
+  margin-top: 0;
+}
+
+.pos-main-surface--ordering .product-tile {
+  position: relative;
+  min-height: 166px;
+  aspect-ratio: 1 / 1;
+  padding: 14px;
+  border-color: #c8c6c1;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5)),
+    var(--surface-muted);
+  box-shadow: 0 2px 5px rgba(24, 26, 27, 0.18);
+}
+
+.pos-main-surface--ordering .product-tile:hover {
+  transform: translateY(-1px);
+}
+
+.pos-main-surface--ordering .product-tile-main {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.pos-main-surface--ordering .product-tile--in-cart .product-tile-main {
+  padding-bottom: 44px;
+}
+
+.pos-main-surface--ordering .product-tile-top,
+.pos-main-surface--ordering .product-tags {
+  display: none;
+}
+
+.pos-main-surface--ordering .product-name {
+  align-self: end;
+  margin-top: 0;
+  font-size: 1.08rem;
+  line-height: 1.08;
+}
+
+.pos-main-surface--ordering .product-meta {
+  display: grid;
+  justify-content: start;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.pos-main-surface--ordering .product-meta strong {
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+}
+
+.pos-main-surface--ordering .product-meta span {
+  display: none;
+}
+
+.pos-main-surface--ordering .product-stock-badge {
+  margin-top: 8px;
+}
+
+.pos-main-surface--ordering .product-quantity-control {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: min(124px, calc(100% - 20px));
+  box-shadow: 0 2px 6px rgba(24, 26, 27, 0.16);
 }
 
 .topbar,
@@ -3810,6 +4215,16 @@ h3 {
   .primary-button {
     width: 100%;
   }
+
+  .pos-main-surface--ordering .checkout-bar--ticket {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .pos-main-surface--ordering .ticket-submit-button {
+    width: auto;
+    flex: 0 0 auto;
+  }
 }
 
 @media (min-width: 720px) and (max-width: 900px) {
@@ -3849,6 +4264,11 @@ h3 {
   .ticket-topline {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .pos-main-surface--ordering .ticket-topline {
+    flex-direction: row;
+    align-items: center;
   }
 
   .menu-search-box {

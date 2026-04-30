@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core'
 import {
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
   CircleAlert,
   Clock3,
   CreditCard,
@@ -9,7 +11,9 @@ import {
   EyeOff,
   LayoutDashboard,
   LockKeyhole,
+  Menu as MenuIcon,
   Minus,
+  MoreHorizontal,
   Plus,
   Printer,
   ReceiptText,
@@ -476,7 +480,6 @@ const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const activeWorkspaceTitle = computed(() => workspaceTabLabels[activeWorkspaceTab.value])
-const cartTicketLabel = computed(() => (cartQuantity.value > 0 ? `新單 · ${cartQuantity.value} 件` : '新單'))
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
 const pageTitle = computed(() => {
@@ -1213,8 +1216,12 @@ onBeforeUnmount(() => {
     <ConsumerOrderPage v-if="activeView === 'online'" />
 
     <template v-else-if="activeView === 'pos'">
-      <section class="pos-workbench" aria-label="門市 POS 工作站">
-        <aside class="pos-side-rail" aria-label="POS 主選單">
+      <section
+        class="pos-workbench"
+        :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
+        aria-label="門市 POS 工作站"
+      >
+        <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
           <div class="side-brand">
             <img :src="brandLogoSrc" alt="Script Coffee" class="side-brand-logo" />
             <div>
@@ -1344,8 +1351,12 @@ onBeforeUnmount(() => {
           </div>
         </aside>
 
-        <section class="pos-main-surface">
+        <section
+          class="pos-main-surface"
+          :class="{ 'pos-main-surface--ordering': activeWorkspaceTab === 'order' }"
+        >
           <header
+            v-if="activeWorkspaceTab !== 'order'"
             class="pos-command-bar"
             :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' }"
           >
@@ -1390,123 +1401,54 @@ onBeforeUnmount(() => {
 
           <section class="workspace" :class="`workspace--${activeWorkspaceTab}`" aria-label="POS 工作台">
             <template v-if="activeWorkspaceTab === 'order'">
-              <section class="menu-panel" aria-labelledby="menu-title">
-                <div class="menu-panel-heading">
-                  <div>
-                    <p class="eyebrow">Menu</p>
-                    <h2 id="menu-title">商品菜單</h2>
-                    <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
-                  </div>
-                  <label class="search-box menu-search-box">
-                    <Search :size="18" aria-hidden="true" />
-                    <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
-                  </label>
-                </div>
-
-                <div class="menu-workarea">
-                  <aside class="category-rail" aria-label="品項分類">
-                    <button
-                      v-for="category in categoryOptions"
-                      :key="category.value"
-                      class="category-rail-button"
-                      :class="{ 'category-rail-button--active': selectedCategory === category.value }"
-                      type="button"
-                      @click="selectedCategory = category.value"
-                    >
-                      {{ category.label }}
-                    </button>
-
-                    <div v-if="quickAddItems.length > 0" class="quick-add-stack" aria-label="快速加購">
-                      <span class="quick-add-title">常用</span>
-                      <button
-                        v-for="(item, index) in quickAddItems"
-                        :key="item.id"
-                        class="quick-add-button"
-                        type="button"
-                        @click="addItem(item)"
-                      >
-                        <span class="quick-add-rank">{{ index + 1 }}</span>
-                        <span class="quick-add-name">{{ item.name }}</span>
-                        <strong>{{ formatCurrency(item.price) }}</strong>
-                        <span v-if="lineQuantityByItem(item.id) > 0" class="quick-add-count">
-                          x{{ lineQuantityByItem(item.id) }}
-                        </span>
-                      </button>
-                    </div>
-                  </aside>
-
-                  <div class="catalog-panel">
-                    <div class="catalog-meta">
-                      <span>{{ selectedCategoryLabel }}</span>
-                      <strong>{{ filteredMenu.length }} 項</strong>
-                    </div>
-
-                    <div class="product-grid">
-                      <article
-                        v-for="item in filteredMenu"
-                        :key="item.id"
-                        class="product-tile"
-                        :class="{ 'product-tile--in-cart': lineQuantityByItem(item.id) > 0 }"
-                      >
-                        <button class="product-tile-main" type="button" @click="addItem(item)">
-                          <span class="product-tile-top">
-                            <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-                            <span class="product-category">{{ categoryLabels[item.category] }}</span>
-                          </span>
-                          <span class="product-name">{{ item.name }}</span>
-                          <span class="product-meta">
-                            <strong>{{ formatCurrency(item.price) }}</strong>
-                            <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
-                          </span>
-                          <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
-                            {{ productStockLabel(item) }}
-                          </span>
-                          <span class="product-tags">{{ item.tags.join(' / ') }}</span>
-                        </button>
-                        <div class="product-quantity-control" :aria-label="`${item.name} 數量`">
-                          <button
-                            type="button"
-                            title="減少數量"
-                            :disabled="lineQuantityByItem(item.id) === 0"
-                            @click="decreaseLine(item.id)"
-                          >
-                            <Minus :size="15" aria-hidden="true" />
-                          </button>
-                          <input
-                            type="number"
-                            min="0"
-                            max="999"
-                            inputmode="numeric"
-                            :aria-label="`${item.name} 數量`"
-                            :value="lineQuantityByItem(item.id) || ''"
-                            placeholder="0"
-                            @input="updateProductQuantityInput(item, $event)"
-                            @change="commitProductQuantityInput(item, $event)"
-                            @keydown.enter.stop="blurQuantityInput"
-                            @keydown.escape.stop="blurQuantityInput"
-                          />
-                          <button type="button" title="增加數量" @click="addItem(item)">
-                            <Plus :size="15" aria-hidden="true" />
-                          </button>
-                        </div>
-                      </article>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
               <section class="cart-panel" aria-labelledby="cart-title">
                 <div class="ticket-topline">
-                  <div>
-                    <p class="eyebrow">Ticket</p>
-                    <h2 id="cart-title">目前訂單</h2>
-                    <span class="panel-note">{{ cartTicketLabel }} · {{ paymentLabels[paymentMethod] }}</span>
+                  <button class="ticket-back-button" type="button" title="返回訂單查詢" @click="setWorkspaceTab('queue')">
+                    <ChevronLeft :size="38" aria-hidden="true" />
+                  </button>
+                  <div class="ticket-title-block">
+                    <h2 id="cart-title">{{ serviceModeLabels[serviceMode] }}</h2>
+                    <span>新單 · 今天 {{ currentClockLabel }}</span>
                   </div>
-                  <strong>{{ formatCurrency(cartTotal) }}</strong>
-                  <button class="icon-button" type="button" title="清空購物車" @click="clearCart">
-                    <Trash2 :size="20" aria-hidden="true" />
+                  <button
+                    class="icon-button ticket-calendar-button"
+                    type="button"
+                    title="設定顧客與取餐時間"
+                    aria-controls="cart-customer-editor"
+                    :aria-expanded="activeCartQuickEditor === 'customer'"
+                    @click="toggleCartQuickEditor('customer')"
+                  >
+                    <CalendarDays :size="24" aria-hidden="true" />
                   </button>
                 </div>
+
+                <div class="ticket-order-strip">
+                  <div>
+                    <ReceiptText :size="22" aria-hidden="true" />
+                    <strong>No. 新單</strong>
+                  </div>
+                  <div>
+                    <strong>{{ formatCurrency(cartTotal) }}</strong>
+                    <button class="icon-button ticket-clear-button" type="button" title="清空購物車" @click="clearCart">
+                      <Trash2 :size="19" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  class="ticket-customer-row"
+                  :class="{ 'ticket-customer-row--active': activeCartQuickEditor === 'customer' }"
+                  type="button"
+                  aria-controls="cart-customer-editor"
+                  :aria-expanded="activeCartQuickEditor === 'customer'"
+                  @click="toggleCartQuickEditor('customer')"
+                >
+                  <UserRound :size="28" aria-hidden="true" />
+                  <span>
+                    <strong>{{ customer.name || '未輸入顧客資訊' }}</strong>
+                    <small>{{ customer.phone || customer.note || '點一下加入姓名、電話或備註' }}</small>
+                  </span>
+                </button>
 
                 <div class="ticket-service-mode" aria-label="服務方式">
                   <button
@@ -1520,20 +1462,20 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
 
-                <div class="order-essential-grid" aria-label="訂單必要資訊">
+                <div class="ticket-config-grid" aria-label="訂單設定">
                   <button
                     class="order-essential-action"
-                    :class="{ 'order-essential-action--active': activeCartQuickEditor === 'customer' }"
+                    :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
                     type="button"
-                    aria-controls="cart-customer-editor"
-                    :aria-expanded="activeCartQuickEditor === 'customer'"
-                    @click="toggleCartQuickEditor('customer')"
+                    aria-controls="cart-payment-editor"
+                    :aria-expanded="activeCartQuickEditor === 'payment'"
+                    @click="toggleCartQuickEditor('payment')"
                   >
                     <span class="order-essential-label">
-                      <UserRound :size="15" aria-hidden="true" />
-                      顧客
+                      <CreditCard :size="15" aria-hidden="true" />
+                      付款
                     </span>
-                    <strong>{{ customer.name || '現場客' }}</strong>
+                    <strong>{{ paymentLabels[paymentMethod] }}</strong>
                   </button>
                   <button
                     class="order-essential-action"
@@ -1549,24 +1491,6 @@ onBeforeUnmount(() => {
                     </span>
                     <strong>{{ serviceModeLabels[serviceMode] }}</strong>
                   </button>
-                  <button
-                    class="order-essential-action"
-                    :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
-                    type="button"
-                    aria-controls="cart-payment-editor"
-                    :aria-expanded="activeCartQuickEditor === 'payment'"
-                    @click="toggleCartQuickEditor('payment')"
-                  >
-                    <span class="order-essential-label">
-                      <CreditCard :size="15" aria-hidden="true" />
-                      付款
-                    </span>
-                    <strong>{{ paymentLabels[paymentMethod] }}</strong>
-                  </button>
-                  <article>
-                    <span>備註</span>
-                    <strong>{{ customer.note ? '有備註' : '無' }}</strong>
-                  </article>
                 </div>
 
                 <div class="ticket-note-chips" aria-label="常用備註">
@@ -1682,21 +1606,138 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <footer class="checkout-bar">
-                  <div>
-                    <span>{{ cartQuantity }} 件</span>
-                    <strong>{{ formatCurrency(cartTotal) }}</strong>
-                  </div>
+                <footer class="checkout-bar checkout-bar--ticket">
                   <button
-                    class="primary-button"
+                    class="primary-button ticket-submit-button"
                     type="button"
                     :disabled="cartLines.length === 0 || isSubmitting"
                     @click="submitCounterOrder"
                   >
-                    <ReceiptText :size="20" aria-hidden="true" />
-                    {{ isSubmitting ? '建立中' : '建立訂單' }}
+                    <Printer :size="22" aria-hidden="true" />
+                    {{ isSubmitting ? '建立中' : '出單' }}
+                  </button>
+                  <div class="ticket-total-summary">
+                    <span>{{ cartQuantity }} 件</span>
+                    <strong>{{ formatCurrency(cartTotal) }}</strong>
+                  </div>
+                  <button
+                    class="icon-button ticket-more-button"
+                    type="button"
+                    title="付款設定"
+                    aria-controls="cart-payment-editor"
+                    :aria-expanded="activeCartQuickEditor === 'payment'"
+                    @click="toggleCartQuickEditor('payment')"
+                  >
+                    <MoreHorizontal :size="24" aria-hidden="true" />
                   </button>
                 </footer>
+              </section>
+
+              <section class="menu-panel" aria-labelledby="menu-title">
+                <div class="menu-panel-heading">
+                  <div>
+                    <p class="eyebrow">Menu</p>
+                    <h2 id="menu-title">商品菜單</h2>
+                    <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
+                  </div>
+                  <label class="search-box menu-search-box">
+                    <Search :size="18" aria-hidden="true" />
+                    <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
+                  </label>
+                </div>
+
+                <div class="menu-workarea">
+                  <aside class="category-rail" aria-label="品項分類">
+                    <span class="category-rail-icon">
+                      <MenuIcon :size="26" aria-hidden="true" />
+                    </span>
+                    <button
+                      v-for="category in categoryOptions"
+                      :key="category.value"
+                      class="category-rail-button"
+                      :class="{ 'category-rail-button--active': selectedCategory === category.value }"
+                      type="button"
+                      @click="selectedCategory = category.value"
+                    >
+                      {{ category.label }}
+                    </button>
+                  </aside>
+
+                  <div class="catalog-panel">
+                    <div class="catalog-meta">
+                      <span>{{ selectedCategoryLabel }} · 點選商品加入訂單</span>
+                      <strong>{{ filteredMenu.length }} 項</strong>
+                    </div>
+
+                    <div v-if="quickAddItems.length > 0" class="quick-add-strip" aria-label="快速加購">
+                      <button
+                        v-for="(item, index) in quickAddItems"
+                        :key="item.id"
+                        class="quick-add-button"
+                        type="button"
+                        @click="addItem(item)"
+                      >
+                        <span class="quick-add-rank">{{ index + 1 }}</span>
+                        <span class="quick-add-name">{{ item.name }}</span>
+                        <strong>{{ formatCurrency(item.price) }}</strong>
+                        <span v-if="lineQuantityByItem(item.id) > 0" class="quick-add-count">
+                          x{{ lineQuantityByItem(item.id) }}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div class="product-grid">
+                      <article
+                        v-for="item in filteredMenu"
+                        :key="item.id"
+                        class="product-tile"
+                        :class="{ 'product-tile--in-cart': lineQuantityByItem(item.id) > 0 }"
+                      >
+                        <button class="product-tile-main" type="button" @click="addItem(item)">
+                          <span class="product-tile-top">
+                            <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
+                            <span class="product-category">{{ categoryLabels[item.category] }}</span>
+                          </span>
+                          <span class="product-name">{{ item.name }}</span>
+                          <span class="product-meta">
+                            <strong>{{ formatCurrency(item.price) }}</strong>
+                            <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
+                          </span>
+                          <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
+                            {{ productStockLabel(item) }}
+                          </span>
+                          <span class="product-tags">{{ item.tags.join(' / ') }}</span>
+                        </button>
+                        <div v-if="lineQuantityByItem(item.id) > 0" class="product-quantity-control" :aria-label="`${item.name} 數量`">
+                          <button
+                            type="button"
+                            title="減少數量"
+                            :disabled="lineQuantityByItem(item.id) === 0"
+                            @click="decreaseLine(item.id)"
+                          >
+                            <Minus :size="15" aria-hidden="true" />
+                          </button>
+                          <input
+                            type="number"
+                            min="0"
+                            max="999"
+                            inputmode="numeric"
+                            :aria-label="`${item.name} 數量`"
+                            :value="lineQuantityByItem(item.id) || ''"
+                            placeholder="0"
+                            @input="updateProductQuantityInput(item, $event)"
+                            @change="commitProductQuantityInput(item, $event)"
+                            @keydown.enter.stop="blurQuantityInput"
+                            @keydown.escape.stop="blurQuantityInput"
+                          />
+                          <button type="button" title="增加數量" @click="addItem(item)">
+                            <Plus :size="15" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </article>
+                    </div>
+                  </div>
+                </div>
               </section>
             </template>
 
