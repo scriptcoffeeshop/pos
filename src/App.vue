@@ -270,7 +270,7 @@ const workspaceTabLabels: Record<WorkspaceTab, string> = {
   order: '外帶 / 外送點餐',
   details: '顧客與備註',
   payment: '付款確認',
-  queue: '訂單佇列',
+  queue: '外帶 / 外送',
   printing: '列印站',
   closeout: '班別關帳',
 }
@@ -457,7 +457,7 @@ const paymentCloseoutRows = computed(() =>
 )
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
 const activeView = ref<AppView>(readInitialView())
-const activeWorkspaceTab = ref<WorkspaceTab>('order')
+const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
 const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
@@ -1041,17 +1041,28 @@ const setWorkspaceTab = (tab: WorkspaceTab): void => {
   activeWorkspaceTab.value = tab
 }
 
+const resetQueueFilters = (): void => {
+  queueFilter.value = 'active'
+  queuePaymentFilter.value = 'all'
+  queueSearchTerm.value = ''
+}
+
+const startTakeoutOrder = (): void => {
+  serviceMode.value = 'takeout'
+  setWorkspaceTab('order')
+}
+
 const setActiveView = (view: AppView): void => {
   if (isNativeApp) {
     activeView.value = 'pos'
-    activeWorkspaceTab.value = 'order'
+    activeWorkspaceTab.value = 'queue'
     globalThis.history.replaceState(null, '', globalThis.location.pathname)
     return
   }
 
   activeView.value = view
   if (view === 'pos') {
-    activeWorkspaceTab.value = 'order'
+    activeWorkspaceTab.value = 'queue'
   }
 
   if (isConsumerDomain) {
@@ -1334,13 +1345,26 @@ onBeforeUnmount(() => {
         </aside>
 
         <section class="pos-main-surface">
-          <header class="pos-command-bar">
+          <header
+            class="pos-command-bar"
+            :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' }"
+          >
             <div>
-              <p class="eyebrow">Workspace</p>
+              <p class="eyebrow">{{ activeWorkspaceTab === 'queue' ? 'Orders' : 'Workspace' }}</p>
               <h1>{{ activeWorkspaceTitle }}</h1>
-              <span>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
+              <span v-if="activeWorkspaceTab === 'queue'">
+                查詢訂單 · {{ queueFilterNote }}
+              </span>
+              <span v-else>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
             </div>
-            <div class="pos-command-status" aria-label="POS 狀態">
+            <div v-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
+              <span>{{ pendingOrders.length }} 張待處理</span>
+              <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
+                <ShoppingBag :size="22" aria-hidden="true" />
+                新增外帶
+              </button>
+            </div>
+            <div v-else class="pos-command-status" aria-label="POS 狀態">
               <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
                 <LockKeyhole :size="18" aria-hidden="true" />
                 {{ stationClaimLabel }}
@@ -1806,10 +1830,14 @@ onBeforeUnmount(() => {
                 <div class="panel-heading">
                   <div>
                     <p class="eyebrow">Orders</p>
-                    <h2 id="queue-title">訂單佇列</h2>
-                    <span class="panel-note">{{ queueFilterNote }}</span>
+                    <h2 id="queue-title">
+                      查詢訂單（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
+                    </h2>
+                    <span class="panel-note">依狀態、付款與關鍵字快速查詢</span>
                   </div>
-                  <span class="queue-count">{{ pendingOrders.length }}</span>
+                  <button class="queue-reset-button" type="button" @click="resetQueueFilters">
+                    重設篩選條件
+                  </button>
                 </div>
 
                 <div class="segmented-control queue-filter" aria-label="訂單篩選">
