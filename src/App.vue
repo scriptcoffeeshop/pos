@@ -811,7 +811,31 @@ const orderSwipeDeleteLabel = (order: PosOrder): string => {
     return refundActionLabel(order)
   }
 
-  return '不可刪除'
+  if (orderClaimedByOtherStation(order)) {
+    return '先接手'
+  }
+
+  if (order.paymentStatus === 'refunded') {
+    return '已退款'
+  }
+
+  if (order.status === 'voided') {
+    return '已作廢'
+  }
+
+  if (order.status === 'served') {
+    return '已交付'
+  }
+
+  if (order.paymentStatus === 'expired') {
+    return '付款逾期'
+  }
+
+  if (order.paymentStatus === 'failed' || order.status === 'failed') {
+    return '已異常'
+  }
+
+  return '不可作廢'
 }
 
 const orderSwipeDeleteDisabled = (order: PosOrder): boolean =>
