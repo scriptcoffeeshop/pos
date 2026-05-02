@@ -66,6 +66,8 @@ type PosWorkspaceDensity = 'comfortable' | 'compact'
 type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync'
 type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
+type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
+type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -86,6 +88,15 @@ interface PrintJobRow {
   key: string
   order: PosOrder
   job: PrintJob
+}
+
+interface CloseoutPreflightItem {
+  id: CloseoutPreflightAction
+  label: string
+  detail: string
+  count: number
+  status: CloseoutPreflightStatus
+  actionLabel: string
 }
 
 interface SwipeState {
@@ -501,8 +512,14 @@ const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
     paymentLabels[order.paymentMethod],
     paymentStatusLabels[order.paymentStatus],
     statusLabels[order.status],
+    `列印${printStatusLabels[order.printStatus]}`,
     fulfillmentLabel(order),
     ...order.lines.map((line) => line.name),
+    ...order.printJobs.flatMap((job) => [
+      printStatusLabels[job.status],
+      `列印${printStatusLabels[job.status]}`,
+      job.lastError ?? '',
+    ]),
   ]
 
   return searchable.some((value) => value.toLowerCase().includes(keyword))
@@ -724,6 +741,79 @@ const closeoutSummary = computed(() => {
     },
   )
 })
+const closeoutOpenOrders = computed(() =>
+  todayOrders.value.filter((order) => order.status !== 'served' && order.status !== 'failed' && order.status !== 'voided'),
+)
+const closeoutPendingPaymentOrders = computed(() =>
+  salesCloseoutOrders.value.filter((order) => order.paymentStatus === 'pending'),
+)
+const closeoutPaymentIssueOrders = computed(() =>
+  todayOrders.value.filter((order) => order.status !== 'voided' && (order.paymentStatus === 'failed' || order.paymentStatus === 'expired')),
+)
+const closeoutPrintIssueOrders = computed(() =>
+  todayOrders.value.filter((order) => order.status !== 'voided' && order.printStatus === 'failed'),
+)
+const closeoutVoidedOrders = computed(() =>
+  todayOrders.value.filter((order) => order.status === 'voided'),
+)
+const closeoutPreflightItems = computed<CloseoutPreflightItem[]>(() => [
+  {
+    id: 'active-orders',
+    label: '未交付訂單',
+    detail: closeoutOpenOrders.value.length > 0 ? '先完成、交付或作廢，避免班別交接漏單。' : '今日進行中訂單已清空。',
+    count: closeoutOpenOrders.value.length,
+    status: closeoutOpenOrders.value.length > 0 ? 'danger' : 'ready',
+    actionLabel: closeoutOpenOrders.value.length > 0 ? '處理' : '查看',
+  },
+  {
+    id: 'pending-payments',
+    label: '待收款',
+    detail: closeoutPendingPaymentOrders.value.length > 0 ? '關班前先完成收款或作廢。' : '沒有待收款訂單。',
+    count: closeoutPendingPaymentOrders.value.length,
+    status: closeoutPendingPaymentOrders.value.length > 0 ? 'danger' : 'ready',
+    actionLabel: closeoutPendingPaymentOrders.value.length > 0 ? '收款' : '查看',
+  },
+  {
+    id: 'payment-issues',
+    label: '付款異常',
+    detail: closeoutPaymentIssueOrders.value.length > 0 ? '確認逾期或失敗付款是否需要重建訂單。' : '付款異常已清空。',
+    count: closeoutPaymentIssueOrders.value.length,
+    status: closeoutPaymentIssueOrders.value.length > 0 ? 'danger' : 'ready',
+    actionLabel: closeoutPaymentIssueOrders.value.length > 0 ? '追查' : '查看',
+  },
+  {
+    id: 'print-issues',
+    label: '列印失敗',
+    detail: closeoutPrintIssueOrders.value.length > 0 ? '重新出單或確認 GODEX / 網路狀態。' : '沒有列印失敗記錄。',
+    count: closeoutPrintIssueOrders.value.length,
+    status: closeoutPrintIssueOrders.value.length > 0 ? 'warning' : 'ready',
+    actionLabel: closeoutPrintIssueOrders.value.length > 0 ? '重印' : '查看',
+  },
+  {
+    id: 'voided-orders',
+    label: '作廢記錄',
+    detail: closeoutVoidedOrders.value.length > 0 ? '交班時確認作廢原因與稽核記錄。' : '今日沒有作廢訂單。',
+    count: closeoutVoidedOrders.value.length,
+    status: closeoutVoidedOrders.value.length > 0 ? 'warning' : 'ready',
+    actionLabel: closeoutVoidedOrders.value.length > 0 ? '核對' : '查看',
+  },
+])
+const closeoutPreflightBlockingCount = computed(() =>
+  closeoutOpenOrders.value.length +
+  closeoutPendingPaymentOrders.value.length +
+  closeoutPaymentIssueOrders.value.length +
+  closeoutPrintIssueOrders.value.length,
+)
+const closeoutPreflightReady = computed(() => closeoutPreflightBlockingCount.value === 0)
+const closeoutPreflightSummary = computed(() => {
+  if (closeoutPreflightReady.value) {
+    return closeoutVoidedOrders.value.length > 0
+      ? `可關班 · 作廢 ${closeoutVoidedOrders.value.length} 張需交接`
+      : '可關班 · 今日預檢完成'
+  }
+
+  return `需處理 ${closeoutPreflightBlockingCount.value} 張/項異常`
+})
 const paymentCloseoutRows = computed(() =>
   paymentOptions
     .map((payment) => {
@@ -814,7 +904,7 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   payment: paymentLabels[paymentMethod.value],
   queue: `${pendingOrders.value.length} 待處理`,
   printing: printStation.online ? '列印在線' : '列印離線',
-  closeout: registerStatusLabel.value,
+  closeout: closeoutPreflightBlockingCount.value > 0 ? `${closeoutPreflightBlockingCount.value} 項待處理` : registerStatusLabel.value,
 }))
 const registerVariance = computed(() => {
   if (!registerSession.value) {
@@ -1311,6 +1401,43 @@ const jumpToKnowledgeTarget = (article: PosKnowledgeArticle): void => {
   }
 
   closeKnowledge()
+}
+
+const resetQueueViewForCloseoutPreflight = (): void => {
+  queueFilter.value = 'all'
+  queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'today'
+  queueServiceFilter.value = 'all'
+  queueSourceFilter.value = 'all'
+  queueSortMode.value = 'fulfillment-asc'
+  queueSearchTerm.value = ''
+  expandedOrderId.value = null
+}
+
+const runCloseoutPreflightAction = (item: CloseoutPreflightItem): void => {
+  resetQueueViewForCloseoutPreflight()
+
+  if (item.id === 'active-orders') {
+    queueFilter.value = 'active'
+  }
+
+  if (item.id === 'pending-payments') {
+    queuePaymentFilter.value = 'pending'
+  }
+
+  if (item.id === 'payment-issues') {
+    queuePaymentFilter.value = 'issue'
+  }
+
+  if (item.id === 'print-issues') {
+    queueSearchTerm.value = '列印失敗'
+  }
+
+  if (item.id === 'voided-orders') {
+    queueSearchTerm.value = statusLabels.voided
+  }
+
+  setWorkspaceTab('queue')
 }
 
 const runToolboxAction = (action: ToolboxAction): void => {
@@ -2844,6 +2971,51 @@ onBeforeUnmount(() => {
                   </article>
                 </div>
 
+                <section class="closeout-preflight" aria-labelledby="closeout-preflight-title">
+                  <div class="closeout-preflight-heading">
+                    <div>
+                      <p class="eyebrow">Preflight</p>
+                      <h3 id="closeout-preflight-title">交班預檢</h3>
+                      <span>{{ closeoutPreflightSummary }}</span>
+                    </div>
+                    <span
+                      class="closeout-preflight-status"
+                      :class="closeoutPreflightReady ? 'closeout-preflight-status--ready' : 'closeout-preflight-status--danger'"
+                    >
+                      <CheckCircle2 v-if="closeoutPreflightReady" :size="16" aria-hidden="true" />
+                      <CircleAlert v-else :size="16" aria-hidden="true" />
+                      {{ closeoutPreflightReady ? '可關班' : '需處理' }}
+                    </span>
+                  </div>
+
+                  <div class="closeout-preflight-list">
+                    <article
+                      v-for="item in closeoutPreflightItems"
+                      :key="item.id"
+                      class="closeout-preflight-item"
+                      :class="`closeout-preflight-item--${item.status}`"
+                    >
+                      <span class="closeout-preflight-icon">
+                        <CheckCircle2 v-if="item.status === 'ready'" :size="17" aria-hidden="true" />
+                        <CircleAlert v-else :size="17" aria-hidden="true" />
+                      </span>
+                      <div>
+                        <strong>{{ item.label }}</strong>
+                        <small>{{ item.detail }}</small>
+                      </div>
+                      <button
+                        type="button"
+                        class="closeout-preflight-button"
+                        :aria-label="`${item.label}${item.count}筆，${item.actionLabel}`"
+                        @click="runCloseoutPreflightAction(item)"
+                      >
+                        <span>{{ item.count }}</span>
+                        {{ item.actionLabel }}
+                      </button>
+                    </article>
+                  </div>
+                </section>
+
                 <div class="payment-closeout-list" aria-label="付款方式對帳">
                   <article v-for="payment in paymentCloseoutRows" :key="payment.value">
                     <span>{{ payment.label }}</span>
@@ -3086,7 +3258,7 @@ onBeforeUnmount(() => {
           <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
             <WalletCards :size="24" aria-hidden="true" />
             <strong>班別關帳</strong>
-            <span>{{ registerStatusLabel }}</span>
+            <span>{{ workspaceTabSummaries.closeout }}</span>
           </button>
           <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
             <Settings2 :size="24" aria-hidden="true" />
