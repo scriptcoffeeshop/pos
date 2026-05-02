@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core'
 import {
+  BookOpenCheck,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -32,6 +33,12 @@ import AdminPanel from './components/AdminPanel.vue'
 import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
+import {
+  posKnowledgeArticles,
+  posKnowledgeCategories,
+  type PosKnowledgeArticle,
+  type PosKnowledgeCategory,
+} from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import type {
   MenuCategory,
@@ -56,8 +63,9 @@ type QueueSourceFilter = 'all' | OrderSource
 type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type PosTextScale = 'standard' | 'large'
 type PosWorkspaceDensity = 'comfortable' | 'compact'
-type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync'
+type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync'
 type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
+type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -589,6 +597,38 @@ const onlineReminderThresholdLabel = computed(() =>
     ? '新單立即提醒'
     : `超過 ${onlineOrderReminder.value.reminderMinutes} 分鐘未確認`,
 )
+const knowledgeCategoryLabels = Object.fromEntries(
+  posKnowledgeCategories.map((category) => [category.value, category.label]),
+) as Record<PosKnowledgeCategory, string>
+const knowledgeCategoryOptions = computed(() => [
+  { value: 'all' as const, label: '全部', count: posKnowledgeArticles.length },
+  ...posKnowledgeCategories.map((category) => ({
+    value: category.value,
+    label: category.label,
+    count: posKnowledgeArticles.filter((article) => article.category === category.value).length,
+  })),
+])
+const filteredKnowledgeArticles = computed(() => {
+  const keyword = knowledgeSearchTerm.value.trim().toLowerCase()
+
+  return posKnowledgeArticles.filter((article) => {
+    const matchesCategory = knowledgeCategoryFilter.value === 'all' || article.category === knowledgeCategoryFilter.value
+    const searchable = [
+      article.title,
+      article.summary,
+      knowledgeCategoryLabels[article.category],
+      ...article.steps,
+      ...article.keywords,
+    ].join(' ').toLowerCase()
+
+    return matchesCategory && (keyword.length === 0 || searchable.includes(keyword))
+  })
+})
+const activeKnowledgeArticle = computed<PosKnowledgeArticle | null>(() =>
+  posKnowledgeArticles.find((article) => article.id === activeKnowledgeArticleId.value) ??
+  filteredKnowledgeArticles.value[0] ??
+  null,
+)
 const activeOrderItemCount = computed(
   () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
 )
@@ -713,6 +753,10 @@ const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const isToolboxOpen = ref(false)
+const isKnowledgeOpen = ref(false)
+const knowledgeSearchTerm = ref('')
+const knowledgeCategoryFilter = ref<KnowledgeCategoryFilter>('all')
+const activeKnowledgeArticleId = ref(posKnowledgeArticles[0]?.id ?? '')
 const stationSearchTerm = ref('')
 const stationCategoryFilter = ref<'all' | MenuCategory>('all')
 const stationAvailabilityFilter = ref<StationAvailabilityFilter>('all')
@@ -1222,11 +1266,51 @@ const focusMenuSearch = (): void => {
 
 const openToolbox = (): void => {
   activeCartQuickEditor.value = null
+  isKnowledgeOpen.value = false
   isToolboxOpen.value = true
 }
 
 const closeToolbox = (): void => {
   isToolboxOpen.value = false
+}
+
+const openKnowledge = (articleId?: string): void => {
+  activeCartQuickEditor.value = null
+  isToolboxOpen.value = false
+  if (articleId) {
+    activeKnowledgeArticleId.value = articleId
+  } else {
+    knowledgeSearchTerm.value = ''
+    knowledgeCategoryFilter.value = 'all'
+    activeKnowledgeArticleId.value = posKnowledgeArticles[0]?.id ?? ''
+  }
+  isKnowledgeOpen.value = true
+}
+
+const closeKnowledge = (): void => {
+  isKnowledgeOpen.value = false
+}
+
+const knowledgeTargetLabels: Record<PosKnowledgeArticle['target'], string> = {
+  order: '點餐',
+  queue: '訂單',
+  printing: '列印/供應',
+  closeout: '班別',
+  admin: '後台',
+  online: '線上入口',
+}
+
+const jumpToKnowledgeTarget = (article: PosKnowledgeArticle): void => {
+  if (article.target === 'admin') {
+    setActiveView('admin')
+  } else if (article.target === 'online') {
+    setActiveView('online')
+  } else {
+    setActiveView('pos')
+    setWorkspaceTab(article.target)
+  }
+
+  closeKnowledge()
 }
 
 const runToolboxAction = (action: ToolboxAction): void => {
@@ -1252,6 +1336,11 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'online') {
     setActiveView('online')
+  }
+
+  if (action === 'knowledge') {
+    openKnowledge()
+    return
   }
 
   if (action === 'sync') {
@@ -1288,6 +1377,12 @@ const selectCartPaymentMethod = (method: PaymentMethod): void => {
 
 const handlePosShortcut = (event: KeyboardEvent): void => {
   if (activeView.value !== 'pos') {
+    return
+  }
+
+  if (event.key === 'Escape' && isKnowledgeOpen.value) {
+    event.preventDefault()
+    closeKnowledge()
     return
   }
 
@@ -1467,6 +1562,16 @@ watch(
       searchTerm: searchTerm.trim().slice(0, 80),
     })
   },
+)
+
+watch(
+  filteredKnowledgeArticles,
+  (articles) => {
+    if (!articles.some((article) => article.id === activeKnowledgeArticleId.value)) {
+      activeKnowledgeArticleId.value = articles[0]?.id ?? ''
+    }
+  },
+  { immediate: true },
 )
 
 watch(posUiPreferences, (preferences) => {
@@ -2993,6 +3098,16 @@ onBeforeUnmount(() => {
             <strong>線上點餐</strong>
             <span>顧客入口預覽</span>
           </button>
+          <button
+            type="button"
+            class="toolbox-card"
+            aria-controls="pos-knowledge-modal"
+            @click="runToolboxAction('knowledge')"
+          >
+            <BookOpenCheck :size="24" aria-hidden="true" />
+            <strong>門市助手</strong>
+            <span>搜尋 SOP 與操作流程</span>
+          </button>
         </div>
 
         <section class="preference-panel" aria-labelledby="toolbox-preferences-title">
@@ -3048,6 +3163,99 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
+      </section>
+    </div>
+
+    <div
+      v-if="isKnowledgeOpen"
+      class="utility-modal-backdrop"
+      @click.self="closeKnowledge"
+    >
+      <section
+        id="pos-knowledge-modal"
+        class="utility-modal knowledge-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="knowledge-title"
+      >
+        <header class="utility-modal-header">
+          <button class="icon-button" type="button" title="關閉門市助手" @click="closeKnowledge">
+            <ChevronLeft :size="20" aria-hidden="true" />
+          </button>
+          <div>
+            <p class="eyebrow">SOP</p>
+            <h2 id="knowledge-title">門市助手</h2>
+          </div>
+          <button class="icon-button" type="button" title="開啟工具箱" @click="openToolbox">
+            <MoreHorizontal :size="18" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="knowledge-layout">
+          <aside class="knowledge-index" aria-label="SOP 搜尋與清單">
+            <label class="search-box knowledge-search">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="knowledgeSearchTerm" type="search" placeholder="搜尋 SOP、關鍵字或狀態" />
+            </label>
+
+            <div class="knowledge-category-row" aria-label="SOP 類別">
+              <button
+                v-for="category in knowledgeCategoryOptions"
+                :key="category.value"
+                type="button"
+                :class="{ 'knowledge-category-button--active': knowledgeCategoryFilter === category.value }"
+                class="knowledge-category-button"
+                @click="knowledgeCategoryFilter = category.value"
+              >
+                <span>{{ category.label }}</span>
+                <strong>{{ category.count }}</strong>
+              </button>
+            </div>
+
+            <div class="knowledge-list">
+              <button
+                v-for="article in filteredKnowledgeArticles"
+                :key="article.id"
+                type="button"
+                class="knowledge-list-button"
+                :class="{ 'knowledge-list-button--active': activeKnowledgeArticle?.id === article.id }"
+                @click="activeKnowledgeArticleId = article.id"
+              >
+                <span>{{ knowledgeCategoryLabels[article.category] }}</span>
+                <strong>{{ article.title }}</strong>
+                <small>{{ article.summary }}</small>
+              </button>
+              <div v-if="filteredKnowledgeArticles.length === 0" class="empty-state knowledge-empty-state">
+                <BookOpenCheck :size="24" aria-hidden="true" />
+                <span>沒有符合條件的 SOP</span>
+              </div>
+            </div>
+          </aside>
+
+          <article v-if="activeKnowledgeArticle" class="knowledge-article">
+            <header class="knowledge-article-header">
+              <p class="eyebrow">{{ knowledgeCategoryLabels[activeKnowledgeArticle.category] }}</p>
+              <h3>{{ activeKnowledgeArticle.title }}</h3>
+              <span>{{ activeKnowledgeArticle.summary }}</span>
+            </header>
+
+            <ol class="knowledge-steps">
+              <li v-for="step in activeKnowledgeArticle.steps" :key="step">
+                {{ step }}
+              </li>
+            </ol>
+
+            <div class="knowledge-keywords" aria-label="SOP 關鍵字">
+              <span v-for="keyword in activeKnowledgeArticle.keywords" :key="keyword">
+                {{ keyword }}
+              </span>
+            </div>
+
+            <button class="primary-button knowledge-target-button" type="button" @click="jumpToKnowledgeTarget(activeKnowledgeArticle)">
+              前往{{ knowledgeTargetLabels[activeKnowledgeArticle.target] }}
+            </button>
+          </article>
+        </div>
       </section>
     </div>
   </main>
