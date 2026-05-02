@@ -33,18 +33,44 @@ import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import type { MenuCategory, MenuItem, OrderStatus, PaymentMethod, PaymentStatus, PosOrder, PrintJob, ServiceMode } from './types/pos'
+import type {
+  MenuCategory,
+  MenuItem,
+  OrderSource,
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  PosOrder,
+  PrintJob,
+  ServiceMode,
+} from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
 type WorkspaceTab = 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
 type CartQuickEditor = 'customer' | 'service' | 'payment' | null
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
+type QueueDateFilter = 'today' | 'older' | 'all'
+type QueueServiceFilter = 'all' | ServiceMode
+type QueueSourceFilter = 'all' | OrderSource
+type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
+type PosTextScale = 'standard' | 'large'
+type PosWorkspaceDensity = 'comfortable' | 'compact'
+type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync'
 
 interface SavedQueueView {
   filter: QueueFilter
   paymentFilter: QueuePaymentFilter
+  dateFilter: QueueDateFilter
+  serviceFilter: QueueServiceFilter
+  sourceFilter: QueueSourceFilter
+  sortMode: QueueSortMode
   searchTerm: string
+}
+
+interface PosUiPreferences {
+  textScale: PosTextScale
+  density: PosWorkspaceDensity
 }
 
 interface PrintJobRow {
@@ -61,8 +87,15 @@ interface SwipeState {
 }
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
+const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
+const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
+const queueSortModeValues: QueueSortMode[] = ['fulfillment-asc', 'created-desc', 'amount-desc']
+const posTextScaleValues: PosTextScale[] = ['standard', 'large']
+const posWorkspaceDensityValues: PosWorkspaceDensity[] = ['comfortable', 'compact']
+const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
+const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
 const maxSwipeOffset = 104
 const swipeActionThreshold = 72
 
@@ -102,27 +135,90 @@ const isQueueFilter = (value: unknown): value is QueueFilter =>
 const isQueuePaymentFilter = (value: unknown): value is QueuePaymentFilter =>
   typeof value === 'string' && queuePaymentFilterValues.includes(value as QueuePaymentFilter)
 
+const isQueueDateFilter = (value: unknown): value is QueueDateFilter =>
+  typeof value === 'string' && queueDateFilterValues.includes(value as QueueDateFilter)
+
+const isQueueServiceFilter = (value: unknown): value is QueueServiceFilter =>
+  value === 'all' || (typeof value === 'string' && serviceModeValues.includes(value as ServiceMode))
+
+const isQueueSourceFilter = (value: unknown): value is QueueSourceFilter =>
+  value === 'all' || (typeof value === 'string' && orderSourceValues.includes(value as OrderSource))
+
+const isQueueSortMode = (value: unknown): value is QueueSortMode =>
+  typeof value === 'string' && queueSortModeValues.includes(value as QueueSortMode)
+
+const isPosTextScale = (value: unknown): value is PosTextScale =>
+  typeof value === 'string' && posTextScaleValues.includes(value as PosTextScale)
+
+const isPosWorkspaceDensity = (value: unknown): value is PosWorkspaceDensity =>
+  typeof value === 'string' && posWorkspaceDensityValues.includes(value as PosWorkspaceDensity)
+
 const readSavedQueueView = (): SavedQueueView => {
   try {
     const rawView = globalThis.localStorage?.getItem(queueFilterStorageKey)
     if (!rawView) {
-      return { filter: 'active', paymentFilter: 'all', searchTerm: '' }
+      return {
+        filter: 'active',
+        paymentFilter: 'all',
+        dateFilter: 'all',
+        serviceFilter: 'all',
+        sourceFilter: 'all',
+        sortMode: 'fulfillment-asc',
+        searchTerm: '',
+      }
     }
 
     const parsed = JSON.parse(rawView) as Partial<SavedQueueView>
     return {
       filter: isQueueFilter(parsed.filter) ? parsed.filter : 'active',
       paymentFilter: isQueuePaymentFilter(parsed.paymentFilter) ? parsed.paymentFilter : 'all',
+      dateFilter: isQueueDateFilter(parsed.dateFilter) ? parsed.dateFilter : 'all',
+      serviceFilter: isQueueServiceFilter(parsed.serviceFilter) ? parsed.serviceFilter : 'all',
+      sourceFilter: isQueueSourceFilter(parsed.sourceFilter) ? parsed.sourceFilter : 'all',
+      sortMode: isQueueSortMode(parsed.sortMode) ? parsed.sortMode : 'fulfillment-asc',
       searchTerm: typeof parsed.searchTerm === 'string' ? parsed.searchTerm.slice(0, 80) : '',
     }
   } catch {
-    return { filter: 'active', paymentFilter: 'all', searchTerm: '' }
+    return {
+      filter: 'active',
+      paymentFilter: 'all',
+      dateFilter: 'all',
+      serviceFilter: 'all',
+      sourceFilter: 'all',
+      sortMode: 'fulfillment-asc',
+      searchTerm: '',
+    }
   }
 }
 
 const writeSavedQueueView = (view: SavedQueueView): void => {
   try {
     globalThis.localStorage?.setItem(queueFilterStorageKey, JSON.stringify(view))
+  } catch {
+    return
+  }
+}
+
+const readPosUiPreferences = (): PosUiPreferences => {
+  try {
+    const rawPreferences = globalThis.localStorage?.getItem(posUiPreferenceStorageKey)
+    if (!rawPreferences) {
+      return { textScale: 'standard', density: 'comfortable' }
+    }
+
+    const parsed = JSON.parse(rawPreferences) as Partial<PosUiPreferences>
+    return {
+      textScale: isPosTextScale(parsed.textScale) ? parsed.textScale : 'standard',
+      density: isPosWorkspaceDensity(parsed.density) ? parsed.density : 'comfortable',
+    }
+  } catch {
+    return { textScale: 'standard', density: 'comfortable' }
+  }
+}
+
+const writePosUiPreferences = (preferences: PosUiPreferences): void => {
+  try {
+    globalThis.localStorage?.setItem(posUiPreferenceStorageKey, JSON.stringify(preferences))
   } catch {
     return
   }
@@ -328,6 +424,51 @@ const queuePaymentFilterOptions = computed(() => {
     },
   ]
 })
+const queueDateFilterOptions: Array<{ value: QueueDateFilter; label: string }> = [
+  { value: 'all', label: '全部日期' },
+  { value: 'today', label: '今日' },
+  { value: 'older', label: '較舊' },
+]
+const queueServiceFilterOptions: Array<{ value: QueueServiceFilter; label: string }> = [
+  { value: 'all', label: '全部取餐方式' },
+  { value: 'takeout', label: '外帶' },
+  { value: 'dine-in', label: '內用' },
+  { value: 'delivery', label: '外送' },
+]
+const queueSourceFilterOptions: Array<{ value: QueueSourceFilter; label: string }> = [
+  { value: 'all', label: '全部來源' },
+  { value: 'counter', label: '櫃台' },
+  { value: 'online', label: '線上' },
+  { value: 'qr', label: '掃碼' },
+]
+const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
+  { value: 'fulfillment-asc', label: '取餐/送達時間' },
+  { value: 'created-desc', label: '建立時間新到舊' },
+  { value: 'amount-desc', label: '金額高到低' },
+]
+const orderDateKey = (order: PosOrder): string | null => {
+  const orderDate = new Date(order.createdAt)
+  return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
+}
+const orderMatchesQueueDate = (order: PosOrder): boolean => {
+  if (queueDateFilter.value === 'all') {
+    return true
+  }
+
+  const todayKey = formatDateKey(new Date(currentTime.value))
+  const dateKey = orderDateKey(order)
+  if (!dateKey) {
+    return queueDateFilter.value === 'older'
+  }
+
+  return queueDateFilter.value === 'today' ? dateKey === todayKey : dateKey !== todayKey
+}
+const orderMatchesQueueService = (order: PosOrder): boolean =>
+  queueServiceFilter.value === 'all' || order.mode === queueServiceFilter.value
+
+const orderMatchesQueueSource = (order: PosOrder): boolean =>
+  queueSourceFilter.value === 'all' || order.source === queueSourceFilter.value
+
 const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
   if (!keyword) {
     return true
@@ -359,9 +500,42 @@ const orderMatchesQueuePayment = (order: PosOrder): boolean => {
 
   return order.paymentStatus === queuePaymentFilter.value
 }
+const orderFulfillmentTime = (order: PosOrder): number => {
+  if (order.requestedFulfillmentAt) {
+    const fulfillmentAt = new Date(order.requestedFulfillmentAt).getTime()
+    if (Number.isFinite(fulfillmentAt)) {
+      return fulfillmentAt
+    }
+  }
+
+  const createdAt = new Date(order.createdAt).getTime()
+  return Number.isFinite(createdAt) ? createdAt : Number.MAX_SAFE_INTEGER
+}
+const orderCreatedTime = (order: PosOrder): number => {
+  const createdAt = new Date(order.createdAt).getTime()
+  return Number.isFinite(createdAt) ? createdAt : 0
+}
+const sortQueueOrders = (orders: PosOrder[]): PosOrder[] =>
+  [...orders].sort((a, b) => {
+    if (queueSortMode.value === 'created-desc') {
+      return orderCreatedTime(b) - orderCreatedTime(a)
+    }
+
+    if (queueSortMode.value === 'amount-desc') {
+      return b.subtotal - a.subtotal || orderCreatedTime(b) - orderCreatedTime(a)
+    }
+
+    return orderFulfillmentTime(a) - orderFulfillmentTime(b) || orderCreatedTime(a) - orderCreatedTime(b)
+  })
 const visibleQueueOrders = computed(() => {
   const keyword = queueSearchTerm.value.trim().toLowerCase()
-  return queueBaseOrders.value.filter((order) => orderMatchesQueueSearch(order, keyword) && orderMatchesQueuePayment(order))
+  return sortQueueOrders(queueBaseOrders.value.filter((order) =>
+    orderMatchesQueueSearch(order, keyword) &&
+    orderMatchesQueuePayment(order) &&
+    orderMatchesQueueDate(order) &&
+    orderMatchesQueueService(order) &&
+    orderMatchesQueueSource(order),
+  ))
 })
 const printJobRows = computed<PrintJobRow[]>(() =>
   orderQueue.value
@@ -373,7 +547,13 @@ const printJobRows = computed<PrintJobRow[]>(() =>
     .sort((a, b) => new Date(b.job.createdAt).getTime() - new Date(a.job.createdAt).getTime()),
 )
 const queueFilterNote = computed(() => {
-  const filtersApplied = queueSearchTerm.value.trim().length > 0 || queuePaymentFilter.value !== 'all'
+  const filtersApplied =
+    queueSearchTerm.value.trim().length > 0 ||
+    queuePaymentFilter.value !== 'all' ||
+    queueDateFilter.value !== 'all' ||
+    queueServiceFilter.value !== 'all' ||
+    queueSourceFilter.value !== 'all' ||
+    queueSortMode.value !== 'fulfillment-asc'
   if (filtersApplied) {
     return `顯示 ${visibleQueueOrders.value.length} 張符合條件訂單`
   }
@@ -463,12 +643,18 @@ const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime
 const activeView = ref<AppView>(readInitialView())
 const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
+const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
+const queueDateFilter = ref<QueueDateFilter>(savedQueueView.dateFilter)
+const queueServiceFilter = ref<QueueServiceFilter>(savedQueueView.serviceFilter)
+const queueSourceFilter = ref<QueueSourceFilter>(savedQueueView.sourceFilter)
+const queueSortMode = ref<QueueSortMode>(savedQueueView.sortMode)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
+const isToolboxOpen = ref(false)
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -972,6 +1158,47 @@ const focusMenuSearch = (): void => {
   })
 }
 
+const openToolbox = (): void => {
+  activeCartQuickEditor.value = null
+  isToolboxOpen.value = true
+}
+
+const closeToolbox = (): void => {
+  isToolboxOpen.value = false
+}
+
+const runToolboxAction = (action: ToolboxAction): void => {
+  if (action === 'order') {
+    startTakeoutOrder()
+  }
+
+  if (action === 'queue') {
+    setWorkspaceTab('queue')
+  }
+
+  if (action === 'supply' || action === 'printing') {
+    setWorkspaceTab('printing')
+  }
+
+  if (action === 'closeout') {
+    setWorkspaceTab('closeout')
+  }
+
+  if (action === 'admin') {
+    setActiveView('admin')
+  }
+
+  if (action === 'online') {
+    setActiveView('online')
+  }
+
+  if (action === 'sync') {
+    void refreshBackendData()
+  }
+
+  closeToolbox()
+}
+
 const toggleCartQuickEditor = (editor: Exclude<CartQuickEditor, null>): void => {
   activeCartQuickEditor.value = activeCartQuickEditor.value === editor ? null : editor
 
@@ -998,7 +1225,25 @@ const selectCartPaymentMethod = (method: PaymentMethod): void => {
 }
 
 const handlePosShortcut = (event: KeyboardEvent): void => {
-  if (activeView.value !== 'pos' || activeWorkspaceTab.value !== 'order') {
+  if (activeView.value !== 'pos') {
+    return
+  }
+
+  if (event.key === 'Escape' && isToolboxOpen.value) {
+    event.preventDefault()
+    closeToolbox()
+    return
+  }
+
+  const isEditing = isEditableKeyboardTarget(event.target)
+
+  if (!isEditing && event.key === 'F1') {
+    event.preventDefault()
+    openToolbox()
+    return
+  }
+
+  if (activeWorkspaceTab.value !== 'order') {
     return
   }
 
@@ -1008,7 +1253,6 @@ const handlePosShortcut = (event: KeyboardEvent): void => {
     return
   }
 
-  const isEditing = isEditableKeyboardTarget(event.target)
   if (isEditing) {
     if (event.key === 'Escape' && event.target === searchInput.value && searchTerm.value) {
       event.preventDefault()
@@ -1047,6 +1291,10 @@ const setWorkspaceTab = (tab: WorkspaceTab): void => {
 const resetQueueFilters = (): void => {
   queueFilter.value = 'active'
   queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'all'
+  queueServiceFilter.value = 'all'
+  queueSourceFilter.value = 'all'
+  queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
 }
 
@@ -1109,13 +1357,24 @@ watch(
   { immediate: true },
 )
 
-watch([queueFilter, queuePaymentFilter, queueSearchTerm], ([filter, paymentFilter, searchTerm]) => {
-  writeSavedQueueView({
-    filter,
-    paymentFilter,
-    searchTerm: searchTerm.trim().slice(0, 80),
-  })
-})
+watch(
+  [queueFilter, queuePaymentFilter, queueDateFilter, queueServiceFilter, queueSourceFilter, queueSortMode, queueSearchTerm],
+  ([filter, paymentFilter, dateFilter, serviceFilter, sourceFilter, sortMode, searchTerm]) => {
+    writeSavedQueueView({
+      filter,
+      paymentFilter,
+      dateFilter,
+      serviceFilter,
+      sourceFilter,
+      sortMode,
+      searchTerm: searchTerm.trim().slice(0, 80),
+    })
+  },
+)
+
+watch(posUiPreferences, (preferences) => {
+  writePosUiPreferences(preferences)
+}, { deep: true })
 
 onMounted(() => {
   globalThis.addEventListener('keydown', handlePosShortcut)
@@ -1218,7 +1477,13 @@ onBeforeUnmount(() => {
     <template v-else-if="activeView === 'pos'">
       <section
         class="pos-workbench"
-        :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
+        :class="[
+          {
+            'pos-workbench--ordering': activeWorkspaceTab === 'order',
+            'pos-workbench--compact': posUiPreferences.density === 'compact',
+            'pos-workbench--text-large': posUiPreferences.textScale === 'large',
+          },
+        ]"
         aria-label="門市 POS 工作站"
       >
         <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
@@ -1338,6 +1603,16 @@ onBeforeUnmount(() => {
 
           <div class="side-rail-footer">
             <span>{{ currentClockLabel }}</span>
+            <button
+              class="icon-button side-toolbox-button"
+              type="button"
+              title="開啟工具箱"
+              aria-controls="pos-toolbox-modal"
+              :aria-expanded="isToolboxOpen"
+              @click="openToolbox"
+            >
+              <MoreHorizontal :size="18" aria-hidden="true" />
+            </button>
             <button
               class="icon-button sync-button"
               :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
@@ -1623,10 +1898,10 @@ onBeforeUnmount(() => {
                   <button
                     class="icon-button ticket-more-button"
                     type="button"
-                    title="付款設定"
-                    aria-controls="cart-payment-editor"
-                    :aria-expanded="activeCartQuickEditor === 'payment'"
-                    @click="toggleCartQuickEditor('payment')"
+                    title="開啟工具箱"
+                    aria-controls="pos-toolbox-modal"
+                    :aria-expanded="isToolboxOpen"
+                    @click="openToolbox"
                   >
                     <MoreHorizontal :size="24" aria-hidden="true" />
                   </button>
@@ -1913,6 +2188,40 @@ onBeforeUnmount(() => {
                       <strong>{{ filter.count }}</strong>
                     </button>
                   </div>
+                  <div class="queue-advanced-filters" aria-label="訂單進階篩選">
+                    <label>
+                      <span>日期</span>
+                      <select v-model="queueDateFilter">
+                        <option v-for="filter in queueDateFilterOptions" :key="filter.value" :value="filter.value">
+                          {{ filter.label }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>方式</span>
+                      <select v-model="queueServiceFilter">
+                        <option v-for="filter in queueServiceFilterOptions" :key="filter.value" :value="filter.value">
+                          {{ filter.label }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>來源</span>
+                      <select v-model="queueSourceFilter">
+                        <option v-for="filter in queueSourceFilterOptions" :key="filter.value" :value="filter.value">
+                          {{ filter.label }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>排序</span>
+                      <select v-model="queueSortMode">
+                        <option v-for="sort in queueSortOptions" :key="sort.value" :value="sort.value">
+                          {{ sort.label }}
+                        </option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
 
                 <div
@@ -2076,7 +2385,7 @@ onBeforeUnmount(() => {
                 </div>
               </section>
 
-              <section v-if="activeWorkspaceTab === 'printing' && isNativeApp" class="station-section" aria-labelledby="station-title">
+              <section v-if="activeWorkspaceTab === 'printing'" class="station-section" aria-labelledby="station-title">
                 <div class="panel-heading">
                   <div>
                     <p class="eyebrow">Station</p>
@@ -2432,5 +2741,131 @@ onBeforeUnmount(() => {
     </template>
 
     <AdminPanel v-else @refresh-pos="refreshBackendData" />
+
+    <div
+      v-if="isToolboxOpen"
+      class="utility-modal-backdrop"
+      @click.self="closeToolbox"
+    >
+      <section
+        id="pos-toolbox-modal"
+        class="utility-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="toolbox-title"
+      >
+        <header class="utility-modal-header">
+          <button class="icon-button" type="button" title="關閉工具箱" @click="closeToolbox">
+            <ChevronLeft :size="20" aria-hidden="true" />
+          </button>
+          <div>
+            <p class="eyebrow">Toolbox</p>
+            <h2 id="toolbox-title">工具箱</h2>
+          </div>
+          <button
+            class="icon-button sync-button"
+            :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
+            type="button"
+            title="重新同步 POS API"
+            :disabled="backendStatus.mode === 'syncing'"
+            @click="runToolboxAction('sync')"
+          >
+            <RefreshCw :size="18" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="toolbox-grid" aria-label="常用工具">
+          <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
+            <ShoppingCart :size="24" aria-hidden="true" />
+            <strong>新增外帶</strong>
+            <span>{{ workspaceTabSummaries.order }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
+            <ReceiptText :size="24" aria-hidden="true" />
+            <strong>訂單查詢</strong>
+            <span>{{ queueFilterNote }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
+            <Eye :size="24" aria-hidden="true" />
+            <strong>供應狀態</strong>
+            <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
+            <Printer :size="24" aria-hidden="true" />
+            <strong>列印站</strong>
+            <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
+            <WalletCards :size="24" aria-hidden="true" />
+            <strong>班別關帳</strong>
+            <span>{{ registerStatusLabel }}</span>
+          </button>
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
+            <Settings2 :size="24" aria-hidden="true" />
+            <strong>後台</strong>
+            <span>商品 · 報表 · 權限</span>
+          </button>
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
+            <ShoppingBag :size="24" aria-hidden="true" />
+            <strong>線上點餐</strong>
+            <span>顧客入口預覽</span>
+          </button>
+        </div>
+
+        <section class="preference-panel" aria-labelledby="toolbox-preferences-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Display</p>
+              <h2 id="toolbox-preferences-title">外觀</h2>
+            </div>
+            <Settings2 :size="20" aria-hidden="true" />
+          </div>
+          <div class="preference-grid">
+            <div class="preference-group">
+              <span>文字</span>
+              <div class="segmented-control preference-segment" aria-label="文字大小">
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ 'segment-button--active': posUiPreferences.textScale === 'standard' }"
+                  @click="posUiPreferences.textScale = 'standard'"
+                >
+                  標準
+                </button>
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ 'segment-button--active': posUiPreferences.textScale === 'large' }"
+                  @click="posUiPreferences.textScale = 'large'"
+                >
+                  放大
+                </button>
+              </div>
+            </div>
+            <div class="preference-group">
+              <span>密度</span>
+              <div class="segmented-control preference-segment" aria-label="畫面密度">
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ 'segment-button--active': posUiPreferences.density === 'comfortable' }"
+                  @click="posUiPreferences.density = 'comfortable'"
+                >
+                  標準
+                </button>
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ 'segment-button--active': posUiPreferences.density === 'compact' }"
+                  @click="posUiPreferences.density = 'compact'"
+                >
+                  緊湊
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
   </main>
 </template>
