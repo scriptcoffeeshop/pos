@@ -63,6 +63,8 @@ type QueueSourceFilter = 'all' | OrderSource
 type QueueFulfillmentFilter = 'all' | 'overdue' | 'due-soon' | 'scheduled'
 type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
+type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
+type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
 type PosTextScale = 'standard' | 'large'
 type PosWorkspaceDensity = 'comfortable' | 'compact'
 type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync'
@@ -100,6 +102,15 @@ interface CloseoutPreflightItem {
   count: number
   status: CloseoutPreflightStatus
   actionLabel: string
+}
+
+interface QueueTaskAction {
+  id: QueueTaskActionId
+  label: string
+  detail: string
+  count: number
+  actionLabel: string
+  tone: QueueTaskTone
 }
 
 interface SwipeState {
@@ -572,6 +583,7 @@ const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
     paymentStatusLabels[order.paymentStatus],
     statusLabels[order.status],
     `列印${printStatusLabels[order.printStatus]}`,
+    orderNeedsOnlineReminder(order) ? '未確認 線上未確認 掃碼未確認' : '',
     fulfillmentLabel(order),
     ...order.lines.map((line) => line.name),
     ...order.printJobs.flatMap((job) => [
@@ -675,6 +687,63 @@ const queueFulfillmentAlertTitle = computed(() => {
 
   return `${queueFulfillmentAlert.value.dueSoonCount} 張訂單 ${fulfillmentAlertWindowMinutes} 分鐘內到點`
 })
+const queuePendingPaymentOrders = computed(() =>
+  pendingOrders.value.filter((order) => order.paymentStatus === 'pending'),
+)
+const queueReadyOrders = computed(() =>
+  pendingOrders.value.filter((order) => order.status === 'ready'),
+)
+const queuePrintIssueOrders = computed(() =>
+  pendingOrders.value.filter((order) => order.printStatus === 'failed'),
+)
+const queueTaskActions = computed<QueueTaskAction[]>(() => [
+  {
+    id: 'fulfillment-alerts',
+    label: '到點/逾時',
+    detail: queueFulfillmentAlert.value.count > 0
+      ? `逾時 ${queueFulfillmentAlert.value.overdueCount} · ${fulfillmentAlertWindowMinutes} 分內 ${queueFulfillmentAlert.value.dueSoonCount}`
+      : '目前無到點訂單',
+    count: queueFulfillmentAlert.value.count,
+    actionLabel: queueFulfillmentAlert.value.count > 0 ? '處理' : '查看',
+    tone: queueFulfillmentAlert.value.isOverdue ? 'danger' : 'warning',
+  },
+  {
+    id: 'pending-payments',
+    label: '待收款',
+    detail: queuePendingPaymentOrders.value.length > 0
+      ? `合計 ${formatCurrency(queuePendingPaymentOrders.value.reduce((sum, order) => sum + order.subtotal, 0))}`
+      : '目前沒有待收款',
+    count: queuePendingPaymentOrders.value.length,
+    actionLabel: queuePendingPaymentOrders.value.length > 0 ? '收款' : '查看',
+    tone: 'warning',
+  },
+  {
+    id: 'ready-orders',
+    label: '可交付',
+    detail: queueReadyOrders.value.length > 0 ? '優先確認顧客取餐' : '暫無可交付訂單',
+    count: queueReadyOrders.value.length,
+    actionLabel: queueReadyOrders.value.length > 0 ? '交付' : '查看',
+    tone: 'success',
+  },
+  {
+    id: 'online-unconfirmed',
+    label: '線上未確認',
+    detail: onlineOrderReminder.value.activeOverdueCount > 0
+      ? onlineReminderThresholdLabel.value
+      : '沒有逾時未確認新單',
+    count: onlineOrderReminder.value.activeOverdueCount,
+    actionLabel: onlineOrderReminder.value.activeOverdueCount > 0 ? '接手' : '查看',
+    tone: 'warning',
+  },
+  {
+    id: 'print-issues',
+    label: '列印失敗',
+    detail: queuePrintIssueOrders.value.length > 0 ? '重印或檢查出單機' : '目前無列印失敗',
+    count: queuePrintIssueOrders.value.length,
+    actionLabel: queuePrintIssueOrders.value.length > 0 ? '重印' : '查看',
+    tone: queuePrintIssueOrders.value.length > 0 ? 'danger' : 'primary',
+  },
+])
 const printJobRows = computed<PrintJobRow[]>(() =>
   orderQueue.value
     .flatMap((order) => order.printJobs.map((job) => ({
@@ -1724,7 +1793,7 @@ const showOnlineReminderOrders = (): void => {
   queueSourceFilter.value = 'all'
   queueFulfillmentFilter.value = 'all'
   queueSortMode.value = 'fulfillment-asc'
-  queueSearchTerm.value = ''
+  queueSearchTerm.value = '未確認'
   setWorkspaceTab('queue')
 }
 
@@ -1751,6 +1820,45 @@ const showFulfillmentAlertOrders = (filter: QueueFulfillmentFilter): void => {
   queueFulfillmentFilter.value = filter
   queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
+  setWorkspaceTab('queue')
+}
+
+const runQueueTaskAction = (action: QueueTaskAction): void => {
+  queueFilter.value = 'active'
+  queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'all'
+  queueServiceFilter.value = 'all'
+  queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = 'all'
+  queueSortMode.value = 'fulfillment-asc'
+  queueSearchTerm.value = ''
+  expandedOrderId.value = null
+
+  if (action.id === 'fulfillment-alerts') {
+    queueDateFilter.value = 'today'
+    queueFulfillmentFilter.value = queueFulfillmentAlert.value.count === 0
+      ? 'scheduled'
+      : queueFulfillmentAlert.value.overdueCount > 0 ? 'overdue' : 'due-soon'
+  }
+
+  if (action.id === 'pending-payments') {
+    queuePaymentFilter.value = 'pending'
+  }
+
+  if (action.id === 'ready-orders') {
+    queueFilter.value = 'ready'
+  }
+
+  if (action.id === 'online-unconfirmed') {
+    queueSearchTerm.value = '未確認'
+  }
+
+  if (action.id === 'print-issues') {
+    queueFilter.value = 'all'
+    queueDateFilter.value = 'today'
+    queueSearchTerm.value = '列印失敗'
+  }
+
   setWorkspaceTab('queue')
 }
 
@@ -2731,6 +2839,23 @@ onBeforeUnmount(() => {
                       已排程
                     </button>
                   </div>
+                </section>
+
+                <section class="queue-task-strip" aria-label="訂單任務快篩">
+                  <button
+                    v-for="action in queueTaskActions"
+                    :key="action.id"
+                    class="queue-task-card"
+                    :class="`queue-task-card--${action.tone}`"
+                    type="button"
+                    :aria-label="`${action.label}${action.count}張，${action.actionLabel}`"
+                    @click="runQueueTaskAction(action)"
+                  >
+                    <span>{{ action.label }}</span>
+                    <strong>{{ action.count }}</strong>
+                    <small>{{ action.detail }}</small>
+                    <em>{{ action.actionLabel }}</em>
+                  </button>
                 </section>
 
                 <div class="queue-tools">
