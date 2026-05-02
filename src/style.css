@@ -2178,6 +2178,74 @@ h3 {
   background: transparent;
 }
 
+.online-reminder-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d5b16b;
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.online-reminder-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.online-reminder-summary svg {
+  color: var(--amber);
+}
+
+.online-reminder-summary h3,
+.online-reminder-summary p,
+.online-reminder-summary span,
+.online-reminder-summary small {
+  margin: 0;
+}
+
+.online-reminder-summary h3 {
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.online-reminder-summary span,
+.online-reminder-summary small {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.online-reminder-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.online-reminder-actions button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #d5b16b;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.online-reminder-actions .primary-button {
+  border-color: var(--primary);
+}
+
 .queue-advanced-filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(124px, 1fr));
@@ -2333,6 +2401,16 @@ h3 {
   opacity: 0.72;
 }
 
+.order-row--online-reminder {
+  padding-left: 10px;
+  border-left: 4px solid var(--amber);
+  background: linear-gradient(90deg, var(--amber-soft), var(--surface) 42%);
+}
+
+.workspace--queue .order-row--online-reminder {
+  padding-left: 12px;
+}
+
 .order-swipe-row:first-of-type .order-row {
   padding-top: 0;
 }
@@ -2469,6 +2547,25 @@ h3 {
 }
 
 .sync-chip svg {
+  flex: 0 0 auto;
+}
+
+.online-reminder-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #d5b16b;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.online-reminder-chip svg {
   flex: 0 0 auto;
 }
 
@@ -4437,6 +4534,20 @@ h3 {
 
   .workspace--queue .queue-tools {
     grid-template-columns: 1fr;
+  }
+
+  .online-reminder-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .online-reminder-actions {
+    width: 100%;
+  }
+
+  .online-reminder-actions button {
+    flex: 1;
+    white-space: normal;
   }
 
   .queue-advanced-filters {

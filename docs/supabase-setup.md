@@ -99,7 +99,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間並阻擋暫停時送單。
-- POS 工作台會每 20 秒短輪詢 `/orders` 與 `/register/current`，平板回到前景時也會補同步一次；API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品與 runtime 出單設定。
+- POS 工作台會每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，用最新 `online_ordering` 設定顯示線上/掃碼新單未確認提醒；平板回到前景時也會補同步一次。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
 - 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；後端用 `create_pos_order()` 在同一個 transaction 建單、寫入希望取餐/送達時間、外送地址、品項並扣 `products.inventory_count`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。

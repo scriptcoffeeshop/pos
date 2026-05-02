@@ -7,6 +7,7 @@ import {
   createOrder,
   createPrintJob,
   closeRegisterSession,
+  defaultOnlineOrderingSettings,
   deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
@@ -40,6 +41,7 @@ import type {
   MenuItem,
   OrderSource,
   OrderStatus,
+  OnlineOrderingSettings,
   PaymentMethod,
   PaymentStatus,
   PosOrder,
@@ -53,9 +55,12 @@ import type {
 
 type CategoryFilter = 'all' | MenuCategory
 type BackendMode = 'syncing' | 'connected' | 'fallback'
+type RuntimeSettings = Awaited<ReturnType<typeof fetchRuntimeSettings>>
+type WebAudioGlobal = typeof globalThis & { webkitAudioContext?: typeof AudioContext }
 
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
+const onlineReminderClockIntervalMs = 30_000
 const maxCartLineQuantity = 999
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
@@ -541,10 +546,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintAt: null,
   })
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
+  const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+  const onlineReminderClock = ref(Date.now())
+  const acknowledgedOnlineReminderIds = ref<string[]>([])
+  const onlineReminderAudioMessage = ref('')
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
   let queueSyncTimer: number | null = null
   let stationHeartbeatTimer: number | null = null
+  let onlineReminderClockTimer: number | null = null
+  let lastPlayedOnlineReminderSignature = ''
 
   watch(
     [cartLines, serviceMode, paymentMethod, customer],
@@ -578,8 +589,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     rules: printerSettings.value.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
   })
 
-  const applyRuntimePrinterSettings = async (): Promise<void> => {
-    const runtimeSettings = await fetchRuntimeSettings()
+  const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
+    onlineOrderingSettings.value = runtimeSettings.onlineOrdering
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
       : buildDefaultPrinterSettings(printStation)
@@ -596,6 +607,134 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printStation.autoPrint = primaryStation.autoPrint
     printStation.online = primaryStation.enabled
   }
+
+  const onlineReminderMinutes = computed(() =>
+    Math.max(0, onlineOrderingSettings.value.unconfirmedReminderMinutes),
+  )
+
+  const unconfirmedOnlineOrders = computed(() =>
+    orderQueue.value.filter((order) =>
+      (order.source === 'online' || order.source === 'qr') &&
+      order.status === 'new' &&
+      ['pending', 'authorized', 'paid'].includes(order.paymentStatus),
+    ),
+  )
+
+  const overdueUnconfirmedOnlineOrders = computed(() => {
+    const thresholdMs = onlineReminderMinutes.value * 60_000
+    const now = onlineReminderClock.value
+
+    return unconfirmedOnlineOrders.value.filter((order) => {
+      const createdAt = new Date(order.createdAt).getTime()
+      if (!Number.isFinite(createdAt)) {
+        return false
+      }
+
+      return now - createdAt >= thresholdMs
+    })
+  })
+
+  const activeOnlineReminderOrders = computed(() => {
+    const acknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
+    return overdueUnconfirmedOnlineOrders.value.filter((order) => !acknowledgedIds.has(order.id))
+  })
+
+  const onlineReminderSignature = computed(() =>
+    activeOnlineReminderOrders.value.map((order) => order.id).sort().join('|'),
+  )
+
+  const onlineOrderReminder = computed(() => ({
+    soundEnabled: onlineOrderingSettings.value.soundEnabled,
+    reminderMinutes: onlineReminderMinutes.value,
+    unconfirmedCount: unconfirmedOnlineOrders.value.length,
+    overdueCount: overdueUnconfirmedOnlineOrders.value.length,
+    activeOverdueCount: activeOnlineReminderOrders.value.length,
+    audioMessage: onlineReminderAudioMessage.value,
+  }))
+
+  const playOnlineOrderTone = async (): Promise<void> => {
+    const AudioContextCtor = globalThis.AudioContext ?? (globalThis as WebAudioGlobal).webkitAudioContext
+    if (!AudioContextCtor) {
+      onlineReminderAudioMessage.value = '此裝置不支援提示音'
+      return
+    }
+
+    try {
+      const audioContext = new AudioContextCtor()
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume()
+      }
+
+      const now = audioContext.currentTime
+      const gain = audioContext.createGain()
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42)
+      gain.connect(audioContext.destination)
+
+      for (const [index, frequency] of [880, 1175].entries()) {
+        const oscillator = audioContext.createOscillator()
+        const startAt = now + index * 0.18
+        oscillator.type = 'sine'
+        oscillator.frequency.setValueAtTime(frequency, startAt)
+        oscillator.connect(gain)
+        oscillator.start(startAt)
+        oscillator.stop(startAt + 0.12)
+      }
+
+      globalThis.setTimeout(() => {
+        void audioContext.close()
+      }, 560)
+      onlineReminderAudioMessage.value = ''
+    } catch {
+      onlineReminderAudioMessage.value = '提示音被瀏覽器阻擋，點一下頁面後會恢復'
+    }
+  }
+
+  const maybePlayOnlineOrderReminder = (): void => {
+    const signature = onlineReminderSignature.value
+    if (!signature) {
+      lastPlayedOnlineReminderSignature = ''
+      return
+    }
+
+    if (!onlineOrderingSettings.value.soundEnabled || signature === lastPlayedOnlineReminderSignature) {
+      return
+    }
+
+    if (globalThis.document?.visibilityState && globalThis.document.visibilityState !== 'visible') {
+      return
+    }
+
+    lastPlayedOnlineReminderSignature = signature
+    void playOnlineOrderTone()
+  }
+
+  const acknowledgeOnlineOrderReminders = (): void => {
+    const nextAcknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
+    for (const order of overdueUnconfirmedOnlineOrders.value) {
+      nextAcknowledgedIds.add(order.id)
+    }
+
+    acknowledgedOnlineReminderIds.value = [...nextAcknowledgedIds]
+  }
+
+  watch(
+    overdueUnconfirmedOnlineOrders,
+    (orders) => {
+      const overdueIds = new Set(orders.map((order) => order.id))
+      acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
+        overdueIds.has(orderId),
+      )
+    },
+  )
+
+  watch(
+    [onlineReminderSignature, () => onlineOrderingSettings.value.soundEnabled],
+    () => {
+      maybePlayOnlineOrderReminder()
+    },
+  )
 
   const filteredMenu = computed(() => {
     const keyword = searchTerm.value.trim().toLowerCase()
@@ -928,12 +1067,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const syncedLocalCount = await syncPendingLocalOrders()
-      const [remoteProducts, remoteOrders, currentRegisterSession] = await Promise.all([
+      const [remoteProducts, remoteOrders, currentRegisterSession, runtimeSettings] = await Promise.all([
         fetchProducts(),
         fetchOrders(),
         fetchCurrentRegisterSession(),
+        fetchRuntimeSettings(),
       ])
-      await applyRuntimePrinterSettings()
+      applyRuntimeSettings(runtimeSettings)
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
       applyRemoteOrders(remoteOrders)
@@ -988,10 +1128,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const syncedLocalCount = await syncPendingLocalOrders()
-      const [remoteOrders, currentRegisterSession] = await Promise.all([
+      const [remoteOrders, currentRegisterSession, runtimeSettings] = await Promise.all([
         fetchOrders(),
         fetchCurrentRegisterSession(),
+        fetchRuntimeSettings().catch(() => null),
       ])
+      if (runtimeSettings) {
+        applyRuntimeSettings(runtimeSettings)
+      }
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
       nextSequence.value = nextSequenceFromOrders(orderQueue.value)
@@ -1734,6 +1878,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const handleVisibilitySync = (): void => {
     if (globalThis.document?.visibilityState === 'visible') {
+      onlineReminderClock.value = Date.now()
+      maybePlayOnlineOrderReminder()
       void refreshQueueState(true)
       void syncStationHeartbeat()
     }
@@ -1749,6 +1895,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       stationHeartbeatTimer = globalThis.setInterval(() => {
         void syncStationHeartbeat()
       }, stationHeartbeatIntervalMs)
+      onlineReminderClockTimer = globalThis.setInterval(() => {
+        onlineReminderClock.value = Date.now()
+      }, onlineReminderClockIntervalMs)
       globalThis.document?.addEventListener('visibilitychange', handleVisibilitySync)
     }
   })
@@ -1762,6 +1911,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       globalThis.clearInterval(stationHeartbeatTimer)
     }
 
+    if (onlineReminderClockTimer !== null) {
+      globalThis.clearInterval(onlineReminderClockTimer)
+    }
+
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
   })
 
@@ -1771,6 +1924,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   return {
     appendCustomerNote,
+    acknowledgeOnlineOrderReminders,
+    activeOnlineReminderOrders,
     backendStatus,
     cartLines,
     cartQuantity,
@@ -1797,6 +1952,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderClaimExpired: isClaimExpired,
     orderClaimedByCurrentStation,
     orderClaimedByOtherStation,
+    onlineOrderReminder,
+    onlineOrderingSettings,
     paymentMethod,
     pendingOrders,
     printOrder,
@@ -1819,6 +1976,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationClaimLabel,
     stationHeartbeatMessage,
     togglingProductId,
+    unconfirmedOnlineOrders,
     updatingPaymentOrderId,
     addItem,
     openRegisterSessionForStation,

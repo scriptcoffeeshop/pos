@@ -228,6 +228,8 @@ const writePosUiPreferences = (preferences: PosUiPreferences): void => {
 const {
   addItem,
   appendCustomerNote,
+  acknowledgeOnlineOrderReminders,
+  activeOnlineReminderOrders,
   backendStatus,
   cartLines,
   cartQuantity,
@@ -254,6 +256,7 @@ const {
   orderClaimedByOtherStation,
   orderPendingSync,
   orderQueue,
+  onlineOrderReminder,
   paymentMethod,
   pendingOrders,
   printOrder,
@@ -575,6 +578,17 @@ const queueFilterNote = computed(() => {
 
   return '顯示全部訂單'
 })
+const activeOnlineReminderIds = computed(() =>
+  new Set(activeOnlineReminderOrders.value.map((order) => order.id)),
+)
+const onlineReminderToneLabel = computed(() =>
+  onlineOrderReminder.value.soundEnabled ? '提示音已開啟' : '提示音已關閉',
+)
+const onlineReminderThresholdLabel = computed(() =>
+  onlineOrderReminder.value.reminderMinutes === 0
+    ? '新單立即提醒'
+    : `超過 ${onlineOrderReminder.value.reminderMinutes} 分鐘未確認`,
+)
 const activeOrderItemCount = computed(
   () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
 )
@@ -1345,6 +1359,19 @@ const resetQueueFilters = (): void => {
   queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
 }
+
+const showOnlineReminderOrders = (): void => {
+  queueFilter.value = 'active'
+  queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'all'
+  queueServiceFilter.value = 'all'
+  queueSourceFilter.value = 'all'
+  queueSortMode.value = 'fulfillment-asc'
+  queueSearchTerm.value = ''
+  setWorkspaceTab('queue')
+}
+
+const orderNeedsOnlineReminder = (order: PosOrder): boolean => activeOnlineReminderIds.value.has(order.id)
 
 const startTakeoutOrder = (): void => {
   serviceMode.value = 'takeout'
@@ -2240,6 +2267,32 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
 
+                <section
+                  v-if="onlineOrderReminder.activeOverdueCount > 0"
+                  class="online-reminder-banner"
+                  aria-live="assertive"
+                >
+                  <div class="online-reminder-summary">
+                    <CircleAlert :size="22" aria-hidden="true" />
+                    <div>
+                      <p class="eyebrow">Online Alert</p>
+                      <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單未確認</h3>
+                      <span>
+                        {{ onlineReminderThresholdLabel }} · {{ onlineReminderToneLabel }} ·
+                        目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待接手
+                      </span>
+                      <small v-if="onlineOrderReminder.audioMessage">{{ onlineOrderReminder.audioMessage }}</small>
+                    </div>
+                  </div>
+                  <div class="online-reminder-actions">
+                    <button type="button" @click="acknowledgeOnlineOrderReminders">已讀提醒</button>
+                    <button class="primary-button" type="button" @click="showOnlineReminderOrders">
+                      <ReceiptText :size="18" aria-hidden="true" />
+                      查看訂單
+                    </button>
+                  </div>
+                </section>
+
                 <div class="queue-tools">
                   <label class="search-box queue-search">
                     <Search :size="18" aria-hidden="true" />
@@ -2313,7 +2366,10 @@ onBeforeUnmount(() => {
                     class="order-row swipe-card"
                     :class="[
                       `order-row--${order.status}`,
-                      { 'order-row--claimed-other': orderClaimedByOtherStation(order) },
+                      {
+                        'order-row--claimed-other': orderClaimedByOtherStation(order),
+                        'order-row--online-reminder': orderNeedsOnlineReminder(order),
+                      },
                     ]"
                     :style="swipeCardStyle(orderSwipeKey(order))"
                     @pointerdown="startSwipe(orderSwipeKey(order), $event)"
@@ -2332,6 +2388,10 @@ onBeforeUnmount(() => {
                           <span v-if="orderPendingSync(order)" class="sync-chip">
                             <Clock3 :size="13" aria-hidden="true" />
                             本機待同步
+                          </span>
+                          <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
+                            <CircleAlert :size="13" aria-hidden="true" />
+                            未確認
                           </span>
                           <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                         </span>
