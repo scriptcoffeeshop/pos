@@ -72,6 +72,7 @@ type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
+type MenuOptionGroupId = 'temperature' | 'beans' | 'extras'
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -120,6 +121,22 @@ interface SwipeState {
   currentX: number
 }
 
+interface MenuOptionChoice {
+  id: string
+  label: string
+  priceDelta?: number
+}
+
+interface MenuOptionGroup {
+  id: MenuOptionGroupId
+  label: string
+  requirement: string
+  required: boolean
+  min: number
+  max: number
+  choices: MenuOptionChoice[]
+}
+
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
@@ -131,9 +148,11 @@ const posTextScaleValues: PosTextScale[] = ['standard', 'large']
 const posWorkspaceDensityValues: PosWorkspaceDensity[] = ['comfortable', 'compact']
 const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
-const maxSwipeOffset = 104
+const orderSwipeActionWidth = 208
+const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
+const configurableMenuCategories: MenuCategory[] = ['coffee', 'tea']
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -267,6 +286,7 @@ const writePosUiPreferences = (preferences: PosUiPreferences): void => {
 }
 
 const {
+  addConfiguredItem,
   addItem,
   appendCustomerNote,
   acknowledgeOnlineOrderReminders,
@@ -410,6 +430,49 @@ const printStatusLabels = {
 } as const
 
 const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需要袋子']
+const beverageOptionGroups: MenuOptionGroup[] = [
+  {
+    id: 'temperature',
+    label: '飲品溫度',
+    requirement: '必選 1 個',
+    required: true,
+    min: 1,
+    max: 1,
+    choices: [
+      { id: 'hot', label: '熱' },
+      { id: 'regular-ice', label: '正常冰' },
+      { id: 'less-ice', label: '少冰' },
+      { id: 'light-ice', label: '微冰' },
+      { id: 'no-ice', label: '去冰' },
+      { id: 'fully-no-ice', label: '完全去冰' },
+    ],
+  },
+  {
+    id: 'beans',
+    label: '選擇豆子(預設中焙)',
+    requirement: '選填最多 1 個',
+    required: false,
+    min: 0,
+    max: 1,
+    choices: [
+      { id: 'dark-roast', label: '換成深焙豆' },
+      { id: 'single-origin', label: '換成單品豆', priceDelta: 20 },
+    ],
+  },
+  {
+    id: 'extras',
+    label: '其他註記',
+    requirement: '選填',
+    required: false,
+    min: 0,
+    max: 3,
+    choices: [
+      { id: 'oat-milk', label: '換成燕麥奶', priceDelta: 20 },
+      { id: 'no-sugar', label: '無糖' },
+      { id: 'separate-bag', label: '分開裝' },
+    ],
+  },
+]
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
   order: '外帶 / 外送點餐',
@@ -1015,7 +1078,15 @@ const queueSortMode = ref<QueueSortMode>(savedQueueView.sortMode)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
+const openSwipeKey = ref<string | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
+const activeOptionItem = ref<MenuItem | null>(null)
+const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({
+  temperature: [],
+  beans: [],
+  extras: [],
+})
+const optionWarning = ref('')
 const isToolboxOpen = ref(false)
 const isKnowledgeOpen = ref(false)
 const knowledgeSearchTerm = ref('')
@@ -1035,6 +1106,28 @@ const registerNote = ref('')
 const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
+const activeOptionGroups = computed(() =>
+  activeOptionItem.value && configurableMenuCategories.includes(activeOptionItem.value.category)
+    ? beverageOptionGroups
+    : [],
+)
+const selectedOptionDetails = computed(() => {
+  const selectedChoices = activeOptionGroups.value.flatMap((group) =>
+    group.choices.filter((choice) => optionSelections.value[group.id]?.includes(choice.id)),
+  )
+
+  return {
+    labels: selectedChoices.map((choice) =>
+      choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
+    ),
+    priceDelta: selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0),
+  }
+})
+const pendingOptionLineTotal = computed(() =>
+  activeOptionItem.value ? activeOptionItem.value.price + selectedOptionDetails.value.priceDelta : 0,
+)
+const ticketDisplayQuantity = computed(() => cartQuantity.value + (activeOptionItem.value ? 1 : 0))
+const ticketDisplayTotal = computed(() => cartTotal.value + pendingOptionLineTotal.value)
 const activeWorkspaceTitle = computed(() => workspaceTabLabels[activeWorkspaceTab.value])
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -1102,7 +1195,11 @@ const registerVarianceClass = computed(() => {
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 
 const lineQuantityByItem = (itemId: string): number =>
-  cartLines.value.find((line) => line.itemId === itemId)?.quantity ?? 0
+  cartLines.value
+    .filter((line) => line.itemId === itemId || line.productId === itemId)
+    .reduce((total, line) => total + line.quantity, 0)
+
+const productRequiresOptions = (item: MenuItem): boolean => configurableMenuCategories.includes(item.category)
 
 const quantityFromInput = (event: Event): number | null => {
   if (!(event.target instanceof HTMLInputElement)) {
@@ -1153,6 +1250,97 @@ const blurQuantityInput = (event: KeyboardEvent): void => {
   if (event.target instanceof HTMLInputElement) {
     event.target.blur()
   }
+}
+
+const resetOptionSelections = (): void => {
+  optionSelections.value = {
+    temperature: [],
+    beans: [],
+    extras: [],
+  }
+  optionWarning.value = ''
+}
+
+const selectMenuItem = (item: MenuItem): void => {
+  activeCartQuickEditor.value = null
+
+  if (!productRequiresOptions(item)) {
+    addItem(item)
+    return
+  }
+
+  activeOptionItem.value = item
+  resetOptionSelections()
+}
+
+const closeOptionPanel = (): void => {
+  activeOptionItem.value = null
+  resetOptionSelections()
+}
+
+const clearTicketDraft = (): void => {
+  clearCart()
+  closeOptionPanel()
+}
+
+const optionChoiceSelected = (group: MenuOptionGroup, choice: MenuOptionChoice): boolean =>
+  optionSelections.value[group.id]?.includes(choice.id) ?? false
+
+const toggleOptionChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): void => {
+  optionWarning.value = ''
+  const currentSelections = optionSelections.value[group.id] ?? []
+  const isSelected = currentSelections.includes(choice.id)
+  let nextSelections: string[]
+
+  if (group.max === 1) {
+    nextSelections = isSelected ? [] : [choice.id]
+  } else if (isSelected) {
+    nextSelections = currentSelections.filter((selectedId) => selectedId !== choice.id)
+  } else {
+    nextSelections = [...currentSelections, choice.id].slice(0, group.max)
+  }
+
+  optionSelections.value = {
+    ...optionSelections.value,
+    [group.id]: nextSelections,
+  }
+}
+
+const missingRequiredOptionGroup = (): MenuOptionGroup | null =>
+  activeOptionGroups.value.find((group) => {
+    const selectedCount = optionSelections.value[group.id]?.length ?? 0
+    return group.required && selectedCount < group.min
+  }) ?? null
+
+const confirmMenuOptions = (): boolean => {
+  const item = activeOptionItem.value
+  if (!item) {
+    return true
+  }
+
+  const missingGroup = missingRequiredOptionGroup()
+  if (missingGroup) {
+    optionWarning.value = `「${missingGroup.label}」尚未選擇完成`
+    return false
+  }
+
+  addConfiguredItem(item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+  closeOptionPanel()
+  return true
+}
+
+const handleSubmitCounterOrder = async (): Promise<void> => {
+  if (activeOptionItem.value && !confirmMenuOptions()) {
+    return
+  }
+
+  const order = await submitCounterOrder()
+  if (!order) {
+    return
+  }
+
+  expandedOrderId.value = order.id
+  setWorkspaceTab('queue')
 }
 
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
@@ -1434,12 +1622,39 @@ const orderSwipeDeleteAction = (order: PosOrder): void => {
     return
   }
 
+  openSwipeKey.value = null
+
   if (orderCanBeVoided(order)) {
     voidOrderAction(order)
     return
   }
 
   refundOrderAction(order)
+}
+
+const orderSwipeCompleteLabel = (order: PosOrder): string => {
+  if (order.status === 'ready') {
+    return '已取餐'
+  }
+
+  if (order.status === 'served') {
+    return '已完成'
+  }
+
+  return '已完成'
+}
+
+const orderSwipeCompleteDisabled = (order: PosOrder): boolean =>
+  ['served', 'failed', 'voided'].includes(order.status) || orderClaimedByOtherStation(order)
+
+const orderSwipeCompleteAction = (order: PosOrder): void => {
+  if (orderSwipeCompleteDisabled(order)) {
+    return
+  }
+
+  const nextStatus: OrderStatus = order.status === 'ready' ? 'served' : 'ready'
+  void updateOrderStatus(order.id, nextStatus)
+  openSwipeKey.value = null
 }
 
 const printJobDeleteDisabled = (row: PrintJobRow): boolean =>
@@ -1456,13 +1671,16 @@ const printJobDeleteAction = (row: PrintJobRow): void => {
   void deletePrintJobForOrder(row.order.id, row.job.id)
 }
 
+const swipeMaxOffsetFor = (key: string): number =>
+  key.startsWith('order:') ? orderSwipeActionWidth : defaultSwipeActionWidth
+
 const swipeOffsetFor = (key: string): number => {
   if (swipeState.value?.key !== key) {
-    return 0
+    return openSwipeKey.value === key ? -swipeMaxOffsetFor(key) : 0
   }
 
   const deltaX = swipeState.value.currentX - swipeState.value.startX
-  return Math.max(-maxSwipeOffset, Math.min(0, deltaX))
+  return Math.max(-swipeMaxOffsetFor(key), Math.min(0, deltaX))
 }
 
 const swipeCardStyle = (key: string): { transform: string } => ({
@@ -1471,6 +1689,7 @@ const swipeCardStyle = (key: string): { transform: string } => ({
 
 const swipeRowClass = (key: string): Record<string, boolean> => ({
   'swipe-row--dragging': swipeState.value?.key === key,
+  'swipe-row--open': openSwipeKey.value === key,
 })
 
 const startSwipe = (key: string, event: PointerEvent): void => {
@@ -1480,6 +1699,10 @@ const startSwipe = (key: string, event: PointerEvent): void => {
 
   if (event.target instanceof HTMLElement && event.target.closest('button, input, textarea, select, a')) {
     return
+  }
+
+  if (openSwipeKey.value && openSwipeKey.value !== key) {
+    openSwipeKey.value = null
   }
 
   swipeState.value = {
@@ -1517,6 +1740,7 @@ const moveSwipe = (key: string, event: PointerEvent): void => {
 const endSwipe = (key: string, action: () => void): void => {
   const offset = swipeOffsetFor(key)
   swipeState.value = null
+  openSwipeKey.value = null
 
   if (offset <= -swipeActionThreshold) {
     action()
@@ -1530,7 +1754,10 @@ const cancelSwipe = (key: string): void => {
 }
 
 const endOrderSwipe = (order: PosOrder): void => {
-  endSwipe(orderSwipeKey(order), () => orderSwipeDeleteAction(order))
+  const key = orderSwipeKey(order)
+  const offset = swipeOffsetFor(key)
+  swipeState.value = null
+  openSwipeKey.value = offset <= -swipeActionThreshold ? key : null
 }
 
 const endPrintJobSwipe = (row: PrintJobRow): void => {
@@ -1735,7 +1962,7 @@ const handlePosShortcut = (event: KeyboardEvent): void => {
 
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault()
-    void submitCounterOrder()
+    void handleSubmitCounterOrder()
     return
   }
 
@@ -1764,13 +1991,16 @@ const handlePosShortcut = (event: KeyboardEvent): void => {
     const item = quickAddItems.value[Number(event.key) - 1]
     if (item) {
       event.preventDefault()
-      addItem(item)
+      selectMenuItem(item)
     }
   }
 }
 
 const setWorkspaceTab = (tab: WorkspaceTab): void => {
   activeCartQuickEditor.value = null
+  if (tab !== 'order') {
+    closeOptionPanel()
+  }
   activeWorkspaceTab.value = tab
 }
 
@@ -2208,26 +2438,16 @@ onBeforeUnmount(() => {
           </nav>
 
           <div class="side-rail-footer">
-            <span>{{ currentClockLabel }}</span>
             <button
               class="icon-button side-toolbox-button"
               type="button"
-              title="開啟工具箱"
+              title="工具箱"
               aria-controls="pos-toolbox-modal"
               :aria-expanded="isToolboxOpen"
               @click="openToolbox"
             >
-              <MoreHorizontal :size="18" aria-hidden="true" />
-            </button>
-            <button
-              class="icon-button sync-button"
-              :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
-              type="button"
-              title="重新同步 POS API"
-              :disabled="backendStatus.mode === 'syncing'"
-              @click="refreshBackendData"
-            >
-              <RefreshCw :size="18" aria-hidden="true" />
+              <Settings2 :size="24" aria-hidden="true" />
+              <span>工具箱</span>
             </button>
           </div>
         </aside>
@@ -2309,8 +2529,8 @@ onBeforeUnmount(() => {
                     <strong>No. 新單</strong>
                   </div>
                   <div>
-                    <strong>{{ formatCurrency(cartTotal) }}</strong>
-                    <button class="icon-button ticket-clear-button" type="button" title="清空購物車" @click="clearCart">
+                    <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
+                    <button class="icon-button ticket-clear-button" type="button" title="清空購物車" @click="clearTicketDraft">
                       <Trash2 :size="19" aria-hidden="true" />
                     </button>
                   </div>
@@ -2481,7 +2701,22 @@ onBeforeUnmount(() => {
                     <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
                   </article>
 
-                  <div v-if="cartLines.length === 0" class="empty-state">
+                  <article v-if="activeOptionItem" class="cart-line cart-line--pending">
+                    <div>
+                      <h3>{{ activeOptionItem.name }}</h3>
+                      <p v-if="optionWarning" class="cart-line-warning">
+                        <CircleAlert :size="16" aria-hidden="true" />
+                        {{ optionWarning }}
+                      </p>
+                      <p v-else>{{ selectedOptionDetails.labels.join(' / ') || '尚未完成選項' }}</p>
+                    </div>
+                    <div class="quantity-stepper quantity-stepper--readonly" aria-label="待選品項數量">
+                      <span>1</span>
+                    </div>
+                    <strong>{{ formatCurrency(pendingOptionLineTotal) }}</strong>
+                  </article>
+
+                  <div v-if="cartLines.length === 0 && !activeOptionItem" class="empty-state">
                     <ShoppingCart :size="24" aria-hidden="true" />
                     <span>尚未加入品項</span>
                   </div>
@@ -2491,15 +2726,15 @@ onBeforeUnmount(() => {
                   <button
                     class="primary-button ticket-submit-button"
                     type="button"
-                    :disabled="cartLines.length === 0 || isSubmitting"
-                    @click="submitCounterOrder"
+                    :disabled="(cartLines.length === 0 && !activeOptionItem) || isSubmitting"
+                    @click="handleSubmitCounterOrder"
                   >
                     <Printer :size="22" aria-hidden="true" />
                     {{ isSubmitting ? '建立中' : '出單' }}
                   </button>
                   <div class="ticket-total-summary">
-                    <span>{{ cartQuantity }} 件</span>
-                    <strong>{{ formatCurrency(cartTotal) }}</strong>
+                    <span>{{ ticketDisplayQuantity }} 件</span>
+                    <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
                   </div>
                   <button
                     class="icon-button ticket-more-button"
@@ -2556,7 +2791,7 @@ onBeforeUnmount(() => {
                         :key="item.id"
                         class="quick-add-button"
                         type="button"
-                        @click="addItem(item)"
+                        @click="selectMenuItem(item)"
                       >
                         <span class="quick-add-rank">{{ index + 1 }}</span>
                         <span class="quick-add-name">{{ item.name }}</span>
@@ -2574,7 +2809,7 @@ onBeforeUnmount(() => {
                         class="product-tile"
                         :class="{ 'product-tile--in-cart': lineQuantityByItem(item.id) > 0 }"
                       >
-                        <button class="product-tile-main" type="button" @click="addItem(item)">
+                        <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
                           <span class="product-tile-top">
                             <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
                             <span class="product-category">{{ categoryLabels[item.category] }}</span>
@@ -2589,7 +2824,11 @@ onBeforeUnmount(() => {
                           </span>
                           <span class="product-tags">{{ item.tags.join(' / ') }}</span>
                         </button>
-                        <div v-if="lineQuantityByItem(item.id) > 0" class="product-quantity-control" :aria-label="`${item.name} 數量`">
+                        <div
+                          v-if="lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item)"
+                          class="product-quantity-control"
+                          :aria-label="`${item.name} 數量`"
+                        >
                           <button
                             type="button"
                             title="減少數量"
@@ -2619,6 +2858,59 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </div>
+
+                <section
+                  v-if="activeOptionItem"
+                  class="menu-option-panel"
+                  role="dialog"
+                  aria-modal="false"
+                  aria-labelledby="menu-option-title"
+                >
+                  <header class="menu-option-header">
+                    <button class="icon-button option-back-button" type="button" title="返回菜單" @click="closeOptionPanel">
+                      <ChevronLeft :size="28" aria-hidden="true" />
+                    </button>
+                    <h3 id="menu-option-title">{{ activeOptionItem.name }}</h3>
+                    <strong>1</strong>
+                  </header>
+
+                  <div class="menu-option-body">
+                    <p v-if="optionWarning" class="menu-option-warning" aria-live="assertive">
+                      <CircleAlert :size="20" aria-hidden="true" />
+                      {{ optionWarning }}
+                    </p>
+
+                    <section v-for="group in activeOptionGroups" :key="group.id" class="menu-option-group">
+                      <div class="menu-option-group-title">
+                        <h4>{{ group.label }}</h4>
+                        <span>{{ group.requirement }}</span>
+                      </div>
+                      <div class="menu-option-grid">
+                        <button
+                          v-for="choice in group.choices"
+                          :key="choice.id"
+                          class="menu-option-choice"
+                          :class="{ 'menu-option-choice--active': optionChoiceSelected(group, choice) }"
+                          type="button"
+                          @click="toggleOptionChoice(group, choice)"
+                        >
+                          <span>{{ choice.label }}</span>
+                          <small v-if="choice.priceDelta">+{{ formatCurrency(choice.priceDelta) }}</small>
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+
+                  <footer class="menu-option-footer">
+                    <button class="icon-button option-trash-button" type="button" title="取消品項" @click="closeOptionPanel">
+                      <Trash2 :size="22" aria-hidden="true" />
+                    </button>
+                    <button class="primary-button option-confirm-button" type="button" @click="confirmMenuOptions">
+                      <CheckCircle2 :size="20" aria-hidden="true" />
+                      加入訂單
+                    </button>
+                  </footer>
+                </section>
               </section>
             </template>
 
@@ -2740,7 +3032,7 @@ onBeforeUnmount(() => {
                     class="primary-button"
                     type="button"
                     :disabled="cartLines.length === 0 || isSubmitting"
-                    @click="submitCounterOrder"
+                    @click="handleSubmitCounterOrder"
                   >
                     <ReceiptText :size="20" aria-hidden="true" />
                     {{ isSubmitting ? '建立中' : '建立訂單' }}
@@ -2931,14 +3223,25 @@ onBeforeUnmount(() => {
                   class="swipe-row order-swipe-row"
                   :class="swipeRowClass(orderSwipeKey(order))"
                 >
-                  <div
-                    class="swipe-action swipe-action--danger"
-                    aria-hidden="true"
-                    inert
-                    :class="{ 'swipe-action--disabled': orderSwipeDeleteDisabled(order) }"
-                  >
-                    <Trash2 :size="18" aria-hidden="true" />
-                    {{ orderSwipeDeleteLabel(order) }}
+                  <div class="swipe-action-stack" aria-label="訂單滑動動作">
+                    <button
+                      class="swipe-action swipe-action--complete"
+                      type="button"
+                      :disabled="orderSwipeCompleteDisabled(order)"
+                      @click.stop="orderSwipeCompleteAction(order)"
+                    >
+                      <CheckCircle2 :size="18" aria-hidden="true" />
+                      {{ orderSwipeCompleteLabel(order) }}
+                    </button>
+                    <button
+                      class="swipe-action swipe-action--danger"
+                      type="button"
+                      :disabled="orderSwipeDeleteDisabled(order)"
+                      @click.stop="orderSwipeDeleteAction(order)"
+                    >
+                      <Trash2 :size="18" aria-hidden="true" />
+                      {{ orderSwipeDeleteLabel(order) }}
+                    </button>
                   </div>
                   <article
                     class="order-row swipe-card"

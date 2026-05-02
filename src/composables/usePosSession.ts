@@ -1149,20 +1149,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const createCartLine = (item: MenuItem, quantity: number): CartLine => {
+  const createCartLine = (
+    item: MenuItem,
+    quantity: number,
+    options: string[] = item.tags.slice(0, 1),
+    unitPrice = item.price,
+    itemId = item.id,
+  ): CartLine => {
     const nextLine: CartLine = {
-      itemId: item.id,
+      itemId,
       productSku: item.sku,
       category: item.category,
       name: item.name,
-      unitPrice: item.price,
+      unitPrice,
       quantity,
-      options: item.tags.slice(0, 1),
+      options,
       prepStation: item.prepStation,
       printLabel: item.printLabel,
     }
 
-    if (item.id !== item.sku) {
+    if (item.id !== item.sku || itemId !== item.id) {
       nextLine.productId = item.id
     }
 
@@ -1213,6 +1219,22 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const addItem = (item: MenuItem): void => {
     setItemQuantity(item, (cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0) + 1)
+  }
+
+  const addConfiguredItem = (item: MenuItem, options: string[], priceAdjustment = 0): void => {
+    const normalizedOptions = options.filter((option) => option.trim().length > 0)
+    const variantKey = [item.id, ...normalizedOptions].join('::')
+    const unitPrice = Math.max(0, item.price + priceAdjustment)
+    const existing = cartLines.value.find((line) => line.itemId === variantKey)
+
+    rememberRecentItem(item.id)
+
+    if (existing) {
+      existing.quantity = normalizeCartQuantity(existing.quantity + 1)
+      return
+    }
+
+    cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey))
   }
 
   const increaseLine = (itemId: string): void => {
@@ -1978,6 +2000,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     togglingProductId,
     unconfirmedOnlineOrders,
     updatingPaymentOrderId,
+    addConfiguredItem,
     addItem,
     openRegisterSessionForStation,
     refreshBackendData: refreshPosData,
