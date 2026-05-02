@@ -2246,6 +2246,89 @@ h3 {
   border-color: var(--primary);
 }
 
+.fulfillment-alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #dfc58e;
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  color: var(--ink);
+}
+
+.fulfillment-alert-banner--overdue {
+  border-color: #e4b1aa;
+  background: var(--danger-soft);
+}
+
+.fulfillment-alert-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fulfillment-alert-summary svg {
+  color: var(--amber);
+}
+
+.fulfillment-alert-banner--overdue .fulfillment-alert-summary svg {
+  color: var(--danger);
+}
+
+.fulfillment-alert-summary h3,
+.fulfillment-alert-summary p,
+.fulfillment-alert-summary span {
+  margin: 0;
+}
+
+.fulfillment-alert-summary h3 {
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.fulfillment-alert-summary span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.fulfillment-alert-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.fulfillment-alert-actions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #dfc58e;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.fulfillment-alert-banner--overdue .fulfillment-alert-actions button {
+  border-color: #e4b1aa;
+}
+
+.fulfillment-alert-actions button:disabled {
+  opacity: 0.52;
+}
+
+.fulfillment-alert-actions .primary-button {
+  border-color: var(--primary);
+}
+
 .queue-advanced-filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(124px, 1fr));
@@ -2275,6 +2358,43 @@ h3 {
   border-color: var(--primary);
   outline: none;
   box-shadow: 0 0 0 3px rgba(11, 107, 99, 0.12);
+}
+
+.queue-fulfillment-filter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  border-color: var(--line-strong);
+  background: transparent;
+}
+
+.workspace--queue .queue-advanced-filters,
+.workspace--queue .queue-fulfillment-filter {
+  grid-column: 1 / -1;
+}
+
+.queue-fulfillment-button {
+  display: grid;
+  gap: 2px;
+  min-height: 50px;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.queue-fulfillment-button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.queue-fulfillment-button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.queue-fulfillment-button strong {
+  color: inherit;
+  font-size: 0.84rem;
+  line-height: 1;
 }
 
 .queue-filter-button {
@@ -2407,7 +2527,24 @@ h3 {
   background: linear-gradient(90deg, var(--amber-soft), var(--surface) 42%);
 }
 
+.order-row--fulfillment-overdue {
+  padding-left: 10px;
+  border-left: 4px solid var(--danger);
+  background: linear-gradient(90deg, var(--danger-soft), var(--surface) 44%);
+}
+
+.order-row--fulfillment-soon {
+  padding-left: 10px;
+  border-left: 4px solid var(--amber);
+  background: linear-gradient(90deg, var(--amber-soft), var(--surface) 44%);
+}
+
 .workspace--queue .order-row--online-reminder {
+  padding-left: 12px;
+}
+
+.workspace--queue .order-row--fulfillment-overdue,
+.workspace--queue .order-row--fulfillment-soon {
   padding-left: 12px;
 }
 
@@ -2424,6 +2561,18 @@ h3 {
   color: var(--primary);
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.order-fulfillment--overdue {
+  color: var(--danger);
+}
+
+.order-fulfillment--soon {
+  color: var(--amber);
+}
+
+.order-fulfillment--scheduled {
+  color: var(--primary);
 }
 
 .order-row-title {
@@ -2567,6 +2716,37 @@ h3 {
 
 .online-reminder-chip svg {
   flex: 0 0 auto;
+}
+
+.fulfillment-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #a9d2c4;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.fulfillment-chip svg {
+  flex: 0 0 auto;
+}
+
+.fulfillment-chip.order-fulfillment--overdue {
+  border-color: #e4b1aa;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.fulfillment-chip.order-fulfillment--soon {
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
 .order-row-meta {
@@ -4839,21 +5019,29 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .online-reminder-banner {
+  .online-reminder-banner,
+  .fulfillment-alert-banner {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .online-reminder-actions {
+  .online-reminder-actions,
+  .fulfillment-alert-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 
-  .online-reminder-actions button {
+  .online-reminder-actions button,
+  .fulfillment-alert-actions button {
     flex: 1;
     white-space: normal;
   }
 
   .queue-advanced-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .queue-fulfillment-filter {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -5101,6 +5289,16 @@ h3 {
   .preference-grid,
   .queue-advanced-filters {
     grid-template-columns: 1fr;
+  }
+
+  .queue-fulfillment-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-fulfillment-button,
+  .queue-fulfillment-button:first-child,
+  .queue-fulfillment-button:last-child {
+    border-radius: var(--radius);
   }
 
   .closeout-preflight-heading {

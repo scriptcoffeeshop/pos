@@ -69,6 +69,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'fulfillment-alerts',
+    category: 'orders',
+    title: '取餐/送達時間預警',
+    summary: '訂單查詢會標示已逾時、15 分鐘內與已排程訂單，尖峰時先處理到點票券。',
+    steps: [
+      '進入「訂單」工作區，先查看上方履約時間預警是否有已逾時或 15 分鐘內訂單。',
+      '按「已逾時」「15 分內」或時段快篩，把列表縮到需要立即處理的訂單。',
+      '依排序先處理最接近的取餐/送達時間，完成製作後按「完成」或「交付」。',
+      '若顧客改時間，展開明細確認履約欄位，再依門市流程重建或備註交接。',
+    ],
+    keywords: ['取餐', '送達', '履約', '逾時', '15 分鐘', '排程', '時段'],
+    target: 'queue',
+  },
+  {
     id: 'supply-batch',
     category: 'supply',
     title: '暫停/恢復商品供應',

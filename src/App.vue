@@ -60,7 +60,9 @@ type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 type QueueDateFilter = 'today' | 'older' | 'all'
 type QueueServiceFilter = 'all' | ServiceMode
 type QueueSourceFilter = 'all' | OrderSource
+type QueueFulfillmentFilter = 'all' | 'overdue' | 'due-soon' | 'scheduled'
 type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
+type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type PosTextScale = 'standard' | 'large'
 type PosWorkspaceDensity = 'comfortable' | 'compact'
 type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync'
@@ -75,6 +77,7 @@ interface SavedQueueView {
   dateFilter: QueueDateFilter
   serviceFilter: QueueServiceFilter
   sourceFilter: QueueSourceFilter
+  fulfillmentFilter: QueueFulfillmentFilter
   sortMode: QueueSortMode
   searchTerm: string
 }
@@ -111,6 +114,7 @@ const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
 const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
+const queueFulfillmentFilterValues: QueueFulfillmentFilter[] = ['all', 'overdue', 'due-soon', 'scheduled']
 const queueSortModeValues: QueueSortMode[] = ['fulfillment-asc', 'created-desc', 'amount-desc']
 const posTextScaleValues: PosTextScale[] = ['standard', 'large']
 const posWorkspaceDensityValues: PosWorkspaceDensity[] = ['comfortable', 'compact']
@@ -118,6 +122,7 @@ const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
 const maxSwipeOffset = 104
 const swipeActionThreshold = 72
+const fulfillmentAlertWindowMinutes = 15
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -164,6 +169,9 @@ const isQueueServiceFilter = (value: unknown): value is QueueServiceFilter =>
 const isQueueSourceFilter = (value: unknown): value is QueueSourceFilter =>
   value === 'all' || (typeof value === 'string' && orderSourceValues.includes(value as OrderSource))
 
+const isQueueFulfillmentFilter = (value: unknown): value is QueueFulfillmentFilter =>
+  typeof value === 'string' && queueFulfillmentFilterValues.includes(value as QueueFulfillmentFilter)
+
 const isQueueSortMode = (value: unknown): value is QueueSortMode =>
   typeof value === 'string' && queueSortModeValues.includes(value as QueueSortMode)
 
@@ -183,6 +191,7 @@ const readSavedQueueView = (): SavedQueueView => {
         dateFilter: 'all',
         serviceFilter: 'all',
         sourceFilter: 'all',
+        fulfillmentFilter: 'all',
         sortMode: 'fulfillment-asc',
         searchTerm: '',
       }
@@ -195,6 +204,7 @@ const readSavedQueueView = (): SavedQueueView => {
       dateFilter: isQueueDateFilter(parsed.dateFilter) ? parsed.dateFilter : 'all',
       serviceFilter: isQueueServiceFilter(parsed.serviceFilter) ? parsed.serviceFilter : 'all',
       sourceFilter: isQueueSourceFilter(parsed.sourceFilter) ? parsed.sourceFilter : 'all',
+      fulfillmentFilter: isQueueFulfillmentFilter(parsed.fulfillmentFilter) ? parsed.fulfillmentFilter : 'all',
       sortMode: isQueueSortMode(parsed.sortMode) ? parsed.sortMode : 'fulfillment-asc',
       searchTerm: typeof parsed.searchTerm === 'string' ? parsed.searchTerm.slice(0, 80) : '',
     }
@@ -205,6 +215,7 @@ const readSavedQueueView = (): SavedQueueView => {
       dateFilter: 'all',
       serviceFilter: 'all',
       sourceFilter: 'all',
+      fulfillmentFilter: 'all',
       sortMode: 'fulfillment-asc',
       searchTerm: '',
     }
@@ -464,6 +475,12 @@ const queueSourceFilterOptions: Array<{ value: QueueSourceFilter; label: string 
   { value: 'online', label: '線上' },
   { value: 'qr', label: '掃碼' },
 ]
+const queueFulfillmentFilterLabels: Record<QueueFulfillmentFilter, string> = {
+  all: '全部時段',
+  overdue: '已逾時',
+  'due-soon': `${fulfillmentAlertWindowMinutes} 分內`,
+  scheduled: '已排程',
+}
 const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
   { value: 'fulfillment-asc', label: '取餐/送達時間' },
   { value: 'created-desc', label: '建立時間新到舊' },
@@ -478,6 +495,31 @@ const stationAvailabilityFilterOptions: Array<{ value: StationAvailabilityFilter
 const orderDateKey = (order: PosOrder): string | null => {
   const orderDate = new Date(order.createdAt)
   return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
+}
+const orderFulfillmentTimestamp = (order: PosOrder): number | null => {
+  if (!order.requestedFulfillmentAt) {
+    return null
+  }
+
+  const timestamp = new Date(order.requestedFulfillmentAt).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+const orderIsOpenForFulfillment = (order: PosOrder): boolean =>
+  order.status !== 'served' && order.status !== 'failed' && order.status !== 'voided'
+
+const orderFulfillmentUrgency = (order: PosOrder): FulfillmentUrgency => {
+  const timestamp = orderFulfillmentTimestamp(order)
+  if (timestamp === null || !orderIsOpenForFulfillment(order)) {
+    return 'none'
+  }
+
+  const now = currentTime.value
+  if (timestamp < now) {
+    return 'overdue'
+  }
+
+  const dueSoonThreshold = now + fulfillmentAlertWindowMinutes * 60 * 1000
+  return timestamp <= dueSoonThreshold ? 'soon' : 'scheduled'
 }
 const orderMatchesQueueDate = (order: PosOrder): boolean => {
   if (queueDateFilter.value === 'all') {
@@ -497,6 +539,23 @@ const orderMatchesQueueService = (order: PosOrder): boolean =>
 
 const orderMatchesQueueSource = (order: PosOrder): boolean =>
   queueSourceFilter.value === 'all' || order.source === queueSourceFilter.value
+
+const orderMatchesQueueFulfillment = (order: PosOrder): boolean => {
+  if (queueFulfillmentFilter.value === 'all') {
+    return true
+  }
+
+  const urgency = orderFulfillmentUrgency(order)
+  if (queueFulfillmentFilter.value === 'due-soon') {
+    return urgency === 'soon'
+  }
+
+  if (queueFulfillmentFilter.value === 'scheduled') {
+    return urgency === 'overdue' || urgency === 'soon' || urgency === 'scheduled'
+  }
+
+  return urgency === queueFulfillmentFilter.value
+}
 
 const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
   if (!keyword) {
@@ -569,8 +628,52 @@ const visibleQueueOrders = computed(() => {
     orderMatchesQueuePayment(order) &&
     orderMatchesQueueDate(order) &&
     orderMatchesQueueService(order) &&
-    orderMatchesQueueSource(order),
+    orderMatchesQueueSource(order) &&
+    orderMatchesQueueFulfillment(order),
   ))
+})
+const queueFulfillmentFilterOptions = computed(() => {
+  const baseOrders = queueBaseOrders.value
+  return queueFulfillmentFilterValues.map((value) => ({
+    value,
+    label: queueFulfillmentFilterLabels[value],
+    count: value === 'all'
+      ? baseOrders.length
+      : baseOrders.filter((order) => {
+        const urgency = orderFulfillmentUrgency(order)
+        if (value === 'due-soon') {
+          return urgency === 'soon'
+        }
+
+        if (value === 'scheduled') {
+          return urgency !== 'none'
+        }
+
+        return urgency === value
+      }).length,
+  }))
+})
+const queueFulfillmentAlert = computed(() => {
+  const alertOrders = pendingOrders.value.filter((order) => {
+    const urgency = orderFulfillmentUrgency(order)
+    return urgency === 'overdue' || urgency === 'soon'
+  })
+  const overdueCount = alertOrders.filter((order) => orderFulfillmentUrgency(order) === 'overdue').length
+  const dueSoonCount = alertOrders.length - overdueCount
+
+  return {
+    count: alertOrders.length,
+    overdueCount,
+    dueSoonCount,
+    isOverdue: overdueCount > 0,
+  }
+})
+const queueFulfillmentAlertTitle = computed(() => {
+  if (queueFulfillmentAlert.value.overdueCount > 0) {
+    return `${queueFulfillmentAlert.value.overdueCount} 張訂單已超過取餐/送達時間`
+  }
+
+  return `${queueFulfillmentAlert.value.dueSoonCount} 張訂單 ${fulfillmentAlertWindowMinutes} 分鐘內到點`
 })
 const printJobRows = computed<PrintJobRow[]>(() =>
   orderQueue.value
@@ -588,6 +691,7 @@ const queueFilterNote = computed(() => {
     queueDateFilter.value !== 'all' ||
     queueServiceFilter.value !== 'all' ||
     queueSourceFilter.value !== 'all' ||
+    queueFulfillmentFilter.value !== 'all' ||
     queueSortMode.value !== 'fulfillment-asc'
   if (filtersApplied) {
     return `顯示 ${visibleQueueOrders.value.length} 張符合條件訂單`
@@ -837,6 +941,7 @@ const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
 const queueDateFilter = ref<QueueDateFilter>(savedQueueView.dateFilter)
 const queueServiceFilter = ref<QueueServiceFilter>(savedQueueView.serviceFilter)
 const queueSourceFilter = ref<QueueSourceFilter>(savedQueueView.sourceFilter)
+const queueFulfillmentFilter = ref<QueueFulfillmentFilter>(savedQueueView.fulfillmentFilter)
 const queueSortMode = ref<QueueSortMode>(savedQueueView.sortMode)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
 const expandedOrderId = ref<string | null>(null)
@@ -902,7 +1007,7 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
   details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
   payment: paymentLabels[paymentMethod.value],
-  queue: `${pendingOrders.value.length} 待處理`,
+  queue: queueFulfillmentAlert.value.count > 0 ? `${queueFulfillmentAlert.value.count} 張到點` : `${pendingOrders.value.length} 待處理`,
   printing: printStation.online ? '列印在線' : '列印離線',
   closeout: closeoutPreflightBlockingCount.value > 0 ? `${closeoutPreflightBlockingCount.value} 項待處理` : registerStatusLabel.value,
 }))
@@ -1046,6 +1151,33 @@ const printSummary = (order: PosOrder): string => {
   }
 
   return `${printStatusLabels[order.printStatus]}${attemptText}`
+}
+
+const fulfillmentUrgencyLabel = (order: PosOrder): string => {
+  const urgency = orderFulfillmentUrgency(order)
+  if (urgency === 'overdue') {
+    return '已逾時'
+  }
+
+  if (urgency === 'soon') {
+    return `${fulfillmentAlertWindowMinutes} 分內`
+  }
+
+  if (urgency === 'scheduled') {
+    return '已排程'
+  }
+
+  return ''
+}
+
+const fulfillmentUrgencyClass = (order: PosOrder): string => {
+  const urgency = orderFulfillmentUrgency(order)
+  return urgency === 'none' ? '' : `order-fulfillment--${urgency}`
+}
+
+const fulfillmentRowClass = (order: PosOrder): string => {
+  const urgency = orderFulfillmentUrgency(order)
+  return urgency === 'overdue' || urgency === 'soon' ? `order-row--fulfillment-${urgency}` : ''
 }
 
 const fulfillmentLabel = (order: PosOrder): string => {
@@ -1409,6 +1541,7 @@ const resetQueueViewForCloseoutPreflight = (): void => {
   queueDateFilter.value = 'today'
   queueServiceFilter.value = 'all'
   queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = 'all'
   queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
   expandedOrderId.value = null
@@ -1578,6 +1711,7 @@ const resetQueueFilters = (): void => {
   queueDateFilter.value = 'all'
   queueServiceFilter.value = 'all'
   queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = 'all'
   queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
 }
@@ -1588,12 +1722,37 @@ const showOnlineReminderOrders = (): void => {
   queueDateFilter.value = 'all'
   queueServiceFilter.value = 'all'
   queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = 'all'
   queueSortMode.value = 'fulfillment-asc'
   queueSearchTerm.value = ''
   setWorkspaceTab('queue')
 }
 
 const orderNeedsOnlineReminder = (order: PosOrder): boolean => activeOnlineReminderIds.value.has(order.id)
+
+const applyQueueFulfillmentFilter = (filter: QueueFulfillmentFilter): void => {
+  queueFulfillmentFilter.value = filter
+  if (filter === 'all') {
+    return
+  }
+
+  queueFilter.value = 'active'
+  queueDateFilter.value = 'today'
+  queueSortMode.value = 'fulfillment-asc'
+  queueSearchTerm.value = ''
+}
+
+const showFulfillmentAlertOrders = (filter: QueueFulfillmentFilter): void => {
+  queueFilter.value = 'active'
+  queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'today'
+  queueServiceFilter.value = 'all'
+  queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = filter
+  queueSortMode.value = 'fulfillment-asc'
+  queueSearchTerm.value = ''
+  setWorkspaceTab('queue')
+}
 
 const startTakeoutOrder = (): void => {
   serviceMode.value = 'takeout'
@@ -1677,14 +1836,24 @@ watch(
 )
 
 watch(
-  [queueFilter, queuePaymentFilter, queueDateFilter, queueServiceFilter, queueSourceFilter, queueSortMode, queueSearchTerm],
-  ([filter, paymentFilter, dateFilter, serviceFilter, sourceFilter, sortMode, searchTerm]) => {
+  [
+    queueFilter,
+    queuePaymentFilter,
+    queueDateFilter,
+    queueServiceFilter,
+    queueSourceFilter,
+    queueFulfillmentFilter,
+    queueSortMode,
+    queueSearchTerm,
+  ],
+  ([filter, paymentFilter, dateFilter, serviceFilter, sourceFilter, fulfillmentFilter, sortMode, searchTerm]) => {
     writeSavedQueueView({
       filter,
       paymentFilter,
       dateFilter,
       serviceFilter,
       sourceFilter,
+      fulfillmentFilter,
       sortMode,
       searchTerm: searchTerm.trim().slice(0, 80),
     })
@@ -2525,6 +2694,45 @@ onBeforeUnmount(() => {
                   </div>
                 </section>
 
+                <section
+                  v-if="queueFulfillmentAlert.count > 0"
+                  class="fulfillment-alert-banner"
+                  :class="queueFulfillmentAlert.isOverdue ? 'fulfillment-alert-banner--overdue' : 'fulfillment-alert-banner--soon'"
+                  aria-live="polite"
+                >
+                  <div class="fulfillment-alert-summary">
+                    <Clock3 :size="22" aria-hidden="true" />
+                    <div>
+                      <p class="eyebrow">Pickup Time</p>
+                      <h3>{{ queueFulfillmentAlertTitle }}</h3>
+                      <span>
+                        已逾時 {{ queueFulfillmentAlert.overdueCount }} 張 ·
+                        {{ fulfillmentAlertWindowMinutes }} 分鐘內 {{ queueFulfillmentAlert.dueSoonCount }} 張
+                      </span>
+                    </div>
+                  </div>
+                  <div class="fulfillment-alert-actions">
+                    <button
+                      type="button"
+                      :disabled="queueFulfillmentAlert.overdueCount === 0"
+                      @click="showFulfillmentAlertOrders('overdue')"
+                    >
+                      已逾時
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="queueFulfillmentAlert.dueSoonCount === 0"
+                      @click="showFulfillmentAlertOrders('due-soon')"
+                    >
+                      {{ fulfillmentAlertWindowMinutes }} 分內
+                    </button>
+                    <button class="primary-button" type="button" @click="showFulfillmentAlertOrders('scheduled')">
+                      <CalendarDays :size="18" aria-hidden="true" />
+                      已排程
+                    </button>
+                  </div>
+                </section>
+
                 <div class="queue-tools">
                   <label class="search-box queue-search">
                     <Search :size="18" aria-hidden="true" />
@@ -2577,6 +2785,19 @@ onBeforeUnmount(() => {
                       </select>
                     </label>
                   </div>
+                  <div class="segmented-control queue-fulfillment-filter" aria-label="履約時段篩選">
+                    <button
+                      v-for="filter in queueFulfillmentFilterOptions"
+                      :key="filter.value"
+                      class="segment-button queue-fulfillment-button"
+                      :class="{ 'segment-button--active': queueFulfillmentFilter === filter.value }"
+                      type="button"
+                      @click="applyQueueFulfillmentFilter(filter.value)"
+                    >
+                      <span>{{ filter.label }}</span>
+                      <strong>{{ filter.count }}</strong>
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -2598,6 +2819,7 @@ onBeforeUnmount(() => {
                     class="order-row swipe-card"
                     :class="[
                       `order-row--${order.status}`,
+                      fulfillmentRowClass(order),
                       {
                         'order-row--claimed-other': orderClaimedByOtherStation(order),
                         'order-row--online-reminder': orderNeedsOnlineReminder(order),
@@ -2625,6 +2847,14 @@ onBeforeUnmount(() => {
                             <CircleAlert :size="13" aria-hidden="true" />
                             未確認
                           </span>
+                          <span
+                            v-if="fulfillmentUrgencyLabel(order)"
+                            class="fulfillment-chip"
+                            :class="fulfillmentUrgencyClass(order)"
+                          >
+                            <Clock3 :size="13" aria-hidden="true" />
+                            {{ fulfillmentUrgencyLabel(order) }}
+                          </span>
                           <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                         </span>
                       </div>
@@ -2633,7 +2863,7 @@ onBeforeUnmount(() => {
                         {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
                         {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
                       </span>
-                      <small v-if="fulfillmentLabel(order)" class="order-fulfillment">
+                      <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
                         {{ fulfillmentLabel(order) }}
                       </small>
                     </div>
