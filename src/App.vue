@@ -73,6 +73,7 @@ type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = 'temperature' | 'beans' | 'extras'
+type QueueAdminActionKind = 'void' | 'refund'
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -135,6 +136,12 @@ interface MenuOptionGroup {
   min: number
   max: number
   choices: MenuOptionChoice[]
+}
+
+interface QueueAdminActionRequest {
+  kind: QueueAdminActionKind
+  orderId: string
+  label: string
 }
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
@@ -1087,6 +1094,9 @@ const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({
   extras: [],
 })
 const optionWarning = ref('')
+const pendingQueueAdminAction = ref<QueueAdminActionRequest | null>(null)
+const queueActionPin = ref('')
+const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
 const isKnowledgeOpen = ref(false)
 const knowledgeSearchTerm = ref('')
@@ -1558,6 +1568,8 @@ const orderCanBeRefunded = (order: PosOrder): boolean =>
   !['failed', 'voided'].includes(order.status) &&
   !orderClaimedByOtherStation(order)
 
+const queueAdminActionLabel = (kind: QueueAdminActionKind): string => (kind === 'void' ? '作廢' : '退款')
+
 const voidActionLabel = (order: PosOrder): string => (
   voidingOrderId.value === order.id ? '作廢中' : '作廢'
 )
@@ -1566,12 +1578,12 @@ const refundActionLabel = (order: PosOrder): string => (
   refundingOrderId.value === order.id ? '退款中' : '退款'
 )
 
-const voidOrderAction = (order: PosOrder): void => {
-  void voidOrderForStation(stationPin.value.trim(), order.id)
+const voidOrderAction = async (order: PosOrder, adminPin = stationPin.value.trim()): Promise<void> => {
+  await voidOrderForStation(adminPin, order.id)
 }
 
-const refundOrderAction = (order: PosOrder): void => {
-  void refundOrderForStation(stationPin.value.trim(), order.id)
+const refundOrderAction = async (order: PosOrder, adminPin = stationPin.value.trim()): Promise<void> => {
+  await refundOrderForStation(adminPin, order.id)
 }
 
 const orderSwipeKey = (order: PosOrder): string => `order:${order.id}`
@@ -1622,14 +1634,74 @@ const orderSwipeDeleteAction = (order: PosOrder): void => {
     return
   }
 
-  openSwipeKey.value = null
-
   if (orderCanBeVoided(order)) {
-    voidOrderAction(order)
+    requestQueueAdminAction('void', order)
     return
   }
 
-  refundOrderAction(order)
+  requestQueueAdminAction('refund', order)
+}
+
+const executeQueueAdminAction = async (
+  kind: QueueAdminActionKind,
+  order: PosOrder,
+  adminPin: string,
+): Promise<void> => {
+  const label = queueAdminActionLabel(kind)
+  queueActionMessage.value = `${order.id} ${label}處理中`
+  pendingQueueAdminAction.value = null
+  openSwipeKey.value = null
+
+  if (kind === 'void') {
+    await voidOrderAction(order, adminPin)
+  } else {
+    await refundOrderAction(order, adminPin)
+  }
+
+  queueActionMessage.value = backendStatus.detail || backendStatus.label
+}
+
+const requestQueueAdminAction = (kind: QueueAdminActionKind, order: PosOrder): void => {
+  const label = queueAdminActionLabel(kind)
+  const adminPin = stationPin.value.trim()
+
+  if (!adminPin) {
+    pendingQueueAdminAction.value = {
+      kind,
+      orderId: order.id,
+      label,
+    }
+    queueActionPin.value = ''
+    queueActionMessage.value = `${order.id} 需要管理 PIN 才能${label}`
+    return
+  }
+
+  void executeQueueAdminAction(kind, order, adminPin)
+}
+
+const cancelQueueAdminAction = (): void => {
+  pendingQueueAdminAction.value = null
+  queueActionPin.value = ''
+  queueActionMessage.value = ''
+}
+
+const confirmQueueAdminAction = (): void => {
+  const action = pendingQueueAdminAction.value
+  const adminPin = queueActionPin.value.trim()
+  if (!action || !adminPin) {
+    return
+  }
+
+  const order = orderQueue.value.find((entry) => entry.id === action.orderId)
+  if (!order) {
+    queueActionMessage.value = `${action.orderId} 已不在目前佇列`
+    pendingQueueAdminAction.value = null
+    return
+  }
+
+  stationPin.value = adminPin
+  queueActionPin.value = ''
+  void executeQueueAdminAction(action.kind, order, adminPin)
 }
 
 const orderSwipeCompleteLabel = (order: PosOrder): string => {
@@ -1766,6 +1838,22 @@ const endPrintJobSwipe = (row: PrintJobRow): void => {
 
 const toggleOrderDetail = (order: PosOrder): void => {
   expandedOrderId.value = expandedOrderId.value === order.id ? null : order.id
+}
+
+const handleOrderRowClick = (order: PosOrder, event: MouseEvent): void => {
+  if (event.target instanceof HTMLElement && event.target.closest('button, input, textarea, select, a')) {
+    return
+  }
+
+  const key = orderSwipeKey(order)
+  if (openSwipeKey.value) {
+    if (openSwipeKey.value !== key) {
+      openSwipeKey.value = null
+    }
+    return
+  }
+
+  toggleOrderDetail(order)
 }
 
 const isEditableKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -3217,6 +3305,41 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
+                <section
+                  v-if="pendingQueueAdminAction || queueActionMessage"
+                  class="queue-admin-card"
+                  :class="{ 'queue-admin-card--prompt': pendingQueueAdminAction }"
+                  aria-live="polite"
+                >
+                  <div class="queue-admin-card-copy">
+                    <CircleAlert :size="20" aria-hidden="true" />
+                    <div>
+                      <strong v-if="pendingQueueAdminAction">
+                        {{ pendingQueueAdminAction.orderId }} 確認{{ pendingQueueAdminAction.label }}
+                      </strong>
+                      <strong v-else>操作狀態</strong>
+                      <span>{{ queueActionMessage }}</span>
+                    </div>
+                  </div>
+                  <form v-if="pendingQueueAdminAction" class="queue-admin-pin-form" @submit.prevent="confirmQueueAdminAction">
+                    <label>
+                      管理 PIN
+                      <input
+                        v-model="queueActionPin"
+                        type="password"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        placeholder="輸入 PIN 後確認"
+                      />
+                    </label>
+                    <button type="button" @click="cancelQueueAdminAction">取消</button>
+                    <button class="primary-button" type="submit" :disabled="!queueActionPin.trim()">
+                      確認{{ pendingQueueAdminAction.label }}
+                    </button>
+                  </form>
+                  <button v-else type="button" @click="queueActionMessage = ''">關閉</button>
+                </section>
+
                 <div
                   v-for="order in visibleQueueOrders"
                   :key="order.id"
@@ -3258,6 +3381,7 @@ onBeforeUnmount(() => {
                     @pointermove="moveSwipe(orderSwipeKey(order), $event)"
                     @pointerup="endOrderSwipe(order)"
                     @pointercancel="cancelSwipe(orderSwipeKey(order))"
+                    @click="handleOrderRowClick(order, $event)"
                   >
                     <div class="order-row-main">
                       <div class="order-row-title">
@@ -3337,7 +3461,7 @@ onBeforeUnmount(() => {
                         class="order-action--void"
                         type="button"
                         :disabled="voidingOrderId === order.id"
-                        @click="voidOrderAction(order)"
+                        @click="requestQueueAdminAction('void', order)"
                       >
                         <Trash2 :size="16" aria-hidden="true" />
                         {{ voidActionLabel(order) }}
@@ -3347,7 +3471,7 @@ onBeforeUnmount(() => {
                         class="order-action--refund"
                         type="button"
                         :disabled="refundingOrderId === order.id"
-                        @click="refundOrderAction(order)"
+                        @click="requestQueueAdminAction('refund', order)"
                       >
                         <WalletCards :size="16" aria-hidden="true" />
                         {{ refundActionLabel(order) }}
@@ -3827,7 +3951,7 @@ onBeforeUnmount(() => {
                   class="active-order-void-button"
                   type="button"
                   :disabled="voidingOrderId === activeOrder.id"
-                  @click="voidOrderAction(activeOrder)"
+                  @click="requestQueueAdminAction('void', activeOrder)"
                 >
                   <Trash2 :size="16" aria-hidden="true" />
                   {{ voidActionLabel(activeOrder) }}
@@ -3837,7 +3961,7 @@ onBeforeUnmount(() => {
                   class="active-order-refund-button"
                   type="button"
                   :disabled="refundingOrderId === activeOrder.id"
-                  @click="refundOrderAction(activeOrder)"
+                  @click="requestQueueAdminAction('refund', activeOrder)"
                 >
                   <WalletCards :size="16" aria-hidden="true" />
                   {{ refundActionLabel(activeOrder) }}
