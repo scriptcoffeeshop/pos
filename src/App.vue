@@ -57,6 +57,7 @@ type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type PosTextScale = 'standard' | 'large'
 type PosWorkspaceDensity = 'comfortable' | 'compact'
 type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync'
+type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -446,6 +447,12 @@ const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
   { value: 'created-desc', label: '建立時間新到舊' },
   { value: 'amount-desc', label: '金額高到低' },
 ]
+const stationAvailabilityFilterOptions: Array<{ value: StationAvailabilityFilter; label: string }> = [
+  { value: 'all', label: '全部狀態' },
+  { value: 'available', label: '正常供應' },
+  { value: 'stopped', label: '暫停/售完' },
+  { value: 'low-stock', label: '低庫存' },
+]
 const orderDateKey = (order: PosOrder): string | null => {
   const orderDate = new Date(order.createdAt)
   return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
@@ -586,6 +593,43 @@ const lowStockStationProducts = computed(() =>
     product.inventoryCount <= product.lowStockThreshold,
   ),
 )
+const stationProductMatchesStatus = (product: MenuItem): boolean => {
+  if (stationAvailabilityFilter.value === 'available') {
+    return product.available && product.inventoryCount !== 0 && !isProductTemporarilyStopped(product)
+  }
+
+  if (stationAvailabilityFilter.value === 'stopped') {
+    return !product.available || product.inventoryCount === 0 || isProductTemporarilyStopped(product)
+  }
+
+  if (stationAvailabilityFilter.value === 'low-stock') {
+    return lowStockStationProducts.value.some((entry) => entry.id === product.id)
+  }
+
+  return true
+}
+const visibleStationProducts = computed(() => {
+  const keyword = stationSearchTerm.value.trim().toLowerCase()
+  return stationProducts.value.filter((product) => {
+    const matchesCategory = stationCategoryFilter.value === 'all' || product.category === stationCategoryFilter.value
+    const matchesKeyword =
+      keyword.length === 0 ||
+      product.name.toLowerCase().includes(keyword) ||
+      product.sku.toLowerCase().includes(keyword) ||
+      product.tags.some((tag) => tag.toLowerCase().includes(keyword))
+
+    return matchesCategory && matchesKeyword && stationProductMatchesStatus(product)
+  })
+})
+const stationFilteredAvailableProducts = computed(() =>
+  visibleStationProducts.value.filter((product) => product.available),
+)
+const stationFilteredStoppedProducts = computed(() =>
+  visibleStationProducts.value.filter((product) => !product.available),
+)
+const stationFilterSummary = computed(() =>
+  `顯示 ${visibleStationProducts.value.length} 個 · 可售 ${stationFilteredAvailableProducts.value.length} 個 · 暫停 ${stationFilteredStoppedProducts.value.length} 個`,
+)
 const closeoutSummary = computed(() => {
   const collectedStatuses = new Set(['authorized', 'paid'])
 
@@ -655,6 +699,10 @@ const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const isToolboxOpen = ref(false)
+const stationSearchTerm = ref('')
+const stationCategoryFilter = ref<'all' | MenuCategory>('all')
+const stationAvailabilityFilter = ref<StationAvailabilityFilter>('all')
+const stationBatchProductIds = ref<string[]>([])
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -1331,6 +1379,28 @@ const loadStationProducts = (): void => {
 
 const toggleStationProduct = (product: MenuItem): void => {
   void updateProductAvailability(stationPin.value.trim(), product.id, !product.available)
+}
+
+const stationBatchProductIdSet = computed(() => new Set(stationBatchProductIds.value))
+const isStationBatchBusy = computed(() => stationBatchProductIds.value.length > 0)
+const stationProductIsBusy = (product: MenuItem): boolean =>
+  togglingProductId.value === product.id || stationBatchProductIdSet.value.has(product.id)
+
+const updateVisibleStationProducts = async (isAvailable: boolean): Promise<void> => {
+  if (isStationBatchBusy.value) {
+    return
+  }
+
+  const targetProducts = visibleStationProducts.value.filter((product) => product.available !== isAvailable)
+  if (targetProducts.length === 0) {
+    return
+  }
+
+  stationBatchProductIds.value = targetProducts.map((product) => product.id)
+  for (const product of targetProducts) {
+    await updateProductAvailability(stationPin.value.trim(), product.id, isAvailable)
+  }
+  stationBatchProductIds.value = []
 }
 
 const openRegisterSessionAction = (): void => {
@@ -2410,8 +2480,56 @@ onBeforeUnmount(() => {
 
                 <p class="station-message">{{ productStatusMessage }}</p>
 
+                <div class="station-filter-panel" aria-label="供應狀態篩選與批次操作">
+                  <label class="search-box station-search">
+                    <Search :size="18" aria-hidden="true" />
+                    <input v-model="stationSearchTerm" type="search" placeholder="搜尋商品、SKU 或標籤" />
+                  </label>
+                  <div class="station-filter-grid">
+                    <label>
+                      <span>分類</span>
+                      <select v-model="stationCategoryFilter">
+                        <option v-for="category in categoryOptions" :key="`station-${category.value}`" :value="category.value">
+                          {{ category.label }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>狀態</span>
+                      <select v-model="stationAvailabilityFilter">
+                        <option
+                          v-for="filter in stationAvailabilityFilterOptions"
+                          :key="filter.value"
+                          :value="filter.value"
+                        >
+                          {{ filter.label }}
+                        </option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="station-batch-actions">
+                    <span>{{ stationFilterSummary }}</span>
+                    <button
+                      type="button"
+                      :disabled="isStationBatchBusy || stationFilteredAvailableProducts.length === 0"
+                      @click="updateVisibleStationProducts(false)"
+                    >
+                      <EyeOff :size="16" aria-hidden="true" />
+                      暫停篩選結果
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="isStationBatchBusy || stationFilteredStoppedProducts.length === 0"
+                      @click="updateVisibleStationProducts(true)"
+                    >
+                      <Eye :size="16" aria-hidden="true" />
+                      恢復篩選結果
+                    </button>
+                  </div>
+                </div>
+
                 <div class="station-product-list" aria-label="前台商品狀態">
-                  <article v-for="product in stationProducts" :key="product.id" class="station-product-row">
+                  <article v-for="product in visibleStationProducts" :key="product.id" class="station-product-row">
                     <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
                     <span>
                       <strong>{{ product.name }}</strong>
@@ -2423,14 +2541,19 @@ onBeforeUnmount(() => {
                     <button
                       type="button"
                       :class="{ 'station-product-toggle--stopped': !product.available }"
-                      :disabled="togglingProductId === product.id"
+                      :disabled="stationProductIsBusy(product)"
                       @click="toggleStationProduct(product)"
                     >
-                      <EyeOff v-if="product.available" :size="16" aria-hidden="true" />
+                      <RefreshCw v-if="stationProductIsBusy(product)" :size="16" aria-hidden="true" />
+                      <EyeOff v-else-if="product.available" :size="16" aria-hidden="true" />
                       <Eye v-else :size="16" aria-hidden="true" />
-                      {{ product.available ? '暫停' : '恢復' }}
+                      {{ stationProductIsBusy(product) ? '更新中' : product.available ? '暫停' : '恢復' }}
                     </button>
                   </article>
+                  <div v-if="visibleStationProducts.length === 0" class="empty-state station-empty-state">
+                    <EyeOff :size="22" aria-hidden="true" />
+                    <span>沒有符合條件的商品</span>
+                  </div>
                 </div>
               </section>
 
