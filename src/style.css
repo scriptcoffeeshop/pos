@@ -4051,6 +4051,73 @@ h3 {
   white-space: nowrap;
 }
 
+.admin-operations-toolbar {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-operation-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-operation-summary article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.admin-operation-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-operation-summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 1.35rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-operation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-operation-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-operation-row time {
+  padding-top: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.admin-operation-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .admin-member-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -4452,6 +4519,8 @@ h3 {
   .admin-section-grid,
   .admin-report-grid,
   .admin-report-sections,
+  .admin-operation-summary,
+  .admin-operation-row,
   .admin-station-grid,
   .admin-rule-grid,
   .admin-role-header {

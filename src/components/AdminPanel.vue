@@ -68,8 +68,24 @@ interface WalletAdjustmentDraft {
   note: string
 }
 
-type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'audit' | 'stations'
+type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'operations' | 'audit' | 'stations'
 type PaymentEventStatusFilter = 'all' | 'applied' | 'duplicate' | 'unapplied'
+type OperationTimelineKind = 'audit' | 'register' | 'station'
+type OperationTimelineFilter = 'all' | OperationTimelineKind
+
+interface OperationTimelineEntry {
+  id: string
+  kind: OperationTimelineKind
+  title: string
+  subject: string
+  stationId: string
+  actor: string
+  summary: string
+  statusLabel: string
+  statusClass: string
+  createdAt: string
+  searchableText: string
+}
 
 const emit = defineEmits<{
   refreshPos: []
@@ -82,6 +98,7 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'payments', label: '支付事件' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
+  { value: 'operations', label: '營運紀錄' },
   { value: 'stations', label: '平板' },
   { value: 'audit', label: '稽核' },
 ]
@@ -153,6 +170,13 @@ const paymentEventStatusOptions: Array<{ value: PaymentEventStatusFilter; label:
   { value: 'applied', label: '已套用' },
   { value: 'duplicate', label: '重送' },
   { value: 'unapplied', label: '未套用' },
+]
+
+const operationTimelineFilterOptions: Array<{ value: OperationTimelineFilter; label: string }> = [
+  { value: 'all', label: '全部紀錄' },
+  { value: 'register', label: '班別' },
+  { value: 'station', label: '平板' },
+  { value: 'audit', label: '操作' },
 ]
 
 const auditFieldLabels: Record<string, string> = {
@@ -252,12 +276,16 @@ const paymentEventLimit = ref(50)
 const paymentProviderFilter = ref('all')
 const paymentEventStatusFilter = ref<PaymentEventStatusFilter>('all')
 const auditActionFilter = ref('all')
+const operationSearchTerm = ref('')
+const operationKindFilter = ref<OperationTimelineFilter>('all')
+const operationStationFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isStationLoading = ref(false)
+const isOperationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
@@ -342,6 +370,92 @@ const stationOptions = computed(() => {
     },
   ]
 })
+
+const operationStationOptions = computed(() => {
+  const stations = new Map<string, string>()
+  for (const station of stationHeartbeats.value) {
+    stations.set(station.stationId, station.stationLabel || station.stationId)
+  }
+  for (const event of auditEvents.value) {
+    if (event.stationId) {
+      stations.set(event.stationId, stations.get(event.stationId) ?? event.stationId)
+    }
+  }
+
+  return Array.from(stations.entries())
+    .sort(([, first], [, second]) => first.localeCompare(second, 'zh-TW'))
+    .map(([value, label]) => ({ value, label }))
+})
+
+const operationTimelineEntries = computed<OperationTimelineEntry[]>(() => {
+  const auditEntries = auditEvents.value.map((event): OperationTimelineEntry => {
+    const kind: OperationTimelineKind = event.action.startsWith('register.') ? 'register' : 'audit'
+    const title = auditActionLabel(event.action)
+    const subject = auditSubject(event)
+    const stationId = event.stationId || '未標記平板'
+    const actor = event.actor || 'pos-api'
+    const summary = auditMetadataSummary(event)
+    const statusLabel = kind === 'register' ? '班別' : '操作'
+
+    return {
+      id: `audit-${event.id}`,
+      kind,
+      title,
+      subject,
+      stationId,
+      actor,
+      summary,
+      statusLabel,
+      statusClass: kind === 'register' ? 'status-pill--success' : 'status-pill--neutral',
+      createdAt: event.createdAt,
+      searchableText: [title, subject, stationId, actor, summary, event.action].join(' ').toLowerCase(),
+    }
+  })
+
+  const stationEntries = stationHeartbeats.value.map((station): OperationTimelineEntry => {
+    const stationLabel = station.stationLabel || station.stationId
+    const statusLabel = stationStatusLabel(station)
+    const summaryParts = [
+      station.platform || '未標記平台',
+      station.appVersion || '未標記版本',
+      station.userAgent ? station.userAgent.slice(0, 80) : '',
+    ].filter(Boolean)
+    const summary = summaryParts.join(' · ')
+
+    return {
+      id: `station-${station.stationId}`,
+      kind: 'station',
+      title: `平板${statusLabel}`,
+      subject: stationLabel,
+      stationId: station.stationId,
+      actor: 'station-heartbeat',
+      summary,
+      statusLabel,
+      statusClass: stationStatusClass(station),
+      createdAt: station.lastSeenAt,
+      searchableText: [stationLabel, station.stationId, statusLabel, summary].join(' ').toLowerCase(),
+    }
+  })
+
+  return [...auditEntries, ...stationEntries].sort((first, second) => {
+    const firstTime = new Date(first.createdAt).getTime()
+    const secondTime = new Date(second.createdAt).getTime()
+    return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0)
+  })
+})
+
+const filteredOperationTimelineEntries = computed(() => {
+  const keyword = operationSearchTerm.value.trim().toLowerCase()
+  return operationTimelineEntries.value.filter((entry) => {
+    const matchesKind = operationKindFilter.value === 'all' || entry.kind === operationKindFilter.value
+    const matchesStation = operationStationFilter.value === 'all' || entry.stationId === operationStationFilter.value
+    const matchesKeyword = !keyword || entry.searchableText.includes(keyword)
+
+    return matchesKind && matchesStation && matchesKeyword
+  })
+})
+
+const operationTimelineCount = computed(() => filteredOperationTimelineEntries.value.length)
 
 const filteredProducts = computed(() => {
   const keyword = searchTerm.value.trim().toLowerCase()
@@ -642,6 +756,31 @@ const exportAuditEventsCsv = (): void => {
   adminMessage.value = `已匯出 ${filteredAuditEvents.value.length} 筆稽核紀錄`
 }
 
+const exportOperationTimelineCsv = (): void => {
+  if (filteredOperationTimelineEntries.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的營運紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['created_at', 'type', 'title', 'subject', 'station_id', 'actor', 'status', 'summary'],
+    ...filteredOperationTimelineEntries.value.map((entry) => [
+      entry.createdAt,
+      entry.kind,
+      entry.title,
+      entry.subject,
+      entry.stationId,
+      entry.actor,
+      entry.statusLabel,
+      entry.summary,
+    ]),
+  ]
+
+  const kind = operationKindFilter.value === 'all' ? 'all' : operationKindFilter.value
+  downloadCsv(`script-coffee-operations-${kind}.csv`, rows)
+  adminMessage.value = `已匯出 ${filteredOperationTimelineEntries.value.length} 筆營運紀錄`
+}
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -883,6 +1022,31 @@ const loadStationHeartbeats = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
   } finally {
     isStationLoading.value = false
+  }
+}
+
+const loadOperationTimeline = async (): Promise<void> => {
+  if (!adminPin.value.trim()) {
+    adminMessage.value = '請輸入管理 PIN'
+    return
+  }
+
+  isOperationLoading.value = true
+  adminMessage.value = '讀取營運紀錄中'
+
+  try {
+    writeStoredPin(adminPin.value.trim())
+    const [events, stations] = await Promise.all([
+      fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
+      fetchAdminStations(adminPin.value.trim()),
+    ])
+    auditEvents.value = events
+    stationHeartbeats.value = stations
+    adminMessage.value = `已載入 ${filteredOperationTimelineEntries.value.length} 筆營運紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '營運紀錄讀取失敗'
+  } finally {
+    isOperationLoading.value = false
   }
 }
 
@@ -1212,6 +1376,10 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>在線平板</span>
         <strong>{{ onlineStationCount }}</strong>
+      </article>
+      <article>
+        <span>營運紀錄</span>
+        <strong>{{ operationTimelineCount }}</strong>
       </article>
       <article>
         <span>稽核紀錄</span>
@@ -1840,6 +2008,97 @@ const saveAccessControl = async (): Promise<void> => {
               </div>
             </article>
           </section>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'operations'" class="admin-tab-panel" aria-label="營運紀錄">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Timeline</p>
+            <h2>營運紀錄</h2>
+            <span class="panel-note">整合平板心跳、開關班與關鍵操作紀錄</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions admin-operations-toolbar">
+            <label class="search-box">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="operationSearchTerm" type="search" placeholder="搜尋平板、訂單、會員或操作" />
+            </label>
+            <label class="admin-limit-field">
+              類型
+              <select v-model="operationKindFilter">
+                <option v-for="option in operationTimelineFilterOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              平板
+              <select v-model="operationStationFilter">
+                <option value="all">全部平板</option>
+                <option v-for="station in operationStationOptions" :key="station.value" :value="station.value">
+                  {{ station.label }}
+                </option>
+              </select>
+            </label>
+            <button class="primary-button" type="button" :disabled="isOperationLoading" @click="loadOperationTimeline">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isOperationLoading ? '讀取中' : '刷新紀錄' }}
+            </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="filteredOperationTimelineEntries.length === 0"
+              @click="exportOperationTimelineCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-operation-summary" aria-label="營運紀錄摘要">
+          <article>
+            <span>目前顯示</span>
+            <strong>{{ filteredOperationTimelineEntries.length }}</strong>
+          </article>
+          <article>
+            <span>操作稽核</span>
+            <strong>{{ auditEvents.length }}</strong>
+          </article>
+          <article>
+            <span>平板心跳</span>
+            <strong>{{ stationHeartbeats.length }}</strong>
+          </article>
+          <article>
+            <span>在線平板</span>
+            <strong>{{ onlineStationCount }}</strong>
+          </article>
+        </div>
+
+        <div class="admin-operation-list">
+          <article v-for="entry in filteredOperationTimelineEntries" :key="entry.id" class="admin-operation-row">
+            <time :datetime="entry.createdAt">{{ formatAuditTime(entry.createdAt) }}</time>
+            <div class="admin-operation-body">
+              <header class="admin-row-header">
+                <div class="admin-audit-primary">
+                  <strong>{{ entry.title }}</strong>
+                  <span>{{ entry.subject }}</span>
+                </div>
+                <span class="status-pill" :class="entry.statusClass">{{ entry.statusLabel }}</span>
+              </header>
+
+              <div class="admin-audit-meta">
+                <span>{{ entry.stationId }}</span>
+                <span>{{ entry.actor }}</span>
+                <span>{{ entry.summary }}</span>
+              </div>
+            </div>
+          </article>
+
+          <div v-if="filteredOperationTimelineEntries.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無符合條件的營運紀錄</span>
+          </div>
         </div>
       </section>
 
