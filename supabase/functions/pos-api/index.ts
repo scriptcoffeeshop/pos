@@ -12,7 +12,7 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering";
 type ProductChannel = "pos" | "online" | "qr";
 
 interface OrderLineInput {
@@ -213,6 +213,15 @@ interface AccessControlSettings {
   roles: RoleSetting[];
 }
 
+interface OnlineOrderingSettings {
+  enabled: boolean;
+  allowScheduledOrders: boolean;
+  averagePrepMinutes: number;
+  unconfirmedReminderMinutes: number;
+  soundEnabled: boolean;
+  pauseMessage: string;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -344,6 +353,15 @@ const defaultAccessControl: AccessControlSettings = {
       ],
     },
   ],
+};
+
+const defaultOnlineOrdering: OnlineOrderingSettings = {
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  soundEnabled: true,
+  pauseMessage: "目前暫停線上點餐，請稍後再試",
 };
 
 const loadOrder = (orderId: string) =>
@@ -541,8 +559,12 @@ api.get("/settings/runtime", async (c) => {
     "printer_settings",
     defaultPrinterSettings,
   );
+  const onlineOrdering = await loadSetting<OnlineOrderingSettings>(
+    "online_ordering",
+    defaultOnlineOrdering,
+  );
 
-  return c.json({ printerSettings });
+  return c.json({ printerSettings, onlineOrdering });
 });
 
 api.post("/station/heartbeat", async (c) => {
@@ -1030,7 +1052,7 @@ api.get("/admin/settings", async (c) => {
   const { data, error } = await supabase
     .from("pos_settings")
     .select("key, value")
-    .in("key", ["printer_settings", "access_control"]);
+    .in("key", ["printer_settings", "access_control", "online_ordering"]);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -1127,7 +1149,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -1185,9 +1207,23 @@ api.post("/orders", async (c) => {
   const stationId = sanitizeStationId(input.stationId);
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const orderSource = input.source ?? "counter";
+  if (orderSource === "online" || orderSource === "qr") {
+    const onlineOrdering = await loadSetting<OnlineOrderingSettings>(
+      "online_ordering",
+      defaultOnlineOrdering,
+    );
+    if (!onlineOrdering.enabled) {
+      return c.json({ error: onlineOrdering.pauseMessage }, 409);
+    }
+    if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
+      return c.json({ error: "Scheduled online orders are disabled" }, 409);
+    }
+  }
+
   const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
     p_order_number: input.orderNumber,
-    p_source: input.source ?? "counter",
+    p_source: orderSource,
     p_service_mode: input.serviceMode ?? "takeout",
     p_customer_name: input.customerName?.trim() || "現場客",
     p_customer_phone: input.customerPhone?.trim() ?? "",
@@ -2659,15 +2695,57 @@ const validateAccessControl = (input: unknown): {
   return { value: { roles }, error: null };
 };
 
+const validateOnlineOrdering = (input: unknown): {
+  value: OnlineOrderingSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "online_ordering must be an object" };
+  }
+
+  const settings = input as Partial<OnlineOrderingSettings>;
+  const averagePrepMinutes = Number(settings.averagePrepMinutes);
+  const unconfirmedReminderMinutes = Number(settings.unconfirmedReminderMinutes);
+  if (!Number.isInteger(averagePrepMinutes) || averagePrepMinutes < 0 || averagePrepMinutes > 180) {
+    return { value: null, error: "averagePrepMinutes must be between 0 and 180" };
+  }
+
+  if (
+    !Number.isInteger(unconfirmedReminderMinutes) ||
+    unconfirmedReminderMinutes < 0 ||
+    unconfirmedReminderMinutes > 120
+  ) {
+    return { value: null, error: "unconfirmedReminderMinutes must be between 0 and 120" };
+  }
+
+  const pauseMessage = sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120);
+
+  return {
+    value: {
+      enabled: Boolean(settings.enabled),
+      allowScheduledOrders: Boolean(settings.allowScheduledOrders),
+      averagePrepMinutes,
+      unconfirmedReminderMinutes,
+      soundEnabled: Boolean(settings.soundEnabled),
+      pauseMessage,
+    },
+    error: null,
+  };
+};
+
 const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
     return validatePrinterSettings(input);
+  }
+
+  if (key === "online_ordering") {
+    return validateOnlineOrdering(input);
   }
 
   return validateAccessControl(input);

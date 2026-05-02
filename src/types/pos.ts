@@ -159,9 +159,19 @@ export interface AccessControlSettings {
   roles: RoleSetting[]
 }
 
+export interface OnlineOrderingSettings {
+  enabled: boolean
+  allowScheduledOrders: boolean
+  averagePrepMinutes: number
+  unconfirmedReminderMinutes: number
+  soundEnabled: boolean
+  pauseMessage: string
+}
+
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
+  onlineOrdering: OnlineOrderingSettings
 }
 
 export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'

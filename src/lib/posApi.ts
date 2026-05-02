@@ -9,6 +9,7 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   DailySalesReport,
+  OnlineOrderingSettings,
   PosMember,
   PosOrder,
   PosPaymentEvent,
@@ -217,6 +218,7 @@ interface AdminSettingsResponse {
 
 interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
+  onlineOrdering: OnlineOrderingSettings
 }
 
 interface DailyReportResponse {
@@ -257,7 +259,7 @@ interface ProductResponse {
   product: ApiProduct
 }
 
-export type AdminSettingKey = 'printer_settings' | 'access_control'
+export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering'
 export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -472,13 +474,40 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
   return Array.isArray(settings.roles)
 }
 
+export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  soundEnabled: true,
+  pauseMessage: '目前暫停線上點餐，請稍後再試',
+})
+
+const isOnlineOrderingSettings = (value: unknown): value is OnlineOrderingSettings => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const settings = value as OnlineOrderingSettings
+  return (
+    typeof settings.enabled === 'boolean' &&
+    typeof settings.allowScheduledOrders === 'boolean' &&
+    Number.isFinite(settings.averagePrepMinutes) &&
+    Number.isFinite(settings.unconfirmedReminderMinutes) &&
+    typeof settings.soundEnabled === 'boolean' &&
+    typeof settings.pauseMessage === 'string'
+  )
+}
+
 const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
   const accessControl = rows.find((row) => row.key === 'access_control')?.value
+  const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
 
   return {
     printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
     accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
+    onlineOrdering: isOnlineOrderingSettings(onlineOrdering) ? onlineOrdering : defaultOnlineOrderingSettings(),
   }
 }
 
@@ -704,8 +733,15 @@ export const updateAdminSetting = async <SettingValue>(
   return data.setting.value as SettingValue
 }
 
-export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =>
-  request<RuntimeSettingsResponse>('/settings/runtime')
+export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> => {
+  const data = await request<Partial<RuntimeSettingsResponse>>('/settings/runtime')
+  return {
+    printerSettings: isPrinterSettings(data.printerSettings) ? data.printerSettings : { stations: [], rules: [] },
+    onlineOrdering: isOnlineOrderingSettings(data.onlineOrdering)
+      ? data.onlineOrdering
+      : defaultOnlineOrderingSettings(),
+  }
+}
 
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {
   const data = await request<OrdersResponse>(`/orders?limit=${limit}`)

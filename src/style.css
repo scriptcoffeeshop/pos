@@ -3492,6 +3492,18 @@ h3 {
   transform: translateY(-1px);
 }
 
+.consumer-product-tile:disabled,
+.consumer-product-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.consumer-product-tile:disabled:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
 .consumer-product-footer {
   display: flex;
   align-items: center;
@@ -3559,6 +3571,10 @@ h3 {
 
 .consumer-product-row:hover strong {
   color: var(--primary-dark);
+}
+
+.consumer-product-row:disabled:hover strong {
+  color: var(--ink);
 }
 
 .consumer-product-row-copy {
@@ -3714,6 +3730,7 @@ h3 {
 .admin-limit-field,
 .admin-product-row label,
 .admin-product-stock-grid label,
+.admin-online-settings-grid label,
 .admin-member-create label,
 .admin-member-row label,
 .admin-station-row label,
@@ -3732,6 +3749,7 @@ h3 {
 .admin-product-row input,
 .admin-product-row select,
 .admin-product-stock-grid input,
+.admin-online-settings-grid input,
 .admin-member-create input,
 .admin-member-row input,
 .admin-station-row input,
@@ -4051,6 +4069,58 @@ h3 {
   white-space: nowrap;
 }
 
+.admin-online-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-online-status-grid article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.admin-online-status-grid span,
+.admin-online-status-grid small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-online-status-grid strong {
+  color: var(--ink);
+  font-size: 1.2rem;
+}
+
+.admin-online-toggle-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-online-toggle-grid .toggle-row {
+  min-height: 38px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-online-settings-grid {
+  display: grid;
+  grid-template-columns: 160px 160px minmax(260px, 1fr);
+  gap: 9px;
+  align-items: end;
+}
+
 .admin-operations-toolbar {
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -4248,6 +4318,7 @@ h3 {
 .admin-limit-field select:focus,
 .admin-product-row input:focus,
 .admin-product-row select:focus,
+.admin-online-settings-grid input:focus,
 .admin-member-create input:focus,
 .admin-member-row input:focus,
 .admin-station-row input:focus,
@@ -4482,6 +4553,10 @@ h3 {
     min-width: 0;
   }
 
+  .search-box.consumer-search {
+    width: auto;
+  }
+
   .segmented-control {
     grid-auto-flow: row;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4519,6 +4594,8 @@ h3 {
   .admin-section-grid,
   .admin-report-grid,
   .admin-report-sections,
+  .admin-online-status-grid,
+  .admin-online-settings-grid,
   .admin-operation-summary,
   .admin-operation-row,
   .admin-station-grid,

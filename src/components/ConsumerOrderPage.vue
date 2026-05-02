@@ -13,11 +13,26 @@ import {
   TicketCheck,
   Trash2,
 } from 'lucide-vue-next'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { categoryLabels, menuItems } from '../data/menu'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
-import { createOrder, fetchProducts, isPosApiConfigured } from '../lib/posApi'
-import type { CartLine, CustomerDraft, MenuCategory, MenuItem, PaymentMethod, PosOrder, ServiceMode } from '../types/pos'
+import {
+  createOrder,
+  defaultOnlineOrderingSettings,
+  fetchProducts,
+  fetchRuntimeSettings,
+  isPosApiConfigured,
+} from '../lib/posApi'
+import type {
+  CartLine,
+  CustomerDraft,
+  MenuCategory,
+  MenuItem,
+  OnlineOrderingSettings,
+  PaymentMethod,
+  PosOrder,
+  ServiceMode,
+} from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
@@ -49,6 +64,7 @@ const serviceMode = ref<ServiceMode>('takeout')
 const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 const menuCatalog = ref<MenuItem[]>([])
+const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
 const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
 const isSubmitting = ref(false)
@@ -96,7 +112,20 @@ const menuGroups = computed(() =>
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
+const canOrderOnline = computed(() => onlineOrdering.value.enabled)
+const onlineStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放接單' : '暫停接單'))
+const onlineStatusDetail = computed(() =>
+  onlineOrdering.value.enabled
+    ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+    : onlineOrdering.value.pauseMessage,
+)
+const requestedFulfillmentMinimum = computed(() => {
+  const nextTime = new Date(Date.now() + Math.max(onlineOrdering.value.averagePrepMinutes, 0) * 60_000)
+  const timezoneOffsetMs = nextTime.getTimezoneOffset() * 60 * 1000
+  return new Date(nextTime.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+})
 const canSubmit = computed(() =>
+  canOrderOnline.value &&
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
@@ -105,6 +134,11 @@ const canSubmit = computed(() =>
 )
 
 const addItem = (item: MenuItem): void => {
+  if (!canOrderOnline.value) {
+    formError.value = onlineOrdering.value.pauseMessage
+    return
+  }
+
   const existing = cartLines.value.find((line) => line.itemId === item.id)
   if (existing) {
     existing.quantity += 1
@@ -201,15 +235,23 @@ const loadOnlineMenu = async (): Promise<void> => {
 
   try {
     if (!isPosApiConfigured) {
+      onlineOrdering.value = defaultOnlineOrderingSettings()
       menuCatalog.value = onlineFallbackMenu()
       orderMessage.value = '線上菜單預覽'
       return
     }
 
-    const products = await fetchProducts('online')
+    const [runtimeSettings, products] = await Promise.all([
+      fetchRuntimeSettings(),
+      fetchProducts('online'),
+    ])
+    onlineOrdering.value = runtimeSettings.onlineOrdering
     menuCatalog.value = products
-    orderMessage.value = products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放'
+    orderMessage.value = onlineOrdering.value.enabled
+      ? (products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放')
+      : onlineOrdering.value.pauseMessage
   } catch (error) {
+    onlineOrdering.value = defaultOnlineOrderingSettings()
     menuCatalog.value = onlineFallbackMenu()
     orderMessage.value = error instanceof Error ? `菜單同步失敗：${error.message}` : '菜單同步失敗'
   } finally {
@@ -218,6 +260,16 @@ const loadOnlineMenu = async (): Promise<void> => {
 }
 
 const submitOnlineOrder = async (): Promise<void> => {
+  if (!canOrderOnline.value) {
+    formError.value = onlineOrdering.value.pauseMessage
+    return
+  }
+
+  if (!onlineOrdering.value.allowScheduledOrders && customer.requestedFulfillmentAt.trim()) {
+    formError.value = '目前未開放預約時間，請清除希望時間後再送出'
+    return
+  }
+
   if (!canSubmit.value) {
     formError.value = requiresDeliveryAddress.value
       ? '請填寫姓名、電話、外送地址並加入品項'
@@ -273,6 +325,15 @@ const submitOnlineOrder = async (): Promise<void> => {
 onMounted(() => {
   void loadOnlineMenu()
 })
+
+watch(
+  () => onlineOrdering.value.allowScheduledOrders,
+  (allowScheduledOrders) => {
+    if (!allowScheduledOrders) {
+      customer.requestedFulfillmentAt = ''
+    }
+  },
+)
 </script>
 
 <template>
@@ -287,8 +348,8 @@ onMounted(() => {
           <h2>Script Coffee</h2>
           <p class="consumer-status-line">
             <Clock3 :size="18" aria-hidden="true" />
-            <strong>準備中</strong>
-            <span>11:30 開始營業</span>
+            <strong>{{ onlineStatusLabel }}</strong>
+            <span>{{ onlineStatusDetail }}</span>
           </p>
           <p class="consumer-status-line">
             <ShoppingBag :size="18" aria-hidden="true" />
@@ -345,7 +406,14 @@ onMounted(() => {
       </div>
 
       <div v-if="displayMode === 'grid'" class="consumer-product-grid">
-        <button v-for="item in filteredMenu" :key="item.id" class="consumer-product-tile" type="button" @click="addItem(item)">
+        <button
+          v-for="item in filteredMenu"
+          :key="item.id"
+          class="consumer-product-tile"
+          type="button"
+          :disabled="!canOrderOnline"
+          @click="addItem(item)"
+        >
           <span class="product-tile-top">
             <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
             <span class="product-category">{{ categoryLabels[item.category] }}</span>
@@ -368,6 +436,7 @@ onMounted(() => {
             :key="item.id"
             class="consumer-product-row"
             type="button"
+            :disabled="!canOrderOnline"
             @click="addItem(item)"
           >
             <span class="consumer-product-row-copy">
@@ -446,7 +515,12 @@ onMounted(() => {
         </label>
         <label>
           希望時間
-          <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+          <input
+            v-model="customer.requestedFulfillmentAt"
+            type="datetime-local"
+            :disabled="!onlineOrdering.allowScheduledOrders"
+            :min="requestedFulfillmentMinimum"
+          />
         </label>
         <label v-if="requiresDeliveryAddress" class="wide-field">
           外送地址
@@ -477,7 +551,7 @@ onMounted(() => {
       <button class="primary-button consumer-submit-button" type="button" :disabled="!canSubmit" @click="submitOnlineOrder">
         <TicketCheck v-if="!isSubmitting" :size="20" aria-hidden="true" />
         <Clock3 v-else :size="20" aria-hidden="true" />
-        {{ isSubmitting ? '送出中' : '送出訂單' }}
+        {{ isSubmitting ? '送出中' : (canOrderOnline ? '送出訂單' : '暫停接單') }}
       </button>
 
       <article v-if="lastOrder" class="consumer-confirmation">

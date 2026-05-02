@@ -40,6 +40,7 @@ import type {
   DailySalesReport,
   MenuCategory,
   MenuItem,
+  OnlineOrderingSettings,
   PrinterSettings,
   PosAuditEvent,
   PosMember,
@@ -68,7 +69,17 @@ interface WalletAdjustmentDraft {
   note: string
 }
 
-type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'operations' | 'audit' | 'stations'
+type AdminTab =
+  | 'products'
+  | 'online'
+  | 'members'
+  | 'reports'
+  | 'payments'
+  | 'printing'
+  | 'access'
+  | 'operations'
+  | 'audit'
+  | 'stations'
 type PaymentEventStatusFilter = 'all' | 'applied' | 'duplicate' | 'unapplied'
 type OperationTimelineKind = 'audit' | 'register' | 'station'
 type OperationTimelineFilter = 'all' | OperationTimelineKind
@@ -93,6 +104,7 @@ const emit = defineEmits<{
 
 const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
+  { value: 'online', label: '線上點餐' },
   { value: 'members', label: '會員錢包' },
   { value: 'reports', label: '營運報表' },
   { value: 'payments', label: '支付事件' },
@@ -236,6 +248,15 @@ const emptyAccessControl = (): AccessControlSettings => ({
   roles: [],
 })
 
+const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  soundEnabled: true,
+  pauseMessage: '目前暫停線上點餐，請稍後再試',
+})
+
 const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
   stations: settings.stations.map((station) => ({ ...station })),
   rules: settings.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
@@ -244,6 +265,8 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
 })
+
+const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({ ...settings })
 
 const toDateInput = (date = new Date()): string => {
   const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
@@ -268,6 +291,7 @@ const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
+const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
@@ -303,6 +327,8 @@ const lowStockProducts = computed(() =>
 )
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
+const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
+const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
 const auditEventCount = computed(() => auditEvents.value.length)
 const paymentEventCount = computed(() => paymentEvents.value.length)
 const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
@@ -950,6 +976,7 @@ const loadAdminData = async (): Promise<void> => {
     dailyReport.value = report
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
+    onlineOrdering.value = cloneOnlineOrdering(settings.onlineOrdering)
     auditEvents.value = events
     paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
@@ -1255,6 +1282,34 @@ const savePrinterSettings = async (): Promise<void> => {
   }
 }
 
+const saveOnlineOrdering = async (): Promise<void> => {
+  savingSettingKey.value = 'online_ordering'
+  adminMessage.value = '儲存線上點餐設定'
+
+  try {
+    const savedSettings = await updateAdminSetting<OnlineOrderingSettings>(
+      adminPin.value.trim(),
+      'online_ordering',
+      {
+        ...onlineOrdering.value,
+        averagePrepMinutes: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.averagePrepMinutes) || 0), 0), 180),
+        unconfirmedReminderMinutes: Math.min(
+          Math.max(Math.trunc(Number(onlineOrdering.value.unconfirmedReminderMinutes) || 0), 0),
+          120,
+        ),
+        pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
+      },
+    )
+    onlineOrdering.value = cloneOnlineOrdering(savedSettings)
+    adminMessage.value = '線上點餐設定已更新'
+    emit('refreshPos')
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '線上點餐設定更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
 const addRole = (): void => {
   accessControl.value.roles.push({
     id: buildId('role'),
@@ -1340,6 +1395,14 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>線上/掃碼</span>
         <strong>{{ onlineProducts }}</strong>
+      </article>
+      <article>
+        <span>線上點餐</span>
+        <strong>{{ onlineOrderingStatusLabel }}</strong>
+      </article>
+      <article>
+        <span>備餐時間</span>
+        <strong>{{ onlineOrderingPrepLabel }}</strong>
       </article>
       <article>
         <span>低庫存</span>
@@ -1547,6 +1610,77 @@ const saveAccessControl = async (): Promise<void> => {
             <span>沒有符合條件的商品</span>
           </div>
         </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'online'" class="admin-tab-panel" aria-label="線上點餐設定">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Online</p>
+            <h2>線上點餐設定</h2>
+            <span class="panel-note">控制消費者頁接單狀態、預約與提醒節奏</span>
+          </div>
+          <button class="primary-button" type="button" :disabled="savingSettingKey === 'online_ordering'" @click="saveOnlineOrdering">
+            <Save :size="18" aria-hidden="true" />
+            {{ savingSettingKey === 'online_ordering' ? '儲存中' : '儲存線上設定' }}
+          </button>
+        </div>
+
+        <div class="admin-online-status-grid">
+          <article>
+            <span>接單狀態</span>
+            <strong>{{ onlineOrdering.enabled ? '開放接單' : '暫停接單' }}</strong>
+            <small>{{ onlineOrdering.enabled ? '消費者可送出新訂單' : '消費者頁會保留菜單但阻擋下單' }}</small>
+          </article>
+          <article>
+            <span>平均備餐</span>
+            <strong>{{ onlineOrdering.averagePrepMinutes }} 分</strong>
+            <small>顯示於消費者頁並作為預約最早時間參考</small>
+          </article>
+          <article>
+            <span>未確認提醒</span>
+            <strong>{{ onlineOrdering.unconfirmedReminderMinutes }} 分</strong>
+            <small>{{ onlineOrdering.soundEnabled ? '提示音已啟用' : '提示音未啟用' }}</small>
+          </article>
+        </div>
+
+        <section class="admin-subpanel">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Runtime</p>
+              <h3>接單與提醒</h3>
+            </div>
+          </div>
+
+          <div class="admin-online-toggle-grid">
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.enabled" type="checkbox" />
+              外帶外送開放接單
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.allowScheduledOrders" type="checkbox" />
+              允許顧客選希望時間
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.soundEnabled" type="checkbox" />
+              新單提示音
+            </label>
+          </div>
+
+          <div class="admin-online-settings-grid">
+            <label>
+              平均備餐分鐘
+              <input v-model.number="onlineOrdering.averagePrepMinutes" type="number" min="0" max="180" step="1" />
+            </label>
+            <label>
+              未確認提醒分鐘
+              <input v-model.number="onlineOrdering.unconfirmedReminderMinutes" type="number" min="0" max="120" step="1" />
+            </label>
+            <label class="wide-field">
+              暫停接單提示
+              <input v-model="onlineOrdering.pauseMessage" type="text" maxlength="120" />
+            </label>
+          </div>
+        </section>
       </section>
 
       <section v-else-if="activeAdminTab === 'members'" class="admin-tab-panel" aria-label="會員錢包">
