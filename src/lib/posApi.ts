@@ -9,6 +9,8 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   DailySalesReport,
+  OnlineMenuOptionGroup,
+  OnlineNotificationRepeatMode,
   OnlineOrderingSettings,
   PosMember,
   PosOrder,
@@ -480,24 +482,168 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
   soundEnabled: true,
+  notificationRepeatMode: 'continuous',
+  notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
 })
 
-const isOnlineOrderingSettings = (value: unknown): value is OnlineOrderingSettings => {
-  if (!value || typeof value !== 'object') {
-    return false
+const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', 'continuous'])
+
+const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' ? value.trim().slice(0, 80) : fallback
+
+const normalizeOnlineMenuOptionGroups = (value: unknown): OnlineMenuOptionGroup[] => {
+  if (!Array.isArray(value)) {
+    return []
   }
 
-  const settings = value as OnlineOrderingSettings
-  return (
-    typeof settings.enabled === 'boolean' &&
-    typeof settings.allowScheduledOrders === 'boolean' &&
-    Number.isFinite(settings.averagePrepMinutes) &&
-    Number.isFinite(settings.unconfirmedReminderMinutes) &&
-    typeof settings.soundEnabled === 'boolean' &&
-    typeof settings.pauseMessage === 'string'
+  const seenGroupIds = new Set<string>()
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const group = entry as Partial<OnlineMenuOptionGroup>
+    const id = sanitizeOnlineText(group.id)
+    const label = sanitizeOnlineText(group.label)
+    if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+      return []
+    }
+
+    const seenChoiceIds = new Set<string>()
+    const choices = group.choices.flatMap((choiceEntry) => {
+      if (!choiceEntry || typeof choiceEntry !== 'object') {
+        return []
+      }
+
+      const choice = choiceEntry as OnlineMenuOptionGroup['choices'][number]
+      const choiceId = sanitizeOnlineText(choice.id)
+      const choiceLabel = sanitizeOnlineText(choice.label)
+      if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+        return []
+      }
+
+      seenChoiceIds.add(choiceId)
+      const normalizedChoice: OnlineMenuOptionGroup['choices'][number] = {
+        id: choiceId,
+        label: choiceLabel,
+      }
+      if (Number.isFinite(choice.priceDelta)) {
+        normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0)
+      }
+      return [normalizedChoice]
+    })
+
+    if (choices.length === 0) {
+      return []
+    }
+
+    const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)))
+    const required = Boolean(group.required)
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0
+    seenGroupIds.add(id)
+
+    return [{
+      id,
+      label,
+      requirement: sanitizeOnlineText(group.requirement, required ? `必選 ${min} 個` : `選填最多 ${max} 個`),
+      required,
+      min,
+      max,
+      choices,
+    }]
+  })
+}
+
+const normalizeProductOptionAssignments = (
+  value: unknown,
+  groups: OnlineMenuOptionGroup[],
+): Record<string, string[]> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const validGroupIds = new Set(groups.map((group) => group.id))
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string[]>>(
+    (assignments, [productId, groupIds]) => {
+      if (!Array.isArray(groupIds)) {
+        return assignments
+      }
+
+      const normalizedIds = [
+        ...new Set(
+          groupIds.filter((groupId): groupId is string =>
+            typeof groupId === 'string' && validGroupIds.has(groupId),
+          ),
+        ),
+      ]
+      if (normalizedIds.length > 0) {
+        assignments[productId] = normalizedIds
+      }
+      return assignments
+    },
+    {},
   )
+}
+
+const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings => {
+  const defaults = defaultOnlineOrderingSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings>
+  const menuOptionGroups = normalizeOnlineMenuOptionGroups(settings.menuOptionGroups)
+  const notificationRepeatMode = notificationRepeatModes.has(settings.notificationRepeatMode as OnlineNotificationRepeatMode)
+    ? (settings.notificationRepeatMode as OnlineNotificationRepeatMode)
+    : defaults.notificationRepeatMode
+
+  return {
+    enabled: typeof settings.enabled === 'boolean' ? settings.enabled : defaults.enabled,
+    allowScheduledOrders:
+      typeof settings.allowScheduledOrders === 'boolean' ? settings.allowScheduledOrders : defaults.allowScheduledOrders,
+    averagePrepMinutes: Number.isFinite(settings.averagePrepMinutes)
+      ? Math.min(Math.max(Math.trunc(settings.averagePrepMinutes ?? defaults.averagePrepMinutes), 0), 180)
+      : defaults.averagePrepMinutes,
+    unconfirmedReminderMinutes: Number.isFinite(settings.unconfirmedReminderMinutes)
+      ? Math.min(Math.max(Math.trunc(settings.unconfirmedReminderMinutes ?? defaults.unconfirmedReminderMinutes), 0), 120)
+      : defaults.unconfirmedReminderMinutes,
+    acceptanceRequired:
+      typeof settings.acceptanceRequired === 'boolean' ? settings.acceptanceRequired : defaults.acceptanceRequired,
+    acceptWithoutPrinting:
+      typeof settings.acceptWithoutPrinting === 'boolean'
+        ? settings.acceptWithoutPrinting
+        : defaults.acceptWithoutPrinting,
+    soundEnabled: typeof settings.soundEnabled === 'boolean' ? settings.soundEnabled : defaults.soundEnabled,
+    notificationRepeatMode,
+    notificationVolume: Number.isFinite(settings.notificationVolume)
+      ? Math.min(Math.max(Math.trunc(settings.notificationVolume ?? defaults.notificationVolume), 0), 100)
+      : defaults.notificationVolume,
+    pauseMessage:
+      typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
+        ? settings.pauseMessage.trim().slice(0, 120)
+        : defaults.pauseMessage,
+    menuOptionGroups,
+    productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    noteSupplyStatuses:
+      settings.noteSupplyStatuses && typeof settings.noteSupplyStatuses === 'object' && !Array.isArray(settings.noteSupplyStatuses)
+        ? Object.entries(settings.noteSupplyStatuses).reduce<Record<string, 'normal' | 'online-stopped' | 'stopped'>>(
+          (statuses, [noteId, status]) => {
+            if (status === 'normal' || status === 'online-stopped' || status === 'stopped') {
+              statuses[noteId] = status
+            }
+            return statuses
+          },
+          {},
+        )
+        : defaults.noteSupplyStatuses,
+  }
 }
 
 const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
@@ -508,7 +654,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   return {
     printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
     accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
-    onlineOrdering: isOnlineOrderingSettings(onlineOrdering) ? onlineOrdering : defaultOnlineOrderingSettings(),
+    onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
   }
 }
 
@@ -763,9 +909,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
   const data = await request<Partial<RuntimeSettingsResponse>>('/settings/runtime')
   return {
     printerSettings: isPrinterSettings(data.printerSettings) ? data.printerSettings : { stations: [], rules: [] },
-    onlineOrdering: isOnlineOrderingSettings(data.onlineOrdering)
-      ? data.onlineOrdering
-      : defaultOnlineOrderingSettings(),
+    onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
   }
 }
 

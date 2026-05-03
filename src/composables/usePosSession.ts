@@ -70,6 +70,7 @@ const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
 const localCounterOrdersStorageKey = 'script-coffee-pos-local-counter-orders'
 const localProductsStorageKey = 'script-coffee-pos-local-products'
+const acceptedOnlineOrderIdsStorageKey = 'script-coffee-pos-accepted-online-orders'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -385,6 +386,33 @@ const writeLocalCounterOrders = (orders: PosOrder[]): void => {
     }
 
     globalThis.localStorage?.setItem(localCounterOrdersStorageKey, JSON.stringify(visibleOrders))
+  } catch {
+    return
+  }
+}
+
+const readAcceptedOnlineOrderIds = (): string[] => {
+  try {
+    const rawIds = globalThis.localStorage?.getItem(acceptedOnlineOrderIdsStorageKey)
+    if (!rawIds) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawIds)
+    return Array.isArray(parsed)
+      ? parsed.filter((orderId): orderId is string => typeof orderId === 'string').slice(0, 100)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeAcceptedOnlineOrderIds = (orderIds: string[]): void => {
+  try {
+    globalThis.localStorage?.setItem(
+      acceptedOnlineOrderIdsStorageKey,
+      JSON.stringify([...new Set(orderIds)].slice(-100)),
+    )
   } catch {
     return
   }
@@ -778,6 +806,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
   const onlineReminderClock = ref(Date.now())
   const acknowledgedOnlineReminderIds = ref<string[]>([])
+  const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
   const onlineReminderAudioMessage = ref('')
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
@@ -828,6 +857,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     Math.max(0, onlineOrderingSettings.value.unconfirmedReminderMinutes),
   )
 
+  const onlineOrderAccepted = (order: PosOrder): boolean =>
+    acceptedOnlineOrderIds.value.includes(order.id) || Boolean(order.claimedBy)
+
+  const onlineOrderRequiresAcceptance = (order: PosOrder): boolean =>
+    onlineOrderingSettings.value.acceptanceRequired &&
+    (order.source === 'online' || order.source === 'qr') &&
+    order.status === 'new' &&
+    ['pending', 'authorized', 'paid'].includes(order.paymentStatus) &&
+    !onlineOrderAccepted(order)
+
   const unconfirmedOnlineOrders = computed(() =>
     orderQueue.value.filter((order) =>
       (order.source === 'online' || order.source === 'qr') &&
@@ -852,12 +891,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const activeOnlineReminderOrders = computed(() => {
     const acknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
-    return overdueUnconfirmedOnlineOrders.value.filter((order) => !acknowledgedIds.has(order.id))
+    const candidateOrders = onlineOrderingSettings.value.acceptanceRequired
+      ? unconfirmedOnlineOrders.value.filter(onlineOrderRequiresAcceptance)
+      : overdueUnconfirmedOnlineOrders.value
+    return candidateOrders.filter((order) => !acknowledgedIds.has(order.id))
   })
 
-  const onlineReminderSignature = computed(() =>
-    activeOnlineReminderOrders.value.map((order) => order.id).sort().join('|'),
-  )
+  const onlineReminderSignature = computed(() => {
+    const orderSignature = activeOnlineReminderOrders.value.map((order) => order.id).sort().join('|')
+    if (!orderSignature || onlineOrderingSettings.value.notificationRepeatMode !== 'continuous') {
+      return orderSignature
+    }
+
+    return `${orderSignature}:${Math.floor(onlineReminderClock.value / 60_000)}`
+  })
 
   const onlineOrderReminder = computed(() => ({
     soundEnabled: onlineOrderingSettings.value.soundEnabled,
@@ -883,8 +930,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       const now = audioContext.currentTime
       const gain = audioContext.createGain()
+      const volume = Math.min(Math.max(onlineOrderingSettings.value.notificationVolume, 0), 100) / 100
       gain.gain.setValueAtTime(0.0001, now)
-      gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.18 * volume), now + 0.02)
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42)
       gain.connect(audioContext.destination)
 
@@ -927,20 +975,29 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const acknowledgeOnlineOrderReminders = (): void => {
+    const snoozedIds = activeOnlineReminderOrders.value.map((order) => order.id)
     const nextAcknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
-    for (const order of overdueUnconfirmedOnlineOrders.value) {
-      nextAcknowledgedIds.add(order.id)
+    for (const orderId of snoozedIds) {
+      nextAcknowledgedIds.add(orderId)
     }
 
     acknowledgedOnlineReminderIds.value = [...nextAcknowledgedIds]
+    if (onlineOrderingSettings.value.acceptanceRequired && snoozedIds.length > 0) {
+      globalThis.setTimeout(() => {
+        acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
+          !snoozedIds.includes(orderId),
+        )
+        onlineReminderClock.value = Date.now()
+      }, 60_000)
+    }
   }
 
   watch(
-    overdueUnconfirmedOnlineOrders,
+    unconfirmedOnlineOrders,
     (orders) => {
-      const overdueIds = new Set(orders.map((order) => order.id))
+      const activeIds = new Set(orders.map((order) => order.id))
       acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
-        overdueIds.has(orderId),
+        activeIds.has(orderId),
       )
     },
   )
@@ -951,6 +1008,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       maybePlayOnlineOrderReminder()
     },
   )
+
+  watch(orderQueue, (orders) => {
+    const activeOrderIds = new Set(orders.filter((order) => !['served', 'voided', 'failed'].includes(order.status)).map((order) => order.id))
+    const nextAcceptedIds = acceptedOnlineOrderIds.value.filter((orderId) => activeOrderIds.has(orderId))
+    if (nextAcceptedIds.length !== acceptedOnlineOrderIds.value.length) {
+      acceptedOnlineOrderIds.value = nextAcceptedIds
+      writeAcceptedOnlineOrderIds(nextAcceptedIds)
+    }
+  })
 
   const filteredMenu = computed(() => {
     const keyword = searchTerm.value.trim().toLowerCase()
@@ -991,7 +1057,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
-  const pendingOrders = computed(() => orderQueue.value.filter((order) => order.status !== 'served' && order.status !== 'voided'))
+  const pendingOrders = computed(() =>
+    orderQueue.value.filter((order) =>
+      order.status !== 'served' &&
+      order.status !== 'voided' &&
+      !onlineOrderRequiresAcceptance(order),
+    ),
+  )
 
   const setBackendStatus = (mode: BackendMode, label: string, detail: string): void => {
     backendStatus.mode = mode
@@ -1350,6 +1422,33 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } finally {
       claimingOrderId.value = null
     }
+  }
+
+  const markOnlineOrderAccepted = (orderId: string): void => {
+    acceptedOnlineOrderIds.value = [...new Set([...acceptedOnlineOrderIds.value, orderId])].slice(-100)
+    acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((entry) => entry !== orderId)
+    writeAcceptedOnlineOrderIds(acceptedOnlineOrderIds.value)
+  }
+
+  const acceptOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return false
+    }
+
+    if (!onlineOrderRequiresAcceptance(order)) {
+      markOnlineOrderAccepted(order.id)
+      return true
+    }
+
+    const claimed = await claimOrderForStation(order.id, Boolean(order.claimedBy && orderClaimExpired(order)))
+    if (!claimed) {
+      return false
+    }
+
+    markOnlineOrderAccepted(order.id)
+    setBackendStatus('connected', '線上訂單已接單', `${order.id} 已排入桌況頁`)
+    return true
   }
 
   const releaseOrderClaimForStation = async (orderId: string): Promise<void> => {
@@ -2580,6 +2679,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   return {
     appendCustomerNote,
     acknowledgeOnlineOrderReminders,
+    acceptOnlineOrderForStation,
     activeOnlineReminderOrders,
     backendStatus,
     cartLines,
@@ -2614,6 +2714,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderClaimExpired,
     orderClaimedByCurrentStation,
     orderClaimedByOtherStation,
+    onlineOrderRequiresAcceptance,
     onlineOrderReminder,
     onlineOrderingSettings,
     paymentMethod,

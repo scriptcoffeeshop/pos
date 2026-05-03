@@ -160,13 +160,38 @@ export interface AccessControlSettings {
   roles: RoleSetting[]
 }
 
+export interface OnlineMenuOptionChoice {
+  id: string
+  label: string
+  priceDelta?: number
+}
+
+export interface OnlineMenuOptionGroup {
+  id: string
+  label: string
+  requirement: string
+  required: boolean
+  min: number
+  max: number
+  choices: OnlineMenuOptionChoice[]
+}
+
+export type OnlineNotificationRepeatMode = 'once' | 'continuous'
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   allowScheduledOrders: boolean
   averagePrepMinutes: number
   unconfirmedReminderMinutes: number
+  acceptanceRequired: boolean
+  acceptWithoutPrinting: boolean
   soundEnabled: boolean
+  notificationRepeatMode: OnlineNotificationRepeatMode
+  notificationVolume: number
   pauseMessage: string
+  menuOptionGroups: OnlineMenuOptionGroup[]
+  productOptionAssignments: Record<string, string[]>
+  noteSupplyStatuses: Record<string, ProductSupplyStatus>
 }
 
 export interface PosAdminSettings {

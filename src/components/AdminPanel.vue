@@ -253,8 +253,15 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
   soundEnabled: true,
+  notificationRepeatMode: 'continuous',
+  notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
 })
 
 const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
@@ -266,7 +273,22 @@ const cloneAccessControl = (settings: AccessControlSettings): AccessControlSetti
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
 })
 
-const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({ ...settings })
+const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
+  ...defaultOnlineOrderingSettings(),
+  ...settings,
+  menuOptionGroups: settings.menuOptionGroups.map((group) => ({
+    ...group,
+    choices: group.choices.map((choice) => ({ ...choice })),
+  })),
+  productOptionAssignments: Object.entries(settings.productOptionAssignments).reduce<Record<string, string[]>>(
+    (assignments, [productId, groupIds]) => {
+      assignments[productId] = [...groupIds]
+      return assignments
+    },
+    {},
+  ),
+  noteSupplyStatuses: { ...settings.noteSupplyStatuses },
+})
 
 const toDateInput = (date = new Date()): string => {
   const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
@@ -1297,7 +1319,13 @@ const saveOnlineOrdering = async (): Promise<void> => {
           Math.max(Math.trunc(Number(onlineOrdering.value.unconfirmedReminderMinutes) || 0), 0),
           120,
         ),
+        notificationRepeatMode:
+          onlineOrdering.value.notificationRepeatMode === 'once' ? 'once' : 'continuous',
+        notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
+        menuOptionGroups: onlineOrdering.value.menuOptionGroups,
+        productOptionAssignments: onlineOrdering.value.productOptionAssignments,
+        noteSupplyStatuses: onlineOrdering.value.noteSupplyStatuses,
       },
     )
     onlineOrdering.value = cloneOnlineOrdering(savedSettings)
@@ -1641,6 +1669,11 @@ const saveAccessControl = async (): Promise<void> => {
             <strong>{{ onlineOrdering.unconfirmedReminderMinutes }} 分</strong>
             <small>{{ onlineOrdering.soundEnabled ? '提示音已啟用' : '提示音未啟用' }}</small>
           </article>
+          <article>
+            <span>接單流程</span>
+            <strong>{{ onlineOrdering.acceptanceRequired ? '平板確認' : '自動入列' }}</strong>
+            <small>{{ onlineOrdering.acceptWithoutPrinting ? '接單不自動出單' : '接單後依列印站規則' }}</small>
+          </article>
         </div>
 
         <section class="admin-subpanel">
@@ -1664,6 +1697,14 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.soundEnabled" type="checkbox" />
               新單提示音
             </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.acceptanceRequired" type="checkbox" />
+              線上/掃碼單需平板接單
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.acceptWithoutPrinting" type="checkbox" />
+              接單時不自動出單
+            </label>
           </div>
 
           <div class="admin-online-settings-grid">
@@ -1674,6 +1715,18 @@ const saveAccessControl = async (): Promise<void> => {
             <label>
               未確認提醒分鐘
               <input v-model.number="onlineOrdering.unconfirmedReminderMinutes" type="number" min="0" max="120" step="1" />
+            </label>
+            <label>
+              提示聲播放
+              <select v-model="onlineOrdering.notificationRepeatMode">
+                <option value="continuous">連續提醒</option>
+                <option value="once">只播放一次</option>
+              </select>
+            </label>
+            <label>
+              提示音量
+              <input v-model.number="onlineOrdering.notificationVolume" type="range" min="0" max="100" step="5" />
+              <small>{{ onlineOrdering.notificationVolume }}%</small>
             </label>
             <label class="wide-field">
               暫停接單提示

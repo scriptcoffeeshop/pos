@@ -214,13 +214,39 @@ interface AccessControlSettings {
   roles: RoleSetting[];
 }
 
+interface OnlineMenuOptionChoice {
+  id: string;
+  label: string;
+  priceDelta?: number;
+}
+
+interface OnlineMenuOptionGroup {
+  id: string;
+  label: string;
+  requirement: string;
+  required: boolean;
+  min: number;
+  max: number;
+  choices: OnlineMenuOptionChoice[];
+}
+
+type OnlineNotificationRepeatMode = "once" | "continuous";
+type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
+
 interface OnlineOrderingSettings {
   enabled: boolean;
   allowScheduledOrders: boolean;
   averagePrepMinutes: number;
   unconfirmedReminderMinutes: number;
+  acceptanceRequired: boolean;
+  acceptWithoutPrinting: boolean;
   soundEnabled: boolean;
+  notificationRepeatMode: OnlineNotificationRepeatMode;
+  notificationVolume: number;
   pauseMessage: string;
+  menuOptionGroups: OnlineMenuOptionGroup[];
+  productOptionAssignments: Record<string, string[]>;
+  noteSupplyStatuses: Record<string, ProductSupplyStatus>;
 }
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
@@ -361,8 +387,15 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
   soundEnabled: true,
+  notificationRepeatMode: "continuous",
+  notificationVolume: 80,
   pauseMessage: "目前暫停線上點餐，請稍後再試",
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
 };
 
 const loadOrder = (orderId: string) =>
@@ -2808,6 +2841,112 @@ const validateAccessControl = (input: unknown): {
   return { value: { roles }, error: null };
 };
 
+const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenGroupIds = new Set<string>();
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const group = entry as Partial<OnlineMenuOptionGroup>;
+    const id = sanitizeText(group.id, "").slice(0, 80);
+    const label = sanitizeText(group.label, "").slice(0, 80);
+    if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+      return [];
+    }
+
+    const seenChoiceIds = new Set<string>();
+    const choices = group.choices.flatMap((entryChoice) => {
+      if (!entryChoice || typeof entryChoice !== "object") {
+        return [];
+      }
+
+      const choice = entryChoice as Partial<OnlineMenuOptionChoice>;
+      const choiceId = sanitizeText(choice.id, "").slice(0, 80);
+      const choiceLabel = sanitizeText(choice.label, "").slice(0, 80);
+      if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+        return [];
+      }
+
+      seenChoiceIds.add(choiceId);
+      const normalizedChoice: OnlineMenuOptionChoice = {
+        id: choiceId,
+        label: choiceLabel,
+      };
+      if (Number.isFinite(choice.priceDelta)) {
+        normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0);
+      }
+      return [normalizedChoice];
+    });
+
+    if (choices.length === 0) {
+      return [];
+    }
+
+    const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)));
+    const required = Boolean(group.required);
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0;
+    const requirement = sanitizeText(group.requirement, required ? `必選 ${min} 個` : `選填最多 ${max} 個`).slice(0, 80);
+    seenGroupIds.add(id);
+
+    return [{
+      id,
+      label,
+      requirement,
+      required,
+      min,
+      max,
+      choices,
+    }];
+  });
+};
+
+const normalizeProductOptionAssignments = (
+  input: unknown,
+  groups: OnlineMenuOptionGroup[],
+): Record<string, string[]> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const validGroupIds = new Set(groups.map((group) => group.id));
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, string[]>>((assignments, [productId, groupIds]) => {
+    if (!Array.isArray(groupIds)) {
+      return assignments;
+    }
+
+    const normalizedIds = [
+      ...new Set(groupIds.filter((groupId): groupId is string =>
+        typeof groupId === "string" && validGroupIds.has(groupId)
+      )),
+    ];
+    if (normalizedIds.length > 0) {
+      assignments[productId.slice(0, 80)] = normalizedIds;
+    }
+    return assignments;
+  }, {});
+};
+
+const normalizeNoteSupplyStatuses = (input: unknown): Record<string, ProductSupplyStatus> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, ProductSupplyStatus>>(
+    (statuses, [noteId, status]) => {
+      if (status === "normal" || status === "online-stopped" || status === "stopped") {
+        statuses[noteId.slice(0, 160)] = status;
+      }
+      return statuses;
+    },
+    {},
+  );
+};
+
 const validateOnlineOrdering = (input: unknown): {
   value: OnlineOrderingSettings | null;
   error: string | null;
@@ -2819,6 +2958,7 @@ const validateOnlineOrdering = (input: unknown): {
   const settings = input as Partial<OnlineOrderingSettings>;
   const averagePrepMinutes = Number(settings.averagePrepMinutes);
   const unconfirmedReminderMinutes = Number(settings.unconfirmedReminderMinutes);
+  const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
   if (!Number.isInteger(averagePrepMinutes) || averagePrepMinutes < 0 || averagePrepMinutes > 180) {
     return { value: null, error: "averagePrepMinutes must be between 0 and 180" };
   }
@@ -2831,7 +2971,16 @@ const validateOnlineOrdering = (input: unknown): {
     return { value: null, error: "unconfirmedReminderMinutes must be between 0 and 120" };
   }
 
+  if (!Number.isInteger(notificationVolume) || notificationVolume < 0 || notificationVolume > 100) {
+    return { value: null, error: "notificationVolume must be between 0 and 100" };
+  }
+
   const pauseMessage = sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120);
+  const notificationRepeatMode: OnlineNotificationRepeatMode =
+    settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
+      ? settings.notificationRepeatMode
+      : defaultOnlineOrdering.notificationRepeatMode;
+  const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
 
   return {
     value: {
@@ -2839,8 +2988,15 @@ const validateOnlineOrdering = (input: unknown): {
       allowScheduledOrders: Boolean(settings.allowScheduledOrders),
       averagePrepMinutes,
       unconfirmedReminderMinutes,
+      acceptanceRequired: settings.acceptanceRequired !== false,
+      acceptWithoutPrinting: Boolean(settings.acceptWithoutPrinting),
       soundEnabled: Boolean(settings.soundEnabled),
+      notificationRepeatMode,
+      notificationVolume,
       pauseMessage,
+      menuOptionGroups,
+      productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+      noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
     },
     error: null,
   };

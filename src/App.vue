@@ -45,10 +45,12 @@ import {
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
+import { isPosApiConfigured, updateAdminSetting } from './lib/posApi'
 import type {
   CartLine,
   MenuCategory,
   MenuItem,
+  OnlineOrderingSettings,
   OrderSource,
   OrderStatus,
   PaymentMethod,
@@ -463,6 +465,7 @@ const {
   addConfiguredItem,
   addItem,
   appendCustomerNote,
+  acceptOnlineOrderForStation,
   acknowledgeOnlineOrderReminders,
   activeOnlineReminderOrders,
   backendStatus,
@@ -498,7 +501,9 @@ const {
   orderClaimedByOtherStation,
   orderPendingSync,
   orderQueue,
+  onlineOrderRequiresAcceptance,
   onlineOrderReminder,
+  onlineOrderingSettings,
   paymentMethod,
   pendingOrders,
   printOrder,
@@ -877,14 +882,48 @@ const undoLastSupplyAction = (): void => {
   supplyActionMessage.value = `已回復：${snapshot.label}`
 }
 
-const saveSupplyChanges = (): void => {
+const onlineOptionGroupsForSync = (): OnlineOrderingSettings['menuOptionGroups'] =>
+  cloneOptionGroups(optionGroupCatalog.value)
+
+const onlineProductAssignmentsForSync = (): OnlineOrderingSettings['productOptionAssignments'] =>
+  cloneProductAssignments(productOptionAssignments.value)
+
+const saveSupplyChanges = async (): Promise<void> => {
   writeSupplyStatusMap(supplyProductStatusStorageKey, productSupplyStatuses.value)
   writeSupplyStatusMap(supplyNoteStatusStorageKey, noteSupplyStatuses.value)
   writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
   writeOptionGroups(optionGroupCatalog.value)
   writeProductOptionAssignments(productOptionAssignments.value)
   supplyHasUnsavedChanges.value = false
-  supplyActionMessage.value = '供應狀態已儲存'
+
+  if (!isPosApiConfigured) {
+    supplyActionMessage.value = '供應狀態已儲存；線上同步需先連線 POS API'
+    return
+  }
+
+  const adminPin = stationPin.value.trim()
+  if (!adminPin) {
+    supplyActionMessage.value = '供應狀態已儲存；輸入 PIN 後可同步線上點餐'
+    return
+  }
+
+  try {
+    const syncedSettings = await updateAdminSetting<OnlineOrderingSettings>(
+      adminPin,
+      'online_ordering',
+      {
+        ...onlineOrderingSettings.value,
+        menuOptionGroups: onlineOptionGroupsForSync(),
+        productOptionAssignments: onlineProductAssignmentsForSync(),
+        noteSupplyStatuses: { ...noteSupplyStatuses.value },
+      },
+    )
+    onlineOrderingSettings.value = syncedSettings
+    supplyActionMessage.value = '供應狀態已儲存並同步線上點餐'
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '線上同步失敗'
+    supplyActionMessage.value = `供應狀態已儲存；線上同步失敗：${message}`
+  }
 }
 
 const categoryLabelFor = (category: MenuCategory): string =>
@@ -1238,6 +1277,7 @@ const sortQueueOrders = (orders: PosOrder[]): PosOrder[] =>
 const visibleQueueOrders = computed(() => {
   const keyword = queueSearchTerm.value.trim().toLowerCase()
   return sortQueueOrders(queueBaseOrders.value.filter((order) =>
+    !onlineOrderRequiresAcceptance(order) &&
     orderMatchesQueueSearch(order, keyword) &&
     orderMatchesQueuePayment(order) &&
     orderMatchesQueueDate(order) &&
@@ -1381,6 +1421,7 @@ const queueFilterNote = computed(() => {
 const activeOnlineReminderIds = computed(() =>
   new Set(activeOnlineReminderOrders.value.map((order) => order.id)),
 )
+const primaryOnlineReminderOrder = computed(() => activeOnlineReminderOrders.value[0] ?? null)
 const onlineReminderToneLabel = computed(() =>
   onlineOrderReminder.value.soundEnabled ? '提示音已開啟' : '提示音已關閉',
 )
@@ -2944,6 +2985,17 @@ const showOnlineReminderOrders = (): void => {
   setWorkspaceTab('queue')
 }
 
+const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+  const accepted = await acceptOnlineOrderForStation(order.id)
+  if (accepted) {
+    queueActionMessage.value = `${compactOrderId(order.id)} 已接單並排入桌況頁`
+    setWorkspaceTab('queue')
+    return
+  }
+
+  queueActionMessage.value = `${compactOrderId(order.id)} 接單失敗，請稍後重試`
+}
+
 const orderNeedsOnlineReminder = (order: PosOrder): boolean => activeOnlineReminderIds.value.has(order.id)
 
 const applyQueueFulfillmentFilter = (filter: QueueFulfillmentFilter): void => {
@@ -4420,20 +4472,27 @@ onBeforeUnmount(() => {
                     <div class="online-reminder-summary">
                       <CircleAlert :size="22" aria-hidden="true" />
                       <div>
-                        <p class="eyebrow">Online Alert</p>
-                        <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單未確認</h3>
+                        <p class="eyebrow">Online Order</p>
+                        <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單待接單</h3>
                         <span>
                           {{ onlineReminderThresholdLabel }} · {{ onlineReminderToneLabel }} ·
-                          目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待接手
+                          目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待確認
                         </span>
                         <small v-if="onlineOrderReminder.audioMessage">{{ onlineOrderReminder.audioMessage }}</small>
+                        <div class="online-reminder-list">
+                          <article v-for="order in activeOnlineReminderOrders.slice(0, 3)" :key="order.id">
+                            <strong>{{ compactOrderId(order.id) }}</strong>
+                            <span>{{ order.customerName || '線上顧客' }} · {{ serviceModeLabels[order.mode] }} · {{ formatCurrency(order.subtotal) }}</span>
+                            <button type="button" @click="acceptOnlineReminderOrder(order)">接單</button>
+                          </article>
+                        </div>
                       </div>
                     </div>
                     <div class="online-reminder-actions">
-                      <button type="button" @click="acknowledgeOnlineOrderReminders">已讀提醒</button>
+                      <button type="button" @click="acknowledgeOnlineOrderReminders">稍後提醒</button>
                       <button class="primary-button" type="button" @click="showOnlineReminderOrders">
                         <ReceiptText :size="18" aria-hidden="true" />
-                        查看訂單
+                        查看待接單
                       </button>
                     </div>
                   </section>
@@ -5235,6 +5294,28 @@ onBeforeUnmount(() => {
               </aside>
             </section>
           </section>
+        </section>
+
+        <section
+          v-if="primaryOnlineReminderOrder"
+          class="online-order-notification"
+          role="alertdialog"
+          aria-live="assertive"
+          aria-label="線上訂單待接單"
+        >
+          <div>
+            <p class="eyebrow">Online Order</p>
+            <h3>{{ compactOrderId(primaryOnlineReminderOrder.id) }} 待接單</h3>
+            <span>
+              {{ primaryOnlineReminderOrder.customerName || '線上顧客' }} ·
+              {{ serviceModeLabels[primaryOnlineReminderOrder.mode] }} ·
+              {{ formatCurrency(primaryOnlineReminderOrder.subtotal) }}
+            </span>
+          </div>
+          <button type="button" @click="acknowledgeOnlineOrderReminders">稍後</button>
+          <button class="primary-button" type="button" @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder)">
+            接單
+          </button>
         </section>
 
         <div
