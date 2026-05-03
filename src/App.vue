@@ -2973,29 +2973,15 @@ onBeforeUnmount(() => {
                       <strong>{{ filteredMenu.length }} 項</strong>
                     </div>
 
-                    <div v-if="quickAddItems.length > 0" class="quick-add-strip" aria-label="快速加購">
-                      <button
-                        v-for="(item, index) in quickAddItems"
-                        :key="item.id"
-                        class="quick-add-button"
-                        type="button"
-                        @click="selectMenuItem(item)"
-                      >
-                        <span class="quick-add-rank">{{ index + 1 }}</span>
-                        <span class="quick-add-name">{{ item.name }}</span>
-                        <strong>{{ formatCurrency(item.price) }}</strong>
-                        <span v-if="lineQuantityByItem(item.id) > 0" class="quick-add-count">
-                          x{{ lineQuantityByItem(item.id) }}
-                        </span>
-                      </button>
-                    </div>
-
                     <div class="product-grid">
                       <article
                         v-for="item in filteredMenu"
                         :key="item.id"
                         class="product-tile"
-                        :class="{ 'product-tile--in-cart': lineQuantityByItem(item.id) > 0 }"
+                        :class="{
+                          'product-tile--in-cart': lineQuantityByItem(item.id) > 0,
+                          'product-tile--quantity-control': lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item),
+                        }"
                       >
                         <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
                           <span class="product-tile-top">

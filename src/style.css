@@ -433,7 +433,7 @@ button:disabled {
 }
 
 .pos-main-surface .workspace--order {
-  grid-template-columns: minmax(340px, 0.34fr) minmax(0, 1fr);
+  grid-template-columns: minmax(420px, 0.4fr) minmax(0, 1fr);
   min-height: 100svh;
 }
 
@@ -1013,7 +1013,7 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr) auto auto;
 }
 
-.pos-main-surface--ordering .product-tile--in-cart .product-tile-main {
+.pos-main-surface--ordering .product-tile--quantity-control .product-tile-main {
   padding-bottom: 44px;
 }
 
