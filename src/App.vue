@@ -81,6 +81,7 @@ type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
 type SupplyCategoryFilter = MenuCategory | 'notes'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
+type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -477,6 +478,7 @@ const {
   customer,
   deletingPrintJobId,
   decreaseLine,
+  deleteOrderFromQueue,
   deleteProductForStation,
   deletePrintJobForOrder,
   filteredMenu,
@@ -486,6 +488,7 @@ const {
   isRegisterBusy,
   lastPrintPreview,
   menuCatalog,
+  loadCounterOrderForEditing,
   loadProductStatusCatalog,
   loadRegisterSession,
   orderClaimExpired,
@@ -513,12 +516,12 @@ const {
   selectedCategory,
   sendPrinterHealthcheck,
   serviceMode,
+  saveCounterOrder,
   setItemQuantity,
   setLineQuantity,
   startCounterDraft,
   stationClaimLabel,
   stationHeartbeatMessage,
-  submitCounterOrder,
   togglingProductId,
   updateConfiguredLine,
   openRegisterSessionForStation,
@@ -1922,6 +1925,13 @@ const clearTicketDraft = (): void => {
   closeOptionPanel()
 }
 
+const activeTicketAction = ref<TicketAction | null>(null)
+
+const ticketActionDisabled = (): boolean =>
+  (cartLines.value.length === 0 && !activeOptionItem.value) ||
+  Boolean(activeTicketAction.value) ||
+  isSubmitting.value
+
 const optionSelectionsFromLine = (line: CartLine): Record<MenuOptionGroupId, string[]> => {
   const lineOptions = new Set(line.options)
 
@@ -2004,32 +2014,40 @@ const confirmMenuOptions = (): boolean => {
   return true
 }
 
-const handleSubmitCounterOrder = async (): Promise<void> => {
+const handleTicketAction = async (action: TicketAction): Promise<void> => {
+  if (ticketActionDisabled()) {
+    return
+  }
+
   if (activeOptionItem.value && !confirmMenuOptions()) {
     return
   }
 
-  const orderIdsBeforeSubmit = new Set(orderQueue.value.map((order) => order.id))
-  const orderSubmission = submitCounterOrder()
-  await nextTick()
-
-  const queuedOrder = orderQueue.value.find((order) => !orderIdsBeforeSubmit.has(order.id))
-  if (queuedOrder) {
-    expandedOrderId.value = queuedOrder.id
-    setWorkspaceTab('queue')
-  }
-
-  const order = await orderSubmission
+  activeTicketAction.value = action
+  const order = await saveCounterOrder()
   if (!order) {
-    if (queuedOrder && activeWorkspaceTab.value === 'queue') {
-      expandedOrderId.value = null
-      setWorkspaceTab('order')
-    }
+    activeTicketAction.value = null
     return
   }
 
-  expandedOrderId.value = order.id
-  setWorkspaceTab('queue')
+  try {
+    if (action === 'checkout-print' || action === 'checkout-only') {
+      await updatePaymentStatus(order.id, 'paid')
+    }
+
+    if (action === 'checkout-print' || action === 'print') {
+      await printOrder(order.id)
+    }
+
+    expandedOrderId.value = order.id
+    setWorkspaceTab('queue')
+  } finally {
+    activeTicketAction.value = null
+  }
+}
+
+const handleSubmitCounterOrder = async (): Promise<void> => {
+  await handleTicketAction('print')
 }
 
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
@@ -2267,58 +2285,31 @@ const refundOrderAction = async (order: PosOrder, adminPin = stationPin.value.tr
 
 const orderSwipeKey = (order: PosOrder): string => `order:${order.id}`
 
-const orderSwipeDeleteLabel = (order: PosOrder): string => {
-  if (orderCanBeVoided(order)) {
-    return voidActionLabel(order)
-  }
+const orderCanBeDeletedFromQueue = (order: PosOrder): boolean =>
+  !['served', 'failed', 'voided'].includes(order.status) && !orderClaimedByOtherStation(order)
 
-  if (orderCanBeRefunded(order)) {
-    return refundActionLabel(order)
+const orderSwipeDeleteLabel = (order: PosOrder): string => {
+  if (voidingOrderId.value === order.id) {
+    return '刪除中'
   }
 
   if (orderClaimedByOtherStation(order)) {
     return '先接手'
   }
 
-  if (order.paymentStatus === 'refunded') {
-    return '已退款'
-  }
-
-  if (order.status === 'voided') {
-    return '已作廢'
-  }
-
-  if (order.status === 'served') {
-    return '已交付'
-  }
-
-  if (order.paymentStatus === 'expired') {
-    return '付款逾期'
-  }
-
-  if (order.paymentStatus === 'failed' || order.status === 'failed') {
-    return '已異常'
-  }
-
-  return '不可作廢'
+  return orderCanBeDeletedFromQueue(order) ? '刪除' : '不可刪除'
 }
 
 const orderSwipeDeleteDisabled = (order: PosOrder): boolean =>
-  (!orderCanBeVoided(order) && !orderCanBeRefunded(order)) ||
-  voidingOrderId.value === order.id ||
-  refundingOrderId.value === order.id
+  !orderCanBeDeletedFromQueue(order) || voidingOrderId.value === order.id
 
 const orderSwipeDeleteAction = (order: PosOrder): void => {
   if (orderSwipeDeleteDisabled(order)) {
     return
   }
 
-  if (orderCanBeVoided(order)) {
-    requestQueueAdminAction('void', order)
-    return
-  }
-
-  requestQueueAdminAction('refund', order)
+  void deleteOrderFromQueue(order.id)
+  openSwipeKey.value = null
 }
 
 const executeQueueAdminAction = async (
@@ -2404,6 +2395,10 @@ const confirmQueueAdminAction = (): void => {
 }
 
 const orderSwipeCompleteLabel = (order: PosOrder): string => {
+  if (order.mode === 'delivery' || order.source !== 'counter') {
+    return order.status === 'served' ? '已完成' : '已取餐'
+  }
+
   if (order.status === 'ready') {
     return '已取餐'
   }
@@ -2423,7 +2418,10 @@ const orderSwipeCompleteAction = (order: PosOrder): void => {
     return
   }
 
-  const nextStatus: OrderStatus = order.status === 'ready' ? 'served' : 'ready'
+  const nextStatus: OrderStatus =
+    order.mode === 'delivery' || order.source !== 'counter'
+      ? 'served'
+      : order.status === 'ready' ? 'served' : 'ready'
   void updateOrderStatus(order.id, nextStatus)
   openSwipeKey.value = null
 }
@@ -2539,6 +2537,29 @@ const toggleOrderDetail = (order: PosOrder): void => {
   expandedOrderId.value = expandedOrderId.value === order.id ? null : order.id
 }
 
+const orderCanBeEdited = (order: PosOrder): boolean =>
+  order.source === 'counter' &&
+  ['pending', 'authorized'].includes(order.paymentStatus) &&
+  !['served', 'failed', 'voided'].includes(order.status) &&
+  !orderClaimedByOtherStation(order)
+
+const editOrderFromQueue = async (order: PosOrder): Promise<void> => {
+  if (!orderCanBeEdited(order)) {
+    return
+  }
+
+  const loaded = await loadCounterOrderForEditing(order.id)
+  if (!loaded) {
+    return
+  }
+
+  expandedOrderId.value = null
+  openSwipeKey.value = null
+  activeCartQuickEditor.value = null
+  closeOptionPanel()
+  setWorkspaceTab('order')
+}
+
 const handleOrderRowClick = (order: PosOrder, event: MouseEvent): void => {
   if (event.target instanceof HTMLElement && event.target.closest('button, input, textarea, select, a')) {
     return
@@ -2549,6 +2570,11 @@ const handleOrderRowClick = (order: PosOrder, event: MouseEvent): void => {
     if (openSwipeKey.value !== key) {
       openSwipeKey.value = null
     }
+    return
+  }
+
+  if (orderCanBeEdited(order)) {
+    void editOrderFromQueue(order)
     return
   }
 
@@ -3925,15 +3951,35 @@ onBeforeUnmount(() => {
                   </div>
 
                   <footer class="checkout-bar checkout-bar--ticket">
-                    <button
-                      class="primary-button ticket-submit-button"
-                      type="button"
-                      :disabled="(cartLines.length === 0 && !activeOptionItem) || isSubmitting"
-                      @click="handleSubmitCounterOrder"
-                    >
-                      <Printer :size="22" aria-hidden="true" />
-                      {{ isSubmitting ? '建立中' : '出單' }}
-                    </button>
+                    <div class="ticket-action-group" aria-label="訂單操作">
+                      <button
+                        class="primary-button ticket-submit-button"
+                        type="button"
+                        :disabled="ticketActionDisabled()"
+                        @click="handleTicketAction('checkout-print')"
+                      >
+                        <ReceiptText :size="20" aria-hidden="true" />
+                        {{ activeTicketAction === 'checkout-print' ? '處理中' : '結帳' }}
+                      </button>
+                      <button
+                        class="ticket-submit-button ticket-submit-button--secondary"
+                        type="button"
+                        :disabled="ticketActionDisabled()"
+                        @click="handleTicketAction('print')"
+                      >
+                        <Printer :size="20" aria-hidden="true" />
+                        {{ activeTicketAction === 'print' ? '出單中' : '出單' }}
+                      </button>
+                      <button
+                        class="ticket-submit-button ticket-submit-button--secondary ticket-submit-button--wide"
+                        type="button"
+                        :disabled="ticketActionDisabled()"
+                        @click="handleTicketAction('checkout-only')"
+                      >
+                        <CreditCard :size="20" aria-hidden="true" />
+                        {{ activeTicketAction === 'checkout-only' ? '結帳中' : '結帳不出單' }}
+                      </button>
+                    </div>
                     <div class="ticket-total-summary">
                       <span>{{ ticketDisplayQuantity }} 件</span>
                       <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
@@ -4219,11 +4265,11 @@ onBeforeUnmount(() => {
                     <button
                       class="primary-button"
                       type="button"
-                      :disabled="cartLines.length === 0 || isSubmitting"
-                      @click="handleSubmitCounterOrder"
+                      :disabled="ticketActionDisabled()"
+                      @click="handleTicketAction('checkout-print')"
                     >
                       <ReceiptText :size="20" aria-hidden="true" />
-                      {{ isSubmitting ? '建立中' : '建立訂單' }}
+                      {{ activeTicketAction === 'checkout-print' ? '處理中' : '結帳' }}
                     </button>
                   </footer>
                 </section>
