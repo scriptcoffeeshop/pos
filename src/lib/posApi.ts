@@ -226,6 +226,7 @@ interface DailyReportResponse {
 }
 
 export interface ProductUpdateInput {
+  sku?: string
   name: string
   category: MenuCategory
   price: number
@@ -559,6 +560,19 @@ export const fetchAdminProducts = async (adminPin: string): Promise<MenuItem[]> 
   return data.products.map(normalizeProduct)
 }
 
+export const createProduct = async (adminPin: string, input: ProductUpdateInput): Promise<MenuItem> => {
+  const data = await request<ProductResponse>('/admin/products', {
+    method: 'POST',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify(input),
+  })
+
+  return normalizeProduct(data.product)
+}
+
 export const updateProduct = async (
   adminPin: string,
   productId: string,
@@ -571,6 +585,18 @@ export const updateProduct = async (
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(input),
+  })
+
+  return normalizeProduct(data.product)
+}
+
+export const deleteProduct = async (adminPin: string, productId: string): Promise<MenuItem> => {
+  const data = await request<ProductResponse>(`/admin/products/${productId}`, {
+    method: 'DELETE',
+    headers: {
+      'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
+    },
   })
 
   return normalizeProduct(data.product)

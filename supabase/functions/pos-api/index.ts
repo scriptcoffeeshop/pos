@@ -3,7 +3,7 @@ import { cors } from "@hono/hono/cors";
 import type { Context } from "@hono/hono";
 import { createClient } from "@supabase/supabase-js";
 
-type MenuCategory = "coffee" | "tea" | "food" | "retail";
+type MenuCategory = string;
 type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
@@ -159,6 +159,7 @@ interface CloseRegisterInput {
 }
 
 interface ProductUpdateInput {
+  sku?: string;
   name?: string;
   category?: MenuCategory;
   price?: number;
@@ -772,6 +773,43 @@ api.get("/admin/products", async (c) => {
   return c.json({ products: data });
 });
 
+api.post("/admin/products", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ProductUpdateInput>();
+  const { payload, error: validationError } = validateProductUpdateInput(input, { includeSku: true });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("products")
+    .insert(payload)
+    .select(productSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "product.create",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      productId: data.id,
+      sku: data.sku,
+      name: data.name,
+      category: data.category,
+      price: data.price,
+    },
+  });
+
+  return c.json({ product: data }, 201);
+});
+
 api.patch("/admin/products/:id", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -859,6 +897,51 @@ api.patch("/admin/products/:id", async (c) => {
   }
 
   return c.json({ product: data });
+});
+
+api.delete("/admin/products/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const productId = c.req.param("id");
+  const { data: previousProduct, error: previousProductError } = await supabase
+    .from("products")
+    .select(productSelect)
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (previousProductError) {
+    return c.json({ error: previousProductError.message }, 500);
+  }
+
+  if (!previousProduct) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+
+  const { error } = await supabase
+    .from("products")
+    .delete()
+    .eq("id", productId);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "product.delete",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      productId,
+      sku: previousProduct.sku,
+      name: previousProduct.name,
+      category: previousProduct.category,
+      price: previousProduct.price,
+    },
+  });
+
+  return c.json({ product: previousProduct });
 });
 
 api.get("/admin/members", async (c) => {
@@ -2273,7 +2356,6 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
-const productCategories: MenuCategory[] = ["coffee", "tea", "food", "retail"];
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
 const knownPermissions = [
@@ -2310,6 +2392,29 @@ const readProductChannel = (channel: string | undefined): ProductChannel => {
   }
 
   return "pos";
+};
+
+const sanitizeMenuCategory = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().replace(/\s+/g, " ").slice(0, 40);
+};
+
+const sanitizeSku = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const sku = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 64);
+
+  return sku || `product-${Date.now().toString(36)}`;
 };
 
 const isPrintStatus = (status: unknown): status is PrintStatus =>
@@ -2389,21 +2494,31 @@ const validatePaymentWebhookInput = (input: PaymentWebhookInput): string | null 
 
 const validateProductUpdateInput = (
   input: ProductUpdateInput,
+  options: { includeSku?: boolean } = {},
 ): {
   payload: Record<string, unknown>;
   error: string | null;
 } => {
   const payload: Record<string, unknown> = {};
 
+  if (options.includeSku) {
+    const sku = sanitizeSku(input.sku ?? input.name);
+    if (!sku) {
+      return { payload, error: "sku is required" };
+    }
+    payload.sku = sku;
+  }
+
   if (typeof input.name !== "string" || input.name.trim().length === 0) {
     return { payload, error: "name is required" };
   }
   payload.name = input.name.trim();
 
-  if (!input.category || !productCategories.includes(input.category)) {
+  const category = sanitizeMenuCategory(input.category);
+  if (!category) {
     return { payload, error: "category is invalid" };
   }
-  payload.category = input.category;
+  payload.category = category;
 
   const price = input.price;
   if (!Number.isInteger(price) || typeof price !== "number" || price < 0) {
@@ -2640,9 +2755,7 @@ const validatePrinterSettings = (input: unknown): {
       return { value: null, error: "print rule copies must be 1 to 5" };
     }
     const categories = Array.isArray(entry.categories)
-      ? entry.categories.filter((category): category is MenuCategory =>
-        productCategories.includes(category as MenuCategory)
-      )
+      ? entry.categories.map(sanitizeMenuCategory).filter(Boolean)
       : [];
     rules.push({
       id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),

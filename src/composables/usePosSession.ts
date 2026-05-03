@@ -7,7 +7,9 @@ import {
   createOrder,
   createPrintJob,
   closeRegisterSession,
+  createProduct,
   defaultOnlineOrderingSettings,
+  deleteProduct,
   deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
@@ -66,6 +68,7 @@ const maxCartLineQuantity = 999
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
+const localProductsStorageKey = 'script-coffee-pos-local-products'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -86,7 +89,6 @@ interface CounterDraftState {
 
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const paymentMethods: PaymentMethod[] = ['cash', 'card', 'line-pay', 'jkopay', 'transfer']
-const menuCategories: MenuCategory[] = ['coffee', 'tea', 'food', 'retail']
 const orderSources: OrderSource[] = ['counter', 'qr', 'online']
 const orderStatuses: OrderStatus[] = ['new', 'preparing', 'ready', 'served', 'failed', 'voided']
 const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expired', 'failed', 'refunded']
@@ -107,7 +109,7 @@ const isPaymentMethod = (value: unknown): value is PaymentMethod =>
   typeof value === 'string' && paymentMethods.includes(value as PaymentMethod)
 
 const isMenuCategory = (value: unknown): value is MenuCategory =>
-  typeof value === 'string' && menuCategories.includes(value as MenuCategory)
+  typeof value === 'string' && value.trim().length > 0
 
 const isOrderSource = (value: unknown): value is OrderSource =>
   typeof value === 'string' && orderSources.includes(value as OrderSource)
@@ -453,6 +455,103 @@ const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrid
   soldOutUntil: product.soldOutUntil,
 })
 
+const productSkuFromName = (name: string): string => {
+  const sku = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 64)
+
+  return sku || `product-${Date.now().toString(36)}`
+}
+
+const createLocalProductId = (): string =>
+  `local-${globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36)}`
+
+const buildLocalProduct = (input: ProductUpdateInput): MenuItem => ({
+  id: createLocalProductId(),
+  sku: input.sku?.trim() || productSkuFromName(input.name),
+  name: input.name.trim(),
+  category: input.category.trim(),
+  price: input.price,
+  tags: [...input.tags],
+  accent: input.accent,
+  available: input.isAvailable,
+  sortOrder: input.sortOrder,
+  posVisible: input.posVisible,
+  onlineVisible: input.onlineVisible,
+  qrVisible: input.qrVisible,
+  prepStation: input.prepStation,
+  printLabel: input.printLabel,
+  inventoryCount: input.inventoryCount,
+  lowStockThreshold: input.lowStockThreshold,
+  soldOutUntil: input.soldOutUntil,
+})
+
+const isLocalProduct = (product: MenuItem): boolean => product.id.startsWith('local-')
+
+const sanitizeLocalProduct = (value: unknown): MenuItem | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const product = value as Partial<MenuItem>
+  if (
+    typeof product.id !== 'string' ||
+    typeof product.sku !== 'string' ||
+    typeof product.name !== 'string' ||
+    typeof product.category !== 'string' ||
+    typeof product.price !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    category: product.category,
+    price: Math.max(0, Math.trunc(product.price)),
+    tags: Array.isArray(product.tags) ? product.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+    accent: typeof product.accent === 'string' ? product.accent : '#0b6b63',
+    available: typeof product.available === 'boolean' ? product.available : true,
+    sortOrder: typeof product.sortOrder === 'number' ? Math.trunc(product.sortOrder) : 0,
+    posVisible: typeof product.posVisible === 'boolean' ? product.posVisible : true,
+    onlineVisible: typeof product.onlineVisible === 'boolean' ? product.onlineVisible : true,
+    qrVisible: typeof product.qrVisible === 'boolean' ? product.qrVisible : true,
+    prepStation: typeof product.prepStation === 'string' ? product.prepStation : 'counter',
+    printLabel: typeof product.printLabel === 'boolean' ? product.printLabel : true,
+    inventoryCount: typeof product.inventoryCount === 'number' ? Math.trunc(product.inventoryCount) : null,
+    lowStockThreshold: typeof product.lowStockThreshold === 'number' ? Math.trunc(product.lowStockThreshold) : null,
+    soldOutUntil: typeof product.soldOutUntil === 'string' ? product.soldOutUntil : null,
+  }
+}
+
+const readLocalProducts = (): MenuItem[] => {
+  try {
+    const rawProducts = globalThis.localStorage?.getItem(localProductsStorageKey)
+    if (!rawProducts) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawProducts)
+    return Array.isArray(parsed)
+      ? parsed.map(sanitizeLocalProduct).filter((product): product is MenuItem => Boolean(product))
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeLocalProducts = (products: MenuItem[]): void => {
+  try {
+    globalThis.localStorage?.setItem(localProductsStorageKey, JSON.stringify(products.filter(isLocalProduct)))
+  } catch {
+    return
+  }
+}
+
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
   if (!product.soldOutUntil) {
     return false
@@ -547,8 +646,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
   const paymentMethod = ref<PaymentMethod>(savedCounterDraft?.paymentMethod ?? 'cash')
-  const menuCatalog = ref<MenuItem[]>([...menuItems])
-  const productStatusCatalog = ref<MenuItem[]>([...menuItems])
+  const savedLocalProducts = readLocalProducts()
+  const menuCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
+  const productStatusCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
   const cartLines = ref<CartLine[]>(savedCounterDraft?.cartLines ?? [])
   const recentItemIds = ref<string[]>(readRecentItemIds())
   const pendingLocalOrders = ref<PosOrder[]>(savedPendingLocalOrders)
@@ -1050,6 +1150,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const applySavedProduct = (product: MenuItem): void => {
+    if (isLocalProduct(product)) {
+      const savedProducts = readLocalProducts()
+      writeLocalProducts(
+        savedProducts.some((entry) => entry.id === product.id)
+          ? savedProducts.map((entry) => (entry.id === product.id ? product : entry))
+          : [...savedProducts, product],
+      )
+    }
+
     productStatusCatalog.value = sortProducts(
       productStatusCatalog.value.some((entry) => entry.id === product.id)
         ? productStatusCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
@@ -1059,7 +1168,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const shouldShowInPos = isProductOrderable(product)
     if (!shouldShowInPos) {
       menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== product.id)
-      cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id)
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id && line.productId !== product.id)
       return
     }
 
@@ -1068,6 +1177,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         ? menuCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
         : [...menuCatalog.value, product],
     )
+  }
+
+  const removeSavedProduct = (productId: string): void => {
+    writeLocalProducts(readLocalProducts().filter((product) => product.id !== productId))
+    productStatusCatalog.value = productStatusCatalog.value.filter((entry) => entry.id !== productId)
+    menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== productId)
+    cartLines.value = cartLines.value.filter((line) => line.itemId !== productId && line.productId !== productId)
   }
 
   const appendPrintPreviewStatus = (message: string): void => {
@@ -1114,8 +1230,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         fetchRuntimeSettings(),
       ])
       applyRuntimeSettings(runtimeSettings)
-      menuCatalog.value = sortProducts(remoteProducts)
-      productStatusCatalog.value = sortProducts(remoteProducts)
+      const localProducts = readLocalProducts()
+      const allProducts = [...remoteProducts, ...localProducts]
+      menuCatalog.value = sortProducts(allProducts)
+      productStatusCatalog.value = sortProducts(allProducts)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
       nextSequence.value = nextSequenceFromOrders(orderQueue.value)
@@ -1136,8 +1254,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const remoteProducts = await fetchProducts()
-      menuCatalog.value = sortProducts(remoteProducts)
-      productStatusCatalog.value = sortProducts(remoteProducts)
+      const localProducts = readLocalProducts()
+      const allProducts = [...remoteProducts, ...localProducts]
+      menuCatalog.value = sortProducts(allProducts)
+      productStatusCatalog.value = sortProducts(allProducts)
     } catch {
       return
     }
@@ -1642,7 +1762,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const products = await fetchAdminProducts(adminPin)
-      productStatusCatalog.value = sortProducts(products.filter((product) => product.posVisible))
+      productStatusCatalog.value = sortProducts([...products, ...readLocalProducts()].filter((product) => product.posVisible))
       productStatusMessage.value = `已載入 ${productStatusCatalog.value.length} 個 POS 商品，可直接暫停或恢復供應`
     } catch (error) {
       productStatusMessage.value = `商品狀態載入失敗：${getErrorMessage(error)}`
@@ -1719,6 +1839,68 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       applySavedProduct(product)
       productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
       setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+    } finally {
+      togglingProductId.value = null
+    }
+  }
+
+  const createProductForStation = async (
+    adminPin: string,
+    input: ProductUpdateInput,
+  ): Promise<MenuItem | null> => {
+    const fallbackProduct = buildLocalProduct(input)
+    productStatusMessage.value = `${fallbackProduct.name} 建立中`
+
+    if (!adminPin || !isPosApiConfigured) {
+      applySavedProduct(fallbackProduct)
+      productStatusMessage.value = `${fallbackProduct.name} 已新增至本機商品清單`
+      setBackendStatus('fallback', '本機新增商品', '輸入管理 PIN 後可同步雲端商品資料')
+      return fallbackProduct
+    }
+
+    try {
+      const savedProduct = await createProduct(adminPin, input)
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 已新增`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return savedProduct
+    } catch (error) {
+      applySavedProduct(fallbackProduct)
+      productStatusMessage.value = `商品新增失敗，已先保留本機資料：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '本機新增商品', productStatusMessage.value)
+      return fallbackProduct
+    }
+  }
+
+  const deleteProductForStation = async (adminPin: string, productId: string): Promise<boolean> => {
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return false
+    }
+
+    togglingProductId.value = productId
+    productStatusMessage.value = `${product.name} 刪除中`
+
+    if (!adminPin || !isPosApiConfigured || product.id.startsWith('local-')) {
+      removeSavedProduct(productId)
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 已從本機清單刪除`
+      setBackendStatus('fallback', '本機刪除商品', '輸入管理 PIN 後可同步雲端商品資料')
+      return true
+    }
+
+    try {
+      await deleteProduct(adminPin, productId)
+      removeSavedProduct(productId)
+      productStatusMessage.value = `${product.name} 已刪除`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      productStatusMessage.value = `商品刪除失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+      return false
     } finally {
       togglingProductId.value = null
     }
@@ -2059,7 +2241,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     closeRegisterSessionForStation,
     customer,
     deletingPrintJobId,
+    createProductForStation,
     decreaseLine,
+    deleteProductForStation,
     deletePrintJobForOrder,
     filteredMenu,
     increaseLine,

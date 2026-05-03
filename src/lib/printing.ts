@@ -12,6 +12,7 @@ import { formatCurrency, formatOrderTime } from './formatters'
 const escapeEzplText = (value: string): string => value.replaceAll('"', "'").replace(/\s+/g, ' ').trim().slice(0, 42)
 
 type PrintableMode = Exclude<PrintLabelMode, 'both'>
+const builtInPrintCategories = ['coffee', 'tea', 'food', 'retail']
 
 export interface PrintPayloadJob {
   id: string
@@ -69,7 +70,11 @@ const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
     return true
   }
 
-  return rule.categories.includes(line.category)
+  if (rule.categories.includes(line.category)) {
+    return true
+  }
+
+  return builtInPrintCategories.every((category) => rule.categories.includes(category))
 }
 
 const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {

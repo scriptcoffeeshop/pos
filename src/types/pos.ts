@@ -1,4 +1,4 @@
-export type MenuCategory = 'coffee' | 'tea' | 'food' | 'retail'
+export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'

@@ -117,10 +117,10 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'all', label: '全部' },
-  { value: 'coffee', label: categoryLabels.coffee },
-  { value: 'tea', label: categoryLabels.tea },
-  { value: 'food', label: categoryLabels.food },
-  { value: 'retail', label: categoryLabels.retail },
+  { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
+  { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
+  { value: 'food', label: categoryLabels.food ?? '輕食' },
+  { value: 'retail', label: categoryLabels.retail ?? '零售' },
 ]
 
 const menuCategoryOptions = categoryOptions.filter((category): category is { value: MenuCategory; label: string } =>

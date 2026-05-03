@@ -28,7 +28,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ## 初始 schema 草案
 
-- `products`：商品、分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與庫存。
+- `products`：商品、自訂文字分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與庫存。
 - `pos_settings`：出單機/印單規則、角色權限與線上點餐 runtime 等後台設定。
 - `orders`：訂單主檔、來源、服務方式、希望取餐/送達時間、外送地址、付款狀態、製作狀態。
 - `order_items`：訂單品項、數量、單價、客製選項。
@@ -69,6 +69,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - SECURITY DEFINER RPC 執行權收斂：`20260429183000_lock_down_pos_security_definer_rpc.sql`
 - 金流 webhook 事件 RLS policy：`20260429183500_lock_down_payment_events_rls.sql`
 - 線上點餐 runtime 設定：`20260503001500_add_online_ordering_settings.sql`
+- 商品分類放寬為自訂文字：`20260503163000_make_product_categories_custom.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -84,7 +85,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 收銀班別端點：`/functions/v1/pos-api/register/current`
 - 開班端點：`/functions/v1/pos-api/register/open`
 - 關班端點：`/functions/v1/pos-api/register/close`
-- 後台商品端點：`/functions/v1/pos-api/admin/products`
+- 後台商品端點：`/functions/v1/pos-api/admin/products`、`/functions/v1/pos-api/admin/products/:id`
 - 後台會員端點：`/functions/v1/pos-api/admin/members`
 - 後台錢包調整端點：`/functions/v1/pos-api/admin/members/:id/wallet-adjustments`
 - 後台營運日報端點：`/functions/v1/pos-api/admin/reports/daily`
@@ -110,7 +111,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外部金流回呼走 `POST /payments/webhook/:provider`，需 `X-POS-PAYMENT-WEBHOOK-SECRET`。後端以 `record_pos_payment_event()` 寫入 `payment_events` 並做冪等狀態轉換；重複 event 不會二次入帳，金額不符不會改單，退款回呼會寫入負數 `transaction_ledger`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
-- 後台商品修改走 `GET /admin/products` 與 `PATCH /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`。
+- 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`，需 `X-POS-ADMIN-PIN`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，需 `X-POS-ADMIN-PIN`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
 - 後台出單機、權限與線上點餐 runtime 修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`、`online_ordering`。

@@ -110,7 +110,7 @@ export const menuItems: MenuItem[] = [
   },
 ]
 
-export const categoryLabels: Record<MenuItem['category'], string> = {
+export const categoryLabels: Record<string, string> = {
   coffee: '咖啡',
   tea: '茶飲',
   food: '輕食',

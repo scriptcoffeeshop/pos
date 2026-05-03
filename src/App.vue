@@ -78,9 +78,9 @@ type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
-type MenuOptionGroupId = 'temperature' | 'beans' | 'extras'
+type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
-type SupplyCategoryFilter = MenuCategory | 'hand-brew' | 'notes'
+type SupplyCategoryFilter = MenuCategory | 'notes'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 
 interface SavedQueueView {
@@ -154,8 +154,15 @@ interface QueueAdminActionRequest {
 
 interface SupplyNoteItem {
   id: string
+  groupId: string
+  choiceId: string
   name: string
   group: string
+}
+
+interface MenuCategoryDefinition {
+  id: MenuCategory
+  label: string
 }
 
 interface SupplyStatusRow {
@@ -173,6 +180,10 @@ const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
 const supplyNoteStatusStorageKey = 'script-coffee-pos-supply-note-statuses'
+const menuCategoryStorageKey = 'script-coffee-pos-menu-categories'
+const optionGroupStorageKey = 'script-coffee-pos-option-groups'
+const productOptionAssignmentStorageKey = 'script-coffee-pos-product-option-assignments'
+const supplyNotesFilterValue = '__notes__'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
 const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
@@ -187,7 +198,13 @@ const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
-const configurableMenuCategories: MenuCategory[] = ['coffee', 'tea']
+const defaultConfigurableCategoryIds: MenuCategory[] = ['coffee', 'tea']
+const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
+  { id: 'coffee', label: '咖啡' },
+  { id: 'tea', label: '茶飲' },
+  { id: 'food', label: '輕食' },
+  { id: 'retail', label: '零售' },
+]
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -275,6 +292,49 @@ const writeSupplyStatusMap = (storageKey: string, statuses: Record<string, Produ
     return
   }
 }
+
+const readStorageValue = <T,>(storageKey: string, fallback: T): T => {
+  try {
+    const rawValue = globalThis.localStorage?.getItem(storageKey)
+    return rawValue ? JSON.parse(rawValue) as T : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const writeStorageValue = (storageKey: string, value: unknown): void => {
+  try {
+    globalThis.localStorage?.setItem(storageKey, JSON.stringify(value))
+  } catch {
+    return
+  }
+}
+
+const normalizeSpace = (value: string): string => value.trim().replace(/\s+/g, ' ')
+
+const slugFromText = (value: string, fallbackPrefix: string): string => {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 44)
+
+  return slug || `${fallbackPrefix}-${Date.now().toString(36)}`
+}
+
+const uniqueId = (baseId: string, existingIds: Set<string>): string => {
+  let nextId = baseId
+  let index = 2
+  while (existingIds.has(nextId)) {
+    nextId = `${baseId}-${index}`
+    index += 1
+  }
+  return nextId
+}
+
+const withoutRecordKey = <T,>(record: Record<string, T>, key: string): Record<string, T> =>
+  Object.fromEntries(Object.entries(record).filter(([entryKey]) => entryKey !== key))
 
 const readSavedQueueView = (): SavedQueueView => {
   try {
@@ -365,9 +425,11 @@ const {
   claimOrderForStation,
   claimingOrderId,
   closeRegisterSessionForStation,
+  createProductForStation,
   customer,
   deletingPrintJobId,
   decreaseLine,
+  deleteProductForStation,
   deletePrintJobForOrder,
   filteredMenu,
   increaseLine,
@@ -418,17 +480,6 @@ const {
   voidingOrderId,
   voidOrderForStation,
 } = usePosSession({ autoLoad: !isConsumerDomain })
-
-const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'coffee', label: categoryLabels.coffee },
-  { value: 'tea', label: categoryLabels.tea },
-  { value: 'food', label: categoryLabels.food },
-  { value: 'retail', label: categoryLabels.retail },
-]
-const selectedCategoryLabel = computed(
-  () => categoryOptions.find((category) => category.value === selectedCategory.value)?.label ?? '全部',
-)
 
 const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
   { value: 'takeout', label: '外帶' },
@@ -542,14 +593,141 @@ const beverageOptionGroups: MenuOptionGroup[] = [
     ],
   },
 ]
-const supplyCategoryOptions: Array<{ value: SupplyCategoryFilter; label: string }> = [
-  { value: 'coffee', label: '義式咖啡' },
-  { value: 'hand-brew', label: '手沖咖啡' },
-  { value: 'tea', label: '非咖啡' },
-  { value: 'food', label: '鹹、甜食' },
-  { value: 'retail', label: '其他' },
-  { value: 'notes', label: '可用註記' },
-]
+
+const optionGroupRequirement = (group: Pick<MenuOptionGroup, 'required' | 'min' | 'max'>): string => {
+  if (group.required) {
+    return `必選 ${Math.max(1, group.min)} 個`
+  }
+
+  return group.max === 1 ? '選填最多 1 個' : `選填最多 ${Math.max(1, group.max)} 個`
+}
+
+const normalizeCategoryDefinitions = (value: unknown): MenuCategoryDefinition[] => {
+  if (!Array.isArray(value)) {
+    return [...defaultMenuCategoryDefinitions]
+  }
+
+  const seenIds = new Set<string>()
+  const definitions = value.flatMap((entry): MenuCategoryDefinition[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const source = entry as Partial<MenuCategoryDefinition>
+    const id = typeof source.id === 'string' ? normalizeSpace(source.id).slice(0, 40) : ''
+    const label = typeof source.label === 'string' ? normalizeSpace(source.label).slice(0, 40) : id
+    if (!id || seenIds.has(id)) {
+      return []
+    }
+
+    seenIds.add(id)
+    return [{ id, label: label || id }]
+  })
+
+  return definitions.length > 0 ? definitions : [...defaultMenuCategoryDefinitions]
+}
+
+const readMenuCategoryDefinitions = (): MenuCategoryDefinition[] =>
+  normalizeCategoryDefinitions(readStorageValue<unknown>(menuCategoryStorageKey, null))
+
+const writeMenuCategoryDefinitions = (definitions: MenuCategoryDefinition[]): void => {
+  writeStorageValue(menuCategoryStorageKey, definitions)
+}
+
+const normalizeOptionGroups = (value: unknown): MenuOptionGroup[] => {
+  if (!Array.isArray(value)) {
+    return beverageOptionGroups.map((group) => ({ ...group, choices: group.choices.map((choice) => ({ ...choice })) }))
+  }
+
+  const seenGroupIds = new Set<string>()
+  const groups = value.flatMap((entry): MenuOptionGroup[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const source = entry as Partial<MenuOptionGroup>
+    const id = typeof source.id === 'string' ? normalizeSpace(source.id).slice(0, 64) : ''
+    const label = typeof source.label === 'string' ? normalizeSpace(source.label).slice(0, 40) : ''
+    const choices = Array.isArray(source.choices) ? source.choices : []
+    if (!id || !label || seenGroupIds.has(id)) {
+      return []
+    }
+
+    const seenChoiceIds = new Set<string>()
+    const normalizedChoices = choices.flatMap((choice): MenuOptionChoice[] => {
+      if (!choice || typeof choice !== 'object') {
+        return []
+      }
+
+      const choiceSource = choice as Partial<MenuOptionChoice>
+      const choiceId = typeof choiceSource.id === 'string' ? normalizeSpace(choiceSource.id).slice(0, 64) : ''
+      const choiceLabel = typeof choiceSource.label === 'string' ? normalizeSpace(choiceSource.label).slice(0, 40) : ''
+      if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+        return []
+      }
+
+      seenChoiceIds.add(choiceId)
+      const normalizedChoice: MenuOptionChoice = {
+        id: choiceId,
+        label: choiceLabel,
+      }
+      if (typeof choiceSource.priceDelta === 'number' && Number.isFinite(choiceSource.priceDelta)) {
+        normalizedChoice.priceDelta = Math.trunc(choiceSource.priceDelta)
+      }
+      return [normalizedChoice]
+    })
+
+    const max = Math.max(1, Math.trunc(Number(source.max) || 1))
+    const required = Boolean(source.required)
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(source.min) || 1))) : 0
+
+    seenGroupIds.add(id)
+    const requirement = typeof source.requirement === 'string' ? normalizeSpace(source.requirement).slice(0, 40) : ''
+
+    return [{
+      id,
+      label,
+      required,
+      min,
+      max,
+      requirement: requirement || optionGroupRequirement({ required, min, max }),
+      choices: normalizedChoices,
+    }]
+  })
+
+  return groups.length > 0 ? groups : []
+}
+
+const readOptionGroups = (): MenuOptionGroup[] =>
+  normalizeOptionGroups(readStorageValue<unknown>(optionGroupStorageKey, null))
+
+const writeOptionGroups = (groups: MenuOptionGroup[]): void => {
+  writeStorageValue(optionGroupStorageKey, groups)
+}
+
+const readProductOptionAssignments = (): Record<string, string[]> => {
+  const parsed = readStorageValue<unknown>(productOptionAssignmentStorageKey, {})
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {}
+  }
+
+  return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string[]>>((assignments, [productId, groupIds]) => {
+    if (!Array.isArray(groupIds)) {
+      return assignments
+    }
+
+    const uniqueIds = [
+      ...new Set(groupIds.filter((groupId): groupId is string => typeof groupId === 'string' && groupId.trim().length > 0)),
+    ]
+    assignments[productId] = uniqueIds
+    return assignments
+  }, {})
+}
+
+const writeProductOptionAssignments = (assignments: Record<string, string[]>): void => {
+  writeStorageValue(productOptionAssignmentStorageKey, assignments)
+}
+
 const supplyStatusOptions: Array<{ value: ProductSupplyStatus; label: string; detail: string }> = [
   { value: 'normal', label: '正常供應', detail: '現場 POS、線上與掃碼維持可販售' },
   { value: 'online-stopped', label: '線上停售', detail: '現場 POS 仍可販售，線上入口先隱藏' },
@@ -559,17 +737,53 @@ const supplyStatusFilterOptions: Array<{ value: SupplyStatusFilter; label: strin
   { value: 'all', label: '全部狀態' },
   ...supplyStatusOptions.map((status) => ({ value: status.value, label: status.label })),
 ]
-const supplyNoteItems: SupplyNoteItem[] = [
-  ...beverageOptionGroups.flatMap((group) =>
-    group.choices.map((choice) => ({
-      id: `${group.id}-${choice.id}`,
-      name: choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
-      group: group.label,
-    })),
-  ),
-  { id: 'counter-need-bag', name: '需要袋子', group: '櫃台註記' },
-  { id: 'fixed-ice', name: '冰(無法調整)', group: '商品限制' },
-]
+
+const menuCategoryDefinitions = ref<MenuCategoryDefinition[]>(readMenuCategoryDefinitions())
+const optionGroupCatalog = ref<MenuOptionGroup[]>(readOptionGroups())
+const productOptionAssignments = ref<Record<string, string[]>>(readProductOptionAssignments())
+const newCategoryName = ref('')
+const newProductName = ref('')
+const newProductPrice = ref(0)
+const newProductSku = ref('')
+const newOptionGroupName = ref('')
+const newOptionGroupRequired = ref(false)
+const newOptionGroupMax = ref(1)
+const newOptionChoiceGroupId = ref(optionGroupCatalog.value[0]?.id ?? '')
+const newOptionChoiceName = ref('')
+const newOptionChoicePriceDelta = ref(0)
+const supplyActionMessage = ref('')
+
+const categoryLabelFor = (category: MenuCategory): string =>
+  menuCategoryDefinitions.value.find((definition) => definition.id === category)?.label ??
+  categoryLabels[category] ??
+  category
+
+const menuCategoryOptions = computed<MenuCategoryDefinition[]>(() => {
+  const definitions = new Map(menuCategoryDefinitions.value.map((definition) => [definition.id, definition]))
+
+  for (const product of [...productStatusCatalog.value, ...menuCatalog.value]) {
+    if (!definitions.has(product.category)) {
+      definitions.set(product.category, {
+        id: product.category,
+        label: categoryLabels[product.category] ?? product.category,
+      })
+    }
+  }
+
+  return [...definitions.values()]
+})
+
+const categoryOptions = computed<Array<{ value: 'all' | MenuCategory; label: string }>>(() => [
+  { value: 'all', label: '全部' },
+  ...menuCategoryOptions.value.map((category) => ({
+    value: category.id,
+    label: category.label,
+  })),
+])
+const selectedCategoryLabel = computed(
+  () => categoryOptions.value.find((category) => category.value === selectedCategory.value)?.label ?? '全部',
+)
+
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
   order: '外帶 / 外送點餐',
@@ -1054,7 +1268,7 @@ const noteCurrentSupplyStatus = (note: SupplyNoteItem): ProductSupplyStatus =>
   noteSupplyStatuses.value[note.id] ?? 'normal'
 
 const supplyCategoryLabel = (category: SupplyCategoryFilter): string =>
-  supplyCategoryOptions.find((option) => option.value === category)?.label ?? '義式咖啡'
+  supplyCategoryOptions.value.find((option) => option.value === category)?.label ?? categoryLabelFor(category)
 
 const supplyProductRows = computed<SupplyStatusRow[]>(() =>
   stationProducts.value
@@ -1064,7 +1278,7 @@ const supplyProductRows = computed<SupplyStatusRow[]>(() =>
       kind: 'product',
       name: product.name,
       categoryLabel: supplyCategoryLabel(product.category),
-      detail: `${categoryLabels[product.category]} · ${formatCurrency(product.price)}${
+      detail: `${categoryLabelFor(product.category)} · ${formatCurrency(product.price)}${
         productStockLabel(product) ? ` · ${productStockLabel(product)}` : ''
       }`,
       status: productCurrentSupplyStatus(product),
@@ -1072,7 +1286,7 @@ const supplyProductRows = computed<SupplyStatusRow[]>(() =>
     })),
 )
 const supplyNoteRows = computed<SupplyStatusRow[]>(() =>
-  supplyNoteItems.map((note) => ({
+  supplyNoteItems.value.map((note) => ({
     id: note.id,
     kind: 'note',
     name: note.name,
@@ -1084,7 +1298,7 @@ const supplyNoteRows = computed<SupplyStatusRow[]>(() =>
 )
 const visibleSupplyRows = computed<SupplyStatusRow[]>(() => {
   const keyword = supplySearchTerm.value.trim().toLowerCase()
-  const baseRows = supplyCategoryFilter.value === 'notes' ? supplyNoteRows.value : supplyProductRows.value
+  const baseRows = supplyCategoryFilter.value === supplyNotesFilterValue ? supplyNoteRows.value : supplyProductRows.value
 
   return baseRows.filter((row) => {
     const matchesKeyword =
@@ -1248,11 +1462,7 @@ const openSwipeKey = ref<string | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const activeOptionItem = ref<MenuItem | null>(null)
 const activeOptionLineId = ref<string | null>(null)
-const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({
-  temperature: [],
-  beans: [],
-  extras: [],
-})
+const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({})
 const optionWarning = ref('')
 const pendingQueueAdminAction = ref<QueueAdminActionRequest | null>(null)
 const queueActionPin = ref('')
@@ -1272,6 +1482,24 @@ const supplyCategoryFilter = ref<SupplyCategoryFilter>('coffee')
 const supplyStatusFilter = ref<SupplyStatusFilter>('all')
 const productSupplyStatuses = ref<Record<string, ProductSupplyStatus>>(readSupplyStatusMap(supplyProductStatusStorageKey))
 const noteSupplyStatuses = ref<Record<string, ProductSupplyStatus>>(readSupplyStatusMap(supplyNoteStatusStorageKey))
+const supplyCategoryOptions = computed<Array<{ value: SupplyCategoryFilter; label: string }>>(() => [
+  ...menuCategoryOptions.value.map((category) => ({
+    value: category.id,
+    label: category.label,
+  })),
+  { value: supplyNotesFilterValue, label: '可用註記' },
+])
+const supplyNoteItems = computed<SupplyNoteItem[]>(() =>
+  optionGroupCatalog.value.flatMap((group) =>
+    group.choices.map((choice) => ({
+      id: supplyNoteIdForChoice(group, choice),
+      groupId: group.id,
+      choiceId: choice.id,
+      name: choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
+      group: group.label,
+    })),
+  ),
+)
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -1284,21 +1512,37 @@ let claimClockTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const supplyNoteIdForChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): string => `${group.id}-${choice.id}`
 const supplyNoteStatusForName = (name: string): ProductSupplyStatus => {
-  const note = supplyNoteItems.find((item) => item.name === name)
+  const note = supplyNoteItems.value.find((item) => item.name === name)
   return note ? noteCurrentSupplyStatus(note) : 'normal'
 }
 const visibleNoteSnippets = computed(() => noteSnippets.filter((note) => supplyNoteStatusForName(note) !== 'stopped'))
 const visibleTicketNoteSnippets = computed(() =>
   ticketNoteSnippets.filter((note) => supplyNoteStatusForName(note) !== 'stopped'),
 )
-const activeOptionGroups = computed(() =>
-  activeOptionItem.value && configurableMenuCategories.includes(activeOptionItem.value.category)
-    ? beverageOptionGroups.map((group) => ({
-        ...group,
-        choices: group.choices.filter((choice) => noteSupplyStatuses.value[supplyNoteIdForChoice(group, choice)] !== 'stopped'),
-      }))
-    : [],
-)
+const assignedOptionGroupIdsForProduct = (product: MenuItem): string[] => {
+  const assignedIds = productOptionAssignments.value[product.id]
+  if (assignedIds) {
+    return assignedIds.filter((groupId) => optionGroupCatalog.value.some((group) => group.id === groupId))
+  }
+
+  if (defaultConfigurableCategoryIds.includes(product.category)) {
+    const defaultGroupIds = new Set(beverageOptionGroups.map((group) => group.id))
+    return optionGroupCatalog.value.filter((group) => defaultGroupIds.has(group.id)).map((group) => group.id)
+  }
+
+  return []
+}
+const optionGroupsForProduct = (product: MenuItem): MenuOptionGroup[] => {
+  const groupIds = new Set(assignedOptionGroupIdsForProduct(product))
+  return optionGroupCatalog.value
+    .filter((group) => groupIds.has(group.id))
+    .map((group) => ({
+      ...group,
+      choices: group.choices.filter((choice) => noteSupplyStatuses.value[supplyNoteIdForChoice(group, choice)] !== 'stopped'),
+    }))
+    .filter((group) => group.choices.length > 0)
+}
+const activeOptionGroups = computed(() => activeOptionItem.value ? optionGroupsForProduct(activeOptionItem.value) : [])
 const optionChoiceLabel = (choice: MenuOptionChoice): string =>
   choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label
 
@@ -1400,7 +1644,7 @@ const lineQuantityByItem = (itemId: string): number =>
     .filter((line) => line.itemId === itemId || line.productId === itemId)
     .reduce((total, line) => total + line.quantity, 0)
 
-const productRequiresOptions = (item: MenuItem): boolean => configurableMenuCategories.includes(item.category)
+const productRequiresOptions = (item: MenuItem): boolean => optionGroupsForProduct(item).length > 0
 
 const quantityFromInput = (event: Event): number | null => {
   if (!(event.target instanceof HTMLInputElement)) {
@@ -1454,11 +1698,7 @@ const blurQuantityInput = (event: KeyboardEvent): void => {
 }
 
 const resetOptionSelections = (): void => {
-  optionSelections.value = {
-    temperature: [],
-    beans: [],
-    extras: [],
-  }
+  optionSelections.value = {}
   optionWarning.value = ''
 }
 
@@ -1489,7 +1729,7 @@ const clearTicketDraft = (): void => {
 const optionSelectionsFromLine = (line: CartLine): Record<MenuOptionGroupId, string[]> => {
   const lineOptions = new Set(line.options)
 
-  return Object.fromEntries(beverageOptionGroups.map((group) => [
+  return Object.fromEntries(optionGroupCatalog.value.map((group) => [
     group.id,
     group.choices
       .filter((choice) => lineOptions.has(optionChoiceLabel(choice)) || lineOptions.has(choice.label))
@@ -2538,6 +2778,267 @@ const selectSupplyCategory = (category: SupplyCategoryFilter): void => {
   supplyCategoryFilter.value = category
 }
 
+const selectedSupplyCategoryIsNotes = computed(() => supplyCategoryFilter.value === supplyNotesFilterValue)
+const selectedSupplyMenuCategory = computed<MenuCategory | null>(() =>
+  selectedSupplyCategoryIsNotes.value ? null : supplyCategoryFilter.value,
+)
+
+const addMenuCategory = (): void => {
+  const label = normalizeSpace(newCategoryName.value).slice(0, 40)
+  if (!label) {
+    supplyActionMessage.value = '請輸入分類名稱'
+    return
+  }
+
+  const existingIds = new Set(menuCategoryDefinitions.value.map((category) => category.id))
+  const id = uniqueId(label, existingIds)
+  menuCategoryDefinitions.value = [...menuCategoryDefinitions.value, { id, label }]
+  newCategoryName.value = ''
+  supplyCategoryFilter.value = id
+  supplyActionMessage.value = `${label} 已新增`
+}
+
+const fallbackSupplyCategory = (): SupplyCategoryFilter =>
+  menuCategoryOptions.value.find((category) => category.id !== supplyCategoryFilter.value)?.id ?? supplyNotesFilterValue
+
+const deleteSelectedMenuCategory = async (): Promise<void> => {
+  const categoryId = selectedSupplyMenuCategory.value
+  if (!categoryId) {
+    return
+  }
+
+  const products = [
+    ...new Map(
+      [...productStatusCatalog.value, ...menuCatalog.value]
+        .filter((product) => product.category === categoryId)
+        .map((product) => [product.id, product]),
+    ).values(),
+  ]
+  let deletedCount = 0
+
+  for (const product of products) {
+    const deleted = await deleteProductForStation(stationPin.value.trim(), product.id)
+    if (deleted) {
+      deletedCount += 1
+      productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
+      productSupplyStatuses.value = withoutRecordKey(productSupplyStatuses.value, product.id)
+    }
+  }
+
+  if (deletedCount !== products.length) {
+    supplyActionMessage.value = `${categoryLabelFor(categoryId)} 刪除未完成，仍有商品無法移除`
+    return
+  }
+
+  menuCategoryDefinitions.value = menuCategoryDefinitions.value.filter((category) => category.id !== categoryId)
+  supplyCategoryFilter.value = fallbackSupplyCategory()
+  supplyActionMessage.value = `${categoryLabelFor(categoryId)} 已刪除，連同 ${deletedCount} 個商品移除`
+}
+
+const assignedOptionGroupIdsForCategory = (categoryId: MenuCategory): string[] => {
+  const categoryProducts = [
+    ...new Map(
+      [...productStatusCatalog.value, ...menuCatalog.value]
+        .filter((product) => product.category === categoryId)
+        .map((product) => [product.id, product]),
+    ).values(),
+  ]
+  const inheritedIds = categoryProducts
+    .map((product) => assignedOptionGroupIdsForProduct(product))
+    .find((groupIds) => groupIds.length > 0)
+
+  if (inheritedIds) {
+    return inheritedIds
+  }
+
+  if (defaultConfigurableCategoryIds.includes(categoryId)) {
+    const defaultIds = new Set(beverageOptionGroups.map((group) => group.id))
+    return optionGroupCatalog.value.filter((group) => defaultIds.has(group.id)).map((group) => group.id)
+  }
+
+  return []
+}
+
+const nextProductSortOrder = (categoryId: MenuCategory): number => {
+  const categoryProducts = [
+    ...new Map(
+      [...productStatusCatalog.value, ...menuCatalog.value]
+        .filter((product) => product.category === categoryId)
+        .map((product) => [product.id, product]),
+    ).values(),
+  ]
+  const currentMax = categoryProducts.reduce((max, product) => Math.max(max, product.sortOrder), 0)
+  return currentMax + 10
+}
+
+const addProductToSupplyCategory = async (): Promise<void> => {
+  const categoryId = selectedSupplyMenuCategory.value
+  const name = normalizeSpace(newProductName.value).slice(0, 60)
+  const price = Math.max(0, Math.trunc(Number(newProductPrice.value) || 0))
+
+  if (!categoryId) {
+    supplyActionMessage.value = '請先選擇商品分類'
+    return
+  }
+
+  if (!name) {
+    supplyActionMessage.value = '請輸入商品名稱'
+    return
+  }
+
+  const product = await createProductForStation(stationPin.value.trim(), {
+    sku: newProductSku.value.trim() || slugFromText(name, 'product'),
+    name,
+    category: categoryId,
+    price,
+    tags: [],
+    accent: '#0b6b63',
+    isAvailable: true,
+    sortOrder: nextProductSortOrder(categoryId),
+    posVisible: true,
+    onlineVisible: true,
+    qrVisible: true,
+    prepStation: defaultConfigurableCategoryIds.includes(categoryId) ? 'bar' : 'counter',
+    printLabel: true,
+    inventoryCount: null,
+    lowStockThreshold: null,
+    soldOutUntil: null,
+  })
+
+  if (!product) {
+    supplyActionMessage.value = `${name} 新增失敗`
+    return
+  }
+
+  const inheritedGroupIds = assignedOptionGroupIdsForCategory(categoryId)
+  productOptionAssignments.value = {
+    ...productOptionAssignments.value,
+    [product.id]: inheritedGroupIds,
+  }
+  newProductName.value = ''
+  newProductPrice.value = 0
+  newProductSku.value = ''
+  supplyActionMessage.value = `${product.name} 已加入 ${categoryLabelFor(categoryId)}`
+}
+
+const deleteSupplyProduct = async (product: MenuItem): Promise<void> => {
+  const deleted = await deleteProductForStation(stationPin.value.trim(), product.id)
+  if (!deleted) {
+    supplyActionMessage.value = `${product.name} 刪除失敗`
+    return
+  }
+
+  productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
+  productSupplyStatuses.value = withoutRecordKey(productSupplyStatuses.value, product.id)
+  supplyActionMessage.value = `${product.name} 已刪除`
+}
+
+const addOptionGroup = (): void => {
+  const label = normalizeSpace(newOptionGroupName.value).slice(0, 40)
+  if (!label) {
+    supplyActionMessage.value = '請輸入註記大項名稱'
+    return
+  }
+
+  const existingIds = new Set(optionGroupCatalog.value.map((group) => group.id))
+  const id = uniqueId(slugFromText(label, 'note'), existingIds)
+  const max = Math.max(1, Math.trunc(Number(newOptionGroupMax.value) || 1))
+  const required = newOptionGroupRequired.value
+  const min = required ? 1 : 0
+  const group: MenuOptionGroup = {
+    id,
+    label,
+    required,
+    min,
+    max,
+    requirement: optionGroupRequirement({ required, min, max }),
+    choices: [],
+  }
+
+  optionGroupCatalog.value = [...optionGroupCatalog.value, group]
+  newOptionChoiceGroupId.value = id
+  newOptionGroupName.value = ''
+  newOptionGroupRequired.value = false
+  newOptionGroupMax.value = 1
+  supplyActionMessage.value = `${label} 已新增`
+}
+
+const deleteOptionGroup = (groupId: string): void => {
+  const group = optionGroupCatalog.value.find((entry) => entry.id === groupId)
+  optionGroupCatalog.value = optionGroupCatalog.value.filter((entry) => entry.id !== groupId)
+  productOptionAssignments.value = Object.fromEntries(
+    Object.entries(productOptionAssignments.value).map(([productId, groupIds]) => [
+      productId,
+      groupIds.filter((id) => id !== groupId),
+    ]),
+  )
+  noteSupplyStatuses.value = Object.fromEntries(
+    Object.entries(noteSupplyStatuses.value).filter(([noteId]) => !noteId.startsWith(`${groupId}-`)),
+  )
+  newOptionChoiceGroupId.value = optionGroupCatalog.value[0]?.id ?? ''
+  supplyActionMessage.value = `${group?.label ?? '註記大項'} 已刪除`
+}
+
+const addOptionChoice = (): void => {
+  const groupId = newOptionChoiceGroupId.value || optionGroupCatalog.value[0]?.id
+  const label = normalizeSpace(newOptionChoiceName.value).slice(0, 40)
+  if (!groupId || !label) {
+    supplyActionMessage.value = '請選擇大項並輸入選項名稱'
+    return
+  }
+
+  const priceDelta = Math.trunc(Number(newOptionChoicePriceDelta.value) || 0)
+  optionGroupCatalog.value = optionGroupCatalog.value.map((group) => {
+    if (group.id !== groupId) {
+      return group
+    }
+
+    const existingIds = new Set(group.choices.map((choice) => choice.id))
+    const id = uniqueId(slugFromText(label, 'choice'), existingIds)
+    const choice: MenuOptionChoice = {
+      id,
+      label,
+    }
+    if (priceDelta > 0) {
+      choice.priceDelta = priceDelta
+    }
+    return {
+      ...group,
+      choices: [...group.choices, choice],
+    }
+  })
+  newOptionChoiceName.value = ''
+  newOptionChoicePriceDelta.value = 0
+  supplyActionMessage.value = `${label} 已新增`
+}
+
+const deleteOptionChoice = (groupId: string, choiceId: string): void => {
+  const noteId = `${groupId}-${choiceId}`
+  optionGroupCatalog.value = optionGroupCatalog.value.map((group) =>
+    group.id === groupId
+      ? { ...group, choices: group.choices.filter((choice) => choice.id !== choiceId) }
+      : group,
+  )
+  noteSupplyStatuses.value = withoutRecordKey(noteSupplyStatuses.value, noteId)
+  supplyActionMessage.value = '註記選項已刪除'
+}
+
+const productHasOptionGroup = (product: MenuItem, groupId: string): boolean =>
+  assignedOptionGroupIdsForProduct(product).includes(groupId)
+
+const toggleProductOptionGroup = (product: MenuItem, groupId: string): void => {
+  const currentIds = assignedOptionGroupIdsForProduct(product)
+  const nextIds = currentIds.includes(groupId)
+    ? currentIds.filter((id) => id !== groupId)
+    : [...currentIds, groupId]
+
+  productOptionAssignments.value = {
+    ...productOptionAssignments.value,
+    [product.id]: nextIds,
+  }
+  supplyActionMessage.value = `${product.name} 註記已更新`
+}
+
 const supplyRowIsBusy = (row: SupplyStatusRow): boolean =>
   row.kind === 'product' && (togglingProductId.value === row.id || stationBatchProductIdSet.value.has(row.id))
 
@@ -2642,6 +3143,27 @@ watch(productSupplyStatuses, (statuses) => {
 watch(noteSupplyStatuses, (statuses) => {
   writeSupplyStatusMap(supplyNoteStatusStorageKey, statuses)
 }, { deep: true })
+
+watch(menuCategoryDefinitions, (definitions) => {
+  writeMenuCategoryDefinitions(definitions)
+}, { deep: true })
+
+watch(optionGroupCatalog, (groups) => {
+  writeOptionGroups(groups)
+  if (!groups.some((group) => group.id === newOptionChoiceGroupId.value)) {
+    newOptionChoiceGroupId.value = groups[0]?.id ?? ''
+  }
+}, { deep: true })
+
+watch(productOptionAssignments, (assignments) => {
+  writeProductOptionAssignments(assignments)
+}, { deep: true })
+
+watch(supplyCategoryOptions, (options) => {
+  if (!options.some((option) => option.value === supplyCategoryFilter.value)) {
+    supplyCategoryFilter.value = options[0]?.value ?? supplyNotesFilterValue
+  }
+}, { immediate: true })
 
 onMounted(() => {
   globalThis.addEventListener('keydown', handlePosShortcut)
@@ -3239,7 +3761,7 @@ onBeforeUnmount(() => {
                         <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
                           <span class="product-tile-top">
                             <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-                            <span class="product-category">{{ categoryLabels[item.category] }}</span>
+                            <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
                           </span>
                           <span class="product-name">{{ item.name }}</span>
                           <span class="product-meta">
@@ -3947,7 +4469,7 @@ onBeforeUnmount(() => {
                     <span>
                       <strong>{{ product.name }}</strong>
                       <small>
-                        {{ categoryLabels[product.category] }} · {{ formatCurrency(product.price) }}
+                        {{ categoryLabelFor(product.category) }} · {{ formatCurrency(product.price) }}
                         <template v-if="productStockLabel(product)"> · {{ productStockLabel(product) }}</template>
                       </small>
                     </span>
@@ -4509,6 +5031,13 @@ onBeforeUnmount(() => {
             >
               {{ category.label }}
             </button>
+            <form class="supply-rail-form" @submit.prevent="addMenuCategory">
+              <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
+              <button type="submit">
+                <Plus :size="18" aria-hidden="true" />
+                新增分類
+              </button>
+            </form>
           </nav>
 
           <section class="supply-content" aria-label="供應狀態清單">
@@ -4531,6 +5060,86 @@ onBeforeUnmount(() => {
               </label>
             </header>
 
+            <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
+
+            <section v-if="!selectedSupplyCategoryIsNotes" class="supply-management-panel" aria-label="分類與商品管理">
+              <div class="supply-management-title">
+                <strong>分類與商品</strong>
+                <button type="button" class="ghost-danger-button" @click="deleteSelectedMenuCategory">
+                  <Trash2 :size="18" aria-hidden="true" />
+                  刪除分類
+                </button>
+              </div>
+              <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
+                <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
+                <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
+                <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
+                <button type="submit">
+                  <Plus :size="18" aria-hidden="true" />
+                  新增商品
+                </button>
+              </form>
+            </section>
+
+            <section v-else class="supply-management-panel supply-management-panel--notes" aria-label="註記管理">
+              <div class="supply-management-title">
+                <strong>註記大項與選項</strong>
+                <span>{{ optionGroupCatalog.length }} 個大項</span>
+              </div>
+              <form class="supply-note-form" @submit.prevent="addOptionGroup">
+                <input v-model="newOptionGroupName" type="text" placeholder="新增大項，例如：冰量選擇" />
+                <label class="supply-inline-check">
+                  <input v-model="newOptionGroupRequired" type="checkbox" />
+                  必選
+                </label>
+                <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
+                <button type="submit">
+                  <Plus :size="18" aria-hidden="true" />
+                  新增大項
+                </button>
+              </form>
+              <form class="supply-note-form" @submit.prevent="addOptionChoice">
+                <select v-model="newOptionChoiceGroupId">
+                  <option v-for="group in optionGroupCatalog" :key="group.id" :value="group.id">
+                    {{ group.label }}
+                  </option>
+                </select>
+                <input v-model="newOptionChoiceName" type="text" placeholder="新增選項，例如：少冰" />
+                <input v-model.number="newOptionChoicePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
+                <button type="submit">
+                  <Plus :size="18" aria-hidden="true" />
+                  新增選項
+                </button>
+              </form>
+              <div class="supply-note-groups">
+                <article v-for="group in optionGroupCatalog" :key="group.id" class="supply-note-group">
+                  <header>
+                    <div>
+                      <strong>{{ group.label }}</strong>
+                      <span>{{ group.requirement }} · {{ group.choices.length }} 個選項</span>
+                    </div>
+                    <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
+                      <Trash2 :size="16" aria-hidden="true" />
+                      刪除
+                    </button>
+                  </header>
+                  <div class="supply-note-choice-list">
+                    <button
+                      v-for="choice in group.choices"
+                      :key="choice.id"
+                      type="button"
+                      class="supply-note-choice-delete"
+                      @click="deleteOptionChoice(group.id, choice.id)"
+                    >
+                      <span>{{ optionChoiceLabel(choice) }}</span>
+                      <X :size="15" aria-hidden="true" />
+                    </button>
+                    <span v-if="group.choices.length === 0" class="supply-note-empty">尚未建立選項</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+
             <div class="supply-row-list">
               <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
                 <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
@@ -4540,6 +5149,16 @@ onBeforeUnmount(() => {
                   <strong>{{ row.name }}</strong>
                   <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
                 </div>
+                <button
+                  v-if="row.kind === 'product' && row.product"
+                  class="supply-row-delete"
+                  type="button"
+                  :disabled="supplyRowIsBusy(row)"
+                  @click="deleteSupplyProduct(row.product)"
+                >
+                  <Trash2 :size="18" aria-hidden="true" />
+                </button>
+                <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
                 <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
                   <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
                   <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
@@ -4557,6 +5176,17 @@ onBeforeUnmount(() => {
                   <ChevronDown :size="20" aria-hidden="true" />
                 </label>
                 <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
+                <div v-if="row.kind === 'product' && row.product" class="supply-row-options">
+                  <span>可用註記</span>
+                  <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
+                    <input
+                      type="checkbox"
+                      :checked="productHasOptionGroup(row.product, group.id)"
+                      @change="toggleProductOptionGroup(row.product, group.id)"
+                    />
+                    {{ group.label }}
+                  </label>
+                </div>
               </article>
 
               <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">

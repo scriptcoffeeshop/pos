@@ -37,12 +37,12 @@ import type {
 type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
 
-const categoryOptions: Array<{ value: CategoryFilter; label: string }> = [
+const baseCategoryOptions: Array<{ value: CategoryFilter; label: string }> = [
   { value: 'all', label: '全部' },
-  { value: 'coffee', label: categoryLabels.coffee },
-  { value: 'tea', label: categoryLabels.tea },
-  { value: 'food', label: categoryLabels.food },
-  { value: 'retail', label: categoryLabels.retail },
+  { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
+  { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
+  { value: 'food', label: categoryLabels.food ?? '輕食' },
+  { value: 'retail', label: categoryLabels.retail ?? '零售' },
 ]
 
 const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
@@ -87,6 +87,22 @@ const onlineFallbackMenu = (): MenuItem[] =>
       onlineVisible: true,
     }))
 
+const categoryLabelFor = (category: MenuCategory): string =>
+  baseCategoryOptions.find((option) => option.value === category)?.label ?? categoryLabels[category] ?? category
+
+const categoryOptions = computed<Array<{ value: CategoryFilter; label: string }>>(() => {
+  const options = new Map(baseCategoryOptions.map((option) => [option.value, option]))
+  for (const item of menuCatalog.value) {
+    if (!options.has(item.category)) {
+      options.set(item.category, {
+        value: item.category,
+        label: categoryLabelFor(item.category),
+      })
+    }
+  }
+  return [...options.values()]
+})
+
 const itemMatchesFilter = (item: MenuItem): boolean => {
   const keyword = searchTerm.value.trim().toLowerCase()
   const matchesCategory = selectedCategory.value === 'all' || item.category === selectedCategory.value
@@ -100,7 +116,7 @@ const itemMatchesFilter = (item: MenuItem): boolean => {
 
 const filteredMenu = computed(() => menuCatalog.value.filter(itemMatchesFilter))
 const menuGroups = computed(() =>
-  categoryOptions
+  categoryOptions.value
     .filter((category): category is { value: MenuCategory; label: string } => category.value !== 'all')
     .map((category) => ({
       ...category,
@@ -201,7 +217,7 @@ const isProductOrderable = (item: MenuItem): boolean =>
   !isProductTemporarilyStopped(item)
 
 const productDescription = (item: MenuItem): string => {
-  const description = item.tags.join('、') || categoryLabels[item.category]
+  const description = item.tags.join('、') || categoryLabelFor(item.category)
   if (
     item.inventoryCount !== null &&
     item.lowStockThreshold !== null &&

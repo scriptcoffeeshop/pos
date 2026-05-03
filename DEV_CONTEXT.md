@@ -1,6 +1,6 @@
 # 開發交接紀錄
 
-更新日期：2026-05-03
+更新日期：2026-05-04
 
 ## 目前狀態
 
@@ -8,7 +8,7 @@
 - 技術基底：Vue 3 + Vite + TypeScript。
 - 初始畫面：門市 POS 工作台預設進入簡潔的「外帶 / 外送」訂單查詢主畫面，右側導航列依 2026-05-03 iPad 截圖先收斂為底部「工具箱」入口，並保留上一版綠色主色系；主畫面可直接搜尋/篩選訂單，並用「新增外帶」進入點餐。點餐頁改為接近 iCHEF 出單畫面的左側外帶票券、右側分類列與商品大方塊；咖啡/茶飲品項會開啟選項面板並要求先選「飲品溫度」，未選時會顯示必填警告；票券上可直接修改顧客、方式、付款與常用備註；`order.scriptcoffee.com.tw` 會預設進入消費者線上點餐頁。
 - 櫃台效率操作：已有最近/常用品項快速加購並跨重啟保留、常用備註 chip、未送出櫃台草稿自動恢復、訂單搜尋與篩選狀態跨重啟保留、日期/取餐方式/來源/排序進階查詢、履約時間預警資料、訂單明細展開、訂單左滑揭露已完成/已取餐與作廢/退款，不能處理時會顯示已退款、已作廢、已交付、付款逾期、已異常或先接手等原因、列印單左滑刪除、庫存/低庫存提示、下單原子扣庫存、多平板訂單鎖定、收款確認、未收款訂單作廢、已收款退款沖銷、列印重印紀錄、正式開班/關班、關帳摘要、交班預檢、關帳異常檢查與強制確認、鍵盤捷徑；建立櫃台訂單後會清空購物車、重置顧客電話/備註並回到佇列，避免帶到下一張單。
-- 影片 UI/UX 導入：2026-05-02 參考 iCHEF 操作影片後，保留現有預設色系，新增 POS 工具箱、外觀偏好（文字大小、畫面密度）、工具箱重新同步與常用工作區跳轉；供應狀態入口已常駐在列印/前台操作頁，不再只限 Native APK 顯示，且支援搜尋、分類、狀態篩選與批次暫停/恢復篩選結果；後台已新增營運紀錄時間線，整合平板心跳、開關班與關鍵稽核事件，可搜尋、依類型/平板篩選並匯出 CSV；線上點餐設定已接 `online_ordering` runtime setting，可控制接單、預約、平均備餐、未確認提醒與提示音。2026-05-03 依 iPad 截圖重塑主流程，主佇列第一層先收斂為搜尋/條件/訂單列，任務快篩與履約提醒資料後續適合放進工具箱延伸；工具箱已新增門市 SOP 助手，可搜尋點餐、線上新單、付款異常、供應狀態、列印與班別流程，並跳到相關工作區；班別關帳已新增交班預檢，未交付、待收款、付款異常、列印失敗與作廢記錄可直接帶入訂單查詢篩選處理。
+- 影片 UI/UX 導入：2026-05-02 參考 iCHEF 操作影片後，保留現有預設色系，新增 POS 工具箱、外觀偏好（文字大小、畫面密度）、工具箱重新同步與常用工作區跳轉；供應狀態入口已常駐在列印/前台操作頁，不再只限 Native APK 顯示，且支援搜尋、分類、狀態篩選與批次暫停/恢復篩選結果；2026-05-04 供應狀態工具箱擴成商品/分類/註記管理，可新增/刪除分類與商品、建立註記大項與選項、把任意註記綁定到任意商品。後台已新增營運紀錄時間線，整合平板心跳、開關班與關鍵稽核事件，可搜尋、依類型/平板篩選並匯出 CSV；線上點餐設定已接 `online_ordering` runtime setting，可控制接單、預約、平均備餐、未確認提醒與提示音。2026-05-03 依 iPad 截圖重塑主流程，主佇列第一層先收斂為搜尋/條件/訂單列，任務快篩與履約提醒資料後續適合放進工具箱延伸；工具箱已新增門市 SOP 助手，可搜尋點餐、線上新單、付款異常、供應狀態、列印與班別流程，並跳到相關工作區；班別關帳已新增交班預檢，未交付、待收款、付款異常、列印失敗與作廢記錄可直接帶入訂單查詢篩選處理。
 - 前端資料流：`src/lib/posApi.ts` 是唯一 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`usePosSession()` 只處理畫面狀態與 fallback。
 - 門市 SOP 助手：`src/data/posKnowledge.ts` 保存本機 SOP 條目與分類，`src/App.vue` 只處理搜尋、篩選、選取與跳轉；未來真實 SOP 匯入應優先擴充資料檔。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、線上點餐 runtime 設定、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、會員錢包與 CSV 匯出、營運日報與 CSV 匯出、金流回呼事件篩選/匯出、出單機規則、角色權限、營運紀錄時間線、平板在線與操作稽核匯出；讀取金流事件、稽核、平板狀態與寫入設定需 Supabase secret `POS_ADMIN_PIN`。
@@ -22,7 +22,7 @@
 - GitHub Secrets / Variables：已設定 Supabase deploy 需要的 secrets 與前端 build variables。
 - Pages 網域：`order.scriptcoffee.com.tw` 已綁定 GitHub Pages；2026-04-28 使用者回報 HTTPS 已完成。
 - 遠端部署：`20260427155000_initial_pos_schema.sql` 已推到 Supabase；`pos-api` Edge Function 已部署並通過 `/health`、`/products` 驗證。
-- POS API 同步：商品、訂單、runtime 出單機/線上點餐設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；消費者線上菜單讀 `/settings/runtime` 與 `/products?channel=online`，`online_ordering.enabled=false` 時保留瀏覽但阻擋線上/QR 建單；櫃台與線上建單都走 `POST /orders`，後端用 `create_pos_order()` 在同一個 transaction 建單、寫品項與扣庫存，並保存希望取餐/送達時間與外送地址；`GET /orders` 會把超過 `POS_PAYMENT_EXPIRY_MINUTES`（預設 20 分鐘）的線上/QR 待付款新單自動改成 `status=failed`、`payment_status=expired`；平板接單先走 `POST /orders/:id/claim`，收款確認走 `PATCH /orders/:id/payment`，未收款作廢走 `POST /orders/:id/void`，已收款退款走 `POST /orders/:id/refund`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`，列印單刪除走 `DELETE /print-jobs/:id`。POS 啟動後每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，每 30 秒送 `/station/heartbeat`，平板回到前景時也會補同步與檢查線上新單提醒；API 失敗建立的櫃台單會保存到 `script-coffee-pos-pending-orders`，佇列會標示「本機待同步」，後續同步成功時先補寫遠端並去重。
+- POS API 同步：商品、訂單、runtime 出單機/線上點餐設定與收銀班別會從 `/products?channel=pos`、`/orders`、`/settings/runtime`、`/register/current` 載入；商品分類已由固定 enum 放寬為 `products.category text`，工具箱本機會保存可自訂分類、註記大項/選項與商品註記綁定；有 `POS_ADMIN_PIN` 時商品新增/刪除/更新會走 `/admin/products`、`/admin/products/:id` 並寫稽核，無 PIN 或 API 失敗時先保留本機商品狀態。消費者線上菜單讀 `/settings/runtime` 與 `/products?channel=online`，`online_ordering.enabled=false` 時保留瀏覽但阻擋線上/QR 建單；櫃台與線上建單都走 `POST /orders`，後端用 `create_pos_order()` 在同一個 transaction 建單、寫品項與扣庫存，並保存希望取餐/送達時間與外送地址；`GET /orders` 會把超過 `POS_PAYMENT_EXPIRY_MINUTES`（預設 20 分鐘）的線上/QR 待付款新單自動改成 `status=failed`、`payment_status=expired`；平板接單先走 `POST /orders/:id/claim`，收款確認走 `PATCH /orders/:id/payment`，未收款作廢走 `POST /orders/:id/void`，已收款退款走 `POST /orders/:id/refund`，訂單狀態走 `PATCH /orders/:id/status`，列印工作會依後台規則拆成多筆 `POST /print-jobs`，列印單刪除走 `DELETE /print-jobs/:id`。POS 啟動後每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，每 30 秒送 `/station/heartbeat`，平板回到前景時也會補同步與檢查線上新單提醒；API 失敗建立的櫃台單會保存到 `script-coffee-pos-pending-orders`，佇列會標示「本機待同步」，後續同步成功時先補寫遠端並去重。
 - 商品庫存欄位：`products.inventory_count`、`low_stock_threshold`、`sold_out_until` 由 `20260429110000_add_product_inventory_controls.sql` 新增；前端仍保留 `is_available` 作為人工上架/停售開關，庫存為 0 或暫停到期前會在 POS 端視為不可點。
 - 下單扣庫存：`20260429150000_add_create_pos_order_function.sql` 新增 `create_pos_order()`，`POST /orders` 會透過 DB function 原子建單與扣庫存；庫存不足時整筆 rollback，POS 會移除暫存單並把品項還回購物車。
 - 外送/履約欄位：`20260429161000_add_order_fulfillment_fields.sql` 新增 `orders.delivery_address` 與 `requested_fulfillment_at`，線上與櫃台建單都會寫入，POS 佇列與收據 payload 會顯示希望時間與地址。
