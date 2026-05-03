@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   CreditCard,
@@ -82,6 +83,7 @@ type QueueAdminActionKind = 'void' | 'refund'
 type SupplyCategoryFilter = MenuCategory | 'notes'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
+type CategoryMoveDirection = -1 | 1
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -915,6 +917,86 @@ const categoryOptions = computed<Array<{ value: 'all' | MenuCategory; label: str
 const selectedCategoryLabel = computed(
   () => categoryOptions.value.find((category) => category.value === selectedCategory.value)?.label ?? '全部',
 )
+const selectedCategoryIndex = computed(() =>
+  categoryOptions.value.findIndex((category) => category.value === selectedCategory.value),
+)
+const selectedMenuCategoryIndex = computed(() =>
+  menuCategoryDefinitions.value.findIndex((category) => category.id === selectedCategory.value),
+)
+
+const selectCategory = (category: 'all' | MenuCategory): void => {
+  selectedCategory.value = category
+}
+
+const canMoveSelectedCategory = (direction: CategoryMoveDirection): boolean => {
+  const currentIndex = selectedMenuCategoryIndex.value
+  const nextIndex = currentIndex + direction
+
+  return currentIndex >= 0 && nextIndex >= 0 && nextIndex < menuCategoryDefinitions.value.length
+}
+
+const moveSelectedCategory = (direction: CategoryMoveDirection): void => {
+  if (!canMoveSelectedCategory(direction)) {
+    return
+  }
+
+  const currentIndex = selectedMenuCategoryIndex.value
+  const nextIndex = currentIndex + direction
+  const nextDefinitions = cloneMenuCategories(menuCategoryDefinitions.value)
+  const [movedCategory] = nextDefinitions.splice(currentIndex, 1)
+  if (!movedCategory) {
+    return
+  }
+
+  nextDefinitions.splice(nextIndex, 0, movedCategory)
+  menuCategoryDefinitions.value = nextDefinitions
+  supplyActionMessage.value = `${movedCategory.label} 已${direction < 0 ? '往左' : '往右'}移動`
+}
+
+const switchCategoryByOffset = (offset: CategoryMoveDirection): void => {
+  const currentIndex = selectedCategoryIndex.value
+  if (currentIndex < 0) {
+    selectCategory(categoryOptions.value[0]?.value ?? 'all')
+    return
+  }
+
+  const nextCategory = categoryOptions.value[currentIndex + offset]
+  if (nextCategory) {
+    selectCategory(nextCategory.value)
+  }
+}
+
+const categorySwipeState = ref<{ pointerId: number; startX: number; startY: number } | null>(null)
+const categorySwipeThreshold = 72
+
+const startCategorySwipe = (event: PointerEvent): void => {
+  categorySwipeState.value = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+  }
+}
+
+const finishCategorySwipe = (event: PointerEvent): void => {
+  const swipe = categorySwipeState.value
+  if (!swipe || swipe.pointerId !== event.pointerId) {
+    return
+  }
+
+  categorySwipeState.value = null
+  const deltaX = event.clientX - swipe.startX
+  const deltaY = event.clientY - swipe.startY
+
+  if (Math.abs(deltaX) < categorySwipeThreshold || Math.abs(deltaX) < Math.abs(deltaY) * 1.35) {
+    return
+  }
+
+  switchCategoryByOffset(deltaX < 0 ? 1 : -1)
+}
+
+const cancelCategorySwipe = (): void => {
+  categorySwipeState.value = null
+}
 
 const compactOrderId = (orderId: string): string => {
   const parts = orderId.split('-').filter(Boolean)
@@ -3951,6 +4033,22 @@ onBeforeUnmount(() => {
                   </div>
 
                   <footer class="checkout-bar checkout-bar--ticket">
+                    <div class="ticket-footer-summary-row">
+                      <div class="ticket-total-summary">
+                        <span>{{ ticketDisplayQuantity }} 件</span>
+                        <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
+                      </div>
+                      <button
+                        class="icon-button ticket-more-button"
+                        type="button"
+                        title="開啟工具箱"
+                        aria-controls="pos-toolbox-modal"
+                        :aria-expanded="isToolboxOpen"
+                        @click="openToolbox"
+                      >
+                        <MoreHorizontal :size="24" aria-hidden="true" />
+                      </button>
+                    </div>
                     <div class="ticket-action-group" aria-label="訂單操作">
                       <button
                         class="primary-button ticket-submit-button"
@@ -3980,20 +4078,6 @@ onBeforeUnmount(() => {
                         {{ activeTicketAction === 'checkout-only' ? '結帳中' : '結帳不出單' }}
                       </button>
                     </div>
-                    <div class="ticket-total-summary">
-                      <span>{{ ticketDisplayQuantity }} 件</span>
-                      <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
-                    </div>
-                    <button
-                      class="icon-button ticket-more-button"
-                      type="button"
-                      title="開啟工具箱"
-                      aria-controls="pos-toolbox-modal"
-                      :aria-expanded="isToolboxOpen"
-                      @click="openToolbox"
-                    >
-                      <MoreHorizontal :size="24" aria-hidden="true" />
-                    </button>
                   </footer>
                 </section>
 
@@ -4010,7 +4094,13 @@ onBeforeUnmount(() => {
                     </label>
                   </div>
 
-                  <div class="menu-workarea">
+                  <div
+                    class="menu-workarea"
+                    @pointerdown="startCategorySwipe"
+                    @pointerup="finishCategorySwipe"
+                    @pointercancel="cancelCategorySwipe"
+                    @pointerleave="cancelCategorySwipe"
+                  >
                     <aside class="category-rail" aria-label="品項分類">
                       <span class="category-rail-icon">
                         <MenuIcon :size="26" aria-hidden="true" />
@@ -4021,10 +4111,30 @@ onBeforeUnmount(() => {
                         class="category-rail-button"
                         :class="{ 'category-rail-button--active': selectedCategory === category.value }"
                         type="button"
-                        @click="selectedCategory = category.value"
+                        @click="selectCategory(category.value)"
                       >
                         {{ category.label }}
                       </button>
+                      <div v-if="selectedCategory !== 'all'" class="category-order-controls" aria-label="分類順序" @pointerdown.stop>
+                        <button
+                          class="category-order-button"
+                          type="button"
+                          title="分類往左移"
+                          :disabled="!canMoveSelectedCategory(-1)"
+                          @click.stop="moveSelectedCategory(-1)"
+                        >
+                          <ChevronLeft :size="18" aria-hidden="true" />
+                        </button>
+                        <button
+                          class="category-order-button"
+                          type="button"
+                          title="分類往右移"
+                          :disabled="!canMoveSelectedCategory(1)"
+                          @click.stop="moveSelectedCategory(1)"
+                        >
+                          <ChevronRight :size="18" aria-hidden="true" />
+                        </button>
+                      </div>
                     </aside>
 
                     <div class="catalog-panel">

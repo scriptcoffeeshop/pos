@@ -985,19 +985,30 @@ button:disabled {
 }
 
 .pos-main-surface--ordering .checkout-bar--ticket {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 88px;
   margin-top: 0;
   padding: 12px;
+  gap: 10px;
   border-top: 1px solid var(--line);
   background: var(--surface-raised);
 }
 
+.checkout-bar .ticket-footer-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 10px;
+}
+
 .ticket-action-group {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  flex: 1.6;
+  grid-template-columns: 1fr 0.9fr 1.15fr;
+  width: 100%;
   min-width: 0;
-  gap: 8px;
+  gap: 7px;
 }
 
 .ticket-submit-button {
@@ -1005,11 +1016,15 @@ button:disabled {
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 56px;
-  gap: 7px;
-  padding: 0 10px;
-  font-size: 0.94rem;
-  white-space: nowrap;
+  min-height: 52px;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: clamp(0.78rem, 0.82rem + 0.18vw, 0.94rem);
+  flex-wrap: wrap;
+  line-height: 1.08;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ticket-submit-button--secondary {
@@ -1029,28 +1044,30 @@ button:disabled {
   letter-spacing: 0;
 }
 
-.ticket-total-summary {
-  display: grid;
-  min-width: 76px;
-  flex: 0.42;
-  gap: 3px;
-  text-align: center;
+.checkout-bar .ticket-total-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 8px;
+  text-align: right;
 }
 
-.ticket-total-summary span {
+.checkout-bar .ticket-total-summary span {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 900;
 }
 
-.ticket-total-summary strong {
+.checkout-bar .ticket-total-summary strong {
   color: var(--ink);
   font-size: 1.35rem;
 }
 
 .ticket-more-button {
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
 }
 
 .pos-main-surface--ordering .menu-panel-heading {
@@ -1073,18 +1090,22 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: calc(var(--pos-stage-height) - 78px);
+  touch-action: pan-y;
 }
 
 .pos-main-surface--ordering .category-rail {
   grid-auto-flow: column;
   grid-auto-columns: minmax(132px, 1fr);
   align-content: stretch;
+  align-items: stretch;
   gap: 0;
   padding: 0 18px;
   border-right: 0;
   border-bottom: 1px solid var(--line-strong);
   background: #e8e5df;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
 .pos-main-surface--ordering .category-rail-icon {
@@ -1109,6 +1130,37 @@ button:disabled {
   background: var(--surface-raised);
   color: var(--primary-dark);
   box-shadow: inset 0 -4px 0 var(--primary);
+}
+
+.category-order-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 66px;
+  min-width: 104px;
+  gap: 8px;
+  padding-inline: 8px;
+}
+
+.category-order-button {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--secondary);
+  font-weight: 950;
+}
+
+.category-order-button:disabled {
+  opacity: 0.42;
+}
+
+.category-order-button:not(:disabled):hover {
+  border-color: var(--secondary);
+  color: var(--primary-dark);
 }
 
 .pos-main-surface--ordering .catalog-panel {
