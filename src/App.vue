@@ -4642,29 +4642,6 @@ onBeforeUnmount(() => {
                       <div class="order-row-main">
                         <div class="order-row-title">
                           <span class="order-id" :title="order.id">{{ compactOrderId(order.id) }}</span>
-                          <span class="order-row-title-chips">
-                            <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
-                              <LockKeyhole :size="13" aria-hidden="true" />
-                              {{ claimLabelFor(order) }}
-                            </span>
-                            <span v-if="orderPendingSync(order)" class="sync-chip">
-                              <Clock3 :size="13" aria-hidden="true" />
-                              本機待同步
-                            </span>
-                            <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
-                              <CircleAlert :size="13" aria-hidden="true" />
-                              未確認
-                            </span>
-                            <span
-                              v-if="fulfillmentUrgencyLabel(order)"
-                              class="fulfillment-chip"
-                              :class="fulfillmentUrgencyClass(order)"
-                            >
-                              <Clock3 :size="13" aria-hidden="true" />
-                              {{ fulfillmentUrgencyLabel(order) }}
-                            </span>
-                            <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
-                          </span>
                         </div>
                         <strong>{{ order.customerName }}</strong>
                         <span>
@@ -4674,6 +4651,29 @@ onBeforeUnmount(() => {
                         <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
                           {{ fulfillmentLabel(order) }}
                         </small>
+                      </div>
+                      <div class="order-row-badges order-row-title-chips" aria-label="訂單狀態">
+                        <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
+                          <LockKeyhole :size="13" aria-hidden="true" />
+                          {{ claimLabelFor(order) }}
+                        </span>
+                        <span v-if="orderPendingSync(order)" class="sync-chip">
+                          <Clock3 :size="13" aria-hidden="true" />
+                          本機待同步
+                        </span>
+                        <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
+                          <CircleAlert :size="13" aria-hidden="true" />
+                          未確認
+                        </span>
+                        <span
+                          v-if="fulfillmentUrgencyLabel(order)"
+                          class="fulfillment-chip"
+                          :class="fulfillmentUrgencyClass(order)"
+                        >
+                          <Clock3 :size="13" aria-hidden="true" />
+                          {{ fulfillmentUrgencyLabel(order) }}
+                        </span>
+                        <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                       </div>
                       <div class="order-row-meta">
                         <span>{{ formatCurrency(order.subtotal) }}</span>

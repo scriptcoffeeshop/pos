@@ -3059,13 +3059,17 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .order-row {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(118px, max-content) minmax(132px, auto);
   align-items: center;
+  column-gap: clamp(18px, 2vw, 34px);
   min-height: var(--pos-order-row-height);
-  padding: var(--pos-order-row-padding) 24px;
+  padding: calc(var(--pos-order-row-padding) + 2px) 28px;
 }
 
 .workspace--queue .order-row-meta {
+  min-width: 132px;
+  padding-left: clamp(14px, 1.5vw, 24px);
+  border-left: 1px solid var(--line);
   justify-items: end;
 }
 
@@ -3074,7 +3078,9 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .order-row-meta span:first-child {
-  font-size: clamp(1.6rem, 2.5vw, 2.3rem);
+  font-size: clamp(1.9rem, 3vw, 2.7rem);
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
 }
 
 .swipe-row {
@@ -3210,6 +3216,7 @@ button.cart-line-summary:focus-visible {
 .order-row-main {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .order-row-main strong {
@@ -3236,7 +3243,7 @@ button.cart-line-summary:focus-visible {
 
 .order-row-title {
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
 }
 
@@ -3245,6 +3252,27 @@ button.cart-line-summary:focus-visible {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.order-row-badges {
+  display: grid;
+  align-content: center;
+  justify-content: start;
+  justify-items: start;
+  min-width: 0;
+  gap: 6px;
+}
+
+.workspace--queue .order-row-badges {
+  justify-self: start;
+}
+
+.order-row-badges .claim-chip,
+.order-row-badges .sync-chip,
+.order-row-badges .online-reminder-chip,
+.order-row-badges .fulfillment-chip,
+.order-row-badges .status-chip {
+  max-width: 100%;
 }
 
 .order-id {
@@ -6633,6 +6661,25 @@ button.cart-line-summary:focus-visible {
   .admin-rule-grid,
   .admin-role-header {
     grid-template-columns: 1fr;
+  }
+
+  .workspace--queue .order-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workspace--queue .order-row-badges {
+    grid-column: 1;
+    grid-row: 2;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .workspace--queue .order-row-meta {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    min-width: 112px;
   }
 
   .admin-row-header,

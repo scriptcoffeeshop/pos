@@ -1275,11 +1275,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const syncedLocalOrderDetail = (count: number): string => (count > 0 ? `，已補同步 ${count} 張本機訂單` : '')
 
+  const counterOrderSkipsClaimTimeout = (order: PosOrder): boolean => order.source === 'counter'
+
+  const orderClaimExpired = (order: PosOrder, now = Date.now()): boolean =>
+    counterOrderSkipsClaimTimeout(order) ? false : isClaimExpired(order, now)
+
   const orderClaimedByCurrentStation = (order: PosOrder): boolean =>
-    Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !isClaimExpired(order)
+    Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !orderClaimExpired(order)
 
   const orderClaimedByOtherStation = (order: PosOrder): boolean =>
-    Boolean(order.claimedBy) && order.claimedBy !== stationClaimId && !isClaimExpired(order)
+    !counterOrderSkipsClaimTimeout(order) &&
+    Boolean(order.claimedBy) &&
+    order.claimedBy !== stationClaimId &&
+    !orderClaimExpired(order)
 
   const orderPendingSync = (order: PosOrder): boolean =>
     pendingLocalOrders.value.some((entry) => entry.id === order.id)
@@ -1289,7 +1297,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return ''
     }
 
-    if (isClaimExpired(order)) {
+    if (counterOrderSkipsClaimTimeout(order)) {
+      return ''
+    }
+
+    if (orderClaimExpired(order)) {
       return '鎖定逾時'
     }
 
@@ -2599,7 +2611,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     loadRegisterSession,
     orderQueue,
     orderPendingSync,
-    orderClaimExpired: isClaimExpired,
+    orderClaimExpired,
     orderClaimedByCurrentStation,
     orderClaimedByOtherStation,
     onlineOrderReminder,
