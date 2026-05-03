@@ -454,7 +454,7 @@ api.use(
       "x-pos-station-id",
       "x-pos-payment-webhook-secret",
     ],
-    allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
