@@ -910,6 +910,15 @@ const selectedCategoryLabel = computed(
   () => categoryOptions.value.find((category) => category.value === selectedCategory.value)?.label ?? '全部',
 )
 
+const compactOrderId = (orderId: string): string => {
+  const parts = orderId.split('-').filter(Boolean)
+  const prefix = parts[0] ?? 'POS'
+  const suffix = parts.at(-1) ?? orderId
+  const compactSuffix = suffix.length > 6 ? suffix.slice(-6) : suffix
+
+  return `${prefix}-${compactSuffix}`
+}
+
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
   order: '外帶 / 外送點餐',
@@ -4462,7 +4471,7 @@ onBeforeUnmount(() => {
                     >
                       <div class="order-row-main">
                         <div class="order-row-title">
-                          <span class="order-id">{{ order.id }}</span>
+                          <span class="order-id" :title="order.id">{{ compactOrderId(order.id) }}</span>
                           <span class="order-row-title-chips">
                             <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
                               <LockKeyhole :size="13" aria-hidden="true" />

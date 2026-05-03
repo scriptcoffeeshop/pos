@@ -463,7 +463,11 @@ button:disabled {
 }
 
 .pos-command-bar h1 {
+  overflow: hidden;
+  color: var(--ink);
   font-size: 1.48rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pos-command-bar span {
@@ -504,17 +508,30 @@ button:disabled {
 }
 
 .pos-command-bar--queue {
-  min-height: 116px;
+  min-height: 76px;
   margin: -12px -12px 0;
-  padding: 26px 28px;
+  padding: 12px 28px;
   border: 0;
   border-radius: 0;
   box-shadow: 0 4px 14px rgba(24, 26, 27, 0.14);
 }
 
 .pos-command-bar--queue h1 {
-  font-size: clamp(2.2rem, 4vw, 3.25rem);
-  line-height: 1;
+  font-size: clamp(1.24rem, 1.7vw, 1.58rem);
+  line-height: 1.08;
+}
+
+.pos-command-bar--queue .eyebrow {
+  margin-bottom: 2px;
+  font-size: 0.66rem;
+}
+
+.pos-command-bar--queue span {
+  font-size: 0.76rem;
+}
+
+.pos-command-bar > div:first-child {
+  min-width: 0;
 }
 
 .pos-main-surface .workspace {
@@ -2962,7 +2979,7 @@ button.cart-line-summary:focus-visible {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-height: var(--pos-order-row-height);
-  padding: var(--pos-order-row-padding) 0;
+  padding: var(--pos-order-row-padding) 24px;
 }
 
 .workspace--queue .order-row-meta {
@@ -3109,7 +3126,11 @@ button.cart-line-summary:focus-visible {
 
 .order-row-main {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+}
+
+.order-row-main strong {
+  color: var(--ink);
 }
 
 .order-fulfillment {
@@ -3131,6 +3152,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .order-row-title {
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
@@ -3145,7 +3167,7 @@ button.cart-line-summary:focus-visible {
 .order-id {
   color: var(--secondary);
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 900;
 }
 
@@ -3201,7 +3223,7 @@ button.cart-line-summary:focus-visible {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
-  max-width: 176px;
+  max-width: 220px;
   gap: 5px;
   padding: 4px 8px;
   border: 1px solid #b7c7dc;
@@ -3230,9 +3252,9 @@ button.cart-line-summary:focus-visible {
 }
 
 .claim-chip--expired {
-  border-color: #d8c8a4;
-  background: #fff8e8;
-  color: #806018;
+  border-color: #dfc58e;
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
 .sync-chip {

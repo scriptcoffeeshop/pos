@@ -1070,14 +1070,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     if (isClaimExpired(order)) {
-      return `鎖定逾時：${order.claimedBy}`
+      return '鎖定逾時'
     }
 
     if (order.claimedBy === stationClaimId) {
-      return `本機處理中 · ${stationClaimLabel}`
+      return '本機處理中'
     }
 
-    return `${order.claimedBy} 處理中`
+    return '其他平板處理中'
   }
 
   const claimOrderForStation = async (orderId: string, force = false): Promise<boolean> => {
