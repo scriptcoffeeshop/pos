@@ -71,9 +71,8 @@ type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type PosTextScale = 'standard' | 'large'
-type PosWorkspaceDensity = 'comfortable' | 'compact'
-type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync'
+type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync' | 'appearance'
+type ToolboxPanel = 'home' | 'appearance'
 type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
@@ -95,8 +94,9 @@ interface SavedQueueView {
 }
 
 interface PosUiPreferences {
-  textScale: PosTextScale
-  density: PosWorkspaceDensity
+  appearanceScale: number
+  densityScale: number
+  textSize: number
 }
 
 interface PrintJobRow {
@@ -200,8 +200,6 @@ const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'autho
 const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
 const queueFulfillmentFilterValues: QueueFulfillmentFilter[] = ['all', 'overdue', 'due-soon', 'scheduled']
 const queueSortModeValues: QueueSortMode[] = ['fulfillment-asc', 'created-desc', 'amount-desc']
-const posTextScaleValues: PosTextScale[] = ['standard', 'large']
-const posWorkspaceDensityValues: PosWorkspaceDensity[] = ['comfortable', 'compact']
 const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
 const productSupplyStatusValues: ProductSupplyStatus[] = ['normal', 'online-stopped', 'stopped']
@@ -209,6 +207,11 @@ const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
+const defaultPosUiPreferences: PosUiPreferences = {
+  appearanceScale: 100,
+  densityScale: 100,
+  textSize: 100,
+}
 const defaultConfigurableCategoryIds: MenuCategory[] = ['coffee', 'tea']
 const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
   { id: 'coffee', label: '咖啡' },
@@ -267,12 +270,6 @@ const isQueueFulfillmentFilter = (value: unknown): value is QueueFulfillmentFilt
 
 const isQueueSortMode = (value: unknown): value is QueueSortMode =>
   typeof value === 'string' && queueSortModeValues.includes(value as QueueSortMode)
-
-const isPosTextScale = (value: unknown): value is PosTextScale =>
-  typeof value === 'string' && posTextScaleValues.includes(value as PosTextScale)
-
-const isPosWorkspaceDensity = (value: unknown): value is PosWorkspaceDensity =>
-  typeof value === 'string' && posWorkspaceDensityValues.includes(value as PosWorkspaceDensity)
 
 const isProductSupplyStatus = (value: unknown): value is ProductSupplyStatus =>
   typeof value === 'string' && productSupplyStatusValues.includes(value as ProductSupplyStatus)
@@ -396,20 +393,33 @@ const writeSavedQueueView = (view: SavedQueueView): void => {
   }
 }
 
+const clampPreference = (value: unknown, fallback: number, min: number, max: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, Math.round(numberValue)))
+}
+
 const readPosUiPreferences = (): PosUiPreferences => {
   try {
     const rawPreferences = globalThis.localStorage?.getItem(posUiPreferenceStorageKey)
     if (!rawPreferences) {
-      return { textScale: 'standard', density: 'comfortable' }
+      return { ...defaultPosUiPreferences }
     }
 
-    const parsed = JSON.parse(rawPreferences) as Partial<PosUiPreferences>
+    const parsed = JSON.parse(rawPreferences) as Partial<PosUiPreferences> & Record<string, unknown>
+    const legacyDensityScale = parsed.density === 'compact' ? 88 : defaultPosUiPreferences.densityScale
+    const legacyTextSize = parsed.textScale === 'large' ? 108 : defaultPosUiPreferences.textSize
+
     return {
-      textScale: isPosTextScale(parsed.textScale) ? parsed.textScale : 'standard',
-      density: isPosWorkspaceDensity(parsed.density) ? parsed.density : 'comfortable',
+      appearanceScale: clampPreference(parsed.appearanceScale, defaultPosUiPreferences.appearanceScale, 92, 112),
+      densityScale: clampPreference(parsed.densityScale, legacyDensityScale, 82, 118),
+      textSize: clampPreference(parsed.textSize, legacyTextSize, 90, 122),
     }
   } catch {
-    return { textScale: 'standard', density: 'comfortable' }
+    return { ...defaultPosUiPreferences }
   }
 }
 
@@ -1539,6 +1549,38 @@ const activeView = ref<AppView>(readInitialView())
 const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
+const activeToolboxPanel = ref<ToolboxPanel>('home')
+const preferencePercentLabel = (value: number): string => `${Math.round(value)}%`
+const appearancePreferenceSummary = computed(
+  () =>
+    `外觀 ${preferencePercentLabel(posUiPreferences.value.appearanceScale)} · 密度 ${preferencePercentLabel(posUiPreferences.value.densityScale)} · 文字 ${preferencePercentLabel(posUiPreferences.value.textSize)}`,
+)
+const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
+  const appearanceFactor = posUiPreferences.value.appearanceScale / 100
+  const densityFactor = posUiPreferences.value.densityScale / 100
+  const textFactor = posUiPreferences.value.textSize / 100
+
+  return {
+    '--pos-font-size': `${16 * textFactor}px`,
+    '--pos-command-min-height': `${74 * appearanceFactor}px`,
+    '--pos-command-padding-y': `${12 * densityFactor}px`,
+    '--pos-command-padding-x': `${14 * densityFactor}px`,
+    '--pos-queue-padding-y': `${28 * densityFactor}px`,
+    '--pos-queue-padding-x': `${32 * densityFactor}px`,
+    '--pos-order-row-height': `${112 * appearanceFactor}px`,
+    '--pos-order-row-padding': `${16 * densityFactor}px`,
+    '--pos-catalog-padding-y': `${20 * densityFactor}px`,
+    '--pos-catalog-padding-x': `${28 * densityFactor}px`,
+    '--pos-catalog-padding-bottom': `${40 * densityFactor}px`,
+    '--pos-product-grid-gap': `${22 * densityFactor}px`,
+    '--pos-product-tile-width': `${156 * appearanceFactor}px`,
+    '--pos-product-tile-height': `${166 * appearanceFactor}px`,
+    '--pos-product-tile-padding': `${14 * densityFactor}px`,
+  }
+})
+const resetPosUiPreferences = (): void => {
+  posUiPreferences.value = { ...defaultPosUiPreferences }
+}
 const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
 const queueDateFilter = ref<QueueDateFilter>(savedQueueView.dateFilter)
@@ -2467,11 +2509,17 @@ const focusMenuSearch = (): void => {
 const openToolbox = (): void => {
   activeCartQuickEditor.value = null
   isKnowledgeOpen.value = false
+  activeToolboxPanel.value = 'home'
   isToolboxOpen.value = true
 }
 
 const closeToolbox = (): void => {
   isToolboxOpen.value = false
+  activeToolboxPanel.value = 'home'
+}
+
+const showToolboxHome = (): void => {
+  activeToolboxPanel.value = 'home'
 }
 
 const openKnowledge = (articleId?: string): void => {
@@ -2583,6 +2631,11 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'knowledge') {
     openKnowledge()
+    return
+  }
+
+  if (action === 'appearance') {
+    activeToolboxPanel.value = 'appearance'
     return
   }
 
@@ -3381,13 +3434,8 @@ onBeforeUnmount(() => {
     <template v-else-if="activeView === 'pos'">
       <section
         class="pos-workbench"
-        :class="[
-          {
-            'pos-workbench--ordering': activeWorkspaceTab === 'order',
-            'pos-workbench--compact': posUiPreferences.density === 'compact',
-            'pos-workbench--text-large': posUiPreferences.textScale === 'large',
-          },
-        ]"
+        :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
+        :style="posWorkbenchPreferenceStyle"
         aria-label="門市 POS 工作站"
       >
         <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
@@ -4973,14 +5021,20 @@ onBeforeUnmount(() => {
         aria-labelledby="toolbox-title"
       >
         <header class="utility-modal-header">
-          <button class="icon-button" type="button" title="關閉工具箱" @click="closeToolbox">
+          <button
+            class="icon-button"
+            type="button"
+            :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
+            @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
+          >
             <ChevronLeft :size="20" aria-hidden="true" />
           </button>
           <div>
-            <p class="eyebrow">Toolbox</p>
-            <h2 id="toolbox-title">工具箱</h2>
+            <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
+            <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
           </div>
           <button
+            v-if="activeToolboxPanel === 'home'"
             class="icon-button sync-button"
             :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
             type="button"
@@ -4992,7 +5046,7 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <div class="toolbox-grid" aria-label="常用工具">
+        <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
           <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
             <ShoppingCart :size="24" aria-hidden="true" />
             <strong>新增外帶</strong>
@@ -5038,60 +5092,62 @@ onBeforeUnmount(() => {
             <strong>門市助手</strong>
             <span>搜尋 SOP 與操作流程</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
+            <Settings2 :size="20" aria-hidden="true" />
+            <strong>外觀設定</strong>
+            <span>{{ appearancePreferenceSummary }}</span>
+          </button>
         </div>
 
-        <section class="preference-panel" aria-labelledby="toolbox-preferences-title">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Display</p>
-              <h2 id="toolbox-preferences-title">外觀</h2>
-            </div>
-            <Settings2 :size="20" aria-hidden="true" />
+        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+          <div class="preference-slider-list">
+            <label class="preference-slider">
+              <span>
+                <strong>外觀縮放</strong>
+                <small>{{ preferencePercentLabel(posUiPreferences.appearanceScale) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.appearanceScale"
+                type="range"
+                min="92"
+                max="112"
+                step="1"
+                aria-label="外觀縮放"
+              />
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>畫面密度</strong>
+                <small>{{ preferencePercentLabel(posUiPreferences.densityScale) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.densityScale"
+                type="range"
+                min="82"
+                max="118"
+                step="1"
+                aria-label="畫面密度"
+              />
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>文字大小</strong>
+                <small>{{ preferencePercentLabel(posUiPreferences.textSize) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.textSize"
+                type="range"
+                min="90"
+                max="122"
+                step="1"
+                aria-label="文字大小"
+              />
+            </label>
           </div>
-          <div class="preference-grid">
-            <div class="preference-group">
-              <span>文字</span>
-              <div class="segmented-control preference-segment" aria-label="文字大小">
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ 'segment-button--active': posUiPreferences.textScale === 'standard' }"
-                  @click="posUiPreferences.textScale = 'standard'"
-                >
-                  標準
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ 'segment-button--active': posUiPreferences.textScale === 'large' }"
-                  @click="posUiPreferences.textScale = 'large'"
-                >
-                  放大
-                </button>
-              </div>
-            </div>
-            <div class="preference-group">
-              <span>密度</span>
-              <div class="segmented-control preference-segment" aria-label="畫面密度">
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ 'segment-button--active': posUiPreferences.density === 'comfortable' }"
-                  @click="posUiPreferences.density = 'comfortable'"
-                >
-                  標準
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ 'segment-button--active': posUiPreferences.density === 'compact' }"
-                  @click="posUiPreferences.density = 'compact'"
-                >
-                  緊湊
-                </button>
-              </div>
-            </div>
-          </div>
+          <button class="secondary-button preference-reset-button" type="button" @click="resetPosUiPreferences">
+            <RefreshCw :size="18" aria-hidden="true" />
+            重設
+          </button>
         </section>
       </section>
     </div>
