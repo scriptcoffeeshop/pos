@@ -83,6 +83,8 @@ interface BackendStatus {
 interface CounterDraftState {
   cartLines: CartLine[]
   customer: CustomerDraft
+  draftOrderId: string | null
+  draftStartedAt: string | null
   paymentMethod: PaymentMethod
   serviceMode: ServiceMode
 }
@@ -107,6 +109,18 @@ const isServiceMode = (value: unknown): value is ServiceMode =>
 
 const isPaymentMethod = (value: unknown): value is PaymentMethod =>
   typeof value === 'string' && paymentMethods.includes(value as PaymentMethod)
+
+const sanitizeDraftOrderId = (value: unknown): string | null =>
+  typeof value === 'string' && /^POS-\d{8}-\d{3}$/.test(value) ? value : null
+
+const sanitizeDraftStartedAt = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? value : null
+}
 
 const isMenuCategory = (value: unknown): value is MenuCategory =>
   typeof value === 'string' && value.trim().length > 0
@@ -200,6 +214,8 @@ const readCounterDraft = (): CounterDraftState | null => {
         ? parsed.cartLines.map(sanitizeCounterDraftLine).filter((line): line is CartLine => Boolean(line))
         : [],
       customer: sanitizeCustomerDraft(parsed.customer),
+      draftOrderId: sanitizeDraftOrderId(parsed.draftOrderId),
+      draftStartedAt: sanitizeDraftStartedAt(parsed.draftStartedAt),
       paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
       serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
     }
@@ -217,6 +233,7 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.requestedFulfillmentAt.trim().length > 0 ||
       draft.customer.note.trim().length > 0 ||
       draft.customer.name.trim() !== '現場客' ||
+      Boolean(draft.draftOrderId) ||
       draft.paymentMethod !== 'cash' ||
       draft.serviceMode !== 'takeout'
 
@@ -417,14 +434,22 @@ const getErrorMessage = (error: unknown): string => {
 
 const isInventoryError = (message: string): boolean => /inventory|Product not found|quantity/i.test(message)
 
-const nextSequenceFromOrders = (orders: PosOrder[]): number => {
+const nextSequenceFromOrders = (orders: PosOrder[], dateKey = formatDateKey(new Date())): number => {
+  const orderIdPattern = new RegExp(`^POS-${dateKey}-(\\d{3})$`)
   const maxSequence = orders.reduce((currentMax, order) => {
-    const match = order.id.match(/-(\d{3,})$/)
+    const match = order.id.match(orderIdPattern)
     const sequence = match ? Number(match[1]) : 0
     return Number.isFinite(sequence) ? Math.max(currentMax, sequence) : currentMax
   }, 0)
 
   return maxSequence + 1
+}
+
+const sequenceFromOrderId = (orderId: string | null): number => {
+  const match = orderId?.match(/^POS-\d{8}-(\d{3})$/)
+  const sequence = match ? Number(match[1]) : 0
+
+  return Number.isFinite(sequence) ? sequence : 0
 }
 
 const sortProducts = (products: MenuItem[]): MenuItem[] =>
@@ -654,7 +679,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const pendingLocalOrders = ref<PosOrder[]>(savedPendingLocalOrders)
   const orderQueue = ref<PosOrder[]>(mergeLocalPendingOrders(savedPendingLocalOrders, initialOrders))
   const lastPrintPreview = ref('尚未送出列印資料')
-  const nextSequence = ref(nextSequenceFromOrders(orderQueue.value))
+  const counterDraftOrderId = ref<string | null>(savedCounterDraft?.draftOrderId ?? null)
+  const counterDraftStartedAt = ref<string | null>(
+    counterDraftOrderId.value ? savedCounterDraft?.draftStartedAt ?? null : null,
+  )
+  const nextSequence = ref(
+    Math.max(nextSequenceFromOrders(orderQueue.value), sequenceFromOrderId(counterDraftOrderId.value) + 1),
+  )
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
   const deletingPrintJobId = ref<string | null>(null)
@@ -698,11 +729,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let lastPlayedOnlineReminderSignature = ''
 
   watch(
-    [cartLines, serviceMode, paymentMethod, customer],
+    [cartLines, serviceMode, paymentMethod, customer, counterDraftOrderId, counterDraftStartedAt],
     () => {
       writeCounterDraft({
         cartLines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
         customer: { ...customer },
+        draftOrderId: counterDraftOrderId.value,
+        draftStartedAt: counterDraftOrderId.value ? counterDraftStartedAt.value : null,
         paymentMethod: paymentMethod.value,
         serviceMode: serviceMode.value,
       })
@@ -942,6 +975,32 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.deliveryAddress = nextDraft.deliveryAddress
     customer.requestedFulfillmentAt = nextDraft.requestedFulfillmentAt
     customer.note = nextDraft.note
+  }
+
+  const syncNextSequenceFromQueue = (): void => {
+    nextSequence.value = Math.max(
+      nextSequenceFromOrders(orderQueue.value),
+      sequenceFromOrderId(counterDraftOrderId.value) + 1,
+    )
+  }
+
+  const clearCounterDraftIdentity = (): void => {
+    counterDraftOrderId.value = null
+    counterDraftStartedAt.value = null
+    syncNextSequenceFromQueue()
+  }
+
+  const startCounterDraft = (mode: ServiceMode = 'takeout'): void => {
+    const startedAt = new Date()
+    const sequence = Math.max(nextSequence.value, nextSequenceFromOrders(orderQueue.value, formatDateKey(startedAt)))
+
+    clearCart()
+    resetCustomerDraft()
+    paymentMethod.value = 'cash'
+    serviceMode.value = mode
+    counterDraftOrderId.value = buildOrderId(startedAt, sequence)
+    counterDraftStartedAt.value = startedAt.toISOString()
+    nextSequence.value = sequence + 1
   }
 
   const appendCustomerNote = (note: string): void => {
@@ -1246,7 +1305,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       productStatusCatalog.value = sortProducts(allProducts)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      syncNextSequenceFromQueue()
       setBackendStatus(
         'connected',
         'API 已同步',
@@ -1308,7 +1367,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       }
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      syncNextSequenceFromQueue()
       setBackendStatus(
         'connected',
         quiet ? '自動同步完成' : 'API 已同步',
@@ -2028,8 +2087,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     isSubmitting.value = true
     const now = new Date()
+    const draftOrderId = counterDraftOrderId.value
+    const draftStartedAt = counterDraftStartedAt.value
+    const draftSequence = sequenceFromOrderId(draftOrderId)
     const order: PosOrder = {
-      id: buildOrderId(now, nextSequence.value),
+      id: draftOrderId ?? buildOrderId(now, nextSequence.value),
       source: 'counter',
       mode: serviceMode.value,
       customerName: customer.name.trim() || '現場客',
@@ -2042,7 +2104,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       paymentMethod: paymentMethod.value,
       paymentStatus: paymentStatusFor(paymentMethod.value),
       status: 'new',
-      createdAt: now.toISOString(),
+      createdAt: draftStartedAt ?? now.toISOString(),
       claimedBy: stationClaimId,
       claimedAt: now.toISOString(),
       claimExpiresAt: claimExpiresIn(),
@@ -2052,7 +2114,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
     order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
 
-    nextSequence.value += 1
+    if (draftOrderId) {
+      nextSequence.value = Math.max(nextSequence.value, draftSequence + 1)
+    } else {
+      nextSequence.value += 1
+    }
     orderQueue.value.unshift(order)
     lastPrintPreview.value = printPlan.preview
     if (printPlan.jobs.length > 0) {
@@ -2067,6 +2133,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         appendPrintPreviewStatus('STATUS 本機模式已產生列印 payload，尚未建立雲端 print_jobs')
       }
       setBackendStatus('fallback', '本機待同步', `${order.id} 已保留在平板，待 POS API 恢復後補同步`)
+      clearCounterDraftIdentity()
       isSubmitting.value = false
       return order
     }
@@ -2148,13 +2215,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       setBackendStatus('connected', 'API 已同步', `${backendDetail}${pendingLocalOrderDetail()}`)
       void loadRegisterSession()
       void refreshProductCatalog()
+      clearCounterDraftIdentity()
       return nextOrder
     } catch (error) {
       const errorMessage = getErrorMessage(error)
       if (isInventoryError(errorMessage)) {
         orderQueue.value = orderQueue.value.filter((entry) => entry.id !== order.id)
         cartLines.value = order.lines.map((line) => ({ ...line, options: [...line.options] }))
-        nextSequence.value = Math.max(1, nextSequence.value - 1)
+        if (draftOrderId) {
+          nextSequence.value = Math.max(nextSequence.value, draftSequence + 1)
+        } else {
+          nextSequence.value = Math.max(1, nextSequence.value - 1)
+        }
         setBackendStatus('fallback', '庫存不足', `訂單未建立：${errorMessage}`)
         void refreshProductCatalog()
         return null
@@ -2162,6 +2234,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       rememberPendingLocalOrder(order)
       setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${errorMessage}`)
+      clearCounterDraftIdentity()
       return order
     } finally {
       isSubmitting.value = false
@@ -2249,6 +2322,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartTotal,
     clearCart,
     closeRegisterSessionForStation,
+    counterDraftOrderId,
+    counterDraftStartedAt,
     customer,
     deletingPrintJobId,
     createProductForStation,
@@ -2293,6 +2368,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     serviceMode,
     setItemQuantity,
     setLineQuantity,
+    startCounterDraft,
     stationClaimId,
     stationClaimLabel,
     stationHeartbeatMessage,

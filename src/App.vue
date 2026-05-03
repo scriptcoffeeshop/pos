@@ -471,6 +471,8 @@ const {
   claimOrderForStation,
   claimingOrderId,
   closeRegisterSessionForStation,
+  counterDraftOrderId,
+  counterDraftStartedAt,
   createProductForStation,
   customer,
   deletingPrintJobId,
@@ -513,6 +515,7 @@ const {
   serviceMode,
   setItemQuantity,
   setLineQuantity,
+  startCounterDraft,
   stationClaimLabel,
   stationHeartbeatMessage,
   submitCounterOrder,
@@ -919,12 +922,17 @@ const compactOrderId = (orderId: string): string => {
   return `${prefix}-${compactSuffix}`
 }
 
+const orderSequenceLabel = (orderId: string | null): string => {
+  const match = orderId?.match(/^POS-\d{8}-(\d{3})$/)
+  return match?.[1] ?? '新單'
+}
+
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
   order: '外帶 / 外送點餐',
   details: '顧客與備註',
   payment: '付款確認',
-  queue: '外帶 / 外送',
+  queue: '桌況頁',
   printing: '列印站',
   closeout: '班別關帳',
 }
@@ -1694,6 +1702,10 @@ const registerNote = ref('')
 const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
+const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
+const ticketStartedLabel = computed(() =>
+  counterDraftStartedAt.value ? formatOrderTime(counterDraftStartedAt.value) : currentClockLabel.value,
+)
 const supplyNoteIdForChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): string => `${group.id}-${choice.id}`
 const supplyNoteStatusForName = (name: string): ProductSupplyStatus => {
   const note = supplyNoteItems.value.find((item) => item.name === name)
@@ -2592,7 +2604,7 @@ const closeKnowledge = (): void => {
 
 const knowledgeTargetLabels: Record<PosKnowledgeArticle['target'], string> = {
   order: '點餐',
-  queue: '訂單',
+  queue: '桌況',
   printing: '列印/供應',
   closeout: '班別',
   admin: '後台',
@@ -2890,7 +2902,9 @@ const runQueueTaskAction = (action: QueueTaskAction): void => {
 }
 
 const startTakeoutOrder = (): void => {
-  serviceMode.value = 'takeout'
+  startCounterDraft('takeout')
+  activeCartQuickEditor.value = null
+  closeOptionPanel()
   setWorkspaceTab('order')
 }
 
@@ -3643,7 +3657,7 @@ onBeforeUnmount(() => {
                 <p class="eyebrow">{{ activeWorkspaceTab === 'queue' ? 'Orders' : 'Workspace' }}</p>
                 <h1>{{ activeWorkspaceTitle }}</h1>
                 <span v-if="activeWorkspaceTab === 'queue'">
-                  查詢訂單 · {{ queueFilterNote }}
+                  桌況總覽 · {{ queueFilterNote }}
                 </span>
                 <span v-else>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
               </div>
@@ -3682,12 +3696,12 @@ onBeforeUnmount(() => {
               <template v-if="activeWorkspaceTab === 'order'">
                 <section class="cart-panel" aria-labelledby="cart-title">
                   <div class="ticket-topline">
-                    <button class="ticket-back-button" type="button" title="返回訂單查詢" @click="setWorkspaceTab('queue')">
+                    <button class="ticket-back-button" type="button" title="返回桌況頁" @click="setWorkspaceTab('queue')">
                       <ChevronLeft :size="38" aria-hidden="true" />
                     </button>
                     <div class="ticket-title-block">
                       <h2 id="cart-title">{{ serviceModeLabels[serviceMode] }}</h2>
-                      <span>新單 · 今天 {{ currentClockLabel }}</span>
+                      <span>新單 · 今天 {{ ticketStartedLabel }}</span>
                     </div>
                     <button
                       class="icon-button ticket-calendar-button"
@@ -3704,7 +3718,7 @@ onBeforeUnmount(() => {
                   <div class="ticket-order-strip">
                     <div>
                       <ReceiptText :size="22" aria-hidden="true" />
-                      <strong>No. 新單</strong>
+                      <strong :title="counterDraftOrderId ?? '新單'">No. {{ ticketOrderNumber }}</strong>
                     </div>
                     <div>
                       <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
@@ -4219,7 +4233,7 @@ onBeforeUnmount(() => {
                     <div>
                       <p class="eyebrow">Orders</p>
                       <h2 id="queue-title">
-                        查詢訂單（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
+                        桌況頁（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
                       </h2>
                       <span class="panel-note">依狀態、付款與關鍵字快速查詢</span>
                     </div>
@@ -5113,7 +5127,7 @@ onBeforeUnmount(() => {
               </button>
               <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
                 <ReceiptText :size="24" aria-hidden="true" />
-                <strong>訂單查詢</strong>
+                <strong>桌況頁</strong>
                 <span>{{ queueFilterNote }}</span>
               </button>
               <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
