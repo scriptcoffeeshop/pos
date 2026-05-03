@@ -94,9 +94,11 @@ interface SavedQueueView {
 }
 
 interface PosUiPreferences {
-  appearanceScale: number
+  schemaVersion: 2
+  interfaceScale: number
   densityScale: number
   textSize: number
+  darkMode: boolean
 }
 
 interface PrintJobRow {
@@ -208,10 +210,14 @@ const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
 const defaultPosUiPreferences: PosUiPreferences = {
-  appearanceScale: 100,
-  densityScale: 100,
-  textSize: 100,
+  schemaVersion: 2,
+  interfaceScale: 0,
+  densityScale: 0,
+  textSize: 0,
+  darkMode: false,
 }
+const preferenceOffsetMin = -200
+const preferenceOffsetMax = 200
 const defaultConfigurableCategoryIds: MenuCategory[] = ['coffee', 'tea']
 const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
   { id: 'coffee', label: '咖啡' },
@@ -393,13 +399,22 @@ const writeSavedQueueView = (view: SavedQueueView): void => {
   }
 }
 
-const clampPreference = (value: unknown, fallback: number, min: number, max: number): number => {
+const clampPreference = (value: unknown, fallback: number, min = preferenceOffsetMin, max = preferenceOffsetMax): number => {
   const numberValue = Number(value)
   if (!Number.isFinite(numberValue)) {
     return fallback
   }
 
   return Math.min(max, Math.max(min, Math.round(numberValue)))
+}
+
+const migrateScalePercentToOffset = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return clampPreference(Math.round((numberValue - 100) * 10), fallback)
 }
 
 const readPosUiPreferences = (): PosUiPreferences => {
@@ -410,13 +425,23 @@ const readPosUiPreferences = (): PosUiPreferences => {
     }
 
     const parsed = JSON.parse(rawPreferences) as Partial<PosUiPreferences> & Record<string, unknown>
-    const legacyDensityScale = parsed.density === 'compact' ? 88 : defaultPosUiPreferences.densityScale
-    const legacyTextSize = parsed.textScale === 'large' ? 108 : defaultPosUiPreferences.textSize
+    const isCurrentPreferenceSchema = parsed.schemaVersion === 2
+    const legacyDensityScale = parsed.density === 'compact' ? -80 : defaultPosUiPreferences.densityScale
+    const legacyTextSize = parsed.textScale === 'large' ? 80 : defaultPosUiPreferences.textSize
 
     return {
-      appearanceScale: clampPreference(parsed.appearanceScale, defaultPosUiPreferences.appearanceScale, 92, 112),
-      densityScale: clampPreference(parsed.densityScale, legacyDensityScale, 82, 118),
-      textSize: clampPreference(parsed.textSize, legacyTextSize, 90, 122),
+      schemaVersion: 2,
+      interfaceScale: clampPreference(
+        parsed.interfaceScale,
+        migrateScalePercentToOffset(parsed.appearanceScale, defaultPosUiPreferences.interfaceScale),
+      ),
+      densityScale: isCurrentPreferenceSchema
+        ? clampPreference(parsed.densityScale, defaultPosUiPreferences.densityScale)
+        : migrateScalePercentToOffset(parsed.densityScale, legacyDensityScale),
+      textSize: isCurrentPreferenceSchema
+        ? clampPreference(parsed.textSize, defaultPosUiPreferences.textSize)
+        : migrateScalePercentToOffset(parsed.textSize, legacyTextSize),
+      darkMode: parsed.darkMode === true,
     }
   } catch {
     return { ...defaultPosUiPreferences }
@@ -1550,31 +1575,48 @@ const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const activeToolboxPanel = ref<ToolboxPanel>('home')
-const preferencePercentLabel = (value: number): string => `${Math.round(value)}%`
+const preferenceOffsetLabel = (value: number): string => `${value > 0 ? '+' : ''}${Math.round(value)}%`
+const scaleFactorFromOffset = (offset: number): number =>
+  offset >= 0
+    ? 1 + offset / 100
+    : Math.max(0.33, 1 + offset / 300)
+const densityFactorFromOffset = (offset: number): number =>
+  offset >= 0
+    ? 1 + offset / 220
+    : Math.max(0.46, 1 + offset / 370)
+const textFactorFromOffset = (offset: number): number =>
+  offset >= 0
+    ? 1 + offset / 130
+    : Math.max(0.5, 1 + offset / 400)
 const appearancePreferenceSummary = computed(
   () =>
-    `外觀 ${preferencePercentLabel(posUiPreferences.value.appearanceScale)} · 密度 ${preferencePercentLabel(posUiPreferences.value.densityScale)} · 文字 ${preferencePercentLabel(posUiPreferences.value.textSize)}`,
+    `縮放 ${preferenceOffsetLabel(posUiPreferences.value.interfaceScale)} · 文字 ${preferenceOffsetLabel(posUiPreferences.value.textSize)} · ${posUiPreferences.value.darkMode ? 'Dark' : 'Light'}`,
 )
 const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
-  const appearanceFactor = posUiPreferences.value.appearanceScale / 100
-  const densityFactor = posUiPreferences.value.densityScale / 100
-  const textFactor = posUiPreferences.value.textSize / 100
+  const interfaceScale = scaleFactorFromOffset(posUiPreferences.value.interfaceScale)
+  const densityFactor = densityFactorFromOffset(posUiPreferences.value.densityScale)
+  const textFactor = textFactorFromOffset(posUiPreferences.value.textSize)
+  const orderTicketWidth = Math.max(156, Math.min(420, 420 / interfaceScale))
 
   return {
+    '--pos-interface-scale': interfaceScale.toFixed(4),
+    '--pos-stage-width': `${100 / interfaceScale}vw`,
+    '--pos-stage-height': `${100 / interfaceScale}svh`,
     '--pos-font-size': `${16 * textFactor}px`,
-    '--pos-command-min-height': `${74 * appearanceFactor}px`,
+    '--pos-command-min-height': '74px',
     '--pos-command-padding-y': `${12 * densityFactor}px`,
     '--pos-command-padding-x': `${14 * densityFactor}px`,
     '--pos-queue-padding-y': `${28 * densityFactor}px`,
     '--pos-queue-padding-x': `${32 * densityFactor}px`,
-    '--pos-order-row-height': `${112 * appearanceFactor}px`,
+    '--pos-order-row-height': '112px',
     '--pos-order-row-padding': `${16 * densityFactor}px`,
+    '--pos-order-ticket-width': `${orderTicketWidth}px`,
     '--pos-catalog-padding-y': `${20 * densityFactor}px`,
     '--pos-catalog-padding-x': `${28 * densityFactor}px`,
     '--pos-catalog-padding-bottom': `${40 * densityFactor}px`,
     '--pos-product-grid-gap': `${22 * densityFactor}px`,
-    '--pos-product-tile-width': `${156 * appearanceFactor}px`,
-    '--pos-product-tile-height': `${166 * appearanceFactor}px`,
+    '--pos-product-tile-width': '156px',
+    '--pos-product-tile-height': '166px',
     '--pos-product-tile-padding': `${14 * densityFactor}px`,
   }
 })
@@ -3349,7 +3391,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="pos-shell" :class="{ 'pos-shell--consumer': activeView === 'online' }">
+  <main
+    class="pos-shell"
+    :class="{
+      'pos-shell--consumer': activeView === 'online',
+      'pos-shell--workspace': activeView === 'pos',
+      'pos-shell--dark': activeView === 'pos' && posUiPreferences.darkMode,
+    }"
+  >
     <header v-if="activeView !== 'pos'" class="topbar">
       <div class="brand">
         <img :src="brandLogoSrc" alt="Script Coffee" class="brand-logo" />
@@ -3431,2052 +3480,2064 @@ onBeforeUnmount(() => {
 
     <ConsumerOrderPage v-if="activeView === 'online'" />
 
-    <template v-else-if="activeView === 'pos'">
-      <section
-        class="pos-workbench"
-        :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
-        :style="posWorkbenchPreferenceStyle"
-        aria-label="門市 POS 工作站"
-      >
-        <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
-          <div class="side-brand">
-            <img :src="brandLogoSrc" alt="Script Coffee" class="side-brand-logo" />
-            <div>
-              <span>Script Coffee</span>
-              <strong>門市 POS</strong>
-            </div>
-          </div>
-
-          <div v-if="canSwitchWorkspace" class="side-mode-switch" aria-label="系統模式">
-            <button
-              class="side-mode-button side-mode-button--active"
-              type="button"
-              aria-current="page"
-              @click="setActiveView('pos')"
-            >
-              <LayoutDashboard :size="18" aria-hidden="true" />
-              POS
-            </button>
-            <button class="side-mode-button" type="button" @click="setActiveView('online')">
-              <ShoppingBag :size="18" aria-hidden="true" />
-              線上
-            </button>
-            <button class="side-mode-button" type="button" @click="setActiveView('admin')">
-              <Settings2 :size="18" aria-hidden="true" />
-              後台
-            </button>
-          </div>
-
-          <span v-else-if="isNativeApp" class="side-station-pill">
-            <LockKeyhole :size="18" aria-hidden="true" />
-            APK 工作站
-          </span>
-
-          <nav class="workstation-tabs quick-nav-bar" aria-label="快速導航列">
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'order' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'order' ? 'page' : undefined"
-              @click="setWorkspaceTab('order')"
-            >
-              <ShoppingCart :size="20" aria-hidden="true" />
-              <span>
-                <strong>點餐</strong>
-                <small>{{ workspaceTabSummaries.order }}</small>
-              </span>
-            </button>
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'details' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'details' ? 'page' : undefined"
-              @click="setWorkspaceTab('details')"
-            >
-              <Settings2 :size="20" aria-hidden="true" />
-              <span>
-                <strong>資訊</strong>
-                <small>{{ workspaceTabSummaries.details }}</small>
-              </span>
-            </button>
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'payment' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'payment' ? 'page' : undefined"
-              @click="setWorkspaceTab('payment')"
-            >
-              <CreditCard :size="20" aria-hidden="true" />
-              <span>
-                <strong>付款</strong>
-                <small>{{ workspaceTabSummaries.payment }}</small>
-              </span>
-            </button>
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'queue' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'queue' ? 'page' : undefined"
-              @click="setWorkspaceTab('queue')"
-            >
-              <ReceiptText :size="20" aria-hidden="true" />
-              <span>
-                <strong>訂單</strong>
-                <small>{{ workspaceTabSummaries.queue }}</small>
-              </span>
-            </button>
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'printing' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'printing' ? 'page' : undefined"
-              @click="setWorkspaceTab('printing')"
-            >
-              <Printer :size="20" aria-hidden="true" />
-              <span>
-                <strong>列印</strong>
-                <small>{{ workspaceTabSummaries.printing }}</small>
-              </span>
-            </button>
-            <button
-              class="workstation-tab quick-nav-button"
-              :class="{ 'workstation-tab--active': activeWorkspaceTab === 'closeout' }"
-              type="button"
-              :aria-current="activeWorkspaceTab === 'closeout' ? 'page' : undefined"
-              @click="setWorkspaceTab('closeout')"
-            >
-              <WalletCards :size="20" aria-hidden="true" />
-              <span>
-                <strong>班別</strong>
-                <small>{{ workspaceTabSummaries.closeout }}</small>
-              </span>
-            </button>
-          </nav>
-
-          <div class="side-rail-footer">
-            <button
-              class="icon-button side-toolbox-button"
-              type="button"
-              title="工具箱"
-              aria-controls="pos-toolbox-modal"
-              :aria-expanded="isToolboxOpen"
-              @click="openToolbox"
-            >
-              <Settings2 :size="24" aria-hidden="true" />
-              <span>工具箱</span>
-            </button>
-          </div>
-        </aside>
-
+    <div
+      v-else-if="activeView === 'pos'"
+      class="pos-scale-viewport"
+      :style="posWorkbenchPreferenceStyle"
+    >
+      <div class="pos-scale-stage">
         <section
-          class="pos-main-surface"
-          :class="{ 'pos-main-surface--ordering': activeWorkspaceTab === 'order' }"
+          class="pos-workbench"
+          :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
+          aria-label="門市 POS 工作站"
         >
-          <header
-            v-if="activeWorkspaceTab !== 'order'"
-            class="pos-command-bar"
-            :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' }"
-          >
-            <div>
-              <p class="eyebrow">{{ activeWorkspaceTab === 'queue' ? 'Orders' : 'Workspace' }}</p>
-              <h1>{{ activeWorkspaceTitle }}</h1>
-              <span v-if="activeWorkspaceTab === 'queue'">
-                查詢訂單 · {{ queueFilterNote }}
-              </span>
-              <span v-else>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
+          <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
+            <div class="side-brand">
+              <img :src="brandLogoSrc" alt="Script Coffee" class="side-brand-logo" />
+              <div>
+                <span>Script Coffee</span>
+                <strong>門市 POS</strong>
+              </div>
             </div>
-            <div v-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
-              <span>{{ pendingOrders.length }} 張待處理</span>
-              <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
-                <ShoppingBag :size="22" aria-hidden="true" />
-                新增外帶
+
+            <div v-if="canSwitchWorkspace" class="side-mode-switch" aria-label="系統模式">
+              <button
+                class="side-mode-button side-mode-button--active"
+                type="button"
+                aria-current="page"
+                @click="setActiveView('pos')"
+              >
+                <LayoutDashboard :size="18" aria-hidden="true" />
+                POS
+              </button>
+              <button class="side-mode-button" type="button" @click="setActiveView('online')">
+                <ShoppingBag :size="18" aria-hidden="true" />
+                線上
+              </button>
+              <button class="side-mode-button" type="button" @click="setActiveView('admin')">
+                <Settings2 :size="18" aria-hidden="true" />
+                後台
               </button>
             </div>
-            <div v-else class="pos-command-status" aria-label="POS 狀態">
-              <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
-                <LockKeyhole :size="18" aria-hidden="true" />
-                {{ stationClaimLabel }}
-              </span>
-              <span
-                class="status-pill"
-                :class="backendStatus.mode === 'fallback' ? 'status-pill--danger' : 'status-pill--success'"
-                :title="backendStatus.detail"
-              >
-                <Wifi :size="18" aria-hidden="true" />
-                {{ backendStatus.label }}
-              </span>
-              <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
-                <Printer :size="18" aria-hidden="true" />
-                {{ printStation.host }}:{{ printStation.port }}
-              </span>
-              <span class="status-pill">
-                <Clock3 :size="18" aria-hidden="true" />
-                {{ queueHealth }}
-              </span>
-            </div>
-          </header>
 
-          <section class="workspace" :class="`workspace--${activeWorkspaceTab}`" aria-label="POS 工作台">
-            <template v-if="activeWorkspaceTab === 'order'">
-              <section class="cart-panel" aria-labelledby="cart-title">
-                <div class="ticket-topline">
-                  <button class="ticket-back-button" type="button" title="返回訂單查詢" @click="setWorkspaceTab('queue')">
-                    <ChevronLeft :size="38" aria-hidden="true" />
-                  </button>
-                  <div class="ticket-title-block">
-                    <h2 id="cart-title">{{ serviceModeLabels[serviceMode] }}</h2>
-                    <span>新單 · 今天 {{ currentClockLabel }}</span>
+            <span v-else-if="isNativeApp" class="side-station-pill">
+              <LockKeyhole :size="18" aria-hidden="true" />
+              APK 工作站
+            </span>
+
+            <nav class="workstation-tabs quick-nav-bar" aria-label="快速導航列">
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'order' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'order' ? 'page' : undefined"
+                @click="setWorkspaceTab('order')"
+              >
+                <ShoppingCart :size="20" aria-hidden="true" />
+                <span>
+                  <strong>點餐</strong>
+                  <small>{{ workspaceTabSummaries.order }}</small>
+                </span>
+              </button>
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'details' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'details' ? 'page' : undefined"
+                @click="setWorkspaceTab('details')"
+              >
+                <Settings2 :size="20" aria-hidden="true" />
+                <span>
+                  <strong>資訊</strong>
+                  <small>{{ workspaceTabSummaries.details }}</small>
+                </span>
+              </button>
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'payment' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'payment' ? 'page' : undefined"
+                @click="setWorkspaceTab('payment')"
+              >
+                <CreditCard :size="20" aria-hidden="true" />
+                <span>
+                  <strong>付款</strong>
+                  <small>{{ workspaceTabSummaries.payment }}</small>
+                </span>
+              </button>
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'queue' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'queue' ? 'page' : undefined"
+                @click="setWorkspaceTab('queue')"
+              >
+                <ReceiptText :size="20" aria-hidden="true" />
+                <span>
+                  <strong>訂單</strong>
+                  <small>{{ workspaceTabSummaries.queue }}</small>
+                </span>
+              </button>
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'printing' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'printing' ? 'page' : undefined"
+                @click="setWorkspaceTab('printing')"
+              >
+                <Printer :size="20" aria-hidden="true" />
+                <span>
+                  <strong>列印</strong>
+                  <small>{{ workspaceTabSummaries.printing }}</small>
+                </span>
+              </button>
+              <button
+                class="workstation-tab quick-nav-button"
+                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'closeout' }"
+                type="button"
+                :aria-current="activeWorkspaceTab === 'closeout' ? 'page' : undefined"
+                @click="setWorkspaceTab('closeout')"
+              >
+                <WalletCards :size="20" aria-hidden="true" />
+                <span>
+                  <strong>班別</strong>
+                  <small>{{ workspaceTabSummaries.closeout }}</small>
+                </span>
+              </button>
+            </nav>
+
+            <div class="side-rail-footer">
+              <button
+                class="icon-button side-toolbox-button"
+                type="button"
+                title="工具箱"
+                aria-controls="pos-toolbox-modal"
+                :aria-expanded="isToolboxOpen"
+                @click="openToolbox"
+              >
+                <Settings2 :size="24" aria-hidden="true" />
+                <span>工具箱</span>
+              </button>
+            </div>
+          </aside>
+
+          <section
+            class="pos-main-surface"
+            :class="{ 'pos-main-surface--ordering': activeWorkspaceTab === 'order' }"
+          >
+            <header
+              v-if="activeWorkspaceTab !== 'order'"
+              class="pos-command-bar"
+              :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' }"
+            >
+              <div>
+                <p class="eyebrow">{{ activeWorkspaceTab === 'queue' ? 'Orders' : 'Workspace' }}</p>
+                <h1>{{ activeWorkspaceTitle }}</h1>
+                <span v-if="activeWorkspaceTab === 'queue'">
+                  查詢訂單 · {{ queueFilterNote }}
+                </span>
+                <span v-else>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
+              </div>
+              <div v-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
+                <span>{{ pendingOrders.length }} 張待處理</span>
+                <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
+                  <ShoppingBag :size="22" aria-hidden="true" />
+                  新增外帶
+                </button>
+              </div>
+              <div v-else class="pos-command-status" aria-label="POS 狀態">
+                <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
+                  <LockKeyhole :size="18" aria-hidden="true" />
+                  {{ stationClaimLabel }}
+                </span>
+                <span
+                  class="status-pill"
+                  :class="backendStatus.mode === 'fallback' ? 'status-pill--danger' : 'status-pill--success'"
+                  :title="backendStatus.detail"
+                >
+                  <Wifi :size="18" aria-hidden="true" />
+                  {{ backendStatus.label }}
+                </span>
+                <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
+                  <Printer :size="18" aria-hidden="true" />
+                  {{ printStation.host }}:{{ printStation.port }}
+                </span>
+                <span class="status-pill">
+                  <Clock3 :size="18" aria-hidden="true" />
+                  {{ queueHealth }}
+                </span>
+              </div>
+            </header>
+
+            <section class="workspace" :class="`workspace--${activeWorkspaceTab}`" aria-label="POS 工作台">
+              <template v-if="activeWorkspaceTab === 'order'">
+                <section class="cart-panel" aria-labelledby="cart-title">
+                  <div class="ticket-topline">
+                    <button class="ticket-back-button" type="button" title="返回訂單查詢" @click="setWorkspaceTab('queue')">
+                      <ChevronLeft :size="38" aria-hidden="true" />
+                    </button>
+                    <div class="ticket-title-block">
+                      <h2 id="cart-title">{{ serviceModeLabels[serviceMode] }}</h2>
+                      <span>新單 · 今天 {{ currentClockLabel }}</span>
+                    </div>
+                    <button
+                      class="icon-button ticket-calendar-button"
+                      type="button"
+                      title="設定顧客與取餐時間"
+                      aria-controls="cart-customer-editor"
+                      :aria-expanded="activeCartQuickEditor === 'customer'"
+                      @click="toggleCartQuickEditor('customer')"
+                    >
+                      <CalendarDays :size="24" aria-hidden="true" />
+                    </button>
                   </div>
+
+                  <div class="ticket-order-strip">
+                    <div>
+                      <ReceiptText :size="22" aria-hidden="true" />
+                      <strong>No. 新單</strong>
+                    </div>
+                    <div>
+                      <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
+                      <button class="icon-button ticket-clear-button" type="button" title="清空購物車" @click="clearTicketDraft">
+                        <Trash2 :size="19" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+
                   <button
-                    class="icon-button ticket-calendar-button"
+                    class="ticket-customer-row"
+                    :class="{ 'ticket-customer-row--active': activeCartQuickEditor === 'customer' }"
                     type="button"
-                    title="設定顧客與取餐時間"
                     aria-controls="cart-customer-editor"
                     :aria-expanded="activeCartQuickEditor === 'customer'"
                     @click="toggleCartQuickEditor('customer')"
                   >
-                    <CalendarDays :size="24" aria-hidden="true" />
-                  </button>
-                </div>
-
-                <div class="ticket-order-strip">
-                  <div>
-                    <ReceiptText :size="22" aria-hidden="true" />
-                    <strong>No. 新單</strong>
-                  </div>
-                  <div>
-                    <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
-                    <button class="icon-button ticket-clear-button" type="button" title="清空購物車" @click="clearTicketDraft">
-                      <Trash2 :size="19" aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  class="ticket-customer-row"
-                  :class="{ 'ticket-customer-row--active': activeCartQuickEditor === 'customer' }"
-                  type="button"
-                  aria-controls="cart-customer-editor"
-                  :aria-expanded="activeCartQuickEditor === 'customer'"
-                  @click="toggleCartQuickEditor('customer')"
-                >
-                  <UserRound :size="28" aria-hidden="true" />
-                  <span>
-                    <strong>{{ customer.name || '未輸入顧客資訊' }}</strong>
-                    <small>{{ customer.phone || customer.note || '點一下加入姓名、電話或備註' }}</small>
-                  </span>
-                </button>
-
-                <div class="ticket-service-mode" aria-label="服務方式">
-                  <button
-                    v-for="mode in serviceModeOptions"
-                    :key="`ticket-${mode.value}`"
-                    :class="{ 'ticket-service-mode-button--active': serviceMode === mode.value }"
-                    type="button"
-                    @click="serviceMode = mode.value"
-                  >
-                    {{ mode.label }}
-                  </button>
-                </div>
-
-                <div class="ticket-config-grid" aria-label="訂單設定">
-                  <button
-                    class="order-essential-action"
-                    :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
-                    type="button"
-                    aria-controls="cart-payment-editor"
-                    :aria-expanded="activeCartQuickEditor === 'payment'"
-                    @click="toggleCartQuickEditor('payment')"
-                  >
-                    <span class="order-essential-label">
-                      <CreditCard :size="15" aria-hidden="true" />
-                      付款
+                    <UserRound :size="28" aria-hidden="true" />
+                    <span>
+                      <strong>{{ customer.name || '未輸入顧客資訊' }}</strong>
+                      <small>{{ customer.phone || customer.note || '點一下加入姓名、電話或備註' }}</small>
                     </span>
-                    <strong>{{ paymentLabels[paymentMethod] }}</strong>
                   </button>
-                  <button
-                    class="order-essential-action"
-                    :class="{ 'order-essential-action--active': activeCartQuickEditor === 'service' }"
-                    type="button"
-                    aria-controls="cart-service-editor"
-                    :aria-expanded="activeCartQuickEditor === 'service'"
-                    @click="toggleCartQuickEditor('service')"
-                  >
-                    <span class="order-essential-label">
-                      <ShoppingBag :size="15" aria-hidden="true" />
-                      方式
-                    </span>
-                    <strong>{{ serviceModeLabels[serviceMode] }}</strong>
-                  </button>
-                </div>
 
-                <div class="ticket-note-chips" aria-label="常用備註">
-                  <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
-                    {{ note }}
-                  </button>
-                </div>
-
-                <div v-if="activeCartQuickEditor" class="cart-inline-editor" aria-live="polite">
-                  <div
-                    v-if="activeCartQuickEditor === 'customer'"
-                    id="cart-customer-editor"
-                    class="cart-inline-panel cart-inline-panel--customer"
-                  >
-                    <label>
-                      姓名
-                      <input
-                        ref="customerNameInput"
-                        v-model="customer.name"
-                        type="text"
-                        autocomplete="name"
-                        @keydown.enter="closeCartQuickEditor"
-                        @keydown.escape="closeCartQuickEditor"
-                      />
-                    </label>
-                    <label>
-                      電話
-                      <input
-                        v-model="customer.phone"
-                        type="tel"
-                        autocomplete="tel"
-                        @keydown.enter="closeCartQuickEditor"
-                        @keydown.escape="closeCartQuickEditor"
-                      />
-                    </label>
-                    <button class="cart-inline-done" type="button" @click="closeCartQuickEditor">
-                      <CheckCircle2 :size="18" aria-hidden="true" />
-                      完成
-                    </button>
-                  </div>
-
-                  <div
-                    v-else-if="activeCartQuickEditor === 'service'"
-                    id="cart-service-editor"
-                    class="cart-inline-panel cart-inline-options"
-                    aria-label="直接修改服務方式"
-                  >
+                  <div class="ticket-service-mode" aria-label="服務方式">
                     <button
                       v-for="mode in serviceModeOptions"
-                      :key="`cart-${mode.value}`"
-                      class="segment-button"
-                      :class="{ 'segment-button--active': serviceMode === mode.value }"
+                      :key="`ticket-${mode.value}`"
+                      :class="{ 'ticket-service-mode-button--active': serviceMode === mode.value }"
                       type="button"
-                      @click="selectCartServiceMode(mode.value)"
+                      @click="serviceMode = mode.value"
                     >
                       {{ mode.label }}
                     </button>
                   </div>
 
-                  <div
-                    v-else-if="activeCartQuickEditor === 'payment'"
-                    id="cart-payment-editor"
-                    class="cart-inline-panel cart-inline-options cart-inline-options--payment"
-                    aria-label="直接修改付款方式"
+                  <div class="ticket-config-grid" aria-label="訂單設定">
+                    <button
+                      class="order-essential-action"
+                      :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
+                      type="button"
+                      aria-controls="cart-payment-editor"
+                      :aria-expanded="activeCartQuickEditor === 'payment'"
+                      @click="toggleCartQuickEditor('payment')"
+                    >
+                      <span class="order-essential-label">
+                        <CreditCard :size="15" aria-hidden="true" />
+                        付款
+                      </span>
+                      <strong>{{ paymentLabels[paymentMethod] }}</strong>
+                    </button>
+                    <button
+                      class="order-essential-action"
+                      :class="{ 'order-essential-action--active': activeCartQuickEditor === 'service' }"
+                      type="button"
+                      aria-controls="cart-service-editor"
+                      :aria-expanded="activeCartQuickEditor === 'service'"
+                      @click="toggleCartQuickEditor('service')"
+                    >
+                      <span class="order-essential-label">
+                        <ShoppingBag :size="15" aria-hidden="true" />
+                        方式
+                      </span>
+                      <strong>{{ serviceModeLabels[serviceMode] }}</strong>
+                    </button>
+                  </div>
+
+                  <div class="ticket-note-chips" aria-label="常用備註">
+                    <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
+                      {{ note }}
+                    </button>
+                  </div>
+
+                  <div v-if="activeCartQuickEditor" class="cart-inline-editor" aria-live="polite">
+                    <div
+                      v-if="activeCartQuickEditor === 'customer'"
+                      id="cart-customer-editor"
+                      class="cart-inline-panel cart-inline-panel--customer"
+                    >
+                      <label>
+                        姓名
+                        <input
+                          ref="customerNameInput"
+                          v-model="customer.name"
+                          type="text"
+                          autocomplete="name"
+                          @keydown.enter="closeCartQuickEditor"
+                          @keydown.escape="closeCartQuickEditor"
+                        />
+                      </label>
+                      <label>
+                        電話
+                        <input
+                          v-model="customer.phone"
+                          type="tel"
+                          autocomplete="tel"
+                          @keydown.enter="closeCartQuickEditor"
+                          @keydown.escape="closeCartQuickEditor"
+                        />
+                      </label>
+                      <button class="cart-inline-done" type="button" @click="closeCartQuickEditor">
+                        <CheckCircle2 :size="18" aria-hidden="true" />
+                        完成
+                      </button>
+                    </div>
+
+                    <div
+                      v-else-if="activeCartQuickEditor === 'service'"
+                      id="cart-service-editor"
+                      class="cart-inline-panel cart-inline-options"
+                      aria-label="直接修改服務方式"
+                    >
+                      <button
+                        v-for="mode in serviceModeOptions"
+                        :key="`cart-${mode.value}`"
+                        class="segment-button"
+                        :class="{ 'segment-button--active': serviceMode === mode.value }"
+                        type="button"
+                        @click="selectCartServiceMode(mode.value)"
+                      >
+                        {{ mode.label }}
+                      </button>
+                    </div>
+
+                    <div
+                      v-else-if="activeCartQuickEditor === 'payment'"
+                      id="cart-payment-editor"
+                      class="cart-inline-panel cart-inline-options cart-inline-options--payment"
+                      aria-label="直接修改付款方式"
+                    >
+                      <button
+                        v-for="payment in visiblePaymentOptions"
+                        :key="`cart-${payment.value}`"
+                        class="payment-button"
+                        :class="{ 'payment-button--active': paymentMethod === payment.value }"
+                        type="button"
+                        @click="selectCartPaymentMethod(payment.value)"
+                      >
+                        <CreditCard :size="18" aria-hidden="true" />
+                        {{ payment.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="cart-lines" aria-live="polite">
+                    <article v-for="line in cartLines" :key="line.itemId" class="cart-line">
+                      <button
+                        v-if="lineRequiresOptions(line)"
+                        class="cart-line-summary"
+                        type="button"
+                        @click="editCartLineOptions(line)"
+                      >
+                        <h3>{{ line.name }}</h3>
+                        <p>{{ line.options.join(' / ') || '標準' }}</p>
+                      </button>
+                      <div v-else class="cart-line-summary">
+                        <h3>{{ line.name }}</h3>
+                        <p>{{ line.options.join(' / ') || '標準' }}</p>
+                      </div>
+                      <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
+                        <button type="button" title="減少" @click.stop="decreaseLine(line.itemId)">
+                          <Minus :size="16" aria-hidden="true" />
+                        </button>
+                        <input
+                          class="quantity-input"
+                          type="number"
+                          min="0"
+                          max="999"
+                          inputmode="numeric"
+                          :aria-label="`${line.name} 數量`"
+                          :value="line.quantity"
+                          @click.stop
+                          @input="updateCartQuantityInput(line.itemId, $event)"
+                          @change="commitCartQuantityInput(line.itemId, $event)"
+                          @keydown.enter.stop="blurQuantityInput"
+                          @keydown.escape.stop="blurQuantityInput"
+                        />
+                        <button type="button" title="增加" @click.stop="increaseLine(line.itemId)">
+                          <Plus :size="16" aria-hidden="true" />
+                        </button>
+                      </div>
+                      <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                    </article>
+
+                    <article v-if="activeOptionItem && !activeOptionLineId" class="cart-line cart-line--pending">
+                      <div>
+                        <h3>{{ activeOptionItem.name }}</h3>
+                        <p v-if="optionWarning" class="cart-line-warning">
+                          <CircleAlert :size="16" aria-hidden="true" />
+                          {{ optionWarning }}
+                        </p>
+                        <p v-else>{{ selectedOptionDetails.labels.join(' / ') || '尚未完成選項' }}</p>
+                      </div>
+                      <div class="quantity-stepper quantity-stepper--readonly" aria-label="待選品項數量">
+                        <span>1</span>
+                      </div>
+                      <strong>{{ formatCurrency(pendingOptionLineTotal) }}</strong>
+                    </article>
+
+                    <div v-if="cartLines.length === 0 && !activeOptionItem" class="empty-state">
+                      <ShoppingCart :size="24" aria-hidden="true" />
+                      <span>尚未加入品項</span>
+                    </div>
+                  </div>
+
+                  <footer class="checkout-bar checkout-bar--ticket">
+                    <button
+                      class="primary-button ticket-submit-button"
+                      type="button"
+                      :disabled="(cartLines.length === 0 && !activeOptionItem) || isSubmitting"
+                      @click="handleSubmitCounterOrder"
+                    >
+                      <Printer :size="22" aria-hidden="true" />
+                      {{ isSubmitting ? '建立中' : '出單' }}
+                    </button>
+                    <div class="ticket-total-summary">
+                      <span>{{ ticketDisplayQuantity }} 件</span>
+                      <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
+                    </div>
+                    <button
+                      class="icon-button ticket-more-button"
+                      type="button"
+                      title="開啟工具箱"
+                      aria-controls="pos-toolbox-modal"
+                      :aria-expanded="isToolboxOpen"
+                      @click="openToolbox"
+                    >
+                      <MoreHorizontal :size="24" aria-hidden="true" />
+                    </button>
+                  </footer>
+                </section>
+
+                <section class="menu-panel" aria-labelledby="menu-title">
+                  <div class="menu-panel-heading">
+                    <div>
+                      <p class="eyebrow">Menu</p>
+                      <h2 id="menu-title">商品菜單</h2>
+                      <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
+                    </div>
+                    <label class="search-box menu-search-box">
+                      <Search :size="18" aria-hidden="true" />
+                      <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
+                    </label>
+                  </div>
+
+                  <div class="menu-workarea">
+                    <aside class="category-rail" aria-label="品項分類">
+                      <span class="category-rail-icon">
+                        <MenuIcon :size="26" aria-hidden="true" />
+                      </span>
+                      <button
+                        v-for="category in categoryOptions"
+                        :key="category.value"
+                        class="category-rail-button"
+                        :class="{ 'category-rail-button--active': selectedCategory === category.value }"
+                        type="button"
+                        @click="selectedCategory = category.value"
+                      >
+                        {{ category.label }}
+                      </button>
+                    </aside>
+
+                    <div class="catalog-panel">
+                      <div class="catalog-meta">
+                        <span>{{ selectedCategoryLabel }} · 點選商品加入訂單</span>
+                        <strong>{{ filteredMenu.length }} 項</strong>
+                      </div>
+
+                      <div class="product-grid">
+                        <article
+                          v-for="item in filteredMenu"
+                          :key="item.id"
+                          class="product-tile"
+                          :class="{
+                            'product-tile--in-cart': lineQuantityByItem(item.id) > 0,
+                            'product-tile--quantity-control': lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item),
+                          }"
+                        >
+                          <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
+                            <span class="product-tile-top">
+                              <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
+                              <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
+                            </span>
+                            <span class="product-name">{{ item.name }}</span>
+                            <span class="product-meta">
+                              <strong>{{ formatCurrency(item.price) }}</strong>
+                              <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
+                            </span>
+                            <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
+                              {{ productStockLabel(item) }}
+                            </span>
+                            <span class="product-tags">{{ item.tags.join(' / ') }}</span>
+                          </button>
+                          <div
+                            v-if="lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item)"
+                            class="product-quantity-control"
+                            :aria-label="`${item.name} 數量`"
+                          >
+                            <button
+                              type="button"
+                              title="減少數量"
+                              :disabled="lineQuantityByItem(item.id) === 0"
+                              @click="decreaseLine(item.id)"
+                            >
+                              <Minus :size="15" aria-hidden="true" />
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              max="999"
+                              inputmode="numeric"
+                              :aria-label="`${item.name} 數量`"
+                              :value="lineQuantityByItem(item.id) || ''"
+                              placeholder="0"
+                              @input="updateProductQuantityInput(item, $event)"
+                              @change="commitProductQuantityInput(item, $event)"
+                              @keydown.enter.stop="blurQuantityInput"
+                              @keydown.escape.stop="blurQuantityInput"
+                            />
+                            <button type="button" title="增加數量" @click="addItem(item)">
+                              <Plus :size="15" aria-hidden="true" />
+                            </button>
+                          </div>
+                        </article>
+                      </div>
+                    </div>
+                  </div>
+
+                  <section
+                    v-if="activeOptionItem"
+                    class="menu-option-panel"
+                    role="dialog"
+                    aria-modal="false"
+                    aria-labelledby="menu-option-title"
                   >
+                    <header class="menu-option-header">
+                      <button class="icon-button option-back-button" type="button" title="返回菜單" @click="closeOptionPanel">
+                        <ChevronLeft :size="28" aria-hidden="true" />
+                      </button>
+                      <h3 id="menu-option-title">{{ activeOptionItem.name }}</h3>
+                      <strong>1</strong>
+                    </header>
+
+                    <div class="menu-option-body">
+                      <p v-if="optionWarning" class="menu-option-warning" aria-live="assertive">
+                        <CircleAlert :size="20" aria-hidden="true" />
+                        {{ optionWarning }}
+                      </p>
+
+                      <section v-for="group in activeOptionGroups" :key="group.id" class="menu-option-group">
+                        <div class="menu-option-group-title">
+                          <h4>{{ group.label }}</h4>
+                          <span>{{ group.requirement }}</span>
+                        </div>
+                        <div class="menu-option-grid">
+                          <button
+                            v-for="choice in group.choices"
+                            :key="choice.id"
+                            class="menu-option-choice"
+                            :class="{ 'menu-option-choice--active': optionChoiceSelected(group, choice) }"
+                            type="button"
+                            @click="toggleOptionChoice(group, choice)"
+                          >
+                            <span>{{ choice.label }}</span>
+                            <small v-if="choice.priceDelta">+{{ formatCurrency(choice.priceDelta) }}</small>
+                          </button>
+                        </div>
+                      </section>
+                    </div>
+
+                    <footer class="menu-option-footer">
+                      <button class="icon-button option-trash-button" type="button" title="取消品項" @click="closeOptionPanel">
+                        <Trash2 :size="22" aria-hidden="true" />
+                      </button>
+                      <button class="primary-button option-confirm-button" type="button" @click="confirmMenuOptions">
+                        <CheckCircle2 :size="20" aria-hidden="true" />
+                        {{ activeOptionLineId ? '更新品項' : '加入訂單' }}
+                      </button>
+                    </footer>
+                  </section>
+                </section>
+              </template>
+
+              <aside v-else class="queue-panel workstation-panel-stack" aria-label="工作站內容">
+                <section v-if="activeWorkspaceTab === 'details'" class="order-info-section" aria-labelledby="order-info-title">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">Order Info</p>
+                      <h2 id="order-info-title">訂單資訊</h2>
+                      <span class="panel-note">顧客、履約與備註集中在這裡設定</span>
+                    </div>
+                    <Settings2 :size="22" aria-hidden="true" />
+                  </div>
+
+                  <div class="segmented-control" aria-label="服務方式">
+                    <button
+                      v-for="mode in serviceModeOptions"
+                      :key="mode.value"
+                      class="segment-button"
+                      :class="{ 'segment-button--active': serviceMode === mode.value }"
+                      type="button"
+                      @click="serviceMode = mode.value"
+                    >
+                      {{ mode.label }}
+                    </button>
+                  </div>
+
+                  <div class="customer-grid order-info-grid">
+                    <label>
+                      姓名
+                      <input v-model="customer.name" type="text" autocomplete="name" />
+                    </label>
+                    <label>
+                      電話
+                      <input v-model="customer.phone" type="tel" autocomplete="tel" />
+                    </label>
+                    <label>
+                      預計時間
+                      <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+                    </label>
+                    <label v-if="serviceMode === 'delivery'" class="wide-field">
+                      外送地址
+                      <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" />
+                    </label>
+                    <label class="wide-field">
+                      備註
+                      <textarea v-model="customer.note" rows="4" />
+                    </label>
+                  </div>
+
+                  <div class="note-shortcuts" aria-label="常用備註">
+                    <button v-for="note in visibleNoteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
+                      {{ note }}
+                    </button>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'payment'" class="payment-section" aria-labelledby="payment-title">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">Payment</p>
+                      <h2 id="payment-title">付款</h2>
+                      <span class="panel-note">確認付款方式後送出目前訂單</span>
+                    </div>
+                    <CreditCard :size="22" aria-hidden="true" />
+                  </div>
+
+                  <div class="payment-list payment-list--focused" aria-label="付款方式">
                     <button
                       v-for="payment in visiblePaymentOptions"
-                      :key="`cart-${payment.value}`"
+                      :key="payment.value"
                       class="payment-button"
                       :class="{ 'payment-button--active': paymentMethod === payment.value }"
                       type="button"
-                      @click="selectCartPaymentMethod(payment.value)"
+                      @click="paymentMethod = payment.value"
                     >
                       <CreditCard :size="18" aria-hidden="true" />
                       {{ payment.label }}
                     </button>
                   </div>
-                </div>
 
-                <div class="cart-lines" aria-live="polite">
-                  <article v-for="line in cartLines" :key="line.itemId" class="cart-line">
-                    <button
-                      v-if="lineRequiresOptions(line)"
-                      class="cart-line-summary"
-                      type="button"
-                      @click="editCartLineOptions(line)"
-                    >
-                      <h3>{{ line.name }}</h3>
-                      <p>{{ line.options.join(' / ') || '標準' }}</p>
-                    </button>
-                    <div v-else class="cart-line-summary">
-                      <h3>{{ line.name }}</h3>
-                      <p>{{ line.options.join(' / ') || '標準' }}</p>
-                    </div>
-                    <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
-                      <button type="button" title="減少" @click.stop="decreaseLine(line.itemId)">
-                        <Minus :size="16" aria-hidden="true" />
-                      </button>
-                      <input
-                        class="quantity-input"
-                        type="number"
-                        min="0"
-                        max="999"
-                        inputmode="numeric"
-                        :aria-label="`${line.name} 數量`"
-                        :value="line.quantity"
-                        @click.stop
-                        @input="updateCartQuantityInput(line.itemId, $event)"
-                        @change="commitCartQuantityInput(line.itemId, $event)"
-                        @keydown.enter.stop="blurQuantityInput"
-                        @keydown.escape.stop="blurQuantityInput"
-                      />
-                      <button type="button" title="增加" @click.stop="increaseLine(line.itemId)">
-                        <Plus :size="16" aria-hidden="true" />
-                      </button>
-                    </div>
-                    <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
-                  </article>
+                  <div class="payment-summary-grid" aria-label="付款摘要">
+                    <article>
+                      <span>品項</span>
+                      <strong>{{ cartQuantity }} 件</strong>
+                    </article>
+                    <article>
+                      <span>顧客</span>
+                      <strong>{{ customer.name || '現場客' }}</strong>
+                    </article>
+                    <article>
+                      <span>方式</span>
+                      <strong>{{ serviceModeLabels[serviceMode] }}</strong>
+                    </article>
+                    <article>
+                      <span>合計</span>
+                      <strong>{{ formatCurrency(cartTotal) }}</strong>
+                    </article>
+                  </div>
 
-                  <article v-if="activeOptionItem && !activeOptionLineId" class="cart-line cart-line--pending">
+                  <div class="payment-order-lines">
+                    <article v-for="line in cartLines" :key="`payment-${line.itemId}`">
+                      <span>{{ line.name }}</span>
+                      <strong>x{{ line.quantity }}</strong>
+                      <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                    </article>
+                    <div v-if="cartLines.length === 0" class="empty-state payment-empty-state">
+                      <ShoppingCart :size="24" aria-hidden="true" />
+                      <span>尚未加入品項</span>
+                    </div>
+                  </div>
+
+                  <footer class="checkout-bar checkout-bar--panel">
                     <div>
-                      <h3>{{ activeOptionItem.name }}</h3>
-                      <p v-if="optionWarning" class="cart-line-warning">
-                        <CircleAlert :size="16" aria-hidden="true" />
-                        {{ optionWarning }}
-                      </p>
-                      <p v-else>{{ selectedOptionDetails.labels.join(' / ') || '尚未完成選項' }}</p>
+                      <span>{{ paymentLabels[paymentMethod] }}</span>
+                      <strong>{{ formatCurrency(cartTotal) }}</strong>
                     </div>
-                    <div class="quantity-stepper quantity-stepper--readonly" aria-label="待選品項數量">
-                      <span>1</span>
-                    </div>
-                    <strong>{{ formatCurrency(pendingOptionLineTotal) }}</strong>
-                  </article>
-
-                  <div v-if="cartLines.length === 0 && !activeOptionItem" class="empty-state">
-                    <ShoppingCart :size="24" aria-hidden="true" />
-                    <span>尚未加入品項</span>
-                  </div>
-                </div>
-
-                <footer class="checkout-bar checkout-bar--ticket">
-                  <button
-                    class="primary-button ticket-submit-button"
-                    type="button"
-                    :disabled="(cartLines.length === 0 && !activeOptionItem) || isSubmitting"
-                    @click="handleSubmitCounterOrder"
-                  >
-                    <Printer :size="22" aria-hidden="true" />
-                    {{ isSubmitting ? '建立中' : '出單' }}
-                  </button>
-                  <div class="ticket-total-summary">
-                    <span>{{ ticketDisplayQuantity }} 件</span>
-                    <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
-                  </div>
-                  <button
-                    class="icon-button ticket-more-button"
-                    type="button"
-                    title="開啟工具箱"
-                    aria-controls="pos-toolbox-modal"
-                    :aria-expanded="isToolboxOpen"
-                    @click="openToolbox"
-                  >
-                    <MoreHorizontal :size="24" aria-hidden="true" />
-                  </button>
-                </footer>
-              </section>
-
-              <section class="menu-panel" aria-labelledby="menu-title">
-                <div class="menu-panel-heading">
-                  <div>
-                    <p class="eyebrow">Menu</p>
-                    <h2 id="menu-title">商品菜單</h2>
-                    <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
-                  </div>
-                  <label class="search-box menu-search-box">
-                    <Search :size="18" aria-hidden="true" />
-                    <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
-                  </label>
-                </div>
-
-                <div class="menu-workarea">
-                  <aside class="category-rail" aria-label="品項分類">
-                    <span class="category-rail-icon">
-                      <MenuIcon :size="26" aria-hidden="true" />
-                    </span>
                     <button
-                      v-for="category in categoryOptions"
-                      :key="category.value"
-                      class="category-rail-button"
-                      :class="{ 'category-rail-button--active': selectedCategory === category.value }"
+                      class="primary-button"
                       type="button"
-                      @click="selectedCategory = category.value"
+                      :disabled="cartLines.length === 0 || isSubmitting"
+                      @click="handleSubmitCounterOrder"
                     >
-                      {{ category.label }}
-                    </button>
-                  </aside>
-
-                  <div class="catalog-panel">
-                    <div class="catalog-meta">
-                      <span>{{ selectedCategoryLabel }} · 點選商品加入訂單</span>
-                      <strong>{{ filteredMenu.length }} 項</strong>
-                    </div>
-
-                    <div class="product-grid">
-                      <article
-                        v-for="item in filteredMenu"
-                        :key="item.id"
-                        class="product-tile"
-                        :class="{
-                          'product-tile--in-cart': lineQuantityByItem(item.id) > 0,
-                          'product-tile--quantity-control': lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item),
-                        }"
-                      >
-                        <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
-                          <span class="product-tile-top">
-                            <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-                            <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
-                          </span>
-                          <span class="product-name">{{ item.name }}</span>
-                          <span class="product-meta">
-                            <strong>{{ formatCurrency(item.price) }}</strong>
-                            <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
-                          </span>
-                          <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
-                            {{ productStockLabel(item) }}
-                          </span>
-                          <span class="product-tags">{{ item.tags.join(' / ') }}</span>
-                        </button>
-                        <div
-                          v-if="lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item)"
-                          class="product-quantity-control"
-                          :aria-label="`${item.name} 數量`"
-                        >
-                          <button
-                            type="button"
-                            title="減少數量"
-                            :disabled="lineQuantityByItem(item.id) === 0"
-                            @click="decreaseLine(item.id)"
-                          >
-                            <Minus :size="15" aria-hidden="true" />
-                          </button>
-                          <input
-                            type="number"
-                            min="0"
-                            max="999"
-                            inputmode="numeric"
-                            :aria-label="`${item.name} 數量`"
-                            :value="lineQuantityByItem(item.id) || ''"
-                            placeholder="0"
-                            @input="updateProductQuantityInput(item, $event)"
-                            @change="commitProductQuantityInput(item, $event)"
-                            @keydown.enter.stop="blurQuantityInput"
-                            @keydown.escape.stop="blurQuantityInput"
-                          />
-                          <button type="button" title="增加數量" @click="addItem(item)">
-                            <Plus :size="15" aria-hidden="true" />
-                          </button>
-                        </div>
-                      </article>
-                    </div>
-                  </div>
-                </div>
-
-                <section
-                  v-if="activeOptionItem"
-                  class="menu-option-panel"
-                  role="dialog"
-                  aria-modal="false"
-                  aria-labelledby="menu-option-title"
-                >
-                  <header class="menu-option-header">
-                    <button class="icon-button option-back-button" type="button" title="返回菜單" @click="closeOptionPanel">
-                      <ChevronLeft :size="28" aria-hidden="true" />
-                    </button>
-                    <h3 id="menu-option-title">{{ activeOptionItem.name }}</h3>
-                    <strong>1</strong>
-                  </header>
-
-                  <div class="menu-option-body">
-                    <p v-if="optionWarning" class="menu-option-warning" aria-live="assertive">
-                      <CircleAlert :size="20" aria-hidden="true" />
-                      {{ optionWarning }}
-                    </p>
-
-                    <section v-for="group in activeOptionGroups" :key="group.id" class="menu-option-group">
-                      <div class="menu-option-group-title">
-                        <h4>{{ group.label }}</h4>
-                        <span>{{ group.requirement }}</span>
-                      </div>
-                      <div class="menu-option-grid">
-                        <button
-                          v-for="choice in group.choices"
-                          :key="choice.id"
-                          class="menu-option-choice"
-                          :class="{ 'menu-option-choice--active': optionChoiceSelected(group, choice) }"
-                          type="button"
-                          @click="toggleOptionChoice(group, choice)"
-                        >
-                          <span>{{ choice.label }}</span>
-                          <small v-if="choice.priceDelta">+{{ formatCurrency(choice.priceDelta) }}</small>
-                        </button>
-                      </div>
-                    </section>
-                  </div>
-
-                  <footer class="menu-option-footer">
-                    <button class="icon-button option-trash-button" type="button" title="取消品項" @click="closeOptionPanel">
-                      <Trash2 :size="22" aria-hidden="true" />
-                    </button>
-                    <button class="primary-button option-confirm-button" type="button" @click="confirmMenuOptions">
-                      <CheckCircle2 :size="20" aria-hidden="true" />
-                      {{ activeOptionLineId ? '更新品項' : '加入訂單' }}
+                      <ReceiptText :size="20" aria-hidden="true" />
+                      {{ isSubmitting ? '建立中' : '建立訂單' }}
                     </button>
                   </footer>
                 </section>
-              </section>
-            </template>
 
-            <aside v-else class="queue-panel workstation-panel-stack" aria-label="工作站內容">
-              <section v-if="activeWorkspaceTab === 'details'" class="order-info-section" aria-labelledby="order-info-title">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">Order Info</p>
-                    <h2 id="order-info-title">訂單資訊</h2>
-                    <span class="panel-note">顧客、履約與備註集中在這裡設定</span>
-                  </div>
-                  <Settings2 :size="22" aria-hidden="true" />
-                </div>
-
-                <div class="segmented-control" aria-label="服務方式">
-                  <button
-                    v-for="mode in serviceModeOptions"
-                    :key="mode.value"
-                    class="segment-button"
-                    :class="{ 'segment-button--active': serviceMode === mode.value }"
-                    type="button"
-                    @click="serviceMode = mode.value"
-                  >
-                    {{ mode.label }}
-                  </button>
-                </div>
-
-                <div class="customer-grid order-info-grid">
-                  <label>
-                    姓名
-                    <input v-model="customer.name" type="text" autocomplete="name" />
-                  </label>
-                  <label>
-                    電話
-                    <input v-model="customer.phone" type="tel" autocomplete="tel" />
-                  </label>
-                  <label>
-                    預計時間
-                    <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
-                  </label>
-                  <label v-if="serviceMode === 'delivery'" class="wide-field">
-                    外送地址
-                    <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" />
-                  </label>
-                  <label class="wide-field">
-                    備註
-                    <textarea v-model="customer.note" rows="4" />
-                  </label>
-                </div>
-
-                <div class="note-shortcuts" aria-label="常用備註">
-                  <button v-for="note in visibleNoteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
-                    {{ note }}
-                  </button>
-                </div>
-              </section>
-
-              <section v-if="activeWorkspaceTab === 'payment'" class="payment-section" aria-labelledby="payment-title">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">Payment</p>
-                    <h2 id="payment-title">付款</h2>
-                    <span class="panel-note">確認付款方式後送出目前訂單</span>
-                  </div>
-                  <CreditCard :size="22" aria-hidden="true" />
-                </div>
-
-                <div class="payment-list payment-list--focused" aria-label="付款方式">
-                  <button
-                    v-for="payment in visiblePaymentOptions"
-                    :key="payment.value"
-                    class="payment-button"
-                    :class="{ 'payment-button--active': paymentMethod === payment.value }"
-                    type="button"
-                    @click="paymentMethod = payment.value"
-                  >
-                    <CreditCard :size="18" aria-hidden="true" />
-                    {{ payment.label }}
-                  </button>
-                </div>
-
-                <div class="payment-summary-grid" aria-label="付款摘要">
-                  <article>
-                    <span>品項</span>
-                    <strong>{{ cartQuantity }} 件</strong>
-                  </article>
-                  <article>
-                    <span>顧客</span>
-                    <strong>{{ customer.name || '現場客' }}</strong>
-                  </article>
-                  <article>
-                    <span>方式</span>
-                    <strong>{{ serviceModeLabels[serviceMode] }}</strong>
-                  </article>
-                  <article>
-                    <span>合計</span>
-                    <strong>{{ formatCurrency(cartTotal) }}</strong>
-                  </article>
-                </div>
-
-                <div class="payment-order-lines">
-                  <article v-for="line in cartLines" :key="`payment-${line.itemId}`">
-                    <span>{{ line.name }}</span>
-                    <strong>x{{ line.quantity }}</strong>
-                    <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
-                  </article>
-                  <div v-if="cartLines.length === 0" class="empty-state payment-empty-state">
-                    <ShoppingCart :size="24" aria-hidden="true" />
-                    <span>尚未加入品項</span>
-                  </div>
-                </div>
-
-                <footer class="checkout-bar checkout-bar--panel">
-                  <div>
-                    <span>{{ paymentLabels[paymentMethod] }}</span>
-                    <strong>{{ formatCurrency(cartTotal) }}</strong>
-                  </div>
-                  <button
-                    class="primary-button"
-                    type="button"
-                    :disabled="cartLines.length === 0 || isSubmitting"
-                    @click="handleSubmitCounterOrder"
-                  >
-                    <ReceiptText :size="20" aria-hidden="true" />
-                    {{ isSubmitting ? '建立中' : '建立訂單' }}
-                  </button>
-                </footer>
-              </section>
-
-              <section v-if="activeWorkspaceTab === 'queue'" class="queue-section">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">Orders</p>
-                    <h2 id="queue-title">
-                      查詢訂單（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
-                    </h2>
-                    <span class="panel-note">依狀態、付款與關鍵字快速查詢</span>
-                  </div>
-                  <button class="queue-reset-button" type="button" @click="resetQueueFilters">
-                    重設篩選條件
-                  </button>
-                </div>
-
-                <div class="segmented-control queue-filter" aria-label="訂單篩選">
-                  <button
-                    v-for="filter in queueFilterOptions"
-                    :key="filter.value"
-                    class="segment-button queue-filter-button"
-                    :class="{ 'segment-button--active': queueFilter === filter.value }"
-                    type="button"
-                    @click="queueFilter = filter.value"
-                  >
-                    <span>{{ filter.label }}</span>
-                    <strong>{{ filter.count }}</strong>
-                  </button>
-                </div>
-
-                <section
-                  v-if="onlineOrderReminder.activeOverdueCount > 0"
-                  class="online-reminder-banner"
-                  aria-live="assertive"
-                >
-                  <div class="online-reminder-summary">
-                    <CircleAlert :size="22" aria-hidden="true" />
+                <section v-if="activeWorkspaceTab === 'queue'" class="queue-section">
+                  <div class="panel-heading">
                     <div>
-                      <p class="eyebrow">Online Alert</p>
-                      <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單未確認</h3>
-                      <span>
-                        {{ onlineReminderThresholdLabel }} · {{ onlineReminderToneLabel }} ·
-                        目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待接手
-                      </span>
-                      <small v-if="onlineOrderReminder.audioMessage">{{ onlineOrderReminder.audioMessage }}</small>
+                      <p class="eyebrow">Orders</p>
+                      <h2 id="queue-title">
+                        查詢訂單（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
+                      </h2>
+                      <span class="panel-note">依狀態、付款與關鍵字快速查詢</span>
                     </div>
-                  </div>
-                  <div class="online-reminder-actions">
-                    <button type="button" @click="acknowledgeOnlineOrderReminders">已讀提醒</button>
-                    <button class="primary-button" type="button" @click="showOnlineReminderOrders">
-                      <ReceiptText :size="18" aria-hidden="true" />
-                      查看訂單
+                    <button class="queue-reset-button" type="button" @click="resetQueueFilters">
+                      重設篩選條件
                     </button>
                   </div>
-                </section>
 
-                <section
-                  v-if="queueFulfillmentAlert.count > 0"
-                  class="fulfillment-alert-banner"
-                  :class="queueFulfillmentAlert.isOverdue ? 'fulfillment-alert-banner--overdue' : 'fulfillment-alert-banner--soon'"
-                  aria-live="polite"
-                >
-                  <div class="fulfillment-alert-summary">
-                    <Clock3 :size="22" aria-hidden="true" />
-                    <div>
-                      <p class="eyebrow">Pickup Time</p>
-                      <h3>{{ queueFulfillmentAlertTitle }}</h3>
-                      <span>
-                        已逾時 {{ queueFulfillmentAlert.overdueCount }} 張 ·
-                        {{ fulfillmentAlertWindowMinutes }} 分鐘內 {{ queueFulfillmentAlert.dueSoonCount }} 張
-                      </span>
-                    </div>
-                  </div>
-                  <div class="fulfillment-alert-actions">
+                  <div class="segmented-control queue-filter" aria-label="訂單篩選">
                     <button
-                      type="button"
-                      :disabled="queueFulfillmentAlert.overdueCount === 0"
-                      @click="showFulfillmentAlertOrders('overdue')"
-                    >
-                      已逾時
-                    </button>
-                    <button
-                      type="button"
-                      :disabled="queueFulfillmentAlert.dueSoonCount === 0"
-                      @click="showFulfillmentAlertOrders('due-soon')"
-                    >
-                      {{ fulfillmentAlertWindowMinutes }} 分內
-                    </button>
-                    <button class="primary-button" type="button" @click="showFulfillmentAlertOrders('scheduled')">
-                      <CalendarDays :size="18" aria-hidden="true" />
-                      已排程
-                    </button>
-                  </div>
-                </section>
-
-                <section class="queue-task-strip" aria-label="訂單任務快篩">
-                  <button
-                    v-for="action in queueTaskActions"
-                    :key="action.id"
-                    class="queue-task-card"
-                    :class="`queue-task-card--${action.tone}`"
-                    type="button"
-                    :aria-label="`${action.label}${action.count}張，${action.actionLabel}`"
-                    @click="runQueueTaskAction(action)"
-                  >
-                    <span>{{ action.label }}</span>
-                    <strong>{{ action.count }}</strong>
-                    <small>{{ action.detail }}</small>
-                    <em>{{ action.actionLabel }}</em>
-                  </button>
-                </section>
-
-                <div class="queue-tools">
-                  <label class="search-box queue-search">
-                    <Search :size="18" aria-hidden="true" />
-                    <input v-model="queueSearchTerm" type="search" placeholder="搜尋單號、客名、電話或品項" />
-                  </label>
-                  <div class="segmented-control queue-payment-filter" aria-label="付款狀態篩選">
-                    <button
-                      v-for="filter in queuePaymentFilterOptions"
+                      v-for="filter in queueFilterOptions"
                       :key="filter.value"
                       class="segment-button queue-filter-button"
-                      :class="{ 'segment-button--active': queuePaymentFilter === filter.value }"
+                      :class="{ 'segment-button--active': queueFilter === filter.value }"
                       type="button"
-                      @click="queuePaymentFilter = filter.value"
+                      @click="queueFilter = filter.value"
                     >
                       <span>{{ filter.label }}</span>
                       <strong>{{ filter.count }}</strong>
                     </button>
                   </div>
-                  <div class="queue-advanced-filters" aria-label="訂單進階篩選">
-                    <label>
-                      <span>日期</span>
-                      <select v-model="queueDateFilter">
-                        <option v-for="filter in queueDateFilterOptions" :key="filter.value" :value="filter.value">
-                          {{ filter.label }}
-                        </option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>方式</span>
-                      <select v-model="queueServiceFilter">
-                        <option v-for="filter in queueServiceFilterOptions" :key="filter.value" :value="filter.value">
-                          {{ filter.label }}
-                        </option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>來源</span>
-                      <select v-model="queueSourceFilter">
-                        <option v-for="filter in queueSourceFilterOptions" :key="filter.value" :value="filter.value">
-                          {{ filter.label }}
-                        </option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>排序</span>
-                      <select v-model="queueSortMode">
-                        <option v-for="sort in queueSortOptions" :key="sort.value" :value="sort.value">
-                          {{ sort.label }}
-                        </option>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="segmented-control queue-fulfillment-filter" aria-label="履約時段篩選">
-                    <button
-                      v-for="filter in queueFulfillmentFilterOptions"
-                      :key="filter.value"
-                      class="segment-button queue-fulfillment-button"
-                      :class="{ 'segment-button--active': queueFulfillmentFilter === filter.value }"
-                      type="button"
-                      @click="applyQueueFulfillmentFilter(filter.value)"
-                    >
-                      <span>{{ filter.label }}</span>
-                      <strong>{{ filter.count }}</strong>
-                    </button>
-                  </div>
-                </div>
 
-                <section
-                  v-if="pendingQueueAdminAction || queueActionMessage"
-                  class="queue-admin-card"
-                  :class="{ 'queue-admin-card--prompt': pendingQueueAdminAction }"
-                  aria-live="polite"
-                >
-                  <div class="queue-admin-card-copy">
-                    <CircleAlert :size="20" aria-hidden="true" />
-                    <div>
-                      <strong v-if="pendingQueueAdminAction">
-                        {{ pendingQueueAdminAction.orderId }} 確認{{ pendingQueueAdminAction.label }}
-                      </strong>
-                      <strong v-else>操作狀態</strong>
-                      <span>{{ queueActionMessage }}</span>
-                    </div>
-                  </div>
-                  <form v-if="pendingQueueAdminAction" class="queue-admin-pin-form" @submit.prevent="confirmQueueAdminAction">
-                    <label>
-                      管理 PIN
-                      <input
-                        v-model="queueActionPin"
-                        type="password"
-                        inputmode="numeric"
-                        autocomplete="off"
-                        placeholder="輸入 PIN 後確認"
-                      />
-                    </label>
-                    <button type="button" @click="cancelQueueAdminAction">取消</button>
-                    <button class="primary-button" type="submit" :disabled="!queueActionPin.trim()">
-                      確認{{ pendingQueueAdminAction.label }}
-                    </button>
-                  </form>
-                  <button v-else type="button" @click="queueActionMessage = ''">關閉</button>
-                </section>
-
-                <div
-                  v-for="order in visibleQueueOrders"
-                  :key="order.id"
-                  class="swipe-row order-swipe-row"
-                  :class="swipeRowClass(orderSwipeKey(order))"
-                >
-                  <div class="swipe-action-stack" aria-label="訂單滑動動作">
-                    <button
-                      class="swipe-action swipe-action--complete"
-                      type="button"
-                      :disabled="orderSwipeCompleteDisabled(order)"
-                      @click.stop="orderSwipeCompleteAction(order)"
-                    >
-                      <CheckCircle2 :size="18" aria-hidden="true" />
-                      {{ orderSwipeCompleteLabel(order) }}
-                    </button>
-                    <button
-                      class="swipe-action swipe-action--danger"
-                      type="button"
-                      :disabled="orderSwipeDeleteDisabled(order)"
-                      @click.stop="orderSwipeDeleteAction(order)"
-                    >
-                      <Trash2 :size="18" aria-hidden="true" />
-                      {{ orderSwipeDeleteLabel(order) }}
-                    </button>
-                  </div>
-                  <article
-                    class="order-row swipe-card"
-                    :class="[
-                      `order-row--${order.status}`,
-                      fulfillmentRowClass(order),
-                      {
-                        'order-row--claimed-other': orderClaimedByOtherStation(order),
-                        'order-row--online-reminder': orderNeedsOnlineReminder(order),
-                      },
-                    ]"
-                    :style="swipeCardStyle(orderSwipeKey(order))"
-                    @pointerdown="startSwipe(orderSwipeKey(order), $event)"
-                    @pointermove="moveSwipe(orderSwipeKey(order), $event)"
-                    @pointerup="endOrderSwipe(order)"
-                    @pointercancel="cancelSwipe(orderSwipeKey(order))"
-                    @click="handleOrderRowClick(order, $event)"
+                  <section
+                    v-if="onlineOrderReminder.activeOverdueCount > 0"
+                    class="online-reminder-banner"
+                    aria-live="assertive"
                   >
-                    <div class="order-row-main">
-                      <div class="order-row-title">
-                        <span class="order-id">{{ order.id }}</span>
-                        <span class="order-row-title-chips">
-                          <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
-                            <LockKeyhole :size="13" aria-hidden="true" />
-                            {{ claimLabelFor(order) }}
-                          </span>
-                          <span v-if="orderPendingSync(order)" class="sync-chip">
-                            <Clock3 :size="13" aria-hidden="true" />
-                            本機待同步
-                          </span>
-                          <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
-                            <CircleAlert :size="13" aria-hidden="true" />
-                            未確認
-                          </span>
-                          <span
-                            v-if="fulfillmentUrgencyLabel(order)"
-                            class="fulfillment-chip"
-                            :class="fulfillmentUrgencyClass(order)"
-                          >
-                            <Clock3 :size="13" aria-hidden="true" />
-                            {{ fulfillmentUrgencyLabel(order) }}
-                          </span>
-                          <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+                    <div class="online-reminder-summary">
+                      <CircleAlert :size="22" aria-hidden="true" />
+                      <div>
+                        <p class="eyebrow">Online Alert</p>
+                        <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單未確認</h3>
+                        <span>
+                          {{ onlineReminderThresholdLabel }} · {{ onlineReminderToneLabel }} ·
+                          目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待接手
+                        </span>
+                        <small v-if="onlineOrderReminder.audioMessage">{{ onlineOrderReminder.audioMessage }}</small>
+                      </div>
+                    </div>
+                    <div class="online-reminder-actions">
+                      <button type="button" @click="acknowledgeOnlineOrderReminders">已讀提醒</button>
+                      <button class="primary-button" type="button" @click="showOnlineReminderOrders">
+                        <ReceiptText :size="18" aria-hidden="true" />
+                        查看訂單
+                      </button>
+                    </div>
+                  </section>
+
+                  <section
+                    v-if="queueFulfillmentAlert.count > 0"
+                    class="fulfillment-alert-banner"
+                    :class="queueFulfillmentAlert.isOverdue ? 'fulfillment-alert-banner--overdue' : 'fulfillment-alert-banner--soon'"
+                    aria-live="polite"
+                  >
+                    <div class="fulfillment-alert-summary">
+                      <Clock3 :size="22" aria-hidden="true" />
+                      <div>
+                        <p class="eyebrow">Pickup Time</p>
+                        <h3>{{ queueFulfillmentAlertTitle }}</h3>
+                        <span>
+                          已逾時 {{ queueFulfillmentAlert.overdueCount }} 張 ·
+                          {{ fulfillmentAlertWindowMinutes }} 分鐘內 {{ queueFulfillmentAlert.dueSoonCount }} 張
                         </span>
                       </div>
-                      <strong>{{ order.customerName }}</strong>
-                      <span>
-                        {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
-                        {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
-                      </span>
-                      <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
-                        {{ fulfillmentLabel(order) }}
-                      </small>
                     </div>
-                    <div class="order-row-meta">
-                      <span>{{ formatCurrency(order.subtotal) }}</span>
-                      <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
-                      <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
-                        {{ printSummary(order) }}
-                      </span>
-                    </div>
-                    <div class="order-actions">
+                    <div class="fulfillment-alert-actions">
                       <button
-                        v-if="paymentActionLabel(order)"
-                        class="order-action--payment"
                         type="button"
-                        :disabled="paymentActionDisabled(order)"
-                        @click="confirmPaymentAction(order)"
+                        :disabled="queueFulfillmentAlert.overdueCount === 0"
+                        @click="showFulfillmentAlertOrders('overdue')"
                       >
-                        <CreditCard :size="16" aria-hidden="true" />
-                        {{ paymentActionLabel(order) }}
+                        已逾時
                       </button>
                       <button
-                        class="order-action--print"
                         type="button"
-                        :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
-                        @click="printOrder(order.id)"
+                        :disabled="queueFulfillmentAlert.dueSoonCount === 0"
+                        @click="showFulfillmentAlertOrders('due-soon')"
                       >
-                        <Printer :size="16" aria-hidden="true" />
-                        {{ printActionLabel(order) }}
+                        {{ fulfillmentAlertWindowMinutes }} 分內
                       </button>
-                      <button
-                        class="order-action--claim"
-                        type="button"
-                        :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
-                        :disabled="claimActionDisabled(order)"
-                        @click="claimOrderAction(order)"
-                      >
-                        <LockKeyhole :size="16" aria-hidden="true" />
-                        {{ claimActionLabel(order) }}
-                      </button>
-                      <button
-                        v-if="orderCanBeVoided(order)"
-                        class="order-action--void"
-                        type="button"
-                        :disabled="voidingOrderId === order.id"
-                        @click="requestQueueAdminAction('void', order)"
-                      >
-                        <Trash2 :size="16" aria-hidden="true" />
-                        {{ voidActionLabel(order) }}
-                      </button>
-                      <button
-                        v-if="orderCanBeRefunded(order)"
-                        class="order-action--refund"
-                        type="button"
-                        :disabled="refundingOrderId === order.id"
-                        @click="requestQueueAdminAction('refund', order)"
-                      >
-                        <WalletCards :size="16" aria-hidden="true" />
-                        {{ refundActionLabel(order) }}
-                      </button>
-                      <button
-                        class="order-action--detail"
-                        type="button"
-                        :class="{ 'order-action--active': expandedOrderId === order.id }"
-                        @click="toggleOrderDetail(order)"
-                      >
-                        <ReceiptText :size="16" aria-hidden="true" />
-                        明細
-                      </button>
-                      <button
-                        v-for="action in statusActions"
-                        :key="action.value"
-                        :class="{ 'order-action--active': order.status === action.value }"
-                        type="button"
-                        :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
-                        @click="updateOrderStatus(order.id, action.value)"
-                      >
-                        {{ action.label }}
+                      <button class="primary-button" type="button" @click="showFulfillmentAlertOrders('scheduled')">
+                        <CalendarDays :size="18" aria-hidden="true" />
+                        已排程
                       </button>
                     </div>
-                    <div v-if="expandedOrderId === order.id" class="order-detail-panel">
-                      <div class="order-detail-grid">
+                  </section>
+
+                  <section class="queue-task-strip" aria-label="訂單任務快篩">
+                    <button
+                      v-for="action in queueTaskActions"
+                      :key="action.id"
+                      class="queue-task-card"
+                      :class="`queue-task-card--${action.tone}`"
+                      type="button"
+                      :aria-label="`${action.label}${action.count}張，${action.actionLabel}`"
+                      @click="runQueueTaskAction(action)"
+                    >
+                      <span>{{ action.label }}</span>
+                      <strong>{{ action.count }}</strong>
+                      <small>{{ action.detail }}</small>
+                      <em>{{ action.actionLabel }}</em>
+                    </button>
+                  </section>
+
+                  <div class="queue-tools">
+                    <label class="search-box queue-search">
+                      <Search :size="18" aria-hidden="true" />
+                      <input v-model="queueSearchTerm" type="search" placeholder="搜尋單號、客名、電話或品項" />
+                    </label>
+                    <div class="segmented-control queue-payment-filter" aria-label="付款狀態篩選">
+                      <button
+                        v-for="filter in queuePaymentFilterOptions"
+                        :key="filter.value"
+                        class="segment-button queue-filter-button"
+                        :class="{ 'segment-button--active': queuePaymentFilter === filter.value }"
+                        type="button"
+                        @click="queuePaymentFilter = filter.value"
+                      >
+                        <span>{{ filter.label }}</span>
+                        <strong>{{ filter.count }}</strong>
+                      </button>
+                    </div>
+                    <div class="queue-advanced-filters" aria-label="訂單進階篩選">
+                      <label>
+                        <span>日期</span>
+                        <select v-model="queueDateFilter">
+                          <option v-for="filter in queueDateFilterOptions" :key="filter.value" :value="filter.value">
+                            {{ filter.label }}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>方式</span>
+                        <select v-model="queueServiceFilter">
+                          <option v-for="filter in queueServiceFilterOptions" :key="filter.value" :value="filter.value">
+                            {{ filter.label }}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
                         <span>來源</span>
-                        <strong>{{ sourceLabels[order.source] }}</strong>
-                        <span>電話</span>
-                        <strong>{{ order.customerPhone || '未留' }}</strong>
-                        <span>付款</span>
-                        <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
-                        <span>履約</span>
-                        <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
-                        <span>備註</span>
-                        <strong>{{ order.note || '無' }}</strong>
+                        <select v-model="queueSourceFilter">
+                          <option v-for="filter in queueSourceFilterOptions" :key="filter.value" :value="filter.value">
+                            {{ filter.label }}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>排序</span>
+                        <select v-model="queueSortMode">
+                          <option v-for="sort in queueSortOptions" :key="sort.value" :value="sort.value">
+                            {{ sort.label }}
+                          </option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="segmented-control queue-fulfillment-filter" aria-label="履約時段篩選">
+                      <button
+                        v-for="filter in queueFulfillmentFilterOptions"
+                        :key="filter.value"
+                        class="segment-button queue-fulfillment-button"
+                        :class="{ 'segment-button--active': queueFulfillmentFilter === filter.value }"
+                        type="button"
+                        @click="applyQueueFulfillmentFilter(filter.value)"
+                      >
+                        <span>{{ filter.label }}</span>
+                        <strong>{{ filter.count }}</strong>
+                      </button>
+                    </div>
+                  </div>
+
+                  <section
+                    v-if="pendingQueueAdminAction || queueActionMessage"
+                    class="queue-admin-card"
+                    :class="{ 'queue-admin-card--prompt': pendingQueueAdminAction }"
+                    aria-live="polite"
+                  >
+                    <div class="queue-admin-card-copy">
+                      <CircleAlert :size="20" aria-hidden="true" />
+                      <div>
+                        <strong v-if="pendingQueueAdminAction">
+                          {{ pendingQueueAdminAction.orderId }} 確認{{ pendingQueueAdminAction.label }}
+                        </strong>
+                        <strong v-else>操作狀態</strong>
+                        <span>{{ queueActionMessage }}</span>
                       </div>
-                      <div class="order-detail-lines">
-                        <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
-                          <div>
-                            <strong>{{ line.name }}</strong>
-                            <span>{{ line.options.join(' / ') || '標準' }}</span>
+                    </div>
+                    <form v-if="pendingQueueAdminAction" class="queue-admin-pin-form" @submit.prevent="confirmQueueAdminAction">
+                      <label>
+                        管理 PIN
+                        <input
+                          v-model="queueActionPin"
+                          type="password"
+                          inputmode="numeric"
+                          autocomplete="off"
+                          placeholder="輸入 PIN 後確認"
+                        />
+                      </label>
+                      <button type="button" @click="cancelQueueAdminAction">取消</button>
+                      <button class="primary-button" type="submit" :disabled="!queueActionPin.trim()">
+                        確認{{ pendingQueueAdminAction.label }}
+                      </button>
+                    </form>
+                    <button v-else type="button" @click="queueActionMessage = ''">關閉</button>
+                  </section>
+
+                  <div
+                    v-for="order in visibleQueueOrders"
+                    :key="order.id"
+                    class="swipe-row order-swipe-row"
+                    :class="swipeRowClass(orderSwipeKey(order))"
+                  >
+                    <div class="swipe-action-stack" aria-label="訂單滑動動作">
+                      <button
+                        class="swipe-action swipe-action--complete"
+                        type="button"
+                        :disabled="orderSwipeCompleteDisabled(order)"
+                        @click.stop="orderSwipeCompleteAction(order)"
+                      >
+                        <CheckCircle2 :size="18" aria-hidden="true" />
+                        {{ orderSwipeCompleteLabel(order) }}
+                      </button>
+                      <button
+                        class="swipe-action swipe-action--danger"
+                        type="button"
+                        :disabled="orderSwipeDeleteDisabled(order)"
+                        @click.stop="orderSwipeDeleteAction(order)"
+                      >
+                        <Trash2 :size="18" aria-hidden="true" />
+                        {{ orderSwipeDeleteLabel(order) }}
+                      </button>
+                    </div>
+                    <article
+                      class="order-row swipe-card"
+                      :class="[
+                        `order-row--${order.status}`,
+                        fulfillmentRowClass(order),
+                        {
+                          'order-row--claimed-other': orderClaimedByOtherStation(order),
+                          'order-row--online-reminder': orderNeedsOnlineReminder(order),
+                        },
+                      ]"
+                      :style="swipeCardStyle(orderSwipeKey(order))"
+                      @pointerdown="startSwipe(orderSwipeKey(order), $event)"
+                      @pointermove="moveSwipe(orderSwipeKey(order), $event)"
+                      @pointerup="endOrderSwipe(order)"
+                      @pointercancel="cancelSwipe(orderSwipeKey(order))"
+                      @click="handleOrderRowClick(order, $event)"
+                    >
+                      <div class="order-row-main">
+                        <div class="order-row-title">
+                          <span class="order-id">{{ order.id }}</span>
+                          <span class="order-row-title-chips">
+                            <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
+                              <LockKeyhole :size="13" aria-hidden="true" />
+                              {{ claimLabelFor(order) }}
+                            </span>
+                            <span v-if="orderPendingSync(order)" class="sync-chip">
+                              <Clock3 :size="13" aria-hidden="true" />
+                              本機待同步
+                            </span>
+                            <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
+                              <CircleAlert :size="13" aria-hidden="true" />
+                              未確認
+                            </span>
+                            <span
+                              v-if="fulfillmentUrgencyLabel(order)"
+                              class="fulfillment-chip"
+                              :class="fulfillmentUrgencyClass(order)"
+                            >
+                              <Clock3 :size="13" aria-hidden="true" />
+                              {{ fulfillmentUrgencyLabel(order) }}
+                            </span>
+                            <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
+                          </span>
+                        </div>
+                        <strong>{{ order.customerName }}</strong>
+                        <span>
+                          {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
+                          {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
+                        </span>
+                        <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
+                          {{ fulfillmentLabel(order) }}
+                        </small>
+                      </div>
+                      <div class="order-row-meta">
+                        <span>{{ formatCurrency(order.subtotal) }}</span>
+                        <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
+                        <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
+                          {{ printSummary(order) }}
+                        </span>
+                      </div>
+                      <div class="order-actions">
+                        <button
+                          v-if="paymentActionLabel(order)"
+                          class="order-action--payment"
+                          type="button"
+                          :disabled="paymentActionDisabled(order)"
+                          @click="confirmPaymentAction(order)"
+                        >
+                          <CreditCard :size="16" aria-hidden="true" />
+                          {{ paymentActionLabel(order) }}
+                        </button>
+                        <button
+                          class="order-action--print"
+                          type="button"
+                          :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
+                          @click="printOrder(order.id)"
+                        >
+                          <Printer :size="16" aria-hidden="true" />
+                          {{ printActionLabel(order) }}
+                        </button>
+                        <button
+                          class="order-action--claim"
+                          type="button"
+                          :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
+                          :disabled="claimActionDisabled(order)"
+                          @click="claimOrderAction(order)"
+                        >
+                          <LockKeyhole :size="16" aria-hidden="true" />
+                          {{ claimActionLabel(order) }}
+                        </button>
+                        <button
+                          v-if="orderCanBeVoided(order)"
+                          class="order-action--void"
+                          type="button"
+                          :disabled="voidingOrderId === order.id"
+                          @click="requestQueueAdminAction('void', order)"
+                        >
+                          <Trash2 :size="16" aria-hidden="true" />
+                          {{ voidActionLabel(order) }}
+                        </button>
+                        <button
+                          v-if="orderCanBeRefunded(order)"
+                          class="order-action--refund"
+                          type="button"
+                          :disabled="refundingOrderId === order.id"
+                          @click="requestQueueAdminAction('refund', order)"
+                        >
+                          <WalletCards :size="16" aria-hidden="true" />
+                          {{ refundActionLabel(order) }}
+                        </button>
+                        <button
+                          class="order-action--detail"
+                          type="button"
+                          :class="{ 'order-action--active': expandedOrderId === order.id }"
+                          @click="toggleOrderDetail(order)"
+                        >
+                          <ReceiptText :size="16" aria-hidden="true" />
+                          明細
+                        </button>
+                        <button
+                          v-for="action in statusActions"
+                          :key="action.value"
+                          :class="{ 'order-action--active': order.status === action.value }"
+                          type="button"
+                          :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
+                          @click="updateOrderStatus(order.id, action.value)"
+                        >
+                          {{ action.label }}
+                        </button>
+                      </div>
+                      <div v-if="expandedOrderId === order.id" class="order-detail-panel">
+                        <div class="order-detail-grid">
+                          <span>來源</span>
+                          <strong>{{ sourceLabels[order.source] }}</strong>
+                          <span>電話</span>
+                          <strong>{{ order.customerPhone || '未留' }}</strong>
+                          <span>付款</span>
+                          <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                          <span>履約</span>
+                          <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
+                          <span>備註</span>
+                          <strong>{{ order.note || '無' }}</strong>
+                        </div>
+                        <div class="order-detail-lines">
+                          <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
+                            <div>
+                              <strong>{{ line.name }}</strong>
+                              <span>{{ line.options.join(' / ') || '標準' }}</span>
+                            </div>
+                            <span>x{{ line.quantity }}</span>
+                            <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                          </article>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
+                  <div v-if="visibleQueueOrders.length === 0" class="empty-state queue-empty-state">
+                    <ReceiptText :size="24" aria-hidden="true" />
+                    <span>目前沒有符合條件的訂單</span>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'printing'" class="station-section" aria-labelledby="station-title">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">Station</p>
+                      <h2 id="station-title">前台操作</h2>
+                      <span class="panel-note">
+                        {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停 ·
+                        {{ lowStockStationProducts.length }} 個低庫存
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="station-pin-row">
+                    <label>
+                      PIN
+                      <input v-model="stationPin" type="password" inputmode="numeric" autocomplete="off" placeholder="管理 PIN" />
+                    </label>
+                    <button type="button" :disabled="isLoadingProductStatus" @click="loadStationProducts">
+                      <RefreshCw :size="16" aria-hidden="true" />
+                      {{ isLoadingProductStatus ? '載入中' : '載入' }}
+                    </button>
+                  </div>
+
+                  <p class="station-message">{{ productStatusMessage }}</p>
+
+                  <div class="station-filter-panel" aria-label="供應狀態篩選與批次操作">
+                    <label class="search-box station-search">
+                      <Search :size="18" aria-hidden="true" />
+                      <input v-model="stationSearchTerm" type="search" placeholder="搜尋商品、SKU 或標籤" />
+                    </label>
+                    <div class="station-filter-grid">
+                      <label>
+                        <span>分類</span>
+                        <select v-model="stationCategoryFilter">
+                          <option v-for="category in categoryOptions" :key="`station-${category.value}`" :value="category.value">
+                            {{ category.label }}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>狀態</span>
+                        <select v-model="stationAvailabilityFilter">
+                          <option
+                            v-for="filter in stationAvailabilityFilterOptions"
+                            :key="filter.value"
+                            :value="filter.value"
+                          >
+                            {{ filter.label }}
+                          </option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="station-batch-actions">
+                      <span>{{ stationFilterSummary }}</span>
+                      <button
+                        type="button"
+                        :disabled="isStationBatchBusy || stationFilteredAvailableProducts.length === 0"
+                        @click="updateVisibleStationProducts(false)"
+                      >
+                        <EyeOff :size="16" aria-hidden="true" />
+                        暫停篩選結果
+                      </button>
+                      <button
+                        type="button"
+                        :disabled="isStationBatchBusy || stationFilteredStoppedProducts.length === 0"
+                        @click="updateVisibleStationProducts(true)"
+                      >
+                        <Eye :size="16" aria-hidden="true" />
+                        恢復篩選結果
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="station-product-list" aria-label="前台商品狀態">
+                    <article v-for="product in visibleStationProducts" :key="product.id" class="station-product-row">
+                      <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
+                      <span>
+                        <strong>{{ product.name }}</strong>
+                        <small>
+                          {{ categoryLabelFor(product.category) }} · {{ formatCurrency(product.price) }}
+                          <template v-if="productStockLabel(product)"> · {{ productStockLabel(product) }}</template>
+                        </small>
+                      </span>
+                      <button
+                        type="button"
+                        :class="{ 'station-product-toggle--stopped': !product.available }"
+                        :disabled="stationProductIsBusy(product)"
+                        @click="toggleStationProduct(product)"
+                      >
+                        <RefreshCw v-if="stationProductIsBusy(product)" :size="16" aria-hidden="true" />
+                        <EyeOff v-else-if="product.available" :size="16" aria-hidden="true" />
+                        <Eye v-else :size="16" aria-hidden="true" />
+                        {{ stationProductIsBusy(product) ? '更新中' : product.available ? '暫停' : '恢復' }}
+                      </button>
+                    </article>
+                    <div v-if="visibleStationProducts.length === 0" class="empty-state station-empty-state">
+                      <EyeOff :size="22" aria-hidden="true" />
+                      <span>沒有符合條件的商品</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'printing'" class="printer-section">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">LAN Printing</p>
+                      <h2>列印站</h2>
+                      <span class="panel-note">最後列印：{{ lastPrintTime }}</span>
+                    </div>
+                    <button class="icon-button" type="button" title="送出測試列印" @click="sendPrinterHealthcheck">
+                      <Printer :size="20" aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <div class="printer-health">
+                    <CheckCircle2 v-if="printStation.online" :size="20" aria-hidden="true" />
+                    <CircleAlert v-else :size="20" aria-hidden="true" />
+                    <div>
+                      <strong>{{ printStation.name }}</strong>
+                      <span>{{ printStation.protocol }}</span>
+                    </div>
+                  </div>
+
+                  <label class="toggle-row">
+                    <input v-model="printStation.autoPrint" type="checkbox" />
+                    自動列印新訂單
+                  </label>
+
+                  <div class="print-job-panel" aria-label="列印單列表">
+                    <div class="print-job-heading">
+                      <strong>列印單</strong>
+                      <span>{{ printJobRows.length }} 筆</span>
+                    </div>
+
+                    <div v-if="printJobRows.length > 0" class="print-job-list">
+                      <div
+                        v-for="row in printJobRows"
+                        :key="row.key"
+                        class="swipe-row print-job-swipe-row"
+                        :class="swipeRowClass(row.key)"
+                      >
+                        <div
+                          class="swipe-action swipe-action--danger"
+                          aria-hidden="true"
+                          inert
+                          :class="{ 'swipe-action--disabled': printJobDeleteDisabled(row) }"
+                        >
+                          <Trash2 :size="18" aria-hidden="true" />
+                          {{ printJobDeleteLabel(row) }}
+                        </div>
+                        <article
+                          class="print-job-row swipe-card"
+                          :style="swipeCardStyle(row.key)"
+                          @pointerdown="startSwipe(row.key, $event)"
+                          @pointermove="moveSwipe(row.key, $event)"
+                          @pointerup="endPrintJobSwipe(row)"
+                          @pointercancel="cancelSwipe(row.key)"
+                        >
+                          <div class="print-job-main">
+                            <strong>{{ row.order.id }}</strong>
+                            <span>{{ row.order.customerName }} · {{ formatOrderTime(row.job.createdAt) }}</span>
+                            <small v-if="row.job.lastError">{{ row.job.lastError }}</small>
                           </div>
-                          <span>x{{ line.quantity }}</span>
-                          <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                          <span class="print-job-status" :class="`print-job-status--${row.job.status}`">
+                            {{ printStatusLabels[row.job.status] }}
+                          </span>
+                          <span class="print-job-attempts">{{ row.job.attempts }}</span>
+                          <button
+                            class="print-job-delete-button"
+                            type="button"
+                            title="刪除列印單"
+                            :disabled="printJobDeleteDisabled(row)"
+                            @click="printJobDeleteAction(row)"
+                          >
+                            <Trash2 :size="16" aria-hidden="true" />
+                          </button>
                         </article>
                       </div>
                     </div>
-                  </article>
-                </div>
 
-                <div v-if="visibleQueueOrders.length === 0" class="empty-state queue-empty-state">
-                  <ReceiptText :size="24" aria-hidden="true" />
-                  <span>目前沒有符合條件的訂單</span>
-                </div>
-              </section>
-
-              <section v-if="activeWorkspaceTab === 'printing'" class="station-section" aria-labelledby="station-title">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">Station</p>
-                    <h2 id="station-title">前台操作</h2>
-                    <span class="panel-note">
-                      {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停 ·
-                      {{ lowStockStationProducts.length }} 個低庫存
-                    </span>
-                  </div>
-                </div>
-
-                <div class="station-pin-row">
-                  <label>
-                    PIN
-                    <input v-model="stationPin" type="password" inputmode="numeric" autocomplete="off" placeholder="管理 PIN" />
-                  </label>
-                  <button type="button" :disabled="isLoadingProductStatus" @click="loadStationProducts">
-                    <RefreshCw :size="16" aria-hidden="true" />
-                    {{ isLoadingProductStatus ? '載入中' : '載入' }}
-                  </button>
-                </div>
-
-                <p class="station-message">{{ productStatusMessage }}</p>
-
-                <div class="station-filter-panel" aria-label="供應狀態篩選與批次操作">
-                  <label class="search-box station-search">
-                    <Search :size="18" aria-hidden="true" />
-                    <input v-model="stationSearchTerm" type="search" placeholder="搜尋商品、SKU 或標籤" />
-                  </label>
-                  <div class="station-filter-grid">
-                    <label>
-                      <span>分類</span>
-                      <select v-model="stationCategoryFilter">
-                        <option v-for="category in categoryOptions" :key="`station-${category.value}`" :value="category.value">
-                          {{ category.label }}
-                        </option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>狀態</span>
-                      <select v-model="stationAvailabilityFilter">
-                        <option
-                          v-for="filter in stationAvailabilityFilterOptions"
-                          :key="filter.value"
-                          :value="filter.value"
-                        >
-                          {{ filter.label }}
-                        </option>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="station-batch-actions">
-                    <span>{{ stationFilterSummary }}</span>
-                    <button
-                      type="button"
-                      :disabled="isStationBatchBusy || stationFilteredAvailableProducts.length === 0"
-                      @click="updateVisibleStationProducts(false)"
-                    >
-                      <EyeOff :size="16" aria-hidden="true" />
-                      暫停篩選結果
-                    </button>
-                    <button
-                      type="button"
-                      :disabled="isStationBatchBusy || stationFilteredStoppedProducts.length === 0"
-                      @click="updateVisibleStationProducts(true)"
-                    >
-                      <Eye :size="16" aria-hidden="true" />
-                      恢復篩選結果
-                    </button>
-                  </div>
-                </div>
-
-                <div class="station-product-list" aria-label="前台商品狀態">
-                  <article v-for="product in visibleStationProducts" :key="product.id" class="station-product-row">
-                    <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
-                    <span>
-                      <strong>{{ product.name }}</strong>
-                      <small>
-                        {{ categoryLabelFor(product.category) }} · {{ formatCurrency(product.price) }}
-                        <template v-if="productStockLabel(product)"> · {{ productStockLabel(product) }}</template>
-                      </small>
-                    </span>
-                    <button
-                      type="button"
-                      :class="{ 'station-product-toggle--stopped': !product.available }"
-                      :disabled="stationProductIsBusy(product)"
-                      @click="toggleStationProduct(product)"
-                    >
-                      <RefreshCw v-if="stationProductIsBusy(product)" :size="16" aria-hidden="true" />
-                      <EyeOff v-else-if="product.available" :size="16" aria-hidden="true" />
-                      <Eye v-else :size="16" aria-hidden="true" />
-                      {{ stationProductIsBusy(product) ? '更新中' : product.available ? '暫停' : '恢復' }}
-                    </button>
-                  </article>
-                  <div v-if="visibleStationProducts.length === 0" class="empty-state station-empty-state">
-                    <EyeOff :size="22" aria-hidden="true" />
-                    <span>沒有符合條件的商品</span>
-                  </div>
-                </div>
-              </section>
-
-              <section v-if="activeWorkspaceTab === 'printing'" class="printer-section">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">LAN Printing</p>
-                    <h2>列印站</h2>
-                    <span class="panel-note">最後列印：{{ lastPrintTime }}</span>
-                  </div>
-                  <button class="icon-button" type="button" title="送出測試列印" @click="sendPrinterHealthcheck">
-                    <Printer :size="20" aria-hidden="true" />
-                  </button>
-                </div>
-
-                <div class="printer-health">
-                  <CheckCircle2 v-if="printStation.online" :size="20" aria-hidden="true" />
-                  <CircleAlert v-else :size="20" aria-hidden="true" />
-                  <div>
-                    <strong>{{ printStation.name }}</strong>
-                    <span>{{ printStation.protocol }}</span>
-                  </div>
-                </div>
-
-                <label class="toggle-row">
-                  <input v-model="printStation.autoPrint" type="checkbox" />
-                  自動列印新訂單
-                </label>
-
-                <div class="print-job-panel" aria-label="列印單列表">
-                  <div class="print-job-heading">
-                    <strong>列印單</strong>
-                    <span>{{ printJobRows.length }} 筆</span>
+                    <div v-else class="empty-state print-job-empty-state">
+                      <Printer :size="22" aria-hidden="true" />
+                      <span>尚無列印單</span>
+                    </div>
                   </div>
 
-                  <div v-if="printJobRows.length > 0" class="print-job-list">
-                    <div
-                      v-for="row in printJobRows"
-                      :key="row.key"
-                      class="swipe-row print-job-swipe-row"
-                      :class="swipeRowClass(row.key)"
-                    >
-                      <div
-                        class="swipe-action swipe-action--danger"
-                        aria-hidden="true"
-                        inert
-                        :class="{ 'swipe-action--disabled': printJobDeleteDisabled(row) }"
-                      >
-                        <Trash2 :size="18" aria-hidden="true" />
-                        {{ printJobDeleteLabel(row) }}
+                  <pre class="print-preview">{{ lastPrintPreview }}</pre>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'closeout'" class="closeout-section" aria-labelledby="closeout-title">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">Closeout</p>
+                      <h2 id="closeout-title">關帳摘要</h2>
+                      <span class="panel-note">
+                        {{ todayOrders.length }} 張單 · 待收 {{ closeoutSummary.pendingCount }} 張
+                      </span>
+                    </div>
+                    <WalletCards :size="22" aria-hidden="true" />
+                  </div>
+
+                  <div class="closeout-grid">
+                    <article>
+                      <span>已收</span>
+                      <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
+                    </article>
+                    <article>
+                      <span>待收</span>
+                      <strong>{{ formatCurrency(closeoutSummary.pendingTotal) }}</strong>
+                    </article>
+                    <article>
+                      <span>付款異常</span>
+                      <strong>{{ closeoutSummary.failedPaymentCount }}</strong>
+                    </article>
+                    <article>
+                      <span>列印異常</span>
+                      <strong>{{ closeoutSummary.failedPrintCount }}</strong>
+                    </article>
+                    <article>
+                      <span>作廢</span>
+                      <strong>{{ closeoutSummary.voidedCount }}</strong>
+                    </article>
+                  </div>
+
+                  <section class="closeout-preflight" aria-labelledby="closeout-preflight-title">
+                    <div class="closeout-preflight-heading">
+                      <div>
+                        <p class="eyebrow">Preflight</p>
+                        <h3 id="closeout-preflight-title">交班預檢</h3>
+                        <span>{{ closeoutPreflightSummary }}</span>
                       </div>
-                      <article
-                        class="print-job-row swipe-card"
-                        :style="swipeCardStyle(row.key)"
-                        @pointerdown="startSwipe(row.key, $event)"
-                        @pointermove="moveSwipe(row.key, $event)"
-                        @pointerup="endPrintJobSwipe(row)"
-                        @pointercancel="cancelSwipe(row.key)"
+                      <span
+                        class="closeout-preflight-status"
+                        :class="closeoutPreflightReady ? 'closeout-preflight-status--ready' : 'closeout-preflight-status--danger'"
                       >
-                        <div class="print-job-main">
-                          <strong>{{ row.order.id }}</strong>
-                          <span>{{ row.order.customerName }} · {{ formatOrderTime(row.job.createdAt) }}</span>
-                          <small v-if="row.job.lastError">{{ row.job.lastError }}</small>
-                        </div>
-                        <span class="print-job-status" :class="`print-job-status--${row.job.status}`">
-                          {{ printStatusLabels[row.job.status] }}
+                        <CheckCircle2 v-if="closeoutPreflightReady" :size="16" aria-hidden="true" />
+                        <CircleAlert v-else :size="16" aria-hidden="true" />
+                        {{ closeoutPreflightReady ? '可關班' : '需處理' }}
+                      </span>
+                    </div>
+
+                    <div class="closeout-preflight-list">
+                      <article
+                        v-for="item in closeoutPreflightItems"
+                        :key="item.id"
+                        class="closeout-preflight-item"
+                        :class="`closeout-preflight-item--${item.status}`"
+                      >
+                        <span class="closeout-preflight-icon">
+                          <CheckCircle2 v-if="item.status === 'ready'" :size="17" aria-hidden="true" />
+                          <CircleAlert v-else :size="17" aria-hidden="true" />
                         </span>
-                        <span class="print-job-attempts">{{ row.job.attempts }}</span>
+                        <div>
+                          <strong>{{ item.label }}</strong>
+                          <small>{{ item.detail }}</small>
+                        </div>
                         <button
-                          class="print-job-delete-button"
                           type="button"
-                          title="刪除列印單"
-                          :disabled="printJobDeleteDisabled(row)"
-                          @click="printJobDeleteAction(row)"
+                          class="closeout-preflight-button"
+                          :aria-label="`${item.label}${item.count}筆，${item.actionLabel}`"
+                          @click="runCloseoutPreflightAction(item)"
                         >
-                          <Trash2 :size="16" aria-hidden="true" />
+                          <span>{{ item.count }}</span>
+                          {{ item.actionLabel }}
                         </button>
                       </article>
                     </div>
+                  </section>
+
+                  <div class="payment-closeout-list" aria-label="付款方式對帳">
+                    <article v-for="payment in paymentCloseoutRows" :key="payment.value">
+                      <span>{{ payment.label }}</span>
+                      <strong>{{ formatCurrency(payment.total) }}</strong>
+                      <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
+                    </article>
                   </div>
 
-                  <div v-else class="empty-state print-job-empty-state">
-                    <Printer :size="22" aria-hidden="true" />
-                    <span>尚無列印單</span>
-                  </div>
-                </div>
-
-                <pre class="print-preview">{{ lastPrintPreview }}</pre>
-              </section>
-
-              <section v-if="activeWorkspaceTab === 'closeout'" class="closeout-section" aria-labelledby="closeout-title">
-                <div class="panel-heading">
-                  <div>
-                    <p class="eyebrow">Closeout</p>
-                    <h2 id="closeout-title">關帳摘要</h2>
-                    <span class="panel-note">
-                      {{ todayOrders.length }} 張單 · 待收 {{ closeoutSummary.pendingCount }} 張
-                    </span>
-                  </div>
-                  <WalletCards :size="22" aria-hidden="true" />
-                </div>
-
-                <div class="closeout-grid">
-                  <article>
-                    <span>已收</span>
-                    <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
-                  </article>
-                  <article>
-                    <span>待收</span>
-                    <strong>{{ formatCurrency(closeoutSummary.pendingTotal) }}</strong>
-                  </article>
-                  <article>
-                    <span>付款異常</span>
-                    <strong>{{ closeoutSummary.failedPaymentCount }}</strong>
-                  </article>
-                  <article>
-                    <span>列印異常</span>
-                    <strong>{{ closeoutSummary.failedPrintCount }}</strong>
-                  </article>
-                  <article>
-                    <span>作廢</span>
-                    <strong>{{ closeoutSummary.voidedCount }}</strong>
-                  </article>
-                </div>
-
-                <section class="closeout-preflight" aria-labelledby="closeout-preflight-title">
-                  <div class="closeout-preflight-heading">
-                    <div>
-                      <p class="eyebrow">Preflight</p>
-                      <h3 id="closeout-preflight-title">交班預檢</h3>
-                      <span>{{ closeoutPreflightSummary }}</span>
-                    </div>
-                    <span
-                      class="closeout-preflight-status"
-                      :class="closeoutPreflightReady ? 'closeout-preflight-status--ready' : 'closeout-preflight-status--danger'"
-                    >
-                      <CheckCircle2 v-if="closeoutPreflightReady" :size="16" aria-hidden="true" />
-                      <CircleAlert v-else :size="16" aria-hidden="true" />
-                      {{ closeoutPreflightReady ? '可關班' : '需處理' }}
-                    </span>
-                  </div>
-
-                  <div class="closeout-preflight-list">
-                    <article
-                      v-for="item in closeoutPreflightItems"
-                      :key="item.id"
-                      class="closeout-preflight-item"
-                      :class="`closeout-preflight-item--${item.status}`"
-                    >
-                      <span class="closeout-preflight-icon">
-                        <CheckCircle2 v-if="item.status === 'ready'" :size="17" aria-hidden="true" />
-                        <CircleAlert v-else :size="17" aria-hidden="true" />
-                      </span>
+                  <div class="register-session-panel" aria-label="班別開關帳">
+                    <div class="register-session-heading">
                       <div>
-                        <strong>{{ item.label }}</strong>
-                        <small>{{ item.detail }}</small>
+                        <span>班別</span>
+                        <strong>{{ registerStatusLabel }}</strong>
+                        <small>{{ registerMessage }}</small>
                       </div>
                       <button
+                        class="icon-button"
                         type="button"
-                        class="closeout-preflight-button"
-                        :aria-label="`${item.label}${item.count}筆，${item.actionLabel}`"
-                        @click="runCloseoutPreflightAction(item)"
+                        title="重新載入班別"
+                        :disabled="isRegisterBusy"
+                        @click="loadRegisterSession"
                       >
-                        <span>{{ item.count }}</span>
-                        {{ item.actionLabel }}
+                        <RefreshCw :size="18" aria-hidden="true" />
                       </button>
+                    </div>
+
+                    <div v-if="registerSession" class="register-metrics">
+                      <article>
+                        <span>預期現金</span>
+                        <strong>{{ formatCurrency(registerSession.expectedCash) }}</strong>
+                      </article>
+                      <article>
+                        <span>現金銷售</span>
+                        <strong>{{ formatCurrency(registerSession.cashSales) }}</strong>
+                      </article>
+                      <article>
+                        <span>非現金</span>
+                        <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
+                      </article>
+                      <article>
+                        <span>待收</span>
+                        <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
+                      </article>
+                      <article>
+                        <span>單數</span>
+                        <strong>{{ registerSession.orderCount }}</strong>
+                      </article>
+                      <article>
+                        <span>未交付</span>
+                        <strong>{{ registerSession.openOrderCount }}</strong>
+                      </article>
+                      <article>
+                        <span>付款異常</span>
+                        <strong>{{ registerSession.failedPaymentCount }}</strong>
+                      </article>
+                      <article>
+                        <span>列印失敗</span>
+                        <strong>{{ registerSession.failedPrintCount }}</strong>
+                      </article>
+                      <article>
+                        <span>作廢</span>
+                        <strong>{{ registerSession.voidedOrderCount }}</strong>
+                      </article>
+                      <article :class="registerVarianceClass">
+                        <span>現金差額</span>
+                        <strong>{{ formatCurrency(registerVariance) }}</strong>
+                      </article>
+                    </div>
+
+                    <div class="register-form-grid">
+                      <label>
+                        管理 PIN
+                        <input v-model="registerPin" type="password" inputmode="numeric" autocomplete="off" />
+                      </label>
+                      <label v-if="!registerIsOpen">
+                        開班現金
+                        <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
+                      </label>
+                      <label v-else>
+                        實點現金
+                        <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
+                      </label>
+                      <label class="wide-field">
+                        備註
+                        <input v-model="registerNote" type="text" placeholder="交接、差額或補充說明" />
+                      </label>
+                    </div>
+
+                    <label v-if="registerHasCloseoutExceptions" class="toggle-row register-force-close">
+                      <input v-model="forceCloseRegister" type="checkbox" />
+                      異常仍要關班
+                    </label>
+
+                    <button
+                      v-if="registerIsOpen"
+                      class="register-action-button register-action-button--close"
+                      type="button"
+                      :disabled="isRegisterBusy"
+                      @click="closeRegisterSessionAction"
+                    >
+                      <WalletCards :size="18" aria-hidden="true" />
+                      {{ isRegisterBusy ? '關班中' : forceCloseRegister ? '強制關班' : '關班' }}
+                    </button>
+                    <button
+                      v-else
+                      class="register-action-button"
+                      type="button"
+                      :disabled="isRegisterBusy"
+                      @click="openRegisterSessionAction"
+                    >
+                      <WalletCards :size="18" aria-hidden="true" />
+                      {{ isRegisterBusy ? '開班中' : '開班' }}
+                    </button>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'queue' && activeOrder" class="active-order">
+                  <p class="eyebrow">Next</p>
+                  <div class="next-order-title">
+                    <h2>{{ activeOrder.id }}</h2>
+                    <span class="order-row-title-chips">
+                      <span v-if="claimLabelFor(activeOrder)" class="claim-chip" :class="claimChipClass(activeOrder)">
+                        <LockKeyhole :size="13" aria-hidden="true" />
+                        {{ claimLabelFor(activeOrder) }}
+                      </span>
+                      <span v-if="orderPendingSync(activeOrder)" class="sync-chip">
+                        <Clock3 :size="13" aria-hidden="true" />
+                        本機待同步
+                      </span>
+                      <span class="status-chip" :class="statusClass(activeOrder.status)">
+                        {{ statusLabels[activeOrder.status] }}
+                      </span>
+                    </span>
+                  </div>
+                  <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
+                  <p v-if="fulfillmentLabel(activeOrder)" class="order-fulfillment">
+                    {{ fulfillmentLabel(activeOrder) }}
+                  </p>
+                  <button
+                    v-if="paymentActionLabel(activeOrder)"
+                    class="active-order-payment-button"
+                    type="button"
+                    :disabled="paymentActionDisabled(activeOrder)"
+                    @click="confirmPaymentAction(activeOrder)"
+                  >
+                    <CreditCard :size="16" aria-hidden="true" />
+                    {{ paymentActionLabel(activeOrder) }}
+                  </button>
+                  <button
+                    v-if="orderCanBeVoided(activeOrder)"
+                    class="active-order-void-button"
+                    type="button"
+                    :disabled="voidingOrderId === activeOrder.id"
+                    @click="requestQueueAdminAction('void', activeOrder)"
+                  >
+                    <Trash2 :size="16" aria-hidden="true" />
+                    {{ voidActionLabel(activeOrder) }}
+                  </button>
+                  <button
+                    v-if="orderCanBeRefunded(activeOrder)"
+                    class="active-order-refund-button"
+                    type="button"
+                    :disabled="refundingOrderId === activeOrder.id"
+                    @click="requestQueueAdminAction('refund', activeOrder)"
+                  >
+                    <WalletCards :size="16" aria-hidden="true" />
+                    {{ refundActionLabel(activeOrder) }}
+                  </button>
+                  <button
+                    class="active-order-print-button"
+                    type="button"
+                    :disabled="printingOrderId === activeOrder.id || orderClaimedByOtherStation(activeOrder)"
+                    @click="printOrder(activeOrder.id)"
+                  >
+                    <Printer :size="16" aria-hidden="true" />
+                    {{ printingOrderId === activeOrder.id ? '出單中' : '立即出單' }}
+                  </button>
+                </section>
+              </aside>
+            </section>
+          </section>
+        </section>
+
+        <div
+          v-if="isToolboxOpen"
+          class="utility-modal-backdrop"
+          @click.self="closeToolbox"
+        >
+          <section
+            id="pos-toolbox-modal"
+            class="utility-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="toolbox-title"
+          >
+            <header class="utility-modal-header">
+              <button
+                class="icon-button"
+                type="button"
+                :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
+                @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
+              >
+                <ChevronLeft :size="20" aria-hidden="true" />
+              </button>
+              <div>
+                <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
+                <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
+              </div>
+              <button
+                v-if="activeToolboxPanel === 'home'"
+                class="icon-button sync-button"
+                :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
+                type="button"
+                title="重新同步 POS API"
+                :disabled="backendStatus.mode === 'syncing'"
+                @click="runToolboxAction('sync')"
+              >
+                <RefreshCw :size="18" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
+              <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
+                <ShoppingCart :size="24" aria-hidden="true" />
+                <strong>新增外帶</strong>
+                <span>{{ workspaceTabSummaries.order }}</span>
+              </button>
+              <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
+                <ReceiptText :size="24" aria-hidden="true" />
+                <strong>訂單查詢</strong>
+                <span>{{ queueFilterNote }}</span>
+              </button>
+              <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
+                <Eye :size="24" aria-hidden="true" />
+                <strong>供應狀態</strong>
+                <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
+              </button>
+              <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
+                <Printer :size="24" aria-hidden="true" />
+                <strong>列印站</strong>
+                <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
+              </button>
+              <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
+                <WalletCards :size="24" aria-hidden="true" />
+                <strong>班別關帳</strong>
+                <span>{{ workspaceTabSummaries.closeout }}</span>
+              </button>
+              <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
+                <Settings2 :size="24" aria-hidden="true" />
+                <strong>後台</strong>
+                <span>商品 · 報表 · 權限</span>
+              </button>
+              <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
+                <ShoppingBag :size="24" aria-hidden="true" />
+                <strong>線上點餐</strong>
+                <span>顧客入口預覽</span>
+              </button>
+              <button
+                type="button"
+                class="toolbox-card"
+                aria-controls="pos-knowledge-modal"
+                @click="runToolboxAction('knowledge')"
+              >
+                <BookOpenCheck :size="24" aria-hidden="true" />
+                <strong>門市助手</strong>
+                <span>搜尋 SOP 與操作流程</span>
+              </button>
+              <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
+                <Settings2 :size="20" aria-hidden="true" />
+                <strong>外觀設定</strong>
+                <span>{{ appearancePreferenceSummary }}</span>
+              </button>
+            </div>
+
+            <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+              <div class="preference-slider-list">
+                <label class="preference-toggle">
+                  <input v-model="posUiPreferences.darkMode" type="checkbox" />
+                  <span>
+                    <strong>深色模式</strong>
+                    <small>{{ posUiPreferences.darkMode ? 'Dark' : 'Light' }}</small>
+                  </span>
+                </label>
+                <label class="preference-slider">
+                  <span>
+                    <strong>整體縮放</strong>
+                    <small>{{ preferenceOffsetLabel(posUiPreferences.interfaceScale) }}</small>
+                  </span>
+                  <input
+                    v-model.number="posUiPreferences.interfaceScale"
+                    type="range"
+                    :min="preferenceOffsetMin"
+                    :max="preferenceOffsetMax"
+                    step="1"
+                    aria-label="整體縮放"
+                  />
+                </label>
+                <label class="preference-slider">
+                  <span>
+                    <strong>畫面密度</strong>
+                    <small>{{ preferenceOffsetLabel(posUiPreferences.densityScale) }}</small>
+                  </span>
+                  <input
+                    v-model.number="posUiPreferences.densityScale"
+                    type="range"
+                    :min="preferenceOffsetMin"
+                    :max="preferenceOffsetMax"
+                    step="1"
+                    aria-label="畫面密度"
+                  />
+                </label>
+                <label class="preference-slider">
+                  <span>
+                    <strong>文字大小</strong>
+                    <small>{{ preferenceOffsetLabel(posUiPreferences.textSize) }}</small>
+                  </span>
+                  <input
+                    v-model.number="posUiPreferences.textSize"
+                    type="range"
+                    :min="preferenceOffsetMin"
+                    :max="preferenceOffsetMax"
+                    step="1"
+                    aria-label="文字大小"
+                  />
+                </label>
+              </div>
+              <button class="secondary-button preference-reset-button" type="button" @click="resetPosUiPreferences">
+                <RefreshCw :size="18" aria-hidden="true" />
+                重設
+              </button>
+            </section>
+          </section>
+        </div>
+
+        <div
+          v-if="isSupplyStatusOpen"
+          class="utility-modal-backdrop supply-modal-backdrop"
+          @click.self="closeSupplyStatus"
+        >
+          <section
+            id="pos-supply-modal"
+            class="utility-modal supply-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="supply-title"
+          >
+            <header class="supply-modal-header">
+              <button class="icon-button" type="button" title="關閉供應狀態" @click="closeSupplyStatus">
+                <X :size="26" aria-hidden="true" />
+              </button>
+              <h2 id="supply-title">供應狀態</h2>
+              <div class="supply-modal-actions">
+                <button
+                  class="supply-undo-button"
+                  type="button"
+                  :disabled="!supplyUndoAvailable"
+                  @click="undoLastSupplyAction"
+                >
+                  <RefreshCw :size="18" aria-hidden="true" />
+                  回復上一步
+                </button>
+                <button
+                  class="supply-save-button"
+                  type="button"
+                  :disabled="!supplyHasUnsavedChanges"
+                  @click="saveSupplyChanges"
+                >
+                  <Check :size="20" aria-hidden="true" />
+                  儲存
+                </button>
+              </div>
+            </header>
+
+            <div class="supply-toolbar">
+              <label class="supply-search">
+                <Search :size="24" aria-hidden="true" />
+                <input v-model="supplySearchTerm" type="search" placeholder="輸入商品或註記名稱，範例：雞塊" />
+              </label>
+              <label class="supply-filter-summary">
+                <span>篩選狀態</span>
+                <select v-model="supplyStatusFilter">
+                  <option v-for="filter in supplyStatusFilterOptions" :key="filter.value" :value="filter.value">
+                    {{ filter.label }}
+                  </option>
+                </select>
+                <Filter :size="24" aria-hidden="true" />
+              </label>
+            </div>
+
+            <div class="supply-layout">
+              <nav class="supply-category-rail" aria-label="供應狀態分類">
+                <button
+                  v-for="category in supplyCategoryOptions"
+                  :key="category.value"
+                  type="button"
+                  :class="{ 'supply-category-button--active': supplyCategoryFilter === category.value }"
+                  @click="selectSupplyCategory(category.value)"
+                >
+                  {{ category.label }}
+                </button>
+                <form class="supply-rail-form" @submit.prevent="addMenuCategory">
+                  <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
+                  <button type="submit">
+                    <Plus :size="18" aria-hidden="true" />
+                    新增分類
+                  </button>
+                </form>
+              </nav>
+
+              <section class="supply-content" aria-label="供應狀態清單">
+                <header class="supply-content-header">
+                  <div>
+                    <h3>{{ supplyCategoryLabel(supplyCategoryFilter) }}</h3>
+                    <span>{{ supplyStatusSummary }}</span>
+                  </div>
+                  <label class="supply-batch-select">
+                    <span>批次變更狀態</span>
+                    <select
+                      :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
+                      @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
+                    >
+                      <option value="normal">正常供應</option>
+                      <option value="online-stopped">線上停售</option>
+                      <option value="stopped">全部停售</option>
+                    </select>
+                    <ChevronDown :size="22" aria-hidden="true" />
+                  </label>
+                </header>
+
+                <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
+
+                <section v-if="!selectedSupplyCategoryIsNotes" class="supply-management-panel" aria-label="分類與商品管理">
+                  <div class="supply-management-title">
+                    <strong>分類與商品</strong>
+                    <button type="button" class="ghost-danger-button" @click="deleteSelectedMenuCategory">
+                      <Trash2 :size="18" aria-hidden="true" />
+                      刪除分類
+                    </button>
+                  </div>
+                  <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
+                    <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
+                    <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
+                    <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
+                    <button type="submit">
+                      <Plus :size="18" aria-hidden="true" />
+                      新增商品
+                    </button>
+                  </form>
+                </section>
+
+                <section v-else class="supply-management-panel supply-management-panel--notes" aria-label="註記管理">
+                  <div class="supply-management-title">
+                    <strong>註記大項與選項</strong>
+                    <span>{{ optionGroupCatalog.length }} 個大項</span>
+                  </div>
+                  <form class="supply-note-form" @submit.prevent="addOptionGroup">
+                    <input v-model="newOptionGroupName" type="text" placeholder="新增大項，例如：冰量選擇" />
+                    <label class="supply-inline-check">
+                      <input v-model="newOptionGroupRequired" type="checkbox" />
+                      必選
+                    </label>
+                    <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
+                    <button type="submit">
+                      <Plus :size="18" aria-hidden="true" />
+                      新增大項
+                    </button>
+                  </form>
+                  <form class="supply-note-form" @submit.prevent="addOptionChoice">
+                    <select v-model="newOptionChoiceGroupId">
+                      <option v-for="group in optionGroupCatalog" :key="group.id" :value="group.id">
+                        {{ group.label }}
+                      </option>
+                    </select>
+                    <input v-model="newOptionChoiceName" type="text" placeholder="新增選項，例如：少冰" />
+                    <input v-model.number="newOptionChoicePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
+                    <button type="submit">
+                      <Plus :size="18" aria-hidden="true" />
+                      新增選項
+                    </button>
+                  </form>
+                  <div class="supply-note-groups">
+                    <article v-for="group in optionGroupCatalog" :key="group.id" class="supply-note-group">
+                      <header>
+                        <div>
+                          <strong>{{ group.label }}</strong>
+                          <span>{{ group.requirement }} · {{ group.choices.length }} 個選項</span>
+                        </div>
+                        <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
+                          <Trash2 :size="16" aria-hidden="true" />
+                          刪除
+                        </button>
+                      </header>
+                      <div class="supply-note-choice-list">
+                        <button
+                          v-for="choice in group.choices"
+                          :key="choice.id"
+                          type="button"
+                          class="supply-note-choice-delete"
+                          @click="deleteOptionChoice(group.id, choice.id)"
+                        >
+                          <span>{{ optionChoiceLabel(choice) }}</span>
+                          <X :size="15" aria-hidden="true" />
+                        </button>
+                        <span v-if="group.choices.length === 0" class="supply-note-empty">尚未建立選項</span>
+                      </div>
                     </article>
                   </div>
                 </section>
 
-                <div class="payment-closeout-list" aria-label="付款方式對帳">
-                  <article v-for="payment in paymentCloseoutRows" :key="payment.value">
-                    <span>{{ payment.label }}</span>
-                    <strong>{{ formatCurrency(payment.total) }}</strong>
-                    <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
-                  </article>
-                </div>
-
-                <div class="register-session-panel" aria-label="班別開關帳">
-                  <div class="register-session-heading">
-                    <div>
-                      <span>班別</span>
-                      <strong>{{ registerStatusLabel }}</strong>
-                      <small>{{ registerMessage }}</small>
+                <div class="supply-row-list">
+                  <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
+                    <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
+                      <ChevronLeft :size="18" aria-hidden="true" />
+                    </button>
+                    <div class="supply-row-main">
+                      <strong>{{ row.name }}</strong>
+                      <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
                     </div>
                     <button
-                      class="icon-button"
+                      v-if="row.kind === 'product' && row.product"
+                      class="supply-row-delete"
                       type="button"
-                      title="重新載入班別"
-                      :disabled="isRegisterBusy"
-                      @click="loadRegisterSession"
+                      :disabled="supplyRowIsBusy(row)"
+                      @click="deleteSupplyProduct(row.product)"
                     >
-                      <RefreshCw :size="18" aria-hidden="true" />
+                      <Trash2 :size="18" aria-hidden="true" />
                     </button>
+                    <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
+                    <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
+                      <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
+                      <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
+                      <X v-else :size="22" aria-hidden="true" />
+                      <select
+                        :value="row.status"
+                        :disabled="supplyRowIsBusy(row)"
+                        :aria-label="`${row.name} 供應狀態`"
+                        @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+                      >
+                        <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                          {{ status.label }}
+                        </option>
+                      </select>
+                      <ChevronDown :size="20" aria-hidden="true" />
+                    </label>
+                    <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
+                    <div v-if="row.kind === 'product' && row.product" class="supply-row-options">
+                      <span>可用註記</span>
+                      <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
+                        <input
+                          type="checkbox"
+                          :checked="productHasOptionGroup(row.product, group.id)"
+                          @change="toggleProductOptionGroup(row.product, group.id)"
+                        />
+                        {{ group.label }}
+                      </label>
+                    </div>
+                  </article>
+
+                  <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
+                    <EyeOff :size="22" aria-hidden="true" />
+                    <span>沒有符合條件的供應項目</span>
                   </div>
-
-                  <div v-if="registerSession" class="register-metrics">
-                    <article>
-                      <span>預期現金</span>
-                      <strong>{{ formatCurrency(registerSession.expectedCash) }}</strong>
-                    </article>
-                    <article>
-                      <span>現金銷售</span>
-                      <strong>{{ formatCurrency(registerSession.cashSales) }}</strong>
-                    </article>
-                    <article>
-                      <span>非現金</span>
-                      <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
-                    </article>
-                    <article>
-                      <span>待收</span>
-                      <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
-                    </article>
-                    <article>
-                      <span>單數</span>
-                      <strong>{{ registerSession.orderCount }}</strong>
-                    </article>
-                    <article>
-                      <span>未交付</span>
-                      <strong>{{ registerSession.openOrderCount }}</strong>
-                    </article>
-                    <article>
-                      <span>付款異常</span>
-                      <strong>{{ registerSession.failedPaymentCount }}</strong>
-                    </article>
-                    <article>
-                      <span>列印失敗</span>
-                      <strong>{{ registerSession.failedPrintCount }}</strong>
-                    </article>
-                    <article>
-                      <span>作廢</span>
-                      <strong>{{ registerSession.voidedOrderCount }}</strong>
-                    </article>
-                    <article :class="registerVarianceClass">
-                      <span>現金差額</span>
-                      <strong>{{ formatCurrency(registerVariance) }}</strong>
-                    </article>
-                  </div>
-
-                  <div class="register-form-grid">
-                    <label>
-                      管理 PIN
-                      <input v-model="registerPin" type="password" inputmode="numeric" autocomplete="off" />
-                    </label>
-                    <label v-if="!registerIsOpen">
-                      開班現金
-                      <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
-                    </label>
-                    <label v-else>
-                      實點現金
-                      <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
-                    </label>
-                    <label class="wide-field">
-                      備註
-                      <input v-model="registerNote" type="text" placeholder="交接、差額或補充說明" />
-                    </label>
-                  </div>
-
-                  <label v-if="registerHasCloseoutExceptions" class="toggle-row register-force-close">
-                    <input v-model="forceCloseRegister" type="checkbox" />
-                    異常仍要關班
-                  </label>
-
-                  <button
-                    v-if="registerIsOpen"
-                    class="register-action-button register-action-button--close"
-                    type="button"
-                    :disabled="isRegisterBusy"
-                    @click="closeRegisterSessionAction"
-                  >
-                    <WalletCards :size="18" aria-hidden="true" />
-                    {{ isRegisterBusy ? '關班中' : forceCloseRegister ? '強制關班' : '關班' }}
-                  </button>
-                  <button
-                    v-else
-                    class="register-action-button"
-                    type="button"
-                    :disabled="isRegisterBusy"
-                    @click="openRegisterSessionAction"
-                  >
-                    <WalletCards :size="18" aria-hidden="true" />
-                    {{ isRegisterBusy ? '開班中' : '開班' }}
-                  </button>
                 </div>
               </section>
+            </div>
+          </section>
+        </div>
 
-              <section v-if="activeWorkspaceTab === 'queue' && activeOrder" class="active-order">
-                <p class="eyebrow">Next</p>
-                <div class="next-order-title">
-                  <h2>{{ activeOrder.id }}</h2>
-                  <span class="order-row-title-chips">
-                    <span v-if="claimLabelFor(activeOrder)" class="claim-chip" :class="claimChipClass(activeOrder)">
-                      <LockKeyhole :size="13" aria-hidden="true" />
-                      {{ claimLabelFor(activeOrder) }}
-                    </span>
-                    <span v-if="orderPendingSync(activeOrder)" class="sync-chip">
-                      <Clock3 :size="13" aria-hidden="true" />
-                      本機待同步
-                    </span>
-                    <span class="status-chip" :class="statusClass(activeOrder.status)">
-                      {{ statusLabels[activeOrder.status] }}
-                    </span>
+        <div
+          v-if="isKnowledgeOpen"
+          class="utility-modal-backdrop"
+          @click.self="closeKnowledge"
+        >
+          <section
+            id="pos-knowledge-modal"
+            class="utility-modal knowledge-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="knowledge-title"
+          >
+            <header class="utility-modal-header">
+              <button class="icon-button" type="button" title="關閉門市助手" @click="closeKnowledge">
+                <ChevronLeft :size="20" aria-hidden="true" />
+              </button>
+              <div>
+                <p class="eyebrow">SOP</p>
+                <h2 id="knowledge-title">門市助手</h2>
+              </div>
+              <button class="icon-button" type="button" title="開啟工具箱" @click="openToolbox">
+                <MoreHorizontal :size="18" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div class="knowledge-layout">
+              <aside class="knowledge-index" aria-label="SOP 搜尋與清單">
+                <label class="search-box knowledge-search">
+                  <Search :size="18" aria-hidden="true" />
+                  <input v-model="knowledgeSearchTerm" type="search" placeholder="搜尋 SOP、關鍵字或狀態" />
+                </label>
+
+                <div class="knowledge-category-row" aria-label="SOP 類別">
+                  <button
+                    v-for="category in knowledgeCategoryOptions"
+                    :key="category.value"
+                    type="button"
+                    :class="{ 'knowledge-category-button--active': knowledgeCategoryFilter === category.value }"
+                    class="knowledge-category-button"
+                    @click="knowledgeCategoryFilter = category.value"
+                  >
+                    <span>{{ category.label }}</span>
+                    <strong>{{ category.count }}</strong>
+                  </button>
+                </div>
+
+                <div class="knowledge-list">
+                  <button
+                    v-for="article in filteredKnowledgeArticles"
+                    :key="article.id"
+                    type="button"
+                    class="knowledge-list-button"
+                    :class="{ 'knowledge-list-button--active': activeKnowledgeArticle?.id === article.id }"
+                    @click="activeKnowledgeArticleId = article.id"
+                  >
+                    <span>{{ knowledgeCategoryLabels[article.category] }}</span>
+                    <strong>{{ article.title }}</strong>
+                    <small>{{ article.summary }}</small>
+                  </button>
+                  <div v-if="filteredKnowledgeArticles.length === 0" class="empty-state knowledge-empty-state">
+                    <BookOpenCheck :size="24" aria-hidden="true" />
+                    <span>沒有符合條件的 SOP</span>
+                  </div>
+                </div>
+              </aside>
+
+              <article v-if="activeKnowledgeArticle" class="knowledge-article">
+                <header class="knowledge-article-header">
+                  <p class="eyebrow">{{ knowledgeCategoryLabels[activeKnowledgeArticle.category] }}</p>
+                  <h3>{{ activeKnowledgeArticle.title }}</h3>
+                  <span>{{ activeKnowledgeArticle.summary }}</span>
+                </header>
+
+                <ol class="knowledge-steps">
+                  <li v-for="step in activeKnowledgeArticle.steps" :key="step">
+                    {{ step }}
+                  </li>
+                </ol>
+
+                <div class="knowledge-keywords" aria-label="SOP 關鍵字">
+                  <span v-for="keyword in activeKnowledgeArticle.keywords" :key="keyword">
+                    {{ keyword }}
                   </span>
                 </div>
-                <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
-                <p v-if="fulfillmentLabel(activeOrder)" class="order-fulfillment">
-                  {{ fulfillmentLabel(activeOrder) }}
-                </p>
-                <button
-                  v-if="paymentActionLabel(activeOrder)"
-                  class="active-order-payment-button"
-                  type="button"
-                  :disabled="paymentActionDisabled(activeOrder)"
-                  @click="confirmPaymentAction(activeOrder)"
-                >
-                  <CreditCard :size="16" aria-hidden="true" />
-                  {{ paymentActionLabel(activeOrder) }}
+
+                <button class="primary-button knowledge-target-button" type="button" @click="jumpToKnowledgeTarget(activeKnowledgeArticle)">
+                  前往{{ knowledgeTargetLabels[activeKnowledgeArticle.target] }}
                 </button>
-                <button
-                  v-if="orderCanBeVoided(activeOrder)"
-                  class="active-order-void-button"
-                  type="button"
-                  :disabled="voidingOrderId === activeOrder.id"
-                  @click="requestQueueAdminAction('void', activeOrder)"
-                >
-                  <Trash2 :size="16" aria-hidden="true" />
-                  {{ voidActionLabel(activeOrder) }}
-                </button>
-                <button
-                  v-if="orderCanBeRefunded(activeOrder)"
-                  class="active-order-refund-button"
-                  type="button"
-                  :disabled="refundingOrderId === activeOrder.id"
-                  @click="requestQueueAdminAction('refund', activeOrder)"
-                >
-                  <WalletCards :size="16" aria-hidden="true" />
-                  {{ refundActionLabel(activeOrder) }}
-                </button>
-                <button
-                  class="active-order-print-button"
-                  type="button"
-                  :disabled="printingOrderId === activeOrder.id || orderClaimedByOtherStation(activeOrder)"
-                  @click="printOrder(activeOrder.id)"
-                >
-                  <Printer :size="16" aria-hidden="true" />
-                  {{ printingOrderId === activeOrder.id ? '出單中' : '立即出單' }}
-                </button>
-              </section>
-            </aside>
+              </article>
+            </div>
           </section>
-        </section>
-      </section>
-    </template>
+        </div>
+      </div>
+    </div>
 
     <AdminPanel v-else @refresh-pos="refreshBackendData" />
-
-    <div
-      v-if="isToolboxOpen"
-      class="utility-modal-backdrop"
-      @click.self="closeToolbox"
-    >
-      <section
-        id="pos-toolbox-modal"
-        class="utility-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="toolbox-title"
-      >
-        <header class="utility-modal-header">
-          <button
-            class="icon-button"
-            type="button"
-            :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
-            @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
-          >
-            <ChevronLeft :size="20" aria-hidden="true" />
-          </button>
-          <div>
-            <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
-            <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
-          </div>
-          <button
-            v-if="activeToolboxPanel === 'home'"
-            class="icon-button sync-button"
-            :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
-            type="button"
-            title="重新同步 POS API"
-            :disabled="backendStatus.mode === 'syncing'"
-            @click="runToolboxAction('sync')"
-          >
-            <RefreshCw :size="18" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
-          <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
-            <ShoppingCart :size="24" aria-hidden="true" />
-            <strong>新增外帶</strong>
-            <span>{{ workspaceTabSummaries.order }}</span>
-          </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
-            <ReceiptText :size="24" aria-hidden="true" />
-            <strong>訂單查詢</strong>
-            <span>{{ queueFilterNote }}</span>
-          </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
-            <Eye :size="24" aria-hidden="true" />
-            <strong>供應狀態</strong>
-            <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
-          </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
-            <Printer :size="24" aria-hidden="true" />
-            <strong>列印站</strong>
-            <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
-          </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
-            <WalletCards :size="24" aria-hidden="true" />
-            <strong>班別關帳</strong>
-            <span>{{ workspaceTabSummaries.closeout }}</span>
-          </button>
-          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
-            <Settings2 :size="24" aria-hidden="true" />
-            <strong>後台</strong>
-            <span>商品 · 報表 · 權限</span>
-          </button>
-          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
-            <ShoppingBag :size="24" aria-hidden="true" />
-            <strong>線上點餐</strong>
-            <span>顧客入口預覽</span>
-          </button>
-          <button
-            type="button"
-            class="toolbox-card"
-            aria-controls="pos-knowledge-modal"
-            @click="runToolboxAction('knowledge')"
-          >
-            <BookOpenCheck :size="24" aria-hidden="true" />
-            <strong>門市助手</strong>
-            <span>搜尋 SOP 與操作流程</span>
-          </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
-            <Settings2 :size="20" aria-hidden="true" />
-            <strong>外觀設定</strong>
-            <span>{{ appearancePreferenceSummary }}</span>
-          </button>
-        </div>
-
-        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
-          <div class="preference-slider-list">
-            <label class="preference-slider">
-              <span>
-                <strong>外觀縮放</strong>
-                <small>{{ preferencePercentLabel(posUiPreferences.appearanceScale) }}</small>
-              </span>
-              <input
-                v-model.number="posUiPreferences.appearanceScale"
-                type="range"
-                min="92"
-                max="112"
-                step="1"
-                aria-label="外觀縮放"
-              />
-            </label>
-            <label class="preference-slider">
-              <span>
-                <strong>畫面密度</strong>
-                <small>{{ preferencePercentLabel(posUiPreferences.densityScale) }}</small>
-              </span>
-              <input
-                v-model.number="posUiPreferences.densityScale"
-                type="range"
-                min="82"
-                max="118"
-                step="1"
-                aria-label="畫面密度"
-              />
-            </label>
-            <label class="preference-slider">
-              <span>
-                <strong>文字大小</strong>
-                <small>{{ preferencePercentLabel(posUiPreferences.textSize) }}</small>
-              </span>
-              <input
-                v-model.number="posUiPreferences.textSize"
-                type="range"
-                min="90"
-                max="122"
-                step="1"
-                aria-label="文字大小"
-              />
-            </label>
-          </div>
-          <button class="secondary-button preference-reset-button" type="button" @click="resetPosUiPreferences">
-            <RefreshCw :size="18" aria-hidden="true" />
-            重設
-          </button>
-        </section>
-      </section>
-    </div>
-
-    <div
-      v-if="isSupplyStatusOpen"
-      class="utility-modal-backdrop supply-modal-backdrop"
-      @click.self="closeSupplyStatus"
-    >
-      <section
-        id="pos-supply-modal"
-        class="utility-modal supply-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="supply-title"
-      >
-        <header class="supply-modal-header">
-          <button class="icon-button" type="button" title="關閉供應狀態" @click="closeSupplyStatus">
-            <X :size="26" aria-hidden="true" />
-          </button>
-          <h2 id="supply-title">供應狀態</h2>
-          <div class="supply-modal-actions">
-            <button
-              class="supply-undo-button"
-              type="button"
-              :disabled="!supplyUndoAvailable"
-              @click="undoLastSupplyAction"
-            >
-              <RefreshCw :size="18" aria-hidden="true" />
-              回復上一步
-            </button>
-            <button
-              class="supply-save-button"
-              type="button"
-              :disabled="!supplyHasUnsavedChanges"
-              @click="saveSupplyChanges"
-            >
-              <Check :size="20" aria-hidden="true" />
-              儲存
-            </button>
-          </div>
-        </header>
-
-        <div class="supply-toolbar">
-          <label class="supply-search">
-            <Search :size="24" aria-hidden="true" />
-            <input v-model="supplySearchTerm" type="search" placeholder="輸入商品或註記名稱，範例：雞塊" />
-          </label>
-          <label class="supply-filter-summary">
-            <span>篩選狀態</span>
-            <select v-model="supplyStatusFilter">
-              <option v-for="filter in supplyStatusFilterOptions" :key="filter.value" :value="filter.value">
-                {{ filter.label }}
-              </option>
-            </select>
-            <Filter :size="24" aria-hidden="true" />
-          </label>
-        </div>
-
-        <div class="supply-layout">
-          <nav class="supply-category-rail" aria-label="供應狀態分類">
-            <button
-              v-for="category in supplyCategoryOptions"
-              :key="category.value"
-              type="button"
-              :class="{ 'supply-category-button--active': supplyCategoryFilter === category.value }"
-              @click="selectSupplyCategory(category.value)"
-            >
-              {{ category.label }}
-            </button>
-            <form class="supply-rail-form" @submit.prevent="addMenuCategory">
-              <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
-              <button type="submit">
-                <Plus :size="18" aria-hidden="true" />
-                新增分類
-              </button>
-            </form>
-          </nav>
-
-          <section class="supply-content" aria-label="供應狀態清單">
-            <header class="supply-content-header">
-              <div>
-                <h3>{{ supplyCategoryLabel(supplyCategoryFilter) }}</h3>
-                <span>{{ supplyStatusSummary }}</span>
-              </div>
-              <label class="supply-batch-select">
-                <span>批次變更狀態</span>
-                <select
-                  :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
-                  @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
-                >
-                  <option value="normal">正常供應</option>
-                  <option value="online-stopped">線上停售</option>
-                  <option value="stopped">全部停售</option>
-                </select>
-                <ChevronDown :size="22" aria-hidden="true" />
-              </label>
-            </header>
-
-            <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
-
-            <section v-if="!selectedSupplyCategoryIsNotes" class="supply-management-panel" aria-label="分類與商品管理">
-              <div class="supply-management-title">
-                <strong>分類與商品</strong>
-                <button type="button" class="ghost-danger-button" @click="deleteSelectedMenuCategory">
-                  <Trash2 :size="18" aria-hidden="true" />
-                  刪除分類
-                </button>
-              </div>
-              <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
-                <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
-                <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
-                <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
-                <button type="submit">
-                  <Plus :size="18" aria-hidden="true" />
-                  新增商品
-                </button>
-              </form>
-            </section>
-
-            <section v-else class="supply-management-panel supply-management-panel--notes" aria-label="註記管理">
-              <div class="supply-management-title">
-                <strong>註記大項與選項</strong>
-                <span>{{ optionGroupCatalog.length }} 個大項</span>
-              </div>
-              <form class="supply-note-form" @submit.prevent="addOptionGroup">
-                <input v-model="newOptionGroupName" type="text" placeholder="新增大項，例如：冰量選擇" />
-                <label class="supply-inline-check">
-                  <input v-model="newOptionGroupRequired" type="checkbox" />
-                  必選
-                </label>
-                <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
-                <button type="submit">
-                  <Plus :size="18" aria-hidden="true" />
-                  新增大項
-                </button>
-              </form>
-              <form class="supply-note-form" @submit.prevent="addOptionChoice">
-                <select v-model="newOptionChoiceGroupId">
-                  <option v-for="group in optionGroupCatalog" :key="group.id" :value="group.id">
-                    {{ group.label }}
-                  </option>
-                </select>
-                <input v-model="newOptionChoiceName" type="text" placeholder="新增選項，例如：少冰" />
-                <input v-model.number="newOptionChoicePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
-                <button type="submit">
-                  <Plus :size="18" aria-hidden="true" />
-                  新增選項
-                </button>
-              </form>
-              <div class="supply-note-groups">
-                <article v-for="group in optionGroupCatalog" :key="group.id" class="supply-note-group">
-                  <header>
-                    <div>
-                      <strong>{{ group.label }}</strong>
-                      <span>{{ group.requirement }} · {{ group.choices.length }} 個選項</span>
-                    </div>
-                    <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
-                      <Trash2 :size="16" aria-hidden="true" />
-                      刪除
-                    </button>
-                  </header>
-                  <div class="supply-note-choice-list">
-                    <button
-                      v-for="choice in group.choices"
-                      :key="choice.id"
-                      type="button"
-                      class="supply-note-choice-delete"
-                      @click="deleteOptionChoice(group.id, choice.id)"
-                    >
-                      <span>{{ optionChoiceLabel(choice) }}</span>
-                      <X :size="15" aria-hidden="true" />
-                    </button>
-                    <span v-if="group.choices.length === 0" class="supply-note-empty">尚未建立選項</span>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <div class="supply-row-list">
-              <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
-                <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
-                  <ChevronLeft :size="18" aria-hidden="true" />
-                </button>
-                <div class="supply-row-main">
-                  <strong>{{ row.name }}</strong>
-                  <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
-                </div>
-                <button
-                  v-if="row.kind === 'product' && row.product"
-                  class="supply-row-delete"
-                  type="button"
-                  :disabled="supplyRowIsBusy(row)"
-                  @click="deleteSupplyProduct(row.product)"
-                >
-                  <Trash2 :size="18" aria-hidden="true" />
-                </button>
-                <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
-                <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
-                  <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
-                  <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
-                  <X v-else :size="22" aria-hidden="true" />
-                  <select
-                    :value="row.status"
-                    :disabled="supplyRowIsBusy(row)"
-                    :aria-label="`${row.name} 供應狀態`"
-                    @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
-                  >
-                    <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
-                      {{ status.label }}
-                    </option>
-                  </select>
-                  <ChevronDown :size="20" aria-hidden="true" />
-                </label>
-                <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
-                <div v-if="row.kind === 'product' && row.product" class="supply-row-options">
-                  <span>可用註記</span>
-                  <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
-                    <input
-                      type="checkbox"
-                      :checked="productHasOptionGroup(row.product, group.id)"
-                      @change="toggleProductOptionGroup(row.product, group.id)"
-                    />
-                    {{ group.label }}
-                  </label>
-                </div>
-              </article>
-
-              <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
-                <EyeOff :size="22" aria-hidden="true" />
-                <span>沒有符合條件的供應項目</span>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-    </div>
-
-    <div
-      v-if="isKnowledgeOpen"
-      class="utility-modal-backdrop"
-      @click.self="closeKnowledge"
-    >
-      <section
-        id="pos-knowledge-modal"
-        class="utility-modal knowledge-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="knowledge-title"
-      >
-        <header class="utility-modal-header">
-          <button class="icon-button" type="button" title="關閉門市助手" @click="closeKnowledge">
-            <ChevronLeft :size="20" aria-hidden="true" />
-          </button>
-          <div>
-            <p class="eyebrow">SOP</p>
-            <h2 id="knowledge-title">門市助手</h2>
-          </div>
-          <button class="icon-button" type="button" title="開啟工具箱" @click="openToolbox">
-            <MoreHorizontal :size="18" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div class="knowledge-layout">
-          <aside class="knowledge-index" aria-label="SOP 搜尋與清單">
-            <label class="search-box knowledge-search">
-              <Search :size="18" aria-hidden="true" />
-              <input v-model="knowledgeSearchTerm" type="search" placeholder="搜尋 SOP、關鍵字或狀態" />
-            </label>
-
-            <div class="knowledge-category-row" aria-label="SOP 類別">
-              <button
-                v-for="category in knowledgeCategoryOptions"
-                :key="category.value"
-                type="button"
-                :class="{ 'knowledge-category-button--active': knowledgeCategoryFilter === category.value }"
-                class="knowledge-category-button"
-                @click="knowledgeCategoryFilter = category.value"
-              >
-                <span>{{ category.label }}</span>
-                <strong>{{ category.count }}</strong>
-              </button>
-            </div>
-
-            <div class="knowledge-list">
-              <button
-                v-for="article in filteredKnowledgeArticles"
-                :key="article.id"
-                type="button"
-                class="knowledge-list-button"
-                :class="{ 'knowledge-list-button--active': activeKnowledgeArticle?.id === article.id }"
-                @click="activeKnowledgeArticleId = article.id"
-              >
-                <span>{{ knowledgeCategoryLabels[article.category] }}</span>
-                <strong>{{ article.title }}</strong>
-                <small>{{ article.summary }}</small>
-              </button>
-              <div v-if="filteredKnowledgeArticles.length === 0" class="empty-state knowledge-empty-state">
-                <BookOpenCheck :size="24" aria-hidden="true" />
-                <span>沒有符合條件的 SOP</span>
-              </div>
-            </div>
-          </aside>
-
-          <article v-if="activeKnowledgeArticle" class="knowledge-article">
-            <header class="knowledge-article-header">
-              <p class="eyebrow">{{ knowledgeCategoryLabels[activeKnowledgeArticle.category] }}</p>
-              <h3>{{ activeKnowledgeArticle.title }}</h3>
-              <span>{{ activeKnowledgeArticle.summary }}</span>
-            </header>
-
-            <ol class="knowledge-steps">
-              <li v-for="step in activeKnowledgeArticle.steps" :key="step">
-                {{ step }}
-              </li>
-            </ol>
-
-            <div class="knowledge-keywords" aria-label="SOP 關鍵字">
-              <span v-for="keyword in activeKnowledgeArticle.keywords" :key="keyword">
-                {{ keyword }}
-              </span>
-            </div>
-
-            <button class="primary-button knowledge-target-button" type="button" @click="jumpToKnowledgeTarget(activeKnowledgeArticle)">
-              前往{{ knowledgeTargetLabels[activeKnowledgeArticle.target] }}
-            </button>
-          </article>
-        </div>
-      </section>
-    </div>
   </main>
 </template>

@@ -23,6 +23,7 @@
   --shadow-tight: 0 6px 16px rgba(24, 26, 27, 0.08);
   --radius: 8px;
   --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --pos-stage-height: 100svh;
   color: var(--ink);
   background: var(--bg);
   font-family:
@@ -45,6 +46,10 @@ body {
   margin: 0;
 }
 
+body:has(.pos-shell--workspace) {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea {
@@ -62,7 +67,7 @@ button:disabled {
 }
 
 #app {
-  min-height: 100svh;
+  min-height: var(--pos-stage-height);
 }
 
 .boot-loading-shell,
@@ -126,12 +131,109 @@ button:disabled {
 }
 
 .pos-shell {
-  min-height: 100svh;
+  min-height: var(--pos-stage-height);
   padding: 18px;
+}
+
+.pos-shell--workspace {
+  width: 100vw;
+  height: var(--pos-stage-height);
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--bg);
 }
 
 .pos-shell--consumer {
   background: #fff4e3;
+}
+
+.pos-shell--dark {
+  --bg: #111513;
+  --surface: #171c1a;
+  --surface-raised: #202724;
+  --surface-muted: #1a211f;
+  --ink: #f4f7f4;
+  --ink-soft: #d5ddd8;
+  --muted: #a5b1aa;
+  --line: #34413c;
+  --line-strong: #4a5d56;
+  --primary: #0b6b63;
+  --primary-dark: #64d4c8;
+  --primary-soft: #173f3a;
+  --secondary: #85b9e6;
+  --secondary-soft: #1e3447;
+  --amber: #e8be68;
+  --amber-soft: #3f311d;
+  --danger: #e07468;
+  --danger-soft: #43231f;
+  --success: #7bd5a5;
+  --success-soft: #1c3c2d;
+  --shadow: 0 16px 36px rgba(0, 0, 0, 0.36);
+  --shadow-tight: 0 8px 18px rgba(0, 0, 0, 0.32);
+  color-scheme: dark;
+}
+
+.pos-shell--dark .pos-main-surface--ordering,
+.pos-shell--dark .pos-main-surface--ordering .catalog-panel {
+  background: #242722;
+}
+
+.pos-shell--dark .pos-main-surface--ordering .category-rail,
+.pos-shell--dark .order-ticket,
+.pos-shell--dark .ticket-customer-row,
+.pos-shell--dark .ticket-quick-editor,
+.pos-shell--dark .cart-inline-panel,
+.pos-shell--dark .cart-line,
+.pos-shell--dark .product-tile,
+.pos-shell--dark .queue-admin-card,
+.pos-shell--dark .utility-modal,
+.pos-shell--dark .toolbox-card,
+.pos-shell--dark .toolbox-detail-panel,
+.pos-shell--dark .preference-slider,
+.pos-shell--dark .preference-toggle {
+  background: var(--surface-raised);
+}
+
+.pos-shell--dark .pos-main-surface--ordering .product-tile {
+  border-color: #4a514b;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    var(--surface-muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.38);
+}
+
+.pos-shell--dark .utility-modal-backdrop {
+  background: rgba(0, 0, 0, 0.68);
+}
+
+.pos-shell--dark input,
+.pos-shell--dark select,
+.pos-shell--dark textarea {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.pos-scale-viewport {
+  --pos-interface-scale: 1;
+  --pos-stage-width: 100vw;
+  --pos-stage-height: 100svh;
+  --pos-font-size: 16px;
+  width: 100vw;
+  height: 100svh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.pos-scale-stage {
+  position: relative;
+  width: var(--pos-stage-width);
+  height: var(--pos-stage-height);
+  overflow: hidden;
+  font-size: var(--pos-font-size);
+  transform: scale(var(--pos-interface-scale));
+  transform-origin: top left;
 }
 
 .pos-workbench {
@@ -152,10 +254,12 @@ button:disabled {
   --pos-product-tile-padding: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px;
-  min-height: 100svh;
-  margin: -18px;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
   background: var(--bg);
-  font-size: var(--pos-font-size);
+  font-size: inherit;
 }
 
 .pos-workbench--ordering {
@@ -170,7 +274,7 @@ button:disabled {
   grid-row: 1;
   display: flex;
   flex-direction: column;
-  height: 100svh;
+  height: 100%;
   min-height: 0;
   gap: 12px;
   padding: 12px 10px;
@@ -333,7 +437,7 @@ button:disabled {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  min-height: 100svh;
+  min-height: 100%;
   gap: 12px;
   padding: 12px;
 }
@@ -420,12 +524,12 @@ button:disabled {
 }
 
 .pos-main-surface .workspace--order {
-  grid-template-columns: minmax(420px, 0.4fr) minmax(0, 1fr);
-  min-height: 100svh;
+  grid-template-columns: minmax(var(--pos-order-ticket-width, 420px), 0.4fr) minmax(0, 1fr);
+  min-height: var(--pos-stage-height);
 }
 
 .pos-main-surface .workspace--queue {
-  min-height: calc(100svh - 110px);
+  min-height: calc(var(--pos-stage-height) - 110px);
 }
 
 .pos-main-surface .workspace--queue .workstation-panel-stack {
@@ -449,7 +553,7 @@ button:disabled {
 
 .pos-main-surface .menu-panel,
 .pos-main-surface .cart-panel {
-  min-height: 100svh;
+  min-height: var(--pos-stage-height);
   padding: 0;
   overflow: hidden;
 }
@@ -521,7 +625,7 @@ button:disabled {
 .menu-workarea {
   display: grid;
   grid-template-columns: 146px minmax(0, 1fr);
-  min-height: calc(100svh - 186px);
+  min-height: calc(var(--pos-stage-height) - 186px);
 }
 
 .category-rail {
@@ -920,7 +1024,7 @@ button:disabled {
 .pos-main-surface--ordering .menu-workarea {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: calc(100svh - 78px);
+  min-height: calc(var(--pos-stage-height) - 78px);
 }
 
 .pos-main-surface--ordering .category-rail {
@@ -1552,7 +1656,7 @@ h3 {
 .cart-panel {
   display: flex;
   flex-direction: column;
-  min-height: calc(100svh - 214px);
+  min-height: calc(var(--pos-stage-height) - 214px);
 }
 
 .queue-panel {
@@ -2300,13 +2404,13 @@ button.cart-line-summary:focus-visible {
 }
 
 .queue-section {
-  max-height: calc(100svh - 252px);
+  max-height: calc(var(--pos-stage-height) - 252px);
   overflow: auto;
 }
 
 .workspace--queue .queue-section {
   max-height: none;
-  min-height: calc(100svh - 110px);
+  min-height: calc(var(--pos-stage-height) - 110px);
   overflow: auto;
   padding: var(--pos-queue-padding-y) var(--pos-queue-padding-x);
   border: 0;
@@ -2838,7 +2942,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .queue-empty-state {
-  min-height: calc(100svh - 430px);
+  min-height: calc(var(--pos-stage-height) - 430px);
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -4091,7 +4195,7 @@ button.cart-line-summary:focus-visible {
 .utility-modal {
   display: grid;
   width: min(720px, 100%);
-  max-height: min(760px, calc(100svh - 48px));
+  max-height: min(760px, calc(var(--pos-stage-height) - 48px));
   overflow: auto;
   gap: 14px;
   padding: 16px;
@@ -4099,6 +4203,11 @@ button.cart-line-summary:focus-visible {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: 0 22px 60px rgba(24, 26, 27, 0.28);
+}
+
+.pos-scale-stage .utility-modal {
+  width: min(720px, calc(var(--pos-stage-width) - 48px));
+  max-height: calc(var(--pos-stage-height) - 48px);
 }
 
 .utility-modal-header {
@@ -4117,12 +4226,18 @@ button.cart-line-summary:focus-visible {
 .supply-modal {
   grid-template-rows: auto auto minmax(0, 1fr);
   width: min(1712px, calc(100vw - 36px));
-  height: min(1226px, calc(100svh - 36px));
-  max-height: calc(100svh - 36px);
+  height: min(1226px, calc(var(--pos-stage-height) - 36px));
+  max-height: calc(var(--pos-stage-height) - 36px);
   gap: 0;
   padding: 0;
   overflow: hidden;
   background: var(--surface-muted);
+}
+
+.pos-scale-stage .supply-modal {
+  width: min(1712px, calc(var(--pos-stage-width) - 36px));
+  height: min(1226px, calc(var(--pos-stage-height) - 36px));
+  max-height: calc(var(--pos-stage-height) - 36px);
 }
 
 .supply-modal-header {
@@ -4760,13 +4875,26 @@ button.cart-line-summary:focus-visible {
   gap: 12px;
 }
 
-.preference-slider {
+.preference-slider,
+.preference-toggle {
   display: grid;
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
+}
+
+.preference-toggle {
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  min-height: 58px;
+}
+
+.preference-toggle input {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--primary);
 }
 
 .preference-slider span {
@@ -4776,13 +4904,23 @@ button.cart-line-summary:focus-visible {
   gap: 12px;
 }
 
-.preference-slider strong {
+.preference-toggle span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 12px;
+}
+
+.preference-slider strong,
+.preference-toggle strong {
   color: var(--ink);
   font-size: 0.98rem;
   font-weight: 950;
 }
 
-.preference-slider small {
+.preference-slider small,
+.preference-toggle small {
   color: var(--muted);
   font-size: 0.86rem;
   font-weight: 900;
@@ -6137,8 +6275,8 @@ button.cart-line-summary:focus-visible {
 
   .supply-modal {
     width: calc(100vw - 20px);
-    height: calc(100svh - 20px);
-    max-height: calc(100svh - 20px);
+    height: calc(var(--pos-stage-height) - 20px);
+    max-height: calc(var(--pos-stage-height) - 20px);
   }
 
   .supply-modal-header {
@@ -6459,7 +6597,7 @@ button.cart-line-summary:focus-visible {
   }
 
   .utility-modal {
-    max-height: calc(100svh - 20px);
+    max-height: calc(var(--pos-stage-height) - 20px);
   }
 
   .toolbox-grid,
@@ -6554,4 +6692,28 @@ button.cart-line-summary:focus-visible {
     min-width: 0;
     padding: 0 6px;
   }
+}
+
+.pos-scale-stage .pos-main-surface--ordering .workspace--order {
+  grid-template-columns: minmax(var(--pos-order-ticket-width, 420px), var(--pos-order-ticket-width, 420px)) minmax(0, 1fr);
+  min-height: var(--pos-stage-height);
+  overflow: hidden;
+}
+
+.pos-scale-stage .pos-main-surface--ordering .cart-panel,
+.pos-scale-stage .pos-main-surface--ordering .menu-panel {
+  min-width: 0;
+  min-height: var(--pos-stage-height);
+}
+
+.pos-scale-stage .queue-command-actions {
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.pos-scale-stage .queue-command-actions > span,
+.pos-scale-stage .queue-new-order-button {
+  min-width: 0;
+  max-width: 100%;
 }
