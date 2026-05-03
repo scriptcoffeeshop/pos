@@ -1344,8 +1344,22 @@ const handleSubmitCounterOrder = async (): Promise<void> => {
     return
   }
 
-  const order = await submitCounterOrder()
+  const orderIdsBeforeSubmit = new Set(orderQueue.value.map((order) => order.id))
+  const orderSubmission = submitCounterOrder()
+  await nextTick()
+
+  const queuedOrder = orderQueue.value.find((order) => !orderIdsBeforeSubmit.has(order.id))
+  if (queuedOrder) {
+    expandedOrderId.value = queuedOrder.id
+    setWorkspaceTab('queue')
+  }
+
+  const order = await orderSubmission
   if (!order) {
+    if (queuedOrder && activeWorkspaceTab.value === 'queue') {
+      expandedOrderId.value = null
+      setWorkspaceTab('order')
+    }
     return
   }
 
