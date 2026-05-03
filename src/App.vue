@@ -3,13 +3,16 @@ import { Capacitor } from '@capacitor/core'
 import {
   BookOpenCheck,
   CalendarDays,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   CircleAlert,
   Clock3,
   CreditCard,
   Eye,
   EyeOff,
+  Filter,
   LayoutDashboard,
   LockKeyhole,
   Menu as MenuIcon,
@@ -27,6 +30,7 @@ import {
   Trash2,
   UserRound,
   Wifi,
+  X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminPanel from './components/AdminPanel.vue'
@@ -49,6 +53,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   PosOrder,
+  ProductSupplyStatus,
   PrintJob,
   ServiceMode,
 } from './types/pos'
@@ -75,6 +80,8 @@ type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = 'temperature' | 'beans' | 'extras'
 type QueueAdminActionKind = 'void' | 'refund'
+type SupplyCategoryFilter = MenuCategory | 'hand-brew' | 'notes'
+type SupplyStatusFilter = 'all' | ProductSupplyStatus
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -145,8 +152,27 @@ interface QueueAdminActionRequest {
   label: string
 }
 
+interface SupplyNoteItem {
+  id: string
+  name: string
+  group: string
+}
+
+interface SupplyStatusRow {
+  id: string
+  kind: 'product' | 'note'
+  name: string
+  categoryLabel: string
+  detail: string
+  status: ProductSupplyStatus
+  product?: MenuItem
+  note?: SupplyNoteItem
+}
+
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
+const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
+const supplyNoteStatusStorageKey = 'script-coffee-pos-supply-note-statuses'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
 const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
@@ -156,6 +182,7 @@ const posTextScaleValues: PosTextScale[] = ['standard', 'large']
 const posWorkspaceDensityValues: PosWorkspaceDensity[] = ['comfortable', 'compact']
 const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
+const productSupplyStatusValues: ProductSupplyStatus[] = ['normal', 'online-stopped', 'stopped']
 const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
@@ -218,6 +245,36 @@ const isPosTextScale = (value: unknown): value is PosTextScale =>
 
 const isPosWorkspaceDensity = (value: unknown): value is PosWorkspaceDensity =>
   typeof value === 'string' && posWorkspaceDensityValues.includes(value as PosWorkspaceDensity)
+
+const isProductSupplyStatus = (value: unknown): value is ProductSupplyStatus =>
+  typeof value === 'string' && productSupplyStatusValues.includes(value as ProductSupplyStatus)
+
+const readSupplyStatusMap = (storageKey: string): Record<string, ProductSupplyStatus> => {
+  try {
+    const rawStatuses = globalThis.localStorage?.getItem(storageKey)
+    if (!rawStatuses) {
+      return {}
+    }
+
+    const parsed = JSON.parse(rawStatuses) as Record<string, unknown>
+    return Object.entries(parsed).reduce<Record<string, ProductSupplyStatus>>((statuses, [key, value]) => {
+      if (isProductSupplyStatus(value)) {
+        statuses[key] = value
+      }
+      return statuses
+    }, {})
+  } catch {
+    return {}
+  }
+}
+
+const writeSupplyStatusMap = (storageKey: string, statuses: Record<string, ProductSupplyStatus>): void => {
+  try {
+    globalThis.localStorage?.setItem(storageKey, JSON.stringify(statuses))
+  } catch {
+    return
+  }
+}
 
 const readSavedQueueView = (): SavedQueueView => {
   try {
@@ -356,6 +413,7 @@ const {
   updateOrderStatus,
   updatePaymentStatus,
   updateProductAvailability,
+  updateProductSupplyStatus,
   updatingPaymentOrderId,
   voidingOrderId,
   voidOrderForStation,
@@ -439,7 +497,7 @@ const printStatusLabels = {
   failed: '失敗',
 } as const
 
-const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需要袋子']
+const noteSnippets = ['需要袋子']
 const ticketNoteSnippets = ['需要袋子']
 const beverageOptionGroups: MenuOptionGroup[] = [
   {
@@ -483,6 +541,34 @@ const beverageOptionGroups: MenuOptionGroup[] = [
       { id: 'separate-bag', label: '分開裝' },
     ],
   },
+]
+const supplyCategoryOptions: Array<{ value: SupplyCategoryFilter; label: string }> = [
+  { value: 'coffee', label: '義式咖啡' },
+  { value: 'hand-brew', label: '手沖咖啡' },
+  { value: 'tea', label: '非咖啡' },
+  { value: 'food', label: '鹹、甜食' },
+  { value: 'retail', label: '其他' },
+  { value: 'notes', label: '可用註記' },
+]
+const supplyStatusOptions: Array<{ value: ProductSupplyStatus; label: string; detail: string }> = [
+  { value: 'normal', label: '正常供應', detail: '現場 POS、線上與掃碼維持可販售' },
+  { value: 'online-stopped', label: '線上停售', detail: '現場 POS 仍可販售，線上入口先隱藏' },
+  { value: 'stopped', label: '全部停售', detail: '現場 POS 與線上入口都停止販售' },
+]
+const supplyStatusFilterOptions: Array<{ value: SupplyStatusFilter; label: string }> = [
+  { value: 'all', label: '全部狀態' },
+  ...supplyStatusOptions.map((status) => ({ value: status.value, label: status.label })),
+]
+const supplyNoteItems: SupplyNoteItem[] = [
+  ...beverageOptionGroups.flatMap((group) =>
+    group.choices.map((choice) => ({
+      id: `${group.id}-${choice.id}`,
+      name: choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
+      group: group.label,
+    })),
+  ),
+  { id: 'counter-need-bag', name: '需要袋子', group: '櫃台註記' },
+  { id: 'fixed-ice', name: '冰(無法調整)', group: '商品限制' },
 ]
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
@@ -948,6 +1034,75 @@ const stationFilteredStoppedProducts = computed(() =>
 const stationFilterSummary = computed(() =>
   `顯示 ${visibleStationProducts.value.length} 個 · 可售 ${stationFilteredAvailableProducts.value.length} 個 · 暫停 ${stationFilteredStoppedProducts.value.length} 個`,
 )
+const supplyStatusDetail = (status: ProductSupplyStatus): string =>
+  supplyStatusOptions.find((option) => option.value === status)?.detail ?? ''
+
+const eventSupplyStatus = (event: Event): ProductSupplyStatus => {
+  const value = event.target instanceof HTMLSelectElement ? event.target.value : ''
+  return isProductSupplyStatus(value) ? value : 'normal'
+}
+
+const productCurrentSupplyStatus = (product: MenuItem): ProductSupplyStatus => {
+  if (!product.available || product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
+    return 'stopped'
+  }
+
+  return productSupplyStatuses.value[product.id] ?? 'normal'
+}
+
+const noteCurrentSupplyStatus = (note: SupplyNoteItem): ProductSupplyStatus =>
+  noteSupplyStatuses.value[note.id] ?? 'normal'
+
+const supplyCategoryLabel = (category: SupplyCategoryFilter): string =>
+  supplyCategoryOptions.find((option) => option.value === category)?.label ?? '義式咖啡'
+
+const supplyProductRows = computed<SupplyStatusRow[]>(() =>
+  stationProducts.value
+    .filter((product) => product.posVisible && product.category === supplyCategoryFilter.value)
+    .map((product) => ({
+      id: product.id,
+      kind: 'product',
+      name: product.name,
+      categoryLabel: supplyCategoryLabel(product.category),
+      detail: `${categoryLabels[product.category]} · ${formatCurrency(product.price)}${
+        productStockLabel(product) ? ` · ${productStockLabel(product)}` : ''
+      }`,
+      status: productCurrentSupplyStatus(product),
+      product,
+    })),
+)
+const supplyNoteRows = computed<SupplyStatusRow[]>(() =>
+  supplyNoteItems.map((note) => ({
+    id: note.id,
+    kind: 'note',
+    name: note.name,
+    categoryLabel: '可用註記',
+    detail: `${note.group} · 已上架雲端餐廳`,
+    status: noteCurrentSupplyStatus(note),
+    note,
+  })),
+)
+const visibleSupplyRows = computed<SupplyStatusRow[]>(() => {
+  const keyword = supplySearchTerm.value.trim().toLowerCase()
+  const baseRows = supplyCategoryFilter.value === 'notes' ? supplyNoteRows.value : supplyProductRows.value
+
+  return baseRows.filter((row) => {
+    const matchesKeyword =
+      keyword.length === 0 ||
+      row.name.toLowerCase().includes(keyword) ||
+      row.detail.toLowerCase().includes(keyword) ||
+      row.categoryLabel.toLowerCase().includes(keyword)
+    const matchesStatus = supplyStatusFilter.value === 'all' || row.status === supplyStatusFilter.value
+
+    return matchesKeyword && matchesStatus
+  })
+})
+const supplyStatusSummary = computed(() => {
+  const normalCount = visibleSupplyRows.value.filter((row) => row.status === 'normal').length
+  const onlineStoppedCount = visibleSupplyRows.value.filter((row) => row.status === 'online-stopped').length
+  const stoppedCount = visibleSupplyRows.value.filter((row) => row.status === 'stopped').length
+  return `顯示 ${visibleSupplyRows.value.length} 個 · 正常 ${normalCount} · 線上停售 ${onlineStoppedCount} · 全部停售 ${stoppedCount}`
+})
 const closeoutSummary = computed(() => {
   const collectedStatuses = new Set(['authorized', 'paid'])
 
@@ -1103,6 +1258,7 @@ const pendingQueueAdminAction = ref<QueueAdminActionRequest | null>(null)
 const queueActionPin = ref('')
 const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
+const isSupplyStatusOpen = ref(false)
 const isKnowledgeOpen = ref(false)
 const knowledgeSearchTerm = ref('')
 const knowledgeCategoryFilter = ref<KnowledgeCategoryFilter>('all')
@@ -1111,6 +1267,11 @@ const stationSearchTerm = ref('')
 const stationCategoryFilter = ref<'all' | MenuCategory>('all')
 const stationAvailabilityFilter = ref<StationAvailabilityFilter>('all')
 const stationBatchProductIds = ref<string[]>([])
+const supplySearchTerm = ref('')
+const supplyCategoryFilter = ref<SupplyCategoryFilter>('coffee')
+const supplyStatusFilter = ref<SupplyStatusFilter>('all')
+const productSupplyStatuses = ref<Record<string, ProductSupplyStatus>>(readSupplyStatusMap(supplyProductStatusStorageKey))
+const noteSupplyStatuses = ref<Record<string, ProductSupplyStatus>>(readSupplyStatusMap(supplyNoteStatusStorageKey))
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -1121,9 +1282,21 @@ const registerNote = ref('')
 const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
+const supplyNoteIdForChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): string => `${group.id}-${choice.id}`
+const supplyNoteStatusForName = (name: string): ProductSupplyStatus => {
+  const note = supplyNoteItems.find((item) => item.name === name)
+  return note ? noteCurrentSupplyStatus(note) : 'normal'
+}
+const visibleNoteSnippets = computed(() => noteSnippets.filter((note) => supplyNoteStatusForName(note) !== 'stopped'))
+const visibleTicketNoteSnippets = computed(() =>
+  ticketNoteSnippets.filter((note) => supplyNoteStatusForName(note) !== 'stopped'),
+)
 const activeOptionGroups = computed(() =>
   activeOptionItem.value && configurableMenuCategories.includes(activeOptionItem.value.category)
-    ? beverageOptionGroups
+    ? beverageOptionGroups.map((group) => ({
+        ...group,
+        choices: group.choices.filter((choice) => noteSupplyStatuses.value[supplyNoteIdForChoice(group, choice)] !== 'stopped'),
+      }))
     : [],
 )
 const optionChoiceLabel = (choice: MenuOptionChoice): string =>
@@ -2056,7 +2229,12 @@ const runToolboxAction = (action: ToolboxAction): void => {
     setWorkspaceTab('queue')
   }
 
-  if (action === 'supply' || action === 'printing') {
+  if (action === 'supply') {
+    openSupplyStatus()
+    return
+  }
+
+  if (action === 'printing') {
     setWorkspaceTab('printing')
   }
 
@@ -2117,6 +2295,12 @@ const handlePosShortcut = (event: KeyboardEvent): void => {
   if (event.key === 'Escape' && isKnowledgeOpen.value) {
     event.preventDefault()
     closeKnowledge()
+    return
+  }
+
+  if (event.key === 'Escape' && isSupplyStatusOpen.value) {
+    event.preventDefault()
+    closeSupplyStatus()
     return
   }
 
@@ -2327,6 +2511,67 @@ const updateVisibleStationProducts = async (isAvailable: boolean): Promise<void>
   stationBatchProductIds.value = []
 }
 
+const setProductSupplyStatus = (productId: string, status: ProductSupplyStatus): void => {
+  productSupplyStatuses.value = {
+    ...productSupplyStatuses.value,
+    [productId]: status,
+  }
+}
+
+const setNoteSupplyStatus = (noteId: string, status: ProductSupplyStatus): void => {
+  noteSupplyStatuses.value = {
+    ...noteSupplyStatuses.value,
+    [noteId]: status,
+  }
+}
+
+const openSupplyStatus = (): void => {
+  isToolboxOpen.value = false
+  isSupplyStatusOpen.value = true
+}
+
+const closeSupplyStatus = (): void => {
+  isSupplyStatusOpen.value = false
+}
+
+const selectSupplyCategory = (category: SupplyCategoryFilter): void => {
+  supplyCategoryFilter.value = category
+}
+
+const supplyRowIsBusy = (row: SupplyStatusRow): boolean =>
+  row.kind === 'product' && (togglingProductId.value === row.id || stationBatchProductIdSet.value.has(row.id))
+
+const updateSupplyRowStatus = async (row: SupplyStatusRow, status: ProductSupplyStatus): Promise<void> => {
+  if (row.status === status) {
+    return
+  }
+
+  if (row.kind === 'product') {
+    setProductSupplyStatus(row.id, status)
+    await updateProductSupplyStatus(stationPin.value.trim(), row.id, status)
+    return
+  }
+
+  setNoteSupplyStatus(row.id, status)
+}
+
+const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<void> => {
+  if (isStationBatchBusy.value) {
+    return
+  }
+
+  const targetRows = visibleSupplyRows.value.filter((row) => row.status !== status)
+  if (targetRows.length === 0) {
+    return
+  }
+
+  stationBatchProductIds.value = targetRows.filter((row) => row.kind === 'product').map((row) => row.id)
+  for (const row of targetRows) {
+    await updateSupplyRowStatus(row, status)
+  }
+  stationBatchProductIds.value = []
+}
+
 const openRegisterSessionAction = (): void => {
   void openRegisterSessionForStation(registerPin.value.trim(), registerOpeningCash.value, registerNote.value.trim())
 }
@@ -2388,6 +2633,14 @@ watch(
 
 watch(posUiPreferences, (preferences) => {
   writePosUiPreferences(preferences)
+}, { deep: true })
+
+watch(productSupplyStatuses, (statuses) => {
+  writeSupplyStatusMap(supplyProductStatusStorageKey, statuses)
+}, { deep: true })
+
+watch(noteSupplyStatuses, (statuses) => {
+  writeSupplyStatusMap(supplyNoteStatusStorageKey, statuses)
 }, { deep: true })
 
 onMounted(() => {
@@ -2773,7 +3026,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="ticket-note-chips" aria-label="常用備註">
-                  <button v-for="note in ticketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
+                  <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
                     {{ note }}
                   </button>
                 </div>
@@ -3136,7 +3389,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="note-shortcuts" aria-label="常用備註">
-                  <button v-for="note in noteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
+                  <button v-for="note in visibleNoteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
                     {{ note }}
                   </button>
                 </div>
@@ -4203,6 +4456,116 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
+      </section>
+    </div>
+
+    <div
+      v-if="isSupplyStatusOpen"
+      class="utility-modal-backdrop supply-modal-backdrop"
+      @click.self="closeSupplyStatus"
+    >
+      <section
+        id="pos-supply-modal"
+        class="utility-modal supply-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="supply-title"
+      >
+        <header class="supply-modal-header">
+          <button class="icon-button" type="button" title="關閉供應狀態" @click="closeSupplyStatus">
+            <X :size="26" aria-hidden="true" />
+          </button>
+          <h2 id="supply-title">供應狀態</h2>
+          <button class="supply-save-button" type="button" disabled>
+            <Check :size="20" aria-hidden="true" />
+            儲存
+          </button>
+        </header>
+
+        <div class="supply-toolbar">
+          <label class="supply-search">
+            <Search :size="24" aria-hidden="true" />
+            <input v-model="supplySearchTerm" type="search" placeholder="輸入商品或註記名稱，範例：雞塊" />
+          </label>
+          <label class="supply-filter-summary">
+            <span>篩選狀態</span>
+            <select v-model="supplyStatusFilter">
+              <option v-for="filter in supplyStatusFilterOptions" :key="filter.value" :value="filter.value">
+                {{ filter.label }}
+              </option>
+            </select>
+            <Filter :size="24" aria-hidden="true" />
+          </label>
+        </div>
+
+        <div class="supply-layout">
+          <nav class="supply-category-rail" aria-label="供應狀態分類">
+            <button
+              v-for="category in supplyCategoryOptions"
+              :key="category.value"
+              type="button"
+              :class="{ 'supply-category-button--active': supplyCategoryFilter === category.value }"
+              @click="selectSupplyCategory(category.value)"
+            >
+              {{ category.label }}
+            </button>
+          </nav>
+
+          <section class="supply-content" aria-label="供應狀態清單">
+            <header class="supply-content-header">
+              <div>
+                <h3>{{ supplyCategoryLabel(supplyCategoryFilter) }}</h3>
+                <span>{{ supplyStatusSummary }}</span>
+              </div>
+              <label class="supply-batch-select">
+                <span>批次變更狀態</span>
+                <select
+                  :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
+                  @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
+                >
+                  <option value="normal">正常供應</option>
+                  <option value="online-stopped">線上停售</option>
+                  <option value="stopped">全部停售</option>
+                </select>
+                <ChevronDown :size="22" aria-hidden="true" />
+              </label>
+            </header>
+
+            <div class="supply-row-list">
+              <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
+                <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
+                  <ChevronLeft :size="18" aria-hidden="true" />
+                </button>
+                <div class="supply-row-main">
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
+                </div>
+                <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
+                  <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
+                  <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
+                  <X v-else :size="22" aria-hidden="true" />
+                  <select
+                    :value="row.status"
+                    :disabled="supplyRowIsBusy(row)"
+                    :aria-label="`${row.name} 供應狀態`"
+                    @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+                  >
+                    <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                      {{ status.label }}
+                    </option>
+                  </select>
+                  <ChevronDown :size="20" aria-hidden="true" />
+                </label>
+                <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
+              </article>
+
+              <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
+                <EyeOff :size="22" aria-hidden="true" />
+                <span>沒有符合條件的供應項目</span>
+              </div>
+            </div>
+          </section>
+        </div>
       </section>
     </div>
 

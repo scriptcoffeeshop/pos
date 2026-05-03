@@ -45,6 +45,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   PosOrder,
+  ProductSupplyStatus,
   PrintJob,
   PrinterSettings,
   PrintStation,
@@ -427,17 +428,24 @@ const nextSequenceFromOrders = (orders: PosOrder[]): number => {
 const sortProducts = (products: MenuItem[]): MenuItem[] =>
   [...products].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
 
-const productToUpdateInput = (product: MenuItem, isAvailable = product.available): ProductUpdateInput => ({
+interface ProductUpdateOverrides {
+  isAvailable?: boolean
+  posVisible?: boolean
+  onlineVisible?: boolean
+  qrVisible?: boolean
+}
+
+const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrides = {}): ProductUpdateInput => ({
   name: product.name,
   category: product.category,
   price: product.price,
   tags: [...product.tags],
   accent: product.accent,
-  isAvailable,
+  isAvailable: overrides.isAvailable ?? product.available,
   sortOrder: product.sortOrder,
-  posVisible: product.posVisible,
-  onlineVisible: product.onlineVisible,
-  qrVisible: product.qrVisible,
+  posVisible: overrides.posVisible ?? product.posVisible,
+  onlineVisible: overrides.onlineVisible ?? product.onlineVisible,
+  qrVisible: overrides.qrVisible ?? product.qrVisible,
   prepStation: product.prepStation,
   printLabel: product.printLabel,
   inventoryCount: product.inventoryCount,
@@ -452,6 +460,38 @@ const isProductTemporarilyStopped = (product: MenuItem): boolean => {
 
   const stoppedUntil = new Date(product.soldOutUntil).getTime()
   return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
+}
+
+const productSupplyOverrides = (status: ProductSupplyStatus): ProductUpdateOverrides => {
+  if (status === 'online-stopped') {
+    return {
+      isAvailable: true,
+      posVisible: true,
+      onlineVisible: false,
+      qrVisible: false,
+    }
+  }
+
+  if (status === 'stopped') {
+    return {
+      isAvailable: false,
+    }
+  }
+
+  return {
+    isAvailable: true,
+  }
+}
+
+const applyProductSupplyStatus = (product: MenuItem, status: ProductSupplyStatus): MenuItem => {
+  const overrides = productSupplyOverrides(status)
+  return {
+    ...product,
+    available: overrides.isAvailable ?? product.available,
+    posVisible: overrides.posVisible ?? product.posVisible,
+    onlineVisible: overrides.onlineVisible ?? product.onlineVisible,
+    qrVisible: overrides.qrVisible ?? product.qrVisible,
+  }
 }
 
 const isProductOrderable = (product: MenuItem): boolean =>
@@ -1634,9 +1674,46 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusMessage.value = `${product.name} ${isAvailable ? '恢復供應中' : '暫停供應中'}`
 
     try {
-      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, isAvailable))
+      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, { isAvailable }))
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已${savedProduct.available ? '恢復供應' : '暫停供應'}`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+    } catch (error) {
+      applySavedProduct(product)
+      productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+    } finally {
+      togglingProductId.value = null
+    }
+  }
+
+  const updateProductSupplyStatus = async (
+    adminPin: string,
+    productId: string,
+    status: ProductSupplyStatus,
+  ): Promise<void> => {
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return
+    }
+
+    const statusLabel = status === 'normal' ? '正常供應' : status === 'online-stopped' ? '線上停售' : '全部停售'
+    togglingProductId.value = productId
+    applySavedProduct(applyProductSupplyStatus(product, status))
+    productStatusMessage.value = `${product.name} 已在本機標記為${statusLabel}`
+
+    if (!adminPin) {
+      togglingProductId.value = null
+      setBackendStatus('fallback', '本機供應狀態', '輸入管理 PIN 後可同步雲端商品狀態')
+      return
+    }
+
+    try {
+      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, productSupplyOverrides(status)))
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 已更新為${statusLabel}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
     } catch (error) {
       applySavedProduct(product)
@@ -2038,6 +2115,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updateOrderStatus,
     updatePaymentStatus,
     updateProductAvailability,
+    updateProductSupplyStatus,
     voidingOrderId,
     voidOrderForStation,
   }

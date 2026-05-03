@@ -6,6 +6,7 @@ export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 export type RegisterSessionStatus = 'open' | 'closed'
+export type ProductSupplyStatus = 'normal' | 'online-stopped' | 'stopped'
 
 export interface MenuItem {
   id: string
