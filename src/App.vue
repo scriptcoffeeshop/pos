@@ -176,6 +176,17 @@ interface SupplyStatusRow {
   note?: SupplyNoteItem
 }
 
+interface SupplyStateSnapshot {
+  label: string
+  menuCategories: MenuCategoryDefinition[]
+  optionGroups: MenuOptionGroup[]
+  productAssignments: Record<string, string[]>
+  productStatuses: Record<string, ProductSupplyStatus>
+  noteStatuses: Record<string, ProductSupplyStatus>
+  products: MenuItem[]
+  selectedCategory: SupplyCategoryFilter
+}
+
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
@@ -460,6 +471,7 @@ const {
   refundingOrderId,
   refundOrderForStation,
   releaseOrderClaimForStation,
+  restoreSupplyProductSnapshot,
   searchTerm,
   selectedCategory,
   sendPrinterHealthcheck,
@@ -752,6 +764,85 @@ const newOptionChoiceGroupId = ref(optionGroupCatalog.value[0]?.id ?? '')
 const newOptionChoiceName = ref('')
 const newOptionChoicePriceDelta = ref(0)
 const supplyActionMessage = ref('')
+const supplyUndoStack = ref<SupplyStateSnapshot[]>([])
+const supplyHasUnsavedChanges = ref(false)
+const supplyUndoAvailable = computed(() => supplyUndoStack.value.length > 0)
+const maxSupplyUndoSnapshots = 20
+
+const cloneMenuCategories = (categories: MenuCategoryDefinition[]): MenuCategoryDefinition[] =>
+  categories.map((category) => ({ ...category }))
+
+const cloneOptionGroups = (groups: MenuOptionGroup[]): MenuOptionGroup[] =>
+  groups.map((group) => ({
+    ...group,
+    choices: group.choices.map((choice) => ({ ...choice })),
+  }))
+
+const cloneProducts = (products: MenuItem[]): MenuItem[] =>
+  products.map((product) => ({ ...product, tags: [...product.tags] }))
+
+const cloneProductAssignments = (assignments: Record<string, string[]>): Record<string, string[]> =>
+  Object.entries(assignments).reduce<Record<string, string[]>>((copy, [productId, groupIds]) => {
+    copy[productId] = [...groupIds]
+    return copy
+  }, {})
+
+const currentSupplyProducts = (): MenuItem[] =>
+  cloneProducts([
+    ...new Map([...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product])).values(),
+  ])
+
+const captureSupplySnapshot = (label: string): SupplyStateSnapshot => ({
+  label,
+  menuCategories: cloneMenuCategories(menuCategoryDefinitions.value),
+  optionGroups: cloneOptionGroups(optionGroupCatalog.value),
+  productAssignments: cloneProductAssignments(productOptionAssignments.value),
+  productStatuses: { ...productSupplyStatuses.value },
+  noteStatuses: { ...noteSupplyStatuses.value },
+  products: currentSupplyProducts(),
+  selectedCategory: supplyCategoryFilter.value,
+})
+
+const commitSupplyUndoSnapshot = (snapshot: SupplyStateSnapshot): void => {
+  supplyUndoStack.value = [...supplyUndoStack.value, snapshot].slice(-maxSupplyUndoSnapshots)
+  supplyHasUnsavedChanges.value = true
+}
+
+const pushSupplyUndo = (label: string): void => {
+  commitSupplyUndoSnapshot(captureSupplySnapshot(label))
+}
+
+const restoreSupplySnapshot = (snapshot: SupplyStateSnapshot): void => {
+  menuCategoryDefinitions.value = cloneMenuCategories(snapshot.menuCategories)
+  optionGroupCatalog.value = cloneOptionGroups(snapshot.optionGroups)
+  productOptionAssignments.value = cloneProductAssignments(snapshot.productAssignments)
+  productSupplyStatuses.value = { ...snapshot.productStatuses }
+  noteSupplyStatuses.value = { ...snapshot.noteStatuses }
+  restoreSupplyProductSnapshot(snapshot.products)
+  supplyCategoryFilter.value = snapshot.selectedCategory
+}
+
+const undoLastSupplyAction = (): void => {
+  const snapshot = supplyUndoStack.value.at(-1)
+  if (!snapshot) {
+    return
+  }
+
+  restoreSupplySnapshot(snapshot)
+  supplyUndoStack.value = supplyUndoStack.value.slice(0, -1)
+  supplyHasUnsavedChanges.value = true
+  supplyActionMessage.value = `已回復：${snapshot.label}`
+}
+
+const saveSupplyChanges = (): void => {
+  writeSupplyStatusMap(supplyProductStatusStorageKey, productSupplyStatuses.value)
+  writeSupplyStatusMap(supplyNoteStatusStorageKey, noteSupplyStatuses.value)
+  writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
+  writeOptionGroups(optionGroupCatalog.value)
+  writeProductOptionAssignments(productOptionAssignments.value)
+  supplyHasUnsavedChanges.value = false
+  supplyActionMessage.value = '供應狀態已儲存'
+}
 
 const categoryLabelFor = (category: MenuCategory): string =>
   menuCategoryDefinitions.value.find((definition) => definition.id === category)?.label ??
@@ -2792,6 +2883,7 @@ const addMenuCategory = (): void => {
 
   const existingIds = new Set(menuCategoryDefinitions.value.map((category) => category.id))
   const id = uniqueId(label, existingIds)
+  pushSupplyUndo('新增分類')
   menuCategoryDefinitions.value = [...menuCategoryDefinitions.value, { id, label }]
   newCategoryName.value = ''
   supplyCategoryFilter.value = id
@@ -2814,6 +2906,7 @@ const deleteSelectedMenuCategory = async (): Promise<void> => {
         .map((product) => [product.id, product]),
     ).values(),
   ]
+  const undoSnapshot = captureSupplySnapshot('刪除分類')
   let deletedCount = 0
 
   for (const product of products) {
@@ -2826,10 +2919,14 @@ const deleteSelectedMenuCategory = async (): Promise<void> => {
   }
 
   if (deletedCount !== products.length) {
+    if (deletedCount > 0) {
+      commitSupplyUndoSnapshot(undoSnapshot)
+    }
     supplyActionMessage.value = `${categoryLabelFor(categoryId)} 刪除未完成，仍有商品無法移除`
     return
   }
 
+  commitSupplyUndoSnapshot(undoSnapshot)
   menuCategoryDefinitions.value = menuCategoryDefinitions.value.filter((category) => category.id !== categoryId)
   supplyCategoryFilter.value = fallbackSupplyCategory()
   supplyActionMessage.value = `${categoryLabelFor(categoryId)} 已刪除，連同 ${deletedCount} 個商品移除`
@@ -2886,6 +2983,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
     return
   }
 
+  const undoSnapshot = captureSupplySnapshot('新增商品')
   const product = await createProductForStation(stationPin.value.trim(), {
     sku: newProductSku.value.trim() || slugFromText(name, 'product'),
     name,
@@ -2910,6 +3008,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
     return
   }
 
+  commitSupplyUndoSnapshot(undoSnapshot)
   const inheritedGroupIds = assignedOptionGroupIdsForCategory(categoryId)
   productOptionAssignments.value = {
     ...productOptionAssignments.value,
@@ -2922,12 +3021,14 @@ const addProductToSupplyCategory = async (): Promise<void> => {
 }
 
 const deleteSupplyProduct = async (product: MenuItem): Promise<void> => {
+  const undoSnapshot = captureSupplySnapshot('刪除商品')
   const deleted = await deleteProductForStation(stationPin.value.trim(), product.id)
   if (!deleted) {
     supplyActionMessage.value = `${product.name} 刪除失敗`
     return
   }
 
+  commitSupplyUndoSnapshot(undoSnapshot)
   productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
   productSupplyStatuses.value = withoutRecordKey(productSupplyStatuses.value, product.id)
   supplyActionMessage.value = `${product.name} 已刪除`
@@ -2945,6 +3046,7 @@ const addOptionGroup = (): void => {
   const max = Math.max(1, Math.trunc(Number(newOptionGroupMax.value) || 1))
   const required = newOptionGroupRequired.value
   const min = required ? 1 : 0
+  pushSupplyUndo('新增註記大項')
   const group: MenuOptionGroup = {
     id,
     label,
@@ -2965,6 +3067,7 @@ const addOptionGroup = (): void => {
 
 const deleteOptionGroup = (groupId: string): void => {
   const group = optionGroupCatalog.value.find((entry) => entry.id === groupId)
+  pushSupplyUndo('刪除註記大項')
   optionGroupCatalog.value = optionGroupCatalog.value.filter((entry) => entry.id !== groupId)
   productOptionAssignments.value = Object.fromEntries(
     Object.entries(productOptionAssignments.value).map(([productId, groupIds]) => [
@@ -2988,6 +3091,7 @@ const addOptionChoice = (): void => {
   }
 
   const priceDelta = Math.trunc(Number(newOptionChoicePriceDelta.value) || 0)
+  pushSupplyUndo('新增註記選項')
   optionGroupCatalog.value = optionGroupCatalog.value.map((group) => {
     if (group.id !== groupId) {
       return group
@@ -3014,6 +3118,7 @@ const addOptionChoice = (): void => {
 
 const deleteOptionChoice = (groupId: string, choiceId: string): void => {
   const noteId = `${groupId}-${choiceId}`
+  pushSupplyUndo('刪除註記選項')
   optionGroupCatalog.value = optionGroupCatalog.value.map((group) =>
     group.id === groupId
       ? { ...group, choices: group.choices.filter((choice) => choice.id !== choiceId) }
@@ -3032,6 +3137,7 @@ const toggleProductOptionGroup = (product: MenuItem, groupId: string): void => {
     ? currentIds.filter((id) => id !== groupId)
     : [...currentIds, groupId]
 
+  pushSupplyUndo('更新商品註記')
   productOptionAssignments.value = {
     ...productOptionAssignments.value,
     [product.id]: nextIds,
@@ -3042,9 +3148,17 @@ const toggleProductOptionGroup = (product: MenuItem, groupId: string): void => {
 const supplyRowIsBusy = (row: SupplyStatusRow): boolean =>
   row.kind === 'product' && (togglingProductId.value === row.id || stationBatchProductIdSet.value.has(row.id))
 
-const updateSupplyRowStatus = async (row: SupplyStatusRow, status: ProductSupplyStatus): Promise<void> => {
+const updateSupplyRowStatus = async (
+  row: SupplyStatusRow,
+  status: ProductSupplyStatus,
+  options: { recordUndo?: boolean } = {},
+): Promise<void> => {
   if (row.status === status) {
     return
+  }
+
+  if (options.recordUndo !== false) {
+    pushSupplyUndo('變更供應狀態')
   }
 
   if (row.kind === 'product') {
@@ -3066,9 +3180,10 @@ const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<voi
     return
   }
 
+  pushSupplyUndo('批次變更供應狀態')
   stationBatchProductIds.value = targetRows.filter((row) => row.kind === 'product').map((row) => row.id)
   for (const row of targetRows) {
-    await updateSupplyRowStatus(row, status)
+    await updateSupplyRowStatus(row, status, { recordUndo: false })
   }
   stationBatchProductIds.value = []
 }
@@ -4998,10 +5113,26 @@ onBeforeUnmount(() => {
             <X :size="26" aria-hidden="true" />
           </button>
           <h2 id="supply-title">供應狀態</h2>
-          <button class="supply-save-button" type="button" disabled>
-            <Check :size="20" aria-hidden="true" />
-            儲存
-          </button>
+          <div class="supply-modal-actions">
+            <button
+              class="supply-undo-button"
+              type="button"
+              :disabled="!supplyUndoAvailable"
+              @click="undoLastSupplyAction"
+            >
+              <RefreshCw :size="18" aria-hidden="true" />
+              回復上一步
+            </button>
+            <button
+              class="supply-save-button"
+              type="button"
+              :disabled="!supplyHasUnsavedChanges"
+              @click="saveSupplyChanges"
+            >
+              <Check :size="20" aria-hidden="true" />
+              儲存
+            </button>
+          </div>
         </header>
 
         <div class="supply-toolbar">

@@ -4140,7 +4140,7 @@ button.cart-line-summary:focus-visible {
 
 .supply-modal-header {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) 140px;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
   align-items: center;
   min-height: 96px;
   border-bottom: 1px solid var(--line);
@@ -4164,18 +4164,41 @@ button.cart-line-summary:focus-visible {
   text-align: center;
 }
 
-.supply-save-button {
+.supply-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-right: 16px;
+}
+
+.supply-save-button,
+.supply-undo-button {
   display: inline-flex;
   min-height: 56px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-right: 16px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
   font-size: 1.02rem;
   font-weight: 900;
+  padding: 0 16px;
+}
+
+.supply-save-button {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  color: var(--primary-dark);
+}
+
+.supply-save-button:disabled,
+.supply-undo-button:disabled {
+  cursor: not-allowed;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.58;
 }
 
 .supply-toolbar {
@@ -6113,7 +6136,7 @@ button.cart-line-summary:focus-visible {
   }
 
   .supply-modal-header {
-    grid-template-columns: 72px minmax(0, 1fr) 106px;
+    grid-template-columns: 72px minmax(0, 1fr) auto;
     min-height: 76px;
   }
 
@@ -6121,10 +6144,16 @@ button.cart-line-summary:focus-visible {
     font-size: 1.38rem;
   }
 
-  .supply-save-button {
+  .supply-modal-actions {
+    gap: 6px;
+    padding-right: 8px;
+  }
+
+  .supply-save-button,
+  .supply-undo-button {
     min-height: 48px;
-    margin-right: 8px;
     font-size: 0.88rem;
+    padding: 0 10px;
   }
 
   .supply-toolbar {

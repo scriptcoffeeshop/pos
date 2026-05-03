@@ -1186,6 +1186,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartLines.value = cartLines.value.filter((line) => line.itemId !== productId && line.productId !== productId)
   }
 
+  const restoreSupplyProductSnapshot = (products: MenuItem[]): void => {
+    const restoredProducts = sortProducts(products.map((product) => ({ ...product, tags: [...product.tags] })))
+    productStatusCatalog.value = restoredProducts
+    menuCatalog.value = sortProducts(restoredProducts.filter(isProductOrderable))
+    writeLocalProducts(restoredProducts.filter(isLocalProduct))
+    cartLines.value = cartLines.value.filter((line) =>
+      restoredProducts.some((product) => product.id === line.itemId || product.id === line.productId),
+    )
+  }
+
   const appendPrintPreviewStatus = (message: string): void => {
     lastPrintPreview.value = `${lastPrintPreview.value}\n${message}`
   }
@@ -2277,6 +2287,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     refundingOrderId,
     refundOrderForStation,
     releaseOrderClaimForStation,
+    restoreSupplyProductSnapshot,
     searchTerm,
     selectedCategory,
     serviceMode,
