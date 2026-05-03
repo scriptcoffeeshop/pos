@@ -41,6 +41,7 @@ import {
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import type {
+  CartLine,
   MenuCategory,
   MenuItem,
   OrderSource,
@@ -317,6 +318,7 @@ const {
   isLoadingProductStatus,
   isRegisterBusy,
   lastPrintPreview,
+  menuCatalog,
   loadProductStatusCatalog,
   loadRegisterSession,
   orderClaimExpired,
@@ -349,6 +351,7 @@ const {
   stationHeartbeatMessage,
   submitCounterOrder,
   togglingProductId,
+  updateConfiguredLine,
   openRegisterSessionForStation,
   updateOrderStatus,
   updatePaymentStatus,
@@ -437,6 +440,7 @@ const printStatusLabels = {
 } as const
 
 const noteSnippets = ['少冰', '去冰', '無糖', '熱飲', '分開裝', '需要袋子']
+const ticketNoteSnippets = ['需要袋子']
 const beverageOptionGroups: MenuOptionGroup[] = [
   {
     id: 'temperature',
@@ -1088,6 +1092,7 @@ const swipeState = ref<SwipeState | null>(null)
 const openSwipeKey = ref<string | null>(null)
 const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const activeOptionItem = ref<MenuItem | null>(null)
+const activeOptionLineId = ref<string | null>(null)
 const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({
   temperature: [],
   beans: [],
@@ -1121,23 +1126,36 @@ const activeOptionGroups = computed(() =>
     ? beverageOptionGroups
     : [],
 )
+const optionChoiceLabel = (choice: MenuOptionChoice): string =>
+  choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label
+
 const selectedOptionDetails = computed(() => {
   const selectedChoices = activeOptionGroups.value.flatMap((group) =>
     group.choices.filter((choice) => optionSelections.value[group.id]?.includes(choice.id)),
   )
 
   return {
-    labels: selectedChoices.map((choice) =>
-      choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
-    ),
+    labels: selectedChoices.map(optionChoiceLabel),
     priceDelta: selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0),
   }
 })
-const pendingOptionLineTotal = computed(() =>
+const activeOptionLine = computed(() =>
+  activeOptionLineId.value ? cartLines.value.find((line) => line.itemId === activeOptionLineId.value) ?? null : null,
+)
+const pendingOptionUnitPrice = computed(() =>
   activeOptionItem.value ? activeOptionItem.value.price + selectedOptionDetails.value.priceDelta : 0,
 )
-const ticketDisplayQuantity = computed(() => cartQuantity.value + (activeOptionItem.value ? 1 : 0))
-const ticketDisplayTotal = computed(() => cartTotal.value + pendingOptionLineTotal.value)
+const pendingOptionLineTotal = computed(() => pendingOptionUnitPrice.value * (activeOptionLine.value?.quantity ?? 1))
+const ticketDisplayQuantity = computed(() =>
+  cartQuantity.value + (activeOptionItem.value && !activeOptionLineId.value ? 1 : 0),
+)
+const ticketDisplayTotal = computed(() => {
+  if (activeOptionItem.value && activeOptionLine.value) {
+    return cartTotal.value - (activeOptionLine.value.unitPrice * activeOptionLine.value.quantity) + pendingOptionLineTotal.value
+  }
+
+  return cartTotal.value + (activeOptionItem.value ? pendingOptionLineTotal.value : 0)
+})
 const activeWorkspaceTitle = computed(() => workspaceTabLabels[activeWorkspaceTab.value])
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -1273,6 +1291,7 @@ const resetOptionSelections = (): void => {
 
 const selectMenuItem = (item: MenuItem): void => {
   activeCartQuickEditor.value = null
+  activeOptionLineId.value = null
 
   if (!productRequiresOptions(item)) {
     addItem(item)
@@ -1285,12 +1304,45 @@ const selectMenuItem = (item: MenuItem): void => {
 
 const closeOptionPanel = (): void => {
   activeOptionItem.value = null
+  activeOptionLineId.value = null
   resetOptionSelections()
 }
 
 const clearTicketDraft = (): void => {
   clearCart()
   closeOptionPanel()
+}
+
+const optionSelectionsFromLine = (line: CartLine): Record<MenuOptionGroupId, string[]> => {
+  const lineOptions = new Set(line.options)
+
+  return Object.fromEntries(beverageOptionGroups.map((group) => [
+    group.id,
+    group.choices
+      .filter((choice) => lineOptions.has(optionChoiceLabel(choice)) || lineOptions.has(choice.label))
+      .map((choice) => choice.id),
+  ])) as Record<MenuOptionGroupId, string[]>
+}
+
+const menuItemForLine = (line: CartLine): MenuItem | null =>
+  menuCatalog.value.find((item) => item.id === line.productId || item.id === line.itemId || item.sku === line.productSku) ?? null
+
+const lineRequiresOptions = (line: CartLine): boolean => {
+  const item = menuItemForLine(line)
+  return Boolean(item && productRequiresOptions(item))
+}
+
+const editCartLineOptions = (line: CartLine): void => {
+  const item = menuItemForLine(line)
+  if (!item || !productRequiresOptions(item)) {
+    return
+  }
+
+  activeCartQuickEditor.value = null
+  activeOptionItem.value = item
+  activeOptionLineId.value = line.itemId
+  optionSelections.value = optionSelectionsFromLine(line)
+  optionWarning.value = ''
 }
 
 const optionChoiceSelected = (group: MenuOptionGroup, choice: MenuOptionChoice): boolean =>
@@ -1334,7 +1386,11 @@ const confirmMenuOptions = (): boolean => {
     return false
   }
 
-  addConfiguredItem(item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+  if (activeOptionLineId.value) {
+    updateConfiguredLine(activeOptionLineId.value, item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+  } else {
+    addConfiguredItem(item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+  }
   closeOptionPanel()
   return true
 }
@@ -2717,7 +2773,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div class="ticket-note-chips" aria-label="常用備註">
-                  <button v-for="note in noteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
+                  <button v-for="note in ticketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
                     {{ note }}
                   </button>
                 </div>
@@ -2795,12 +2851,21 @@ onBeforeUnmount(() => {
 
                 <div class="cart-lines" aria-live="polite">
                   <article v-for="line in cartLines" :key="line.itemId" class="cart-line">
-                    <div>
+                    <button
+                      v-if="lineRequiresOptions(line)"
+                      class="cart-line-summary"
+                      type="button"
+                      @click="editCartLineOptions(line)"
+                    >
+                      <h3>{{ line.name }}</h3>
+                      <p>{{ line.options.join(' / ') || '標準' }}</p>
+                    </button>
+                    <div v-else class="cart-line-summary">
                       <h3>{{ line.name }}</h3>
                       <p>{{ line.options.join(' / ') || '標準' }}</p>
                     </div>
                     <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
-                      <button type="button" title="減少" @click="decreaseLine(line.itemId)">
+                      <button type="button" title="減少" @click.stop="decreaseLine(line.itemId)">
                         <Minus :size="16" aria-hidden="true" />
                       </button>
                       <input
@@ -2811,19 +2876,20 @@ onBeforeUnmount(() => {
                         inputmode="numeric"
                         :aria-label="`${line.name} 數量`"
                         :value="line.quantity"
+                        @click.stop
                         @input="updateCartQuantityInput(line.itemId, $event)"
                         @change="commitCartQuantityInput(line.itemId, $event)"
                         @keydown.enter.stop="blurQuantityInput"
                         @keydown.escape.stop="blurQuantityInput"
                       />
-                      <button type="button" title="增加" @click="increaseLine(line.itemId)">
+                      <button type="button" title="增加" @click.stop="increaseLine(line.itemId)">
                         <Plus :size="16" aria-hidden="true" />
                       </button>
                     </div>
                     <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
                   </article>
 
-                  <article v-if="activeOptionItem" class="cart-line cart-line--pending">
+                  <article v-if="activeOptionItem && !activeOptionLineId" class="cart-line cart-line--pending">
                     <div>
                       <h3>{{ activeOptionItem.name }}</h3>
                       <p v-if="optionWarning" class="cart-line-warning">
@@ -3029,7 +3095,7 @@ onBeforeUnmount(() => {
                     </button>
                     <button class="primary-button option-confirm-button" type="button" @click="confirmMenuOptions">
                       <CheckCircle2 :size="20" aria-hidden="true" />
-                      加入訂單
+                      {{ activeOptionLineId ? '更新品項' : '加入訂單' }}
                     </button>
                   </footer>
                 </section>

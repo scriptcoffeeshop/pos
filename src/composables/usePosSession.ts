@@ -1237,6 +1237,32 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey))
   }
 
+  const updateConfiguredLine = (lineItemId: string, item: MenuItem, options: string[], priceAdjustment = 0): void => {
+    const currentLine = cartLines.value.find((line) => line.itemId === lineItemId)
+    if (!currentLine) {
+      return
+    }
+
+    const normalizedOptions = options.filter((option) => option.trim().length > 0)
+    const variantKey = [item.id, ...normalizedOptions].join('::')
+    const unitPrice = Math.max(0, item.price + priceAdjustment)
+    const existing = cartLines.value.find((line) => line.itemId === variantKey && line.itemId !== lineItemId)
+
+    rememberRecentItem(item.id)
+
+    if (existing) {
+      existing.quantity = normalizeCartQuantity(existing.quantity + currentLine.quantity)
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== lineItemId)
+      return
+    }
+
+    cartLines.value = cartLines.value.map((line) =>
+      line.itemId === lineItemId
+        ? createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey)
+        : line,
+    )
+  }
+
   const increaseLine = (itemId: string): void => {
     const line = cartLines.value.find((entry) => entry.itemId === itemId)
     if (line) {
@@ -1964,6 +1990,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     isLoadingProductStatus,
     isRegisterBusy,
     lastPrintPreview,
+    menuCatalog,
     claimLabelFor,
     claimOrderForStation,
     claimingOrderId,
@@ -2002,6 +2029,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updatingPaymentOrderId,
     addConfiguredItem,
     addItem,
+    updateConfiguredLine,
     openRegisterSessionForStation,
     refreshBackendData: refreshPosData,
     refreshQueueState,

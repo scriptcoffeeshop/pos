@@ -2065,6 +2065,26 @@ h3 {
   background: var(--surface-muted);
 }
 
+.cart-line-summary {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+button.cart-line-summary {
+  cursor: pointer;
+}
+
+button.cart-line-summary:focus-visible {
+  outline: 3px solid rgba(138, 180, 248, 0.55);
+  outline-offset: 4px;
+}
+
 .cart-line p,
 .order-row-main span,
 .order-row-meta,
