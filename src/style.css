@@ -3584,11 +3584,16 @@ h3 {
 
 .print-job-list {
   display: grid;
-  max-height: 276px;
+  grid-auto-rows: minmax(82px, auto);
+  max-height: min(46svh, 520px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.print-job-swipe-row {
+  min-height: 82px;
 }
 
 .print-job-list .swipe-row:first-child {
@@ -3597,17 +3602,17 @@ h3 {
 
 .print-job-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 34px 34px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(76px, auto) 40px 44px;
+  gap: 10px;
   align-items: center;
-  min-height: 58px;
-  padding: 8px;
+  min-height: 82px;
+  padding: 12px;
 }
 
 .print-job-main {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 4px;
 }
 
 .print-job-main strong,
@@ -3621,7 +3626,7 @@ h3 {
 .print-job-main strong {
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   font-weight: 950;
 }
 
@@ -3638,13 +3643,13 @@ h3 {
 }
 
 .print-job-status {
-  min-width: 58px;
-  padding: 4px 7px;
+  min-width: 76px;
+  padding: 7px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 950;
   text-align: center;
   white-space: nowrap;
@@ -3672,8 +3677,8 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border: 1px solid #e4b1aa;
   border-radius: 6px;
   background: var(--danger-soft);

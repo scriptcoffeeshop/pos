@@ -1658,7 +1658,28 @@ const executeQueueAdminAction = async (
     await refundOrderAction(order, adminPin)
   }
 
+  const latestOrder = orderQueue.value.find((entry) => entry.id === order.id)
+  const actionSucceeded =
+    kind === 'void'
+      ? latestOrder?.status === 'voided'
+      : latestOrder?.paymentStatus === 'refunded'
+
   queueActionMessage.value = backendStatus.detail || backendStatus.label
+
+  if (!actionSucceeded) {
+    pendingQueueAdminAction.value = {
+      kind,
+      orderId: order.id,
+      label,
+    }
+    queueActionPin.value = ''
+    if (stationPin.value.trim() === adminPin) {
+      stationPin.value = ''
+    }
+    return
+  }
+
+  stationPin.value = adminPin
 }
 
 const requestQueueAdminAction = (kind: QueueAdminActionKind, order: PosOrder): void => {
@@ -1699,7 +1720,6 @@ const confirmQueueAdminAction = (): void => {
     return
   }
 
-  stationPin.value = adminPin
   queueActionPin.value = ''
   void executeQueueAdminAction(action.kind, order, adminPin)
 }
