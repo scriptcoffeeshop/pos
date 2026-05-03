@@ -9,6 +9,8 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   DailySalesReport,
+  CartLine,
+  OnlineMenuCategory,
   OnlineMenuOptionGroup,
   OnlineNotificationRepeatMode,
   OnlineOrderingSettings,
@@ -81,6 +83,7 @@ interface ApiOrder {
   claimed_by?: string | null
   claimed_at?: string | null
   claim_expires_at?: string | null
+  draft_lines?: unknown
   order_items?: ApiOrderItem[]
   print_jobs?: ApiPrintJob[]
 }
@@ -325,6 +328,53 @@ const normalizeOptions = (options: unknown): string[] => {
   return options.filter((option): option is string => typeof option === 'string')
 }
 
+const readDraftLineString = (line: Record<string, unknown>, camelKey: string, snakeKey: string): string =>
+  typeof line[camelKey] === 'string'
+    ? String(line[camelKey])
+    : typeof line[snakeKey] === 'string'
+      ? String(line[snakeKey])
+      : ''
+
+const readDraftLineNumber = (line: Record<string, unknown>, camelKey: string, snakeKey: string): number => {
+  const value = line[camelKey] ?? line[snakeKey]
+  return Number.isFinite(value) ? Math.trunc(Number(value)) : 0
+}
+
+const normalizeDraftLines = (lines: unknown): CartLine[] => {
+  if (!Array.isArray(lines)) {
+    return []
+  }
+
+  return lines.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const line = entry as Record<string, unknown>
+    const productSku = readDraftLineString(line, 'productSku', 'product_sku')
+    const name = readDraftLineString(line, 'name', 'name')
+    const unitPrice = readDraftLineNumber(line, 'unitPrice', 'unit_price')
+    const quantity = readDraftLineNumber(line, 'quantity', 'quantity')
+    if (!productSku || !name || unitPrice < 0 || quantity <= 0) {
+      return []
+    }
+
+    const productId = readDraftLineString(line, 'productId', 'product_id')
+    const cartLine: CartLine = {
+      itemId: productId || productSku,
+      productSku,
+      name,
+      unitPrice,
+      quantity,
+      options: normalizeOptions(line.options),
+    }
+    if (productId) {
+      cartLine.productId = productId
+    }
+    return [cartLine]
+  })
+}
+
 const normalizePrintStatus = (order: ApiOrder): PrintStatus => {
   const printJobs = order.print_jobs ?? []
   if (printJobs.length === 0) {
@@ -488,6 +538,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   notificationRepeatMode: 'continuous',
   notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuCategories: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -497,6 +548,29 @@ const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', '
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
+
+const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenCategoryIds = new Set<string>()
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const category = entry as Partial<OnlineMenuCategory>
+    const id = sanitizeOnlineText(category.id)
+    const label = sanitizeOnlineText(category.label)
+    if (!id || !label || seenCategoryIds.has(id)) {
+      return []
+    }
+
+    seenCategoryIds.add(id)
+    return [{ id, label }]
+  })
+}
 
 const normalizeOnlineMenuOptionGroups = (value: unknown): OnlineMenuOptionGroup[] => {
   if (!Array.isArray(value)) {
@@ -599,6 +673,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
   }
 
   const settings = value as Partial<OnlineOrderingSettings>
+  const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories)
   const menuOptionGroups = normalizeOnlineMenuOptionGroups(settings.menuOptionGroups)
   const notificationRepeatMode = notificationRepeatModes.has(settings.notificationRepeatMode as OnlineNotificationRepeatMode)
     ? (settings.notificationRepeatMode as OnlineNotificationRepeatMode)
@@ -629,6 +704,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)
         : defaults.pauseMessage,
+    menuCategories,
     menuOptionGroups,
     productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
     noteSupplyStatuses:
@@ -658,39 +734,47 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   }
 }
 
-export const normalizeOrder = (order: ApiOrder): PosOrder => ({
-  id: order.order_number,
-  remoteId: order.id,
-  source: order.source,
-  mode: order.service_mode,
-  customerName: order.customer_name,
-  customerPhone: order.customer_phone,
-  deliveryAddress: order.delivery_address ?? '',
-  requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
-  note: order.note,
-  subtotal: order.subtotal,
-  paymentMethod: order.payment_method,
-  paymentStatus: order.payment_status,
-  status: order.status,
-  createdAt: order.created_at,
-  claimedBy: order.claimed_by ?? null,
-  claimedAt: order.claimed_at ?? null,
-  claimExpiresAt: order.claim_expires_at ?? null,
-  printStatus: normalizePrintStatus(order),
-  printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
-  lines: (order.order_items ?? []).map((line) => {
-    const cartLine = {
-      itemId: line.product_id ?? line.product_sku,
-      productSku: line.product_sku,
-      name: line.name,
-      unitPrice: line.unit_price,
-      quantity: line.quantity,
-      options: normalizeOptions(line.options),
-    }
+export const normalizeOrder = (order: ApiOrder): PosOrder => {
+  const orderItems = order.order_items ?? []
+  const draftLines = orderItems.length === 0 ? normalizeDraftLines(order.draft_lines) : []
 
-    return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
-  }),
-})
+  return {
+    id: order.order_number,
+    remoteId: order.id,
+    isDraft: order.source === 'counter' && order.status === 'new' && orderItems.length === 0,
+    source: order.source,
+    mode: order.service_mode,
+    customerName: order.customer_name,
+    customerPhone: order.customer_phone,
+    deliveryAddress: order.delivery_address ?? '',
+    requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
+    note: order.note,
+    subtotal: order.subtotal,
+    paymentMethod: order.payment_method,
+    paymentStatus: order.payment_status,
+    status: order.status,
+    createdAt: order.created_at,
+    claimedBy: order.claimed_by ?? null,
+    claimedAt: order.claimed_at ?? null,
+    claimExpiresAt: order.claim_expires_at ?? null,
+    printStatus: normalizePrintStatus(order),
+    printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
+    lines: orderItems.length > 0
+      ? orderItems.map((line) => {
+        const cartLine = {
+          itemId: line.product_id ?? line.product_sku,
+          productSku: line.product_sku,
+          name: line.name,
+          unitPrice: line.unit_price,
+          quantity: line.quantity,
+          options: normalizeOptions(line.options),
+        }
+
+        return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
+      })
+      : draftLines,
+  }
+}
 
 export const fetchProducts = async (channel: ProductChannel = 'pos'): Promise<MenuItem[]> => {
   const data = await request<ProductsResponse>(`/products?channel=${channel}`)
@@ -964,31 +1048,60 @@ export const closeRegisterSession = async (
   return normalizeRegisterSession(data.session)
 }
 
+const orderPayload = (order: PosOrder) => ({
+  orderNumber: order.id,
+  source: order.source,
+  serviceMode: order.mode,
+  customerName: order.customerName,
+  customerPhone: order.customerPhone,
+  deliveryAddress: order.deliveryAddress,
+  requestedFulfillmentAt: order.requestedFulfillmentAt,
+  note: order.note,
+  subtotal: order.subtotal,
+  paymentMethod: order.paymentMethod,
+  paymentStatus: order.paymentStatus,
+  stationId: currentStationId(),
+  lines: order.lines.map((line) => ({
+    productId: line.productId,
+    productSku: line.productSku,
+    name: line.name,
+    unitPrice: line.unitPrice,
+    quantity: line.quantity,
+    options: line.options,
+  })),
+})
+
 export const createOrder = async (order: PosOrder): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>('/orders', {
     method: 'POST',
-    body: JSON.stringify({
-      orderNumber: order.id,
-      source: order.source,
-      serviceMode: order.mode,
-      customerName: order.customerName,
-      customerPhone: order.customerPhone,
-      deliveryAddress: order.deliveryAddress,
-      requestedFulfillmentAt: order.requestedFulfillmentAt,
-      note: order.note,
-      subtotal: order.subtotal,
-      paymentMethod: order.paymentMethod,
-      paymentStatus: order.paymentStatus,
-      stationId: currentStationId(),
-      lines: order.lines.map((line) => ({
-        productId: line.productId,
-        productSku: line.productSku,
-        name: line.name,
-        unitPrice: line.unitPrice,
-        quantity: line.quantity,
-        options: line.options,
-      })),
-    }),
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const createCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>('/orders/drafts', {
+    method: 'POST',
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const updateCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/draft`, {
+    method: 'PATCH',
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const finalizeCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/finalize`, {
+    method: 'POST',
+    body: JSON.stringify(orderPayload(order)),
   })
 
   return normalizeOrder(data.order)

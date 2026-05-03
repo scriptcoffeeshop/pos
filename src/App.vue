@@ -885,8 +885,28 @@ const undoLastSupplyAction = (): void => {
 const onlineOptionGroupsForSync = (): OnlineOrderingSettings['menuOptionGroups'] =>
   cloneOptionGroups(optionGroupCatalog.value)
 
+const onlineMenuCategoriesForSync = (): OnlineOrderingSettings['menuCategories'] =>
+  cloneMenuCategories(menuCategoryDefinitions.value)
+
 const onlineProductAssignmentsForSync = (): OnlineOrderingSettings['productOptionAssignments'] =>
   cloneProductAssignments(productOptionAssignments.value)
+
+const runtimeSupplyConfigHasData = (settings: OnlineOrderingSettings): boolean =>
+  settings.menuCategories.length > 0 ||
+  settings.menuOptionGroups.length > 0 ||
+  Object.keys(settings.productOptionAssignments).length > 0 ||
+  Object.keys(settings.noteSupplyStatuses).length > 0
+
+const applyRuntimeSupplyConfig = (settings: OnlineOrderingSettings): void => {
+  if (supplyHasUnsavedChanges.value || !runtimeSupplyConfigHasData(settings)) {
+    return
+  }
+
+  menuCategoryDefinitions.value = normalizeCategoryDefinitions(settings.menuCategories)
+  optionGroupCatalog.value = normalizeOptionGroups(settings.menuOptionGroups)
+  productOptionAssignments.value = cloneProductAssignments(settings.productOptionAssignments)
+  noteSupplyStatuses.value = { ...settings.noteSupplyStatuses }
+}
 
 const saveSupplyChanges = async (): Promise<void> => {
   writeSupplyStatusMap(supplyProductStatusStorageKey, productSupplyStatuses.value)
@@ -894,16 +914,17 @@ const saveSupplyChanges = async (): Promise<void> => {
   writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
   writeOptionGroups(optionGroupCatalog.value)
   writeProductOptionAssignments(productOptionAssignments.value)
-  supplyHasUnsavedChanges.value = false
 
   if (!isPosApiConfigured) {
-    supplyActionMessage.value = '供應狀態已儲存；線上同步需先連線 POS API'
+    supplyHasUnsavedChanges.value = true
+    supplyActionMessage.value = '已暫存本機；需連線 POS API 後才會寫入資料庫'
     return
   }
 
   const adminPin = stationPin.value.trim()
   if (!adminPin) {
-    supplyActionMessage.value = '供應狀態已儲存；輸入 PIN 後可同步線上點餐'
+    supplyHasUnsavedChanges.value = true
+    supplyActionMessage.value = '已暫存本機；輸入 PIN 後才能寫入資料庫'
     return
   }
 
@@ -913,16 +934,19 @@ const saveSupplyChanges = async (): Promise<void> => {
       'online_ordering',
       {
         ...onlineOrderingSettings.value,
+        menuCategories: onlineMenuCategoriesForSync(),
         menuOptionGroups: onlineOptionGroupsForSync(),
         productOptionAssignments: onlineProductAssignmentsForSync(),
         noteSupplyStatuses: { ...noteSupplyStatuses.value },
       },
     )
     onlineOrderingSettings.value = syncedSettings
-    supplyActionMessage.value = '供應狀態已儲存並同步線上點餐'
+    supplyHasUnsavedChanges.value = false
+    supplyActionMessage.value = '供應狀態、分類與註記已寫入資料庫'
   } catch (error) {
     const message = error instanceof Error ? error.message : '線上同步失敗'
-    supplyActionMessage.value = `供應狀態已儲存；線上同步失敗：${message}`
+    supplyHasUnsavedChanges.value = true
+    supplyActionMessage.value = `已暫存本機；資料庫同步失敗：${message}`
   }
 }
 
@@ -3062,7 +3086,7 @@ const runQueueTaskAction = (action: QueueTaskAction): void => {
 }
 
 const startTakeoutOrder = (): void => {
-  startCounterDraft('takeout')
+  void startCounterDraft('takeout')
   activeCartQuickEditor.value = null
   closeOptionPanel()
   setWorkspaceTab('order')
@@ -3440,8 +3464,10 @@ const updateSupplyRowStatus = async (
   }
 
   if (row.kind === 'product') {
-    setProductSupplyStatus(row.id, status)
-    await updateProductSupplyStatus(stationPin.value.trim(), row.id, status)
+    const updated = await updateProductSupplyStatus(stationPin.value.trim(), row.id, status)
+    if (updated) {
+      setProductSupplyStatus(row.id, status)
+    }
     return
   }
 
@@ -3551,6 +3577,10 @@ watch(optionGroupCatalog, (groups) => {
 watch(productOptionAssignments, (assignments) => {
   writeProductOptionAssignments(assignments)
 }, { deep: true })
+
+watch(onlineOrderingSettings, (settings) => {
+  applyRuntimeSupplyConfig(settings)
+}, { immediate: true, deep: true })
 
 watch(supplyCategoryOptions, (options) => {
   if (!options.some((option) => option.value === supplyCategoryFilter.value)) {

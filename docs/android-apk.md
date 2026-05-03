@@ -21,7 +21,7 @@
 rtk npm run apk:debug
 ```
 
-`apk:debug` 會先跑 `cap:sync`，再執行 Android `assembleDebug`。若 macOS arm64 的本機 JDK 在 JVM 啟動階段崩潰，腳本會自動下載暫存的 x86_64 Temurin 21 JDK 到 `~/.cache/script-coffee-pos/`，並透過 Rosetta 完成 Gradle build。
+`apk:debug` 會先跑 `cap:sync`，再執行 Android `assembleDebug`。在 macOS arm64 上，腳本預設使用暫存的 x86_64 Temurin 21 JDK（`~/.cache/script-coffee-pos/`）透過 Rosetta 完成 Gradle build，並把 JVM fatal error file 寫到同一個 cache 目錄，避免 `hs_err_pid*.log` 出現在專案資料夾。若要強制使用本機 native JDK，可暫時設定 `POS_APK_USE_NATIVE_JDK=1`。
 
 APK 位置：
 

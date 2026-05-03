@@ -52,6 +52,7 @@ export interface CustomerDraft {
 export interface PosOrder {
   id: string
   remoteId?: string
+  isDraft?: boolean
   source: OrderSource
   mode: ServiceMode
   customerName: string
@@ -176,6 +177,11 @@ export interface OnlineMenuOptionGroup {
   choices: OnlineMenuOptionChoice[]
 }
 
+export interface OnlineMenuCategory {
+  id: MenuCategory
+  label: string
+}
+
 export type OnlineNotificationRepeatMode = 'once' | 'continuous'
 
 export interface OnlineOrderingSettings {
@@ -189,6 +195,7 @@ export interface OnlineOrderingSettings {
   notificationRepeatMode: OnlineNotificationRepeatMode
   notificationVolume: number
   pauseMessage: string
+  menuCategories: OnlineMenuCategory[]
   menuOptionGroups: OnlineMenuOptionGroup[]
   productOptionAssignments: Record<string, string[]>
   noteSupplyStatuses: Record<string, ProductSupplyStatus>

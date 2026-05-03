@@ -30,7 +30,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - `products`：商品、自訂文字分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與庫存。
 - `pos_settings`：出單機/印單規則、角色權限與線上點餐 runtime 等後台設定。
-- `orders`：訂單主檔、來源、服務方式、希望取餐/送達時間、外送地址、付款狀態、製作狀態。
+- `orders`：訂單主檔、來源、服務方式、希望取餐/送達時間、外送地址、付款狀態、製作狀態，以及櫃台未出單草稿用的 `draft_lines`。
 - `order_items`：訂單品項、數量、單價、客製選項。
 - `members`：LINE Login profile 與會員錢包摘要，後台可先建立手動會員，未來再綁定 LINE UID。
 - `transaction_ledger`：儲值、扣款、退款與調帳流水；POS 已收款退款會寫入負數 refund entry。
@@ -44,7 +44,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - 會員 LINE profile 名稱固定保存，不被訂單收件人姓名覆蓋。
 - 線上/QR 待付款新單會在 `GET /orders` 時依 `POS_PAYMENT_EXPIRY_MINUTES`（預設 20 分鐘）自動寫入 `status=failed` 與 `payment_status=expired`。
-- `create_pos_order()`、`refund_pos_order()`、`create_pos_member()`、`adjust_pos_member_wallet()` 與 `record_pos_payment_event()` 是 `SECURITY DEFINER` 交易函式，只授權 `service_role` 執行；外部請一律走 `pos-api` Edge Function，不從 anon/authenticated REST RPC 直呼。
+- `create_pos_order()`、`finalize_pos_order()`、`refund_pos_order()`、`create_pos_member()`、`adjust_pos_member_wallet()` 與 `record_pos_payment_event()` 是 `SECURITY DEFINER` 交易函式，只授權 `service_role` 執行；外部請一律走 `pos-api` Edge Function，不從 anon/authenticated REST RPC 直呼。
 - API log 使用結構化 JSON，保留 `scope=action-audit` 類型欄位。
 
 ## 已部署項目
@@ -70,10 +70,12 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 金流 webhook 事件 RLS policy：`20260429183500_lock_down_payment_events_rls.sql`
 - 線上點餐 runtime 設定：`20260503001500_add_online_ordering_settings.sql`
 - 商品分類放寬為自訂文字：`20260503163000_make_product_categories_custom.sql`
+- 櫃台草稿單與正式化函式：`20260504090000_add_counter_order_drafts.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
 - 訂單端點：`/functions/v1/pos-api/orders`
+- 櫃台草稿端點：`/functions/v1/pos-api/orders/drafts`、`/functions/v1/pos-api/orders/:id/draft`、`/functions/v1/pos-api/orders/:id/finalize`
 - 付款狀態端點：`/functions/v1/pos-api/orders/:id/payment`
 - 未收款作廢端點：`/functions/v1/pos-api/orders/:id/void`
 - 已收款退款端點：`/functions/v1/pos-api/orders/:id/refund`
@@ -100,10 +102,10 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間、商品註記選項與加價，並阻擋暫停時送單。
-- POS 工作台會每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。平板回到前景時也會補同步一次。消費者線上點餐頁會每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
+- POS 工作台會每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。平板回到前景時也會補同步一次。消費者線上點餐頁會每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 需 `X-POS-ADMIN-PIN`，用來排查多平板在線與鎖單問題。
-- 櫃台建立訂單時會先建立本機訂單，再寫入 `POST /orders`；後端用 `create_pos_order()` 在同一個 transaction 建單、寫入希望取餐/送達時間、外送地址、品項並扣 `products.inventory_count`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
+- 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
 - 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需 `X-POS-ADMIN-PIN` 與有效 claim lease；只允許 `payment_status=pending` 的訂單作廢。
@@ -111,7 +113,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外部金流回呼走 `POST /payments/webhook/:provider`，需 `X-POS-PAYMENT-WEBHOOK-SECRET`。後端以 `record_pos_payment_event()` 寫入 `payment_events` 並做冪等狀態轉換；重複 event 不會二次入帳，金額不符不會改單，退款回呼會寫入負數 `transaction_ledger`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，需在 request header 帶 `X-POS-ADMIN-PIN`。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
-- 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。
+- 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`，需在 request header 帶 `X-POS-ADMIN-PIN`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。平板端新增/刪除商品或改商品供應狀態時，未成功寫入 API 不會視為完成，只保留舊本機資料作為離線 fallback。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`，需 `X-POS-ADMIN-PIN`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，需 `X-POS-ADMIN-PIN`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
 - 後台出單機、權限與線上點餐 runtime 修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`、`online_ordering`。

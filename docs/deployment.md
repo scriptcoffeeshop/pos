@@ -57,7 +57,7 @@ rtk npm run supabase:functions:deploy
 rtk npm run apk:debug
 ```
 
-`apk:debug` 會先同步 Capacitor，並自動偵測 JDK / Android SDK；若 macOS arm64 JDK 在 Gradle 啟動時崩潰，會下載暫存 x86_64 Temurin 21 後重試。平板安裝預設使用 fresh reinstall：
+`apk:debug` 會先同步 Capacitor，並自動偵測 Android SDK；在 macOS arm64 上預設使用暫存 x86_64 Temurin 21 透過 Rosetta 建置，並把 JVM fatal error file 導到 `~/.cache/script-coffee-pos/`，避免 `hs_err_pid*.log` 掉進專案資料夾。平板安裝預設使用 fresh reinstall：
 
 ```bash
 rtk npm run apk:install:fresh

@@ -37,7 +37,7 @@ interface CreateOrderInput {
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
   stationId?: string;
-  lines: OrderLineInput[];
+  lines?: OrderLineInput[];
 }
 
 interface UpdateStatusInput {
@@ -230,6 +230,11 @@ interface OnlineMenuOptionGroup {
   choices: OnlineMenuOptionChoice[];
 }
 
+interface OnlineMenuCategory {
+  id: MenuCategory;
+  label: string;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 
@@ -244,6 +249,7 @@ interface OnlineOrderingSettings {
   notificationRepeatMode: OnlineNotificationRepeatMode;
   notificationVolume: number;
   pauseMessage: string;
+  menuCategories: OnlineMenuCategory[];
   menuOptionGroups: OnlineMenuOptionGroup[];
   productOptionAssignments: Record<string, string[]>;
   noteSupplyStatuses: Record<string, ProductSupplyStatus>;
@@ -393,6 +399,7 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   notificationRepeatMode: "continuous",
   notificationVolume: 80,
   pauseMessage: "目前暫停線上點餐，請稍後再試",
+  menuCategories: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -404,6 +411,25 @@ const loadOrder = (orderId: string) =>
     .select(orderSelect)
     .eq("id", orderId)
     .single();
+
+const loadOrderByNumber = (orderNumber: string) =>
+  supabase
+    .from("orders")
+    .select(orderSelect)
+    .eq("order_number", orderNumber)
+    .maybeSingle();
+
+const loadOrderByIdOrNumber = (orderIdOrNumber: string) => {
+  if (normalizeUuid(orderIdOrNumber)) {
+    return supabase
+      .from("orders")
+      .select(orderSelect)
+      .eq("id", orderIdOrNumber)
+      .maybeSingle();
+  }
+
+  return loadOrderByNumber(orderIdOrNumber);
+};
 
 const loadMemberWithLedger = async (memberId: string) => {
   const { data: member, error: memberError } = await supabase
@@ -598,7 +624,7 @@ api.get("/settings/runtime", async (c) => {
     defaultOnlineOrdering,
   );
 
-  return c.json({ printerSettings, onlineOrdering });
+  return c.json({ printerSettings, onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering) });
 });
 
 api.post("/station/heartbeat", async (c) => {
@@ -1321,6 +1347,7 @@ api.post("/orders", async (c) => {
   }
 
   const stationId = sanitizeStationId(input.stationId);
+  const orderLines = input.lines ?? [];
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
@@ -1349,7 +1376,7 @@ api.post("/orders", async (c) => {
     p_subtotal: input.subtotal,
     p_payment_method: input.paymentMethod ?? "cash",
     p_payment_status: input.paymentStatus ?? "pending",
-    p_lines: input.lines.map((line) => ({
+    p_lines: orderLines.map((line) => ({
       productId: line.productId ?? null,
       productSku: line.productSku,
       name: line.name,
@@ -1376,7 +1403,7 @@ api.post("/orders", async (c) => {
     metadata: {
       orderNumber: savedOrder.order_number,
       subtotal: savedOrder.subtotal,
-      lineCount: input.lines.length,
+      lineCount: orderLines.length,
       paymentStatus: savedOrder.payment_status,
       deliveryAddress: savedOrder.delivery_address,
       requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
@@ -1384,6 +1411,219 @@ api.post("/orders", async (c) => {
   });
 
   return c.json({ order: savedOrder }, 201);
+});
+
+api.post("/orders/drafts", async (c) => {
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateCounterDraftInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  const now = new Date();
+  const draftLines = normalizeDraftOrderLines(input.lines ?? []);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const existing = await loadOrderByNumber(input.orderNumber);
+  if (existing.error) {
+    return c.json({ error: existing.error.message }, 500);
+  }
+
+  if ((existing.data?.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: existing.data }, 409);
+  }
+
+  const payload = {
+    source: "counter" as OrderSource,
+    service_mode: input.serviceMode ?? "takeout",
+    customer_name: input.customerName?.trim() || "現場客",
+    customer_phone: input.customerPhone?.trim() ?? "",
+    delivery_address: (input.serviceMode ?? "takeout") === "delivery" ? deliveryAddress : "",
+    requested_fulfillment_at: requestedFulfillmentAt,
+    note: input.note?.trim() ?? "",
+    subtotal: input.subtotal,
+    payment_method: input.paymentMethod ?? "cash",
+    payment_status: input.paymentStatus ?? "pending",
+    status: "new" as OrderStatus,
+    draft_lines: draftLines,
+    ...(stationId ? buildClaimPayload(stationId, now) : {}),
+  };
+
+  const result = existing.data
+    ? await supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", existing.data.id)
+      .select(orderSelect)
+      .single()
+    : await supabase
+      .from("orders")
+      .insert({
+        ...payload,
+        order_number: input.orderNumber,
+      })
+      .select(orderSelect)
+      .single();
+
+  if (result.error) {
+    return c.json({ error: result.error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: existing.data ? "order.draft_update" : "order.draft_create",
+    orderId: result.data.id,
+    stationId,
+    metadata: {
+      orderNumber: result.data.order_number,
+      subtotal: result.data.subtotal,
+      draftLineCount: draftLines.length,
+    },
+  });
+
+  return c.json({ order: result.data }, existing.data ? 200 : 201);
+});
+
+api.patch("/orders/:id/draft", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateCounterDraftInput({
+    ...input,
+    orderNumber: input.orderNumber || orderId,
+  });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const current = await loadOrderByIdOrNumber(orderId);
+  if (current.error) {
+    return c.json({ error: current.error.message }, 500);
+  }
+  if (!current.data) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  if (current.data.source !== "counter") {
+    return c.json({ error: "Only counter orders can be edited as drafts" }, 409);
+  }
+  if (terminalOrderStatuses.has(current.data.status as OrderStatus)) {
+    return c.json({ error: "Completed or voided orders cannot be edited", order: current.data }, 409);
+  }
+  if ((current.data.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: current.data }, 409);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  if (isLeaseActiveForOtherStation(current.data, stationId)) {
+    return claimConflictResponse(c, String(current.data.id), stationId);
+  }
+
+  const now = new Date();
+  const draftLines = normalizeDraftOrderLines(input.lines ?? []);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      service_mode: input.serviceMode ?? current.data.service_mode,
+      customer_name: input.customerName?.trim() || "現場客",
+      customer_phone: input.customerPhone?.trim() ?? "",
+      delivery_address: (input.serviceMode ?? current.data.service_mode) === "delivery" ? deliveryAddress : "",
+      requested_fulfillment_at: requestedFulfillmentAt,
+      note: input.note?.trim() ?? "",
+      subtotal: input.subtotal,
+      payment_method: input.paymentMethod ?? current.data.payment_method,
+      payment_status: input.paymentStatus ?? current.data.payment_status,
+      draft_lines: draftLines,
+      ...(stationId ? buildClaimPayload(stationId, now) : {}),
+    })
+    .eq("id", current.data.id)
+    .select(orderSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ order: data });
+});
+
+api.post("/orders/:id/finalize", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateOrderInput({
+    ...input,
+    orderNumber: input.orderNumber || orderId,
+  });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const current = await loadOrderByIdOrNumber(orderId);
+  if (current.error) {
+    return c.json({ error: current.error.message }, 500);
+  }
+  if (!current.data) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  if (current.data.source !== "counter") {
+    return c.json({ error: "Only counter draft orders can be finalized" }, 409);
+  }
+  if ((current.data.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: current.data }, 409);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  if (isLeaseActiveForOtherStation(current.data, stationId)) {
+    return claimConflictResponse(c, String(current.data.id), stationId);
+  }
+
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const orderLines = input.lines ?? [];
+  const { data: finalizedOrderId, error: finalizeError } = await supabase.rpc("finalize_pos_order", {
+    p_order_id: current.data.id,
+    p_service_mode: input.serviceMode ?? "takeout",
+    p_customer_name: input.customerName?.trim() || "現場客",
+    p_customer_phone: input.customerPhone?.trim() ?? "",
+    p_delivery_address: deliveryAddress,
+    p_requested_fulfillment_at: requestedFulfillmentAt,
+    p_note: input.note?.trim() ?? "",
+    p_subtotal: input.subtotal,
+    p_payment_method: input.paymentMethod ?? "cash",
+    p_payment_status: input.paymentStatus ?? "pending",
+    p_lines: orderLines.map((line) => ({
+      productId: line.productId ?? null,
+      productSku: line.productSku,
+      name: line.name,
+      unitPrice: line.unitPrice,
+      quantity: line.quantity,
+      options: line.options ?? [],
+    })),
+  });
+
+  if (finalizeError) {
+    const status = /inventory|Product not found|quantity|finalized/i.test(finalizeError.message) ? 409 : 500;
+    return c.json({ error: finalizeError.message }, status);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(String(finalizedOrderId));
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.draft_finalize",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      subtotal: savedOrder.subtotal,
+      lineCount: orderLines.length,
+      paymentStatus: savedOrder.payment_status,
+    },
+  });
+
+  return c.json({ order: savedOrder });
 });
 
 api.post("/orders/:id/claim", async (c) => {
@@ -2380,6 +2620,60 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
   return null;
 };
 
+const validateCounterDraftInput = (input: CreateOrderInput): string | null => {
+  if (!input.orderNumber?.trim()) {
+    return "orderNumber is required";
+  }
+
+  if (input.source && input.source !== "counter") {
+    return "counter drafts must use counter source";
+  }
+
+  if (input.requestedFulfillmentAt && !normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt)) {
+    return "requestedFulfillmentAt must be a valid ISO datetime";
+  }
+
+  if (!Number.isInteger(input.subtotal) || input.subtotal < 0) {
+    return "subtotal must be a non-negative integer";
+  }
+
+  return null;
+};
+
+const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
+  if (!Array.isArray(lines)) {
+    return [];
+  }
+
+  return lines.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const line = entry as Partial<OrderLineInput>;
+    const productSku = sanitizeText(line.productSku, "").slice(0, 80);
+    const name = sanitizeText(line.name, "").slice(0, 120);
+    const unitPrice = Number(line.unitPrice);
+    const quantity = Number(line.quantity);
+    if (!productSku || !name || !Number.isInteger(unitPrice) || unitPrice < 0 || !Number.isInteger(quantity) || quantity <= 0) {
+      return [];
+    }
+
+    const productId = normalizeUuid(line.productId) ?? undefined;
+    const normalizedLine: OrderLineInput = {
+      productSku,
+      name,
+      unitPrice,
+      quantity,
+      options: Array.isArray(line.options) ? line.options.filter((option) => typeof option === "string").slice(0, 12) : [],
+    };
+    if (productId) {
+      normalizedLine.productId = productId;
+    }
+    return [normalizedLine];
+  });
+};
+
 const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -2905,6 +3199,29 @@ const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] =>
   });
 };
 
+const normalizeOnlineMenuCategories = (input: unknown): OnlineMenuCategory[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenCategoryIds = new Set<string>();
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const category = entry as Partial<OnlineMenuCategory>;
+    const id = sanitizeText(category.id, "").slice(0, 80);
+    const label = sanitizeText(category.label, "").slice(0, 80);
+    if (!id || !label || seenCategoryIds.has(id)) {
+      return [];
+    }
+
+    seenCategoryIds.add(id);
+    return [{ id, label }];
+  });
+};
+
 const normalizeProductOptionAssignments = (
   input: unknown,
   groups: OnlineMenuOptionGroup[],
@@ -2947,6 +3264,47 @@ const normalizeNoteSupplyStatuses = (input: unknown): Record<string, ProductSupp
   );
 };
 
+const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultOnlineOrdering;
+  }
+
+  const settings = input as Partial<OnlineOrderingSettings>;
+  const averagePrepMinutes = Number(settings.averagePrepMinutes ?? defaultOnlineOrdering.averagePrepMinutes);
+  const unconfirmedReminderMinutes = Number(
+    settings.unconfirmedReminderMinutes ?? defaultOnlineOrdering.unconfirmedReminderMinutes,
+  );
+  const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
+  const notificationRepeatMode: OnlineNotificationRepeatMode =
+    settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
+      ? settings.notificationRepeatMode
+      : defaultOnlineOrdering.notificationRepeatMode;
+  const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
+
+  return {
+    enabled: settings.enabled !== false,
+    allowScheduledOrders: settings.allowScheduledOrders !== false,
+    averagePrepMinutes: Number.isInteger(averagePrepMinutes)
+      ? Math.min(Math.max(averagePrepMinutes, 0), 180)
+      : defaultOnlineOrdering.averagePrepMinutes,
+    unconfirmedReminderMinutes: Number.isInteger(unconfirmedReminderMinutes)
+      ? Math.min(Math.max(unconfirmedReminderMinutes, 0), 120)
+      : defaultOnlineOrdering.unconfirmedReminderMinutes,
+    acceptanceRequired: settings.acceptanceRequired !== false,
+    acceptWithoutPrinting: Boolean(settings.acceptWithoutPrinting),
+    soundEnabled: settings.soundEnabled !== false,
+    notificationRepeatMode,
+    notificationVolume: Number.isInteger(notificationVolume)
+      ? Math.min(Math.max(notificationVolume, 0), 100)
+      : defaultOnlineOrdering.notificationVolume,
+    pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
+    menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
+    menuOptionGroups,
+    productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
+  };
+};
+
 const validateOnlineOrdering = (input: unknown): {
   value: OnlineOrderingSettings | null;
   error: string | null;
@@ -2980,6 +3338,7 @@ const validateOnlineOrdering = (input: unknown): {
     settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
       ? settings.notificationRepeatMode
       : defaultOnlineOrdering.notificationRepeatMode;
+  const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories);
   const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
 
   return {
@@ -2994,6 +3353,7 @@ const validateOnlineOrdering = (input: unknown): {
       notificationRepeatMode,
       notificationVolume,
       pauseMessage,
+      menuCategories,
       menuOptionGroups,
       productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
       noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),

@@ -259,6 +259,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   notificationRepeatMode: 'continuous',
   notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuCategories: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -276,6 +277,7 @@ const cloneAccessControl = (settings: AccessControlSettings): AccessControlSetti
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
   ...defaultOnlineOrderingSettings(),
   ...settings,
+  menuCategories: settings.menuCategories.map((category) => ({ ...category })),
   menuOptionGroups: settings.menuOptionGroups.map((group) => ({
     ...group,
     choices: group.choices.map((choice) => ({ ...choice })),
@@ -1323,6 +1325,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
           onlineOrdering.value.notificationRepeatMode === 'once' ? 'once' : 'continuous',
         notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
+        menuCategories: onlineOrdering.value.menuCategories,
         menuOptionGroups: onlineOrdering.value.menuOptionGroups,
         productOptionAssignments: onlineOrdering.value.productOptionAssignments,
         noteSupplyStatuses: onlineOrdering.value.noteSupplyStatuses,

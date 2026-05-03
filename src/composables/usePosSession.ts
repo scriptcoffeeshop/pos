@@ -4,6 +4,7 @@ import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
 import {
+  createCounterDraftOrder,
   createOrder,
   createPrintJob,
   closeRegisterSession,
@@ -20,10 +21,12 @@ import {
   claimOrder,
   currentStationId,
   currentStationLabel,
+  finalizeCounterDraftOrder,
   isPosApiConfigured,
   releaseOrderClaim,
   refundOrder,
   sendStationHeartbeat,
+  updateCounterDraftOrder,
   updateProduct,
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
@@ -689,17 +692,6 @@ const productSupplyOverrides = (status: ProductSupplyStatus): ProductUpdateOverr
   }
 }
 
-const applyProductSupplyStatus = (product: MenuItem, status: ProductSupplyStatus): MenuItem => {
-  const overrides = productSupplyOverrides(status)
-  return {
-    ...product,
-    available: overrides.isAvailable ?? product.available,
-    posVisible: overrides.posVisible ?? product.posVisible,
-    onlineVisible: overrides.onlineVisible ?? product.onlineVisible,
-    qrVisible: overrides.qrVisible ?? product.qrVisible,
-  }
-}
-
 const isProductOrderable = (product: MenuItem): boolean =>
   product.available &&
   product.posVisible &&
@@ -813,6 +805,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let queueSyncTimer: number | null = null
   let stationHeartbeatTimer: number | null = null
   let onlineReminderClockTimer: number | null = null
+  let counterDraftSyncTimer: number | null = null
   let lastPlayedOnlineReminderSignature = ''
 
   const currentPrinterSettings = (): PrinterSettings => ({
@@ -1105,7 +1098,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     syncNextSequenceFromQueue()
   }
 
-  const startCounterDraft = (mode: ServiceMode = 'takeout'): void => {
+  const startCounterDraft = async (mode: ServiceMode = 'takeout'): Promise<void> => {
     const startedAt = new Date()
     const sequence = Math.max(nextSequence.value, nextSequenceFromOrders(orderQueue.value, formatDateKey(startedAt)))
     const orderId = buildOrderId(startedAt, sequence)
@@ -1125,6 +1118,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       paymentStatus: 'pending',
       status: 'new',
       createdAt: startedAtIso,
+      isDraft: true,
       claimedBy: stationClaimId,
       claimedAt: startedAtIso,
       claimExpiresAt: claimExpiresIn(),
@@ -1140,6 +1134,25 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     counterDraftStartedAt.value = startedAtIso
     nextSequence.value = sequence + 1
     rememberLocalCounterOrder(order)
+
+    if (!isPosApiConfigured) {
+      setBackendStatus('fallback', '本機草稿', `${order.id} 已保留在本機，連線 POS API 後才能跨平板追溯`)
+      return
+    }
+
+    try {
+      const persistedDraft = await createCounterDraftOrder(order)
+      const nextOrder: PosOrder = {
+        ...persistedDraft,
+        lines: order.lines,
+        isDraft: true,
+      }
+      replaceOrder(order.id, nextOrder)
+      removeLocalCounterOrder(order.id)
+      setBackendStatus('connected', '草稿已同步', `${order.id} 已建立在資料庫`)
+    } catch (error) {
+      setBackendStatus('fallback', '草稿同步失敗', `${order.id} 先保留在本機：${getErrorMessage(error)}`)
+    }
   }
 
   const appendCustomerNote = (note: string): void => {
@@ -1235,6 +1248,38 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderQueue.value = mergeLocalPendingOrders(pendingLocalOrders.value, orderQueue.value)
   }
 
+  const syncCounterDraftToBackend = async (order: PosOrder): Promise<void> => {
+    if (!isPosApiConfigured || !order.remoteId || !order.isDraft || order.status !== 'new') {
+      return
+    }
+
+    try {
+      const savedDraft = await updateCounterDraftOrder(order)
+      replaceOrder(order.id, {
+        ...savedDraft,
+        lines: order.lines.map((line) => ({ ...line, options: [...line.options] })),
+        isDraft: true,
+      })
+      removeLocalCounterOrder(order.id)
+    } catch (error) {
+      setBackendStatus('fallback', '草稿同步失敗', `${order.id} 暫存在本機：${getErrorMessage(error)}`)
+    }
+  }
+
+  const scheduleCounterDraftSync = (order: PosOrder): void => {
+    if (!isPosApiConfigured || !order.remoteId || !order.isDraft) {
+      return
+    }
+
+    if (counterDraftSyncTimer !== null) {
+      globalThis.clearTimeout(counterDraftSyncTimer)
+    }
+    counterDraftSyncTimer = globalThis.setTimeout(() => {
+      counterDraftSyncTimer = null
+      void syncCounterDraftToBackend(order)
+    }, 700)
+  }
+
   const syncActiveCounterOrderSnapshot = (): void => {
     const orderId = counterDraftOrderId.value
     if (!orderId) {
@@ -1270,6 +1315,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     replaceOrder(orderId, nextOrder)
     if (!nextOrder.remoteId) {
       rememberLocalCounterOrder(nextOrder)
+      return
+    }
+
+    if (nextOrder.isDraft) {
+      scheduleCounterDraftSync(nextOrder)
     }
   }
 
@@ -1571,10 +1621,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         fetchRuntimeSettings(),
       ])
       applyRuntimeSettings(runtimeSettings)
-      const localProducts = readLocalProducts()
-      const allProducts = [...remoteProducts, ...localProducts]
-      menuCatalog.value = sortProducts(allProducts)
-      productStatusCatalog.value = sortProducts(allProducts)
+      writeLocalProducts([])
+      menuCatalog.value = sortProducts(remoteProducts)
+      productStatusCatalog.value = sortProducts(remoteProducts)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
       syncNextSequenceFromQueue()
@@ -1595,10 +1644,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const remoteProducts = await fetchProducts()
-      const localProducts = readLocalProducts()
-      const allProducts = [...remoteProducts, ...localProducts]
-      menuCatalog.value = sortProducts(allProducts)
-      productStatusCatalog.value = sortProducts(allProducts)
+      writeLocalProducts([])
+      menuCatalog.value = sortProducts(remoteProducts)
+      productStatusCatalog.value = sortProducts(remoteProducts)
     } catch {
       return
     }
@@ -2103,7 +2151,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const products = await fetchAdminProducts(adminPin)
-      productStatusCatalog.value = sortProducts([...products, ...readLocalProducts()].filter((product) => product.posVisible))
+      writeLocalProducts([])
+      productStatusCatalog.value = sortProducts(products.filter((product) => product.posVisible))
       productStatusMessage.value = `已載入 ${productStatusCatalog.value.length} 個 POS 商品，可直接暫停或恢復供應`
     } catch (error) {
       productStatusMessage.value = `商品狀態載入失敗：${getErrorMessage(error)}`
@@ -2152,23 +2201,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     adminPin: string,
     productId: string,
     status: ProductSupplyStatus,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const product = productStatusCatalog.value.find((entry) => entry.id === productId)
       ?? menuCatalog.value.find((entry) => entry.id === productId)
     if (!product) {
       productStatusMessage.value = '找不到商品資料，請重新載入'
-      return
+      return false
     }
 
     const statusLabel = status === 'normal' ? '正常供應' : status === 'online-stopped' ? '線上停售' : '全部停售'
     togglingProductId.value = productId
-    applySavedProduct(applyProductSupplyStatus(product, status))
-    productStatusMessage.value = `${product.name} 已在本機標記為${statusLabel}`
+    productStatusMessage.value = `${product.name} 更新為${statusLabel}中`
 
-    if (!adminPin) {
+    if (!adminPin || !isPosApiConfigured) {
       togglingProductId.value = null
-      setBackendStatus('fallback', '本機供應狀態', '輸入管理 PIN 後可同步雲端商品狀態')
-      return
+      productStatusMessage.value = `${product.name} 未更新：需輸入 PIN 並連線 POS API 才會寫入資料庫`
+      setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
+      return false
     }
 
     try {
@@ -2176,10 +2225,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已更新為${statusLabel}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return true
     } catch (error) {
-      applySavedProduct(product)
       productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
-      setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+      setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
+      return false
     } finally {
       togglingProductId.value = null
     }
@@ -2193,10 +2243,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusMessage.value = `${fallbackProduct.name} 建立中`
 
     if (!adminPin || !isPosApiConfigured) {
-      applySavedProduct(fallbackProduct)
-      productStatusMessage.value = `${fallbackProduct.name} 已新增至本機商品清單`
-      setBackendStatus('fallback', '本機新增商品', '輸入管理 PIN 後可同步雲端商品資料')
-      return fallbackProduct
+      productStatusMessage.value = `${fallbackProduct.name} 未新增：需輸入 PIN 並連線 POS API 才會寫入資料庫`
+      setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
+      return null
     }
 
     try {
@@ -2206,10 +2255,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
       return savedProduct
     } catch (error) {
-      applySavedProduct(fallbackProduct)
-      productStatusMessage.value = `商品新增失敗，已先保留本機資料：${getErrorMessage(error)}`
-      setBackendStatus('fallback', '本機新增商品', productStatusMessage.value)
-      return fallbackProduct
+      productStatusMessage.value = `商品新增失敗，未寫入資料庫：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '商品新增失敗', productStatusMessage.value)
+      return null
     }
   }
 
@@ -2224,12 +2272,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     togglingProductId.value = productId
     productStatusMessage.value = `${product.name} 刪除中`
 
-    if (!adminPin || !isPosApiConfigured || product.id.startsWith('local-')) {
+    if (product.id.startsWith('local-')) {
       removeSavedProduct(productId)
       togglingProductId.value = null
       productStatusMessage.value = `${product.name} 已從本機清單刪除`
-      setBackendStatus('fallback', '本機刪除商品', '輸入管理 PIN 後可同步雲端商品資料')
+      setBackendStatus('fallback', '本機商品已刪除', '此品項原本尚未寫入資料庫')
       return true
+    }
+
+    if (!adminPin || !isPosApiConfigured) {
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 未刪除：需輸入 PIN 並連線 POS API 才會更新資料庫`
+      setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
+      return false
     }
 
     try {
@@ -2373,6 +2428,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       paymentMethod: paymentMethod.value,
       paymentStatus,
       status: existingOrder?.status ?? 'new',
+      isDraft: existingOrder?.isDraft ?? true,
       createdAt,
       claimedBy: existingOrder?.claimedBy ?? stationClaimId,
       claimedAt: existingOrder?.claimedAt ?? now.toISOString(),
@@ -2432,7 +2488,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return order
     }
 
-    if (order.remoteId) {
+    if (order.remoteId && !order.isDraft) {
       replaceOrder(order.id, order)
       setBackendStatus('connected', '訂單已更新', `${order.id} 已更新購物車內容`)
       if (finish) {
@@ -2443,11 +2499,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     try {
-      const persistedOrder = await createOrder(order)
+      if (counterDraftSyncTimer !== null) {
+        globalThis.clearTimeout(counterDraftSyncTimer)
+        counterDraftSyncTimer = null
+      }
+
+      const persistedOrder = order.remoteId && order.isDraft
+        ? await finalizeCounterDraftOrder(order)
+        : await createOrder(order)
       let nextOrder: PosOrder = {
         ...order,
         createdAt: persistedOrder.createdAt,
         lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
+        isDraft: false,
       }
 
       if (persistedOrder.remoteId) {
@@ -2667,6 +2731,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (onlineReminderClockTimer !== null) {
       globalThis.clearInterval(onlineReminderClockTimer)
+    }
+
+    if (counterDraftSyncTimer !== null) {
+      globalThis.clearTimeout(counterDraftSyncTimer)
     }
 
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
