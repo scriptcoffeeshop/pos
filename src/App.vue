@@ -5682,301 +5682,294 @@ onBeforeUnmount(() => {
           </section>
         </div>
 
-        <div
+        <section
           v-if="isSupplyStatusOpen"
-          class="utility-modal-backdrop supply-modal-backdrop"
-          @click.self="closeSupplyStatus"
+          id="pos-supply-modal"
+          class="supply-fullscreen supply-modal"
+          aria-labelledby="supply-title"
         >
-          <section
-            id="pos-supply-modal"
-            class="utility-modal supply-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="supply-title"
-          >
-            <header class="supply-modal-header">
-              <button class="icon-button" type="button" title="關閉供應狀態" @click="closeSupplyStatus">
-                <X :size="26" aria-hidden="true" />
-              </button>
-              <div class="supply-modal-title">
-                <p class="eyebrow">Supply</p>
-                <h2 id="supply-title">供應狀態</h2>
-                <span>先調整販售狀態，需要時再展開管理功能</span>
-              </div>
-              <div class="supply-modal-actions">
-                <label class="supply-pin-entry">
-                  <span>管理 PIN</span>
-                  <input
-                    v-model="stationPin"
-                    type="password"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    placeholder="寫入資料庫"
-                  />
-                </label>
-                <button
-                  class="supply-undo-button"
-                  type="button"
-                  :disabled="!supplyUndoAvailable"
-                  @click="undoLastSupplyAction"
-                >
-                  <RefreshCw :size="18" aria-hidden="true" />
-                  回復上一步
-                </button>
-                <button
-                  class="supply-save-button"
-                  type="button"
-                  :disabled="!supplyHasUnsavedChanges"
-                  @click="saveSupplyChanges"
-                >
-                  <Check :size="20" aria-hidden="true" />
-                  儲存
-                </button>
-              </div>
-            </header>
-
-            <div class="supply-toolbar">
-              <label class="supply-search">
-                <Search :size="24" aria-hidden="true" />
-                <input v-model="supplySearchTerm" type="search" placeholder="輸入商品或註記名稱，範例：雞塊" />
-              </label>
-              <label class="supply-filter-summary">
-                <span>篩選狀態</span>
-                <select v-model="supplyStatusFilter">
-                  <option v-for="filter in supplyStatusFilterOptions" :key="filter.value" :value="filter.value">
-                    {{ filter.label }}
-                  </option>
-                </select>
-                <Filter :size="24" aria-hidden="true" />
-              </label>
+          <header class="supply-modal-header">
+            <button class="icon-button" type="button" title="返回" @click="closeSupplyStatus">
+              <ChevronLeft :size="28" aria-hidden="true" />
+            </button>
+            <div class="supply-modal-title">
+              <p class="eyebrow">Supply</p>
+              <h2 id="supply-title">供應狀態</h2>
+              <span>先調整販售狀態，需要時再展開管理功能</span>
             </div>
+            <div class="supply-modal-actions">
+              <label class="supply-pin-entry">
+                <span>管理 PIN</span>
+                <input
+                  v-model="stationPin"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  placeholder="寫入資料庫"
+                />
+              </label>
+              <button
+                class="supply-undo-button"
+                type="button"
+                :disabled="!supplyUndoAvailable"
+                @click="undoLastSupplyAction"
+              >
+                <RefreshCw :size="18" aria-hidden="true" />
+                回復上一步
+              </button>
+              <button
+                class="supply-save-button"
+                type="button"
+                :disabled="!supplyHasUnsavedChanges"
+                @click="saveSupplyChanges"
+              >
+                <Check :size="20" aria-hidden="true" />
+                儲存
+              </button>
+            </div>
+          </header>
 
-            <div class="supply-layout">
-              <nav class="supply-category-rail" aria-label="供應狀態分類">
-                <button
-                  v-for="category in supplyCategoryOptions"
-                  :key="category.value"
-                  type="button"
-                  :class="{ 'supply-category-button--active': supplyCategoryFilter === category.value }"
-                  @click="selectSupplyCategory(category.value)"
-                >
-                  {{ category.label }}
-                </button>
-              </nav>
+          <div class="supply-toolbar">
+            <label class="supply-search">
+              <Search :size="24" aria-hidden="true" />
+              <input v-model="supplySearchTerm" type="search" placeholder="輸入商品或註記名稱，範例：雞塊" />
+            </label>
+            <label class="supply-filter-summary">
+              <span>篩選狀態</span>
+              <select v-model="supplyStatusFilter">
+                <option v-for="filter in supplyStatusFilterOptions" :key="filter.value" :value="filter.value">
+                  {{ filter.label }}
+                </option>
+              </select>
+              <Filter :size="24" aria-hidden="true" />
+            </label>
+          </div>
 
-              <section class="supply-content" aria-label="供應狀態清單">
-                <header class="supply-content-header">
-                  <div>
-                    <h3>{{ supplyCategoryLabel(supplyCategoryFilter) }}</h3>
-                    <span>{{ supplyStatusSummary }}</span>
-                  </div>
-                  <label class="supply-batch-select">
-                    <span>批次變更狀態</span>
-                    <select
-                      :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
-                      @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
-                    >
-                      <option value="normal">正常供應</option>
-                      <option value="online-stopped">線上停售</option>
-                      <option value="stopped">全部停售</option>
-                    </select>
-                    <ChevronDown :size="22" aria-hidden="true" />
-                  </label>
-                </header>
+          <div class="supply-layout">
+            <nav class="supply-category-rail" aria-label="供應狀態分類">
+              <button
+                v-for="category in supplyCategoryOptions"
+                :key="category.value"
+                type="button"
+                :class="{ 'supply-category-button--active': supplyCategoryFilter === category.value }"
+                @click="selectSupplyCategory(category.value)"
+              >
+                {{ category.label }}
+              </button>
+            </nav>
 
-                <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
+            <section class="supply-content" aria-label="供應狀態清單">
+              <header class="supply-content-header">
+                <div>
+                  <h3>{{ supplyCategoryLabel(supplyCategoryFilter) }}</h3>
+                  <span>{{ supplyStatusSummary }}</span>
+                </div>
+                <label class="supply-batch-select">
+                  <span>批次變更狀態</span>
+                  <select
+                    :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
+                    @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
+                  >
+                    <option value="normal">正常供應</option>
+                    <option value="online-stopped">線上停售</option>
+                    <option value="stopped">全部停售</option>
+                  </select>
+                  <ChevronDown :size="22" aria-hidden="true" />
+                </label>
+              </header>
 
-                <details v-if="selectedSupplyMenuCategory" class="supply-management-panel" aria-label="分類與商品管理">
-                  <summary>
-                    <span>
-                      <strong>管理商品與分類</strong>
-                      <small>新增商品、建立分類、刪除目前分類</small>
-                    </span>
-                    <ChevronDown :size="22" aria-hidden="true" />
-                  </summary>
-                  <div class="supply-management-body">
-                    <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
-                      <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
-                      <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
-                      <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
-                      <button type="submit">
-                        <Plus :size="18" aria-hidden="true" />
-                        新增商品
-                      </button>
-                    </form>
-                    <form class="supply-category-form" @submit.prevent="addMenuCategory">
-                      <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
-                      <button type="submit">
-                        <Plus :size="18" aria-hidden="true" />
-                        新增分類
-                      </button>
-                    </form>
-                    <button type="button" class="ghost-danger-button supply-delete-category-button" @click="deleteSelectedMenuCategory">
-                      <Trash2 :size="18" aria-hidden="true" />
-                      刪除目前分類
-                    </button>
-                  </div>
-                </details>
+              <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
 
-                <section v-else-if="selectedSupplyCategoryIsNotes" class="supply-management-panel supply-management-panel--notes" aria-label="可用註記管理">
-                  <div class="supply-management-title">
-                    <strong>可用註記</strong>
-                    <span>{{ availableNoteCatalog.length }} 個註記</span>
-                  </div>
-                  <form class="supply-note-form supply-note-form--available" @submit.prevent="addAvailableNote">
-                    <input v-model="newAvailableNoteName" type="text" placeholder="新增註記，例如：半糖" />
-                    <input v-model.number="newAvailableNotePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
+              <details v-if="selectedSupplyMenuCategory" class="supply-management-panel" aria-label="分類與商品管理">
+                <summary>
+                  <span>
+                    <strong>管理商品與分類</strong>
+                    <small>新增商品、建立分類、刪除目前分類</small>
+                  </span>
+                  <ChevronDown :size="22" aria-hidden="true" />
+                </summary>
+                <div class="supply-management-body">
+                  <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
+                    <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
+                    <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
+                    <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
                     <button type="submit">
                       <Plus :size="18" aria-hidden="true" />
-                      新增註記
+                      新增商品
                     </button>
                   </form>
-                  <div class="supply-note-catalog">
-                    <article v-for="choice in availableNoteCatalog" :key="choice.id" class="supply-note-catalog-card">
-                      <header>
-                        <div>
-                          <strong>{{ optionChoiceLabel(choice) }}</strong>
-                          <span>{{ noteGroupLabelsForChoice(choice.id).join('、') || '尚未加入群組' }}</span>
-                        </div>
-                        <button type="button" class="ghost-danger-button" @click="deleteAvailableNote(choice.id)">
-                          <Trash2 :size="16" aria-hidden="true" />
-                          刪除
-                        </button>
-                      </header>
-                      <div class="supply-note-card-status">
-                        <label
-                          class="supply-row-status supply-note-card-status-control"
-                          :class="`supply-row-status--${availableNoteSupplyStatus(choice.id)}`"
-                        >
-                          <CheckCircle2 v-if="availableNoteSupplyStatus(choice.id) === 'normal'" :size="20" aria-hidden="true" />
-                          <CircleAlert v-else-if="availableNoteSupplyStatus(choice.id) === 'online-stopped'" :size="20" aria-hidden="true" />
-                          <X v-else :size="20" aria-hidden="true" />
-                          <select
-                            :value="availableNoteSupplyStatus(choice.id)"
-                            :aria-label="`${choice.label} 供應狀態`"
-                            @change="updateAvailableNoteSupplyStatus(choice, eventSupplyStatus($event))"
-                          >
-                            <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
-                              {{ status.label }}
-                            </option>
-                          </select>
-                          <ChevronDown :size="18" aria-hidden="true" />
-                        </label>
-                        <small class="supply-note-card-hint">{{ supplyStatusDetail(availableNoteSupplyStatus(choice.id)) }}</small>
-                      </div>
-                    </article>
-                    <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">尚未建立可用註記</span>
-                  </div>
-                </section>
-
-                <section v-else-if="selectedSupplyCategoryIsNoteGroups" class="supply-management-panel supply-management-panel--notes" aria-label="註記群組管理">
-                  <div class="supply-management-title">
-                    <strong>註記群組</strong>
-                    <span>{{ optionGroupCatalog.length }} 個群組</span>
-                  </div>
-                  <form class="supply-note-form" @submit.prevent="addOptionGroup">
-                    <input v-model="newOptionGroupName" type="text" placeholder="新增群組，例如：冰量選擇" />
-                    <label class="supply-inline-check">
-                      <input v-model="newOptionGroupRequired" type="checkbox" />
-                      必選
-                    </label>
-                    <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
+                  <form class="supply-category-form" @submit.prevent="addMenuCategory">
+                    <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
                     <button type="submit">
                       <Plus :size="18" aria-hidden="true" />
-                      新增群組
+                      新增分類
                     </button>
                   </form>
-                  <div class="supply-note-groups">
-                    <article v-for="group in optionGroupCatalog" :key="group.id" class="supply-note-group">
-                      <header>
-                        <div>
-                          <strong>{{ group.label }}</strong>
-                          <span>{{ group.requirement }} · {{ group.choices.length }} 個註記</span>
-                        </div>
-                        <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
-                          <Trash2 :size="16" aria-hidden="true" />
-                          刪除
-                        </button>
-                      </header>
-                      <div class="supply-note-checkbox-list">
-                        <label v-for="choice in availableNoteCatalog" :key="`${group.id}-${choice.id}`" class="supply-note-checkbox">
-                          <input
-                            type="checkbox"
-                            :checked="groupHasAvailableNote(group.id, choice.id)"
-                            @change="toggleGroupAvailableNote(group.id, choice.id)"
-                          />
-                          {{ optionChoiceLabel(choice) }}
-                        </label>
-                        <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">先到可用註記新增選項</span>
-                      </div>
-                    </article>
-                    <span v-if="optionGroupCatalog.length === 0" class="supply-note-empty">尚未建立註記群組</span>
-                  </div>
-                </section>
+                  <button type="button" class="ghost-danger-button supply-delete-category-button" @click="deleteSelectedMenuCategory">
+                    <Trash2 :size="18" aria-hidden="true" />
+                    刪除目前分類
+                  </button>
+                </div>
+              </details>
 
-                <div v-if="!selectedSupplyCategoryIsNotes && !selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
-                  <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
-                    <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
-                      <ChevronLeft :size="18" aria-hidden="true" />
-                    </button>
-                    <div class="supply-row-main">
-                      <strong>{{ row.name }}</strong>
-                      <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
-                    </div>
-                    <button
-                      v-if="row.kind === 'product' && row.product"
-                      class="supply-row-delete"
-                      type="button"
-                      :disabled="supplyRowIsBusy(row)"
-                      @click="deleteSupplyProduct(row.product)"
-                    >
-                      <Trash2 :size="18" aria-hidden="true" />
-                    </button>
-                    <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
-                    <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
-                      <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
-                      <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
-                      <X v-else :size="22" aria-hidden="true" />
-                      <select
-                        :value="row.status"
-                        :disabled="supplyRowIsBusy(row)"
-                        :aria-label="`${row.name} 供應狀態`"
-                        @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+              <section v-else-if="selectedSupplyCategoryIsNotes" class="supply-management-panel supply-management-panel--notes" aria-label="可用註記管理">
+                <div class="supply-management-title">
+                  <strong>可用註記</strong>
+                  <span>{{ availableNoteCatalog.length }} 個註記</span>
+                </div>
+                <form class="supply-note-form supply-note-form--available" @submit.prevent="addAvailableNote">
+                  <input v-model="newAvailableNoteName" type="text" placeholder="新增註記，例如：半糖" />
+                  <input v-model.number="newAvailableNotePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
+                  <button type="submit">
+                    <Plus :size="18" aria-hidden="true" />
+                    新增註記
+                  </button>
+                </form>
+                <div class="supply-note-catalog">
+                  <article v-for="choice in availableNoteCatalog" :key="choice.id" class="supply-note-catalog-card">
+                    <header>
+                      <div>
+                        <strong>{{ optionChoiceLabel(choice) }}</strong>
+                        <span>{{ noteGroupLabelsForChoice(choice.id).join('、') || '尚未加入群組' }}</span>
+                      </div>
+                      <button type="button" class="ghost-danger-button" @click="deleteAvailableNote(choice.id)">
+                        <Trash2 :size="16" aria-hidden="true" />
+                        刪除
+                      </button>
+                    </header>
+                    <div class="supply-note-card-status">
+                      <label
+                        class="supply-row-status supply-note-card-status-control"
+                        :class="`supply-row-status--${availableNoteSupplyStatus(choice.id)}`"
                       >
-                        <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
-                          {{ status.label }}
-                        </option>
-                      </select>
-                      <ChevronDown :size="20" aria-hidden="true" />
-                    </label>
-                    <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
-                    <details v-if="row.kind === 'product' && row.product" class="supply-row-options">
-                      <summary>
-                        <span>註記群組</span>
-                        <ChevronDown :size="16" aria-hidden="true" />
-                      </summary>
-                      <div class="supply-row-option-list">
-                        <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
-                          <input
-                            type="checkbox"
-                            :checked="productHasOptionGroup(row.product, group.id)"
-                            @change="toggleProductOptionGroup(row.product, group.id)"
-                          />
-                          {{ group.label }}
-                        </label>
-                      </div>
-                    </details>
+                        <CheckCircle2 v-if="availableNoteSupplyStatus(choice.id) === 'normal'" :size="20" aria-hidden="true" />
+                        <CircleAlert v-else-if="availableNoteSupplyStatus(choice.id) === 'online-stopped'" :size="20" aria-hidden="true" />
+                        <X v-else :size="20" aria-hidden="true" />
+                        <select
+                          :value="availableNoteSupplyStatus(choice.id)"
+                          :aria-label="`${choice.label} 供應狀態`"
+                          @change="updateAvailableNoteSupplyStatus(choice, eventSupplyStatus($event))"
+                        >
+                          <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                            {{ status.label }}
+                          </option>
+                        </select>
+                        <ChevronDown :size="18" aria-hidden="true" />
+                      </label>
+                      <small class="supply-note-card-hint">{{ supplyStatusDetail(availableNoteSupplyStatus(choice.id)) }}</small>
+                    </div>
                   </article>
-
-                  <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
-                    <EyeOff :size="22" aria-hidden="true" />
-                    <span>沒有符合條件的供應項目</span>
-                  </div>
+                  <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">尚未建立可用註記</span>
                 </div>
               </section>
-            </div>
-          </section>
-        </div>
+
+              <section v-else-if="selectedSupplyCategoryIsNoteGroups" class="supply-management-panel supply-management-panel--notes" aria-label="註記群組管理">
+                <div class="supply-management-title">
+                  <strong>註記群組</strong>
+                  <span>{{ optionGroupCatalog.length }} 個群組</span>
+                </div>
+                <form class="supply-note-form" @submit.prevent="addOptionGroup">
+                  <input v-model="newOptionGroupName" type="text" placeholder="新增群組，例如：冰量選擇" />
+                  <label class="supply-inline-check">
+                    <input v-model="newOptionGroupRequired" type="checkbox" />
+                    必選
+                  </label>
+                  <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
+                  <button type="submit">
+                    <Plus :size="18" aria-hidden="true" />
+                    新增群組
+                  </button>
+                </form>
+                <div class="supply-note-groups">
+                  <article v-for="group in optionGroupCatalog" :key="group.id" class="supply-note-group">
+                    <header>
+                      <div>
+                        <strong>{{ group.label }}</strong>
+                        <span>{{ group.requirement }} · {{ group.choices.length }} 個註記</span>
+                      </div>
+                      <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
+                        <Trash2 :size="16" aria-hidden="true" />
+                        刪除
+                      </button>
+                    </header>
+                    <div class="supply-note-checkbox-list">
+                      <label v-for="choice in availableNoteCatalog" :key="`${group.id}-${choice.id}`" class="supply-note-checkbox">
+                        <input
+                          type="checkbox"
+                          :checked="groupHasAvailableNote(group.id, choice.id)"
+                          @change="toggleGroupAvailableNote(group.id, choice.id)"
+                        />
+                        {{ optionChoiceLabel(choice) }}
+                      </label>
+                      <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">先到可用註記新增選項</span>
+                    </div>
+                  </article>
+                  <span v-if="optionGroupCatalog.length === 0" class="supply-note-empty">尚未建立註記群組</span>
+                </div>
+              </section>
+
+              <div v-if="!selectedSupplyCategoryIsNotes && !selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
+                <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
+                  <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
+                    <ChevronLeft :size="18" aria-hidden="true" />
+                  </button>
+                  <div class="supply-row-main">
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
+                  </div>
+                  <button
+                    v-if="row.kind === 'product' && row.product"
+                    class="supply-row-delete"
+                    type="button"
+                    :disabled="supplyRowIsBusy(row)"
+                    @click="deleteSupplyProduct(row.product)"
+                  >
+                    <Trash2 :size="18" aria-hidden="true" />
+                  </button>
+                  <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
+                  <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
+                    <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
+                    <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
+                    <X v-else :size="22" aria-hidden="true" />
+                    <select
+                      :value="row.status"
+                      :disabled="supplyRowIsBusy(row)"
+                      :aria-label="`${row.name} 供應狀態`"
+                      @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+                    >
+                      <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                        {{ status.label }}
+                      </option>
+                    </select>
+                    <ChevronDown :size="20" aria-hidden="true" />
+                  </label>
+                  <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
+                  <details v-if="row.kind === 'product' && row.product" class="supply-row-options">
+                    <summary>
+                      <span>註記群組</span>
+                      <ChevronDown :size="16" aria-hidden="true" />
+                    </summary>
+                    <div class="supply-row-option-list">
+                      <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
+                        <input
+                          type="checkbox"
+                          :checked="productHasOptionGroup(row.product, group.id)"
+                          @change="toggleProductOptionGroup(row.product, group.id)"
+                        />
+                        {{ group.label }}
+                      </label>
+                    </div>
+                  </details>
+                </article>
+
+                <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
+                  <EyeOff :size="22" aria-hidden="true" />
+                  <span>沒有符合條件的供應項目</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
 
         <div
           v-if="isKnowledgeOpen"
