@@ -5910,43 +5910,46 @@ onBeforeUnmount(() => {
 
               <div v-if="!selectedSupplyCategoryIsNotes && !selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
                 <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
-                  <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
-                    <ChevronLeft :size="18" aria-hidden="true" />
-                  </button>
-                  <div class="supply-row-main">
-                    <strong>{{ row.name }}</strong>
-                    <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
-                  </div>
-                  <button
-                    v-if="row.kind === 'product' && row.product"
-                    class="supply-row-delete"
-                    type="button"
-                    :disabled="supplyRowIsBusy(row)"
-                    @click="deleteSupplyProduct(row.product)"
-                  >
-                    <Trash2 :size="18" aria-hidden="true" />
-                  </button>
-                  <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
-                  <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
-                    <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
-                    <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
-                    <X v-else :size="22" aria-hidden="true" />
-                    <select
-                      :value="row.status"
+                  <div class="supply-row-top">
+                    <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
+                      <ChevronLeft :size="18" aria-hidden="true" />
+                    </button>
+                    <div class="supply-row-main">
+                      <strong>{{ row.name }}</strong>
+                      <span>{{ row.kind === 'product' ? '單點' : '註記' }} · {{ row.detail }}</span>
+                    </div>
+                    <button
+                      v-if="row.kind === 'product' && row.product"
+                      class="supply-row-delete"
+                      type="button"
                       :disabled="supplyRowIsBusy(row)"
-                      :aria-label="`${row.name} 供應狀態`"
-                      @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+                      @click="deleteSupplyProduct(row.product)"
                     >
-                      <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
-                        {{ status.label }}
-                      </option>
-                    </select>
-                    <ChevronDown :size="20" aria-hidden="true" />
-                  </label>
+                      <Trash2 :size="18" aria-hidden="true" />
+                    </button>
+                    <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
+                    <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
+                      <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
+                      <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
+                      <X v-else :size="22" aria-hidden="true" />
+                      <select
+                        :value="row.status"
+                        :disabled="supplyRowIsBusy(row)"
+                        :aria-label="`${row.name} 供應狀態`"
+                        @change="updateSupplyRowStatus(row, eventSupplyStatus($event))"
+                      >
+                        <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                          {{ status.label }}
+                        </option>
+                      </select>
+                      <ChevronDown :size="20" aria-hidden="true" />
+                    </label>
+                  </div>
                   <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
                   <details v-if="row.kind === 'product' && row.product" class="supply-row-options">
                     <summary>
                       <span>註記群組</span>
+                      <small>{{ assignedOptionGroupIdsForProduct(row.product).length }}/{{ optionGroupCatalog.length }}</small>
                       <ChevronDown :size="16" aria-hidden="true" />
                     </summary>
                     <div class="supply-row-option-list">
@@ -5958,6 +5961,7 @@ onBeforeUnmount(() => {
                         />
                         {{ group.label }}
                       </label>
+                      <span v-if="optionGroupCatalog.length === 0" class="supply-row-option-empty">尚未建立註記群組</span>
                     </div>
                   </details>
                 </article>
