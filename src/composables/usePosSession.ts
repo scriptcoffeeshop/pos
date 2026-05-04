@@ -2809,6 +2809,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printOrder,
     printingOrderId,
     printStation,
+    printerSettings,
     productStatusCatalog,
     productStatusMessage,
     quickAddItems,

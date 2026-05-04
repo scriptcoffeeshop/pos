@@ -626,7 +626,7 @@ button:disabled {
 .pos-main-surface .menu-panel,
 .pos-main-surface .cart-panel,
 .pos-main-surface .queue-section,
-.pos-main-surface .station-section,
+.pos-main-surface .printer-settings-section,
 .pos-main-surface .printer-section,
 .pos-main-surface .closeout-section,
 .pos-main-surface .order-info-section,
@@ -1794,7 +1794,8 @@ h3 {
 }
 
 .workspace--printing .workstation-panel-stack {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: minmax(380px, 0.86fr) minmax(420px, 1fr);
+  align-items: start;
 }
 
 .workspace--closeout .workstation-panel-stack {
@@ -1806,7 +1807,7 @@ h3 {
 .order-info-section,
 .payment-section,
 .queue-section,
-.station-section,
+.printer-settings-section,
 .printer-section,
 .closeout-section,
 .active-order {
@@ -1821,7 +1822,7 @@ h3 {
 .order-info-section,
 .payment-section,
 .queue-section,
-.station-section,
+.printer-settings-section,
 .printer-section,
 .closeout-section {
   padding: 14px;
@@ -3990,6 +3991,223 @@ button.cart-line-summary:focus-visible {
   min-height: 96px;
 }
 
+.printer-settings-section,
+.printer-section {
+  display: grid;
+  gap: 12px;
+}
+
+.printer-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.printer-config-panel,
+.printer-rule-overview,
+.printer-flow-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.printer-config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.printer-config-heading strong,
+.printer-flow-panel > strong {
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-weight: 950;
+}
+
+.printer-config-heading span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.printer-station-list,
+.printer-rule-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.printer-station-card,
+.printer-rule-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.printer-station-card--active {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+}
+
+.printer-station-card-main {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--primary-dark);
+}
+
+.printer-station-card-main div,
+.printer-rule-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.printer-station-card-main strong,
+.printer-rule-main strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-station-card-main span,
+.printer-station-card-main small,
+.printer-rule-main span,
+.printer-rule-main small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-station-card-main small {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary-dark);
+}
+
+.printer-station-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.printer-station-details div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+}
+
+.printer-station-details dt,
+.printer-station-details dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-station-details dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.printer-station-details dd {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.printer-rule-card {
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.52fr);
+  align-items: center;
+}
+
+.printer-rule-card--disabled {
+  opacity: 0.58;
+}
+
+.printer-rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.printer-rule-meta span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-rule-empty-state {
+  min-height: 126px;
+}
+
+.printer-flow-panel {
+  align-items: center;
+}
+
+.printer-flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.printer-flow-steps span {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+.printer-control-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
 .printer-health {
   gap: 10px;
   padding: 12px;
@@ -4018,6 +4236,17 @@ button.cart-line-summary:focus-visible {
   width: 18px;
   height: 18px;
   accent-color: var(--primary);
+}
+
+.printer-auto-print-toggle {
+  min-width: 188px;
+  justify-content: center;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  white-space: nowrap;
 }
 
 .print-job-panel {
@@ -6896,6 +7125,19 @@ button.cart-line-summary:focus-visible {
   .supply-row {
     grid-template-columns: 32px minmax(0, 1fr) 44px minmax(220px, 0.34fr);
   }
+
+  .printer-settings-grid,
+  .printer-control-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .printer-rule-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .printer-rule-meta {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 900px) {
@@ -7366,7 +7608,7 @@ button.cart-line-summary:focus-visible {
   }
 
   .workspace--printing .workstation-panel-stack {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

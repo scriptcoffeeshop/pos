@@ -57,7 +57,10 @@ import type {
   PaymentStatus,
   PosOrder,
   ProductSupplyStatus,
+  PrintLabelMode,
   PrintJob,
+  PrintRuleSetting,
+  PrintStationSetting,
   ServiceMode,
 } from './types/pos'
 
@@ -76,7 +79,6 @@ type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orde
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
 type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance'
 type ToolboxPanel = 'home' | 'appearance'
-type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -541,12 +543,10 @@ const {
   filteredMenu,
   increaseLine,
   isSubmitting,
-  isLoadingProductStatus,
   isRegisterBusy,
   lastPrintPreview,
   menuCatalog,
   loadCounterOrderForEditing,
-  loadProductStatusCatalog,
   loadRegisterSession,
   orderClaimExpired,
   orderClaimedByCurrentStation,
@@ -561,8 +561,8 @@ const {
   printOrder,
   printingOrderId,
   printStation,
+  printerSettings,
   productStatusCatalog,
-  productStatusMessage,
   quickAddItems,
   refreshBackendData,
   registerMessage,
@@ -586,7 +586,6 @@ const {
   openRegisterSessionForStation,
   updateOrderStatus,
   updatePaymentStatus,
-  updateProductAvailability,
   updateProductSupplyStatus,
   updatingPaymentOrderId,
   voidingOrderId,
@@ -659,6 +658,12 @@ const printStatusLabels = {
   skipped: '略過',
   failed: '失敗',
 } as const
+
+const printLabelModeLabels: Record<PrintLabelMode, string> = {
+  receipt: '收據',
+  label: '貼紙',
+  both: '收據 + 貼紙',
+}
 
 const noteSnippets = ['需要袋子']
 const ticketNoteSnippets = ['需要袋子']
@@ -1305,12 +1310,6 @@ const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
   { value: 'created-desc', label: '建立時間新到舊' },
   { value: 'amount-desc', label: '金額高到低' },
 ]
-const stationAvailabilityFilterOptions: Array<{ value: StationAvailabilityFilter; label: string }> = [
-  { value: 'all', label: '全部狀態' },
-  { value: 'available', label: '正常供應' },
-  { value: 'stopped', label: '暫停/售完' },
-  { value: 'low-stock', label: '低庫存' },
-]
 const orderDateKey = (order: PosOrder): string | null => {
   const orderDate = new Date(order.createdAt)
   return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
@@ -1562,6 +1561,38 @@ const printJobRows = computed<PrintJobRow[]>(() =>
     })))
     .sort((a, b) => new Date(b.job.createdAt).getTime() - new Date(a.job.createdAt).getTime()),
 )
+const printerStationRows = computed<PrintStationSetting[]>(() => {
+  if (printerSettings.value.stations.length > 0) {
+    return printerSettings.value.stations
+  }
+
+  return [
+    {
+      id: printStation.id ?? 'counter',
+      name: printStation.name,
+      host: printStation.host,
+      port: printStation.port,
+      protocol: printStation.protocol,
+      enabled: printStation.online,
+      autoPrint: printStation.autoPrint,
+    },
+  ]
+})
+const activePrinterStations = computed(() => printerStationRows.value.filter((station) => station.enabled))
+const printerRuleRows = computed<PrintRuleSetting[]>(() =>
+  printerSettings.value.rules.length > 0 ? printerSettings.value.rules : [],
+)
+const enabledPrintRules = computed(() => printerRuleRows.value.filter((rule) => rule.enabled))
+const printerRuleSummary = computed(() =>
+  `${enabledPrintRules.value.length} 條啟用 · ${printerRuleRows.value.length} 條全部`,
+)
+const printerStationName = (stationId: string): string =>
+  printerStationRows.value.find((station) => station.id === stationId)?.name ?? printStation.name
+const printerConnectionLabel = (station: PrintStationSetting): string => `${station.host}:${station.port}`
+const printerRuleCategoriesLabel = (rule: PrintRuleSetting): string =>
+  rule.categories.length === 0 ? '全部品項' : rule.categories.map(categoryLabelFor).join('、')
+const printerRuleModeLabel = (rule: PrintRuleSetting): string =>
+  `${serviceModeLabels[rule.serviceMode]} · ${printLabelModeLabels[rule.labelMode]}`
 const queueFilterNote = computed(() => {
   const filtersApplied =
     queueSearchTerm.value.trim().length > 0 ||
@@ -1639,51 +1670,6 @@ const stationProducts = computed(() =>
 )
 const availableStationProducts = computed(() => stationProducts.value.filter((product) => product.available).length)
 const stoppedStationProducts = computed(() => stationProducts.value.length - availableStationProducts.value)
-const lowStockStationProducts = computed(() =>
-  stationProducts.value.filter((product) =>
-    product.inventoryCount !== null &&
-    product.lowStockThreshold !== null &&
-    product.inventoryCount > 0 &&
-    product.inventoryCount <= product.lowStockThreshold,
-  ),
-)
-const stationProductMatchesStatus = (product: MenuItem): boolean => {
-  if (stationAvailabilityFilter.value === 'available') {
-    return product.available && product.inventoryCount !== 0 && !isProductTemporarilyStopped(product)
-  }
-
-  if (stationAvailabilityFilter.value === 'stopped') {
-    return !product.available || product.inventoryCount === 0 || isProductTemporarilyStopped(product)
-  }
-
-  if (stationAvailabilityFilter.value === 'low-stock') {
-    return lowStockStationProducts.value.some((entry) => entry.id === product.id)
-  }
-
-  return true
-}
-const visibleStationProducts = computed(() => {
-  const keyword = stationSearchTerm.value.trim().toLowerCase()
-  return stationProducts.value.filter((product) => {
-    const matchesCategory = stationCategoryFilter.value === 'all' || product.category === stationCategoryFilter.value
-    const matchesKeyword =
-      keyword.length === 0 ||
-      product.name.toLowerCase().includes(keyword) ||
-      product.sku.toLowerCase().includes(keyword) ||
-      product.tags.some((tag) => tag.toLowerCase().includes(keyword))
-
-    return matchesCategory && matchesKeyword && stationProductMatchesStatus(product)
-  })
-})
-const stationFilteredAvailableProducts = computed(() =>
-  visibleStationProducts.value.filter((product) => product.available),
-)
-const stationFilteredStoppedProducts = computed(() =>
-  visibleStationProducts.value.filter((product) => !product.available),
-)
-const stationFilterSummary = computed(() =>
-  `顯示 ${visibleStationProducts.value.length} 個 · 可售 ${stationFilteredAvailableProducts.value.length} 個 · 暫停 ${stationFilteredStoppedProducts.value.length} 個`,
-)
 const supplyStatusDetail = (status: ProductSupplyStatus): string =>
   supplyStatusOptions.find((option) => option.value === status)?.detail ?? ''
 
@@ -2009,9 +1995,6 @@ const isKnowledgeOpen = ref(false)
 const knowledgeSearchTerm = ref('')
 const knowledgeCategoryFilter = ref<KnowledgeCategoryFilter>('all')
 const activeKnowledgeArticleId = ref(posKnowledgeArticles[0]?.id ?? '')
-const stationSearchTerm = ref('')
-const stationCategoryFilter = ref<'all' | MenuCategory>('all')
-const stationAvailabilityFilter = ref<StationAvailabilityFilter>('all')
 const stationBatchProductIds = ref<string[]>([])
 const supplySearchTerm = ref('')
 const supplyCategoryFilter = ref<SupplyCategoryFilter>('coffee')
@@ -3417,35 +3400,8 @@ const setActiveView = (view: AppView): void => {
   globalThis.history.replaceState(null, '', `${globalThis.location.pathname}?${params.toString()}`)
 }
 
-const loadStationProducts = (): void => {
-  void loadProductStatusCatalog()
-}
-
-const toggleStationProduct = (product: MenuItem): void => {
-  void updateProductAvailability(product.id, !product.available)
-}
-
 const stationBatchProductIdSet = computed(() => new Set(stationBatchProductIds.value))
 const isStationBatchBusy = computed(() => stationBatchProductIds.value.length > 0)
-const stationProductIsBusy = (product: MenuItem): boolean =>
-  togglingProductId.value === product.id || stationBatchProductIdSet.value.has(product.id)
-
-const updateVisibleStationProducts = async (isAvailable: boolean): Promise<void> => {
-  if (isStationBatchBusy.value) {
-    return
-  }
-
-  const targetProducts = visibleStationProducts.value.filter((product) => product.available !== isAvailable)
-  if (targetProducts.length === 0) {
-    return
-  }
-
-  stationBatchProductIds.value = targetProducts.map((product) => product.id)
-  for (const product of targetProducts) {
-    await updateProductAvailability(product.id, isAvailable)
-  }
-  stationBatchProductIds.value = []
-}
 
 const setProductSupplyStatus = (productId: string, status: ProductSupplyStatus): void => {
   productSupplyStatuses.value = {
@@ -5094,132 +5050,123 @@ onBeforeUnmount(() => {
                   </div>
                 </section>
 
-                <section v-if="activeWorkspaceTab === 'printing'" class="station-section" aria-labelledby="station-title">
+                <section v-if="activeWorkspaceTab === 'printing'" class="printer-settings-section" aria-labelledby="printer-settings-title">
                   <div class="panel-heading">
                     <div>
-                      <p class="eyebrow">Station</p>
-                      <h2 id="station-title">前台操作</h2>
-                      <span class="panel-note">
-                        {{ availableStationProducts }} 個可售 · {{ stoppedStationProducts }} 個暫停 ·
-                        {{ lowStockStationProducts.length }} 個低庫存
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="station-pin-row">
-                    <span class="backend-edit-status">
-                      {{ backendEditModeEnabled ? '後台編輯模式已啟用' : '連點工具箱 6 下解鎖後台編輯' }}
-                    </span>
-                    <button type="button" :disabled="isLoadingProductStatus" @click="loadStationProducts">
-                      <RefreshCw :size="16" aria-hidden="true" />
-                      {{ isLoadingProductStatus ? '載入中' : '載入' }}
-                    </button>
-                  </div>
-
-                  <p class="station-message">{{ productStatusMessage }}</p>
-
-                  <div class="station-filter-panel" aria-label="供應狀態篩選與批次操作">
-                    <label class="search-box station-search">
-                      <Search :size="18" aria-hidden="true" />
-                      <input v-model="stationSearchTerm" type="search" placeholder="搜尋商品、SKU 或標籤" />
-                    </label>
-                    <div class="station-filter-grid">
-                      <label>
-                        <span>分類</span>
-                        <select v-model="stationCategoryFilter">
-                          <option v-for="category in categoryOptions" :key="`station-${category.value}`" :value="category.value">
-                            {{ category.label }}
-                          </option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>狀態</span>
-                        <select v-model="stationAvailabilityFilter">
-                          <option
-                            v-for="filter in stationAvailabilityFilterOptions"
-                            :key="filter.value"
-                            :value="filter.value"
-                          >
-                            {{ filter.label }}
-                          </option>
-                        </select>
-                      </label>
-                    </div>
-                    <div class="station-batch-actions">
-                      <span>{{ stationFilterSummary }}</span>
-                      <button
-                        type="button"
-                        :disabled="isStationBatchBusy || stationFilteredAvailableProducts.length === 0"
-                        @click="updateVisibleStationProducts(false)"
-                      >
-                        <EyeOff :size="16" aria-hidden="true" />
-                        暫停篩選結果
-                      </button>
-                      <button
-                        type="button"
-                        :disabled="isStationBatchBusy || stationFilteredStoppedProducts.length === 0"
-                        @click="updateVisibleStationProducts(true)"
-                      >
-                        <Eye :size="16" aria-hidden="true" />
-                        恢復篩選結果
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="station-product-list" aria-label="前台商品狀態">
-                    <article v-for="product in visibleStationProducts" :key="product.id" class="station-product-row">
-                      <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
-                      <span>
-                        <strong>{{ product.name }}</strong>
-                        <small>
-                          {{ categoryLabelFor(product.category) }} · {{ formatCurrency(product.price) }}
-                          <template v-if="productStockLabel(product)"> · {{ productStockLabel(product) }}</template>
-                        </small>
-                      </span>
-                      <button
-                        type="button"
-                        :class="{ 'station-product-toggle--stopped': !product.available }"
-                        :disabled="stationProductIsBusy(product)"
-                        @click="toggleStationProduct(product)"
-                      >
-                        <RefreshCw v-if="stationProductIsBusy(product)" :size="16" aria-hidden="true" />
-                        <EyeOff v-else-if="product.available" :size="16" aria-hidden="true" />
-                        <Eye v-else :size="16" aria-hidden="true" />
-                        {{ stationProductIsBusy(product) ? '更新中' : product.available ? '暫停' : '恢復' }}
-                      </button>
-                    </article>
-                    <div v-if="visibleStationProducts.length === 0" class="empty-state station-empty-state">
-                      <EyeOff :size="22" aria-hidden="true" />
-                      <span>沒有符合條件的商品</span>
-                    </div>
-                  </div>
-                </section>
-
-                <section v-if="activeWorkspaceTab === 'printing'" class="printer-section">
-                  <div class="panel-heading">
-                    <div>
-                      <p class="eyebrow">LAN Printing</p>
-                      <h2>列印站</h2>
-                      <span class="panel-note">最後列印：{{ lastPrintTime }}</span>
+                      <p class="eyebrow">Printer Settings</p>
+                      <h2 id="printer-settings-title">出單機設定</h2>
+                      <span class="panel-note">先選出單機，再用印單規則決定服務方式、品項與單據</span>
                     </div>
                     <button class="icon-button" type="button" title="送出測試列印" @click="sendPrinterHealthcheck">
                       <Printer :size="20" aria-hidden="true" />
                     </button>
                   </div>
 
-                  <div class="printer-health">
-                    <CheckCircle2 v-if="printStation.online" :size="20" aria-hidden="true" />
-                    <CircleAlert v-else :size="20" aria-hidden="true" />
-                    <div>
-                      <strong>{{ printStation.name }}</strong>
-                      <span>{{ printStation.protocol }}</span>
+                  <div class="printer-settings-grid">
+                    <div class="printer-config-panel" aria-label="出單機">
+                      <div class="printer-config-heading">
+                        <strong>出單機</strong>
+                        <span>{{ activePrinterStations.length }} 台啟用</span>
+                      </div>
+                      <div class="printer-station-list">
+                        <article
+                          v-for="station in printerStationRows"
+                          :key="station.id"
+                          class="printer-station-card"
+                          :class="{ 'printer-station-card--active': station.id === printStation.id }"
+                        >
+                          <div class="printer-station-card-main">
+                            <CheckCircle2 v-if="station.enabled" :size="20" aria-hidden="true" />
+                            <CircleAlert v-else :size="20" aria-hidden="true" />
+                            <div>
+                              <strong>{{ station.name }}</strong>
+                              <span>{{ station.enabled ? '已啟用出單機' : '未啟用出單機' }}</span>
+                            </div>
+                            <small>{{ station.autoPrint ? '自動出單' : '手動出單' }}</small>
+                          </div>
+                          <dl class="printer-station-details">
+                            <div>
+                              <dt>連線</dt>
+                              <dd>{{ printerConnectionLabel(station) }}</dd>
+                            </div>
+                            <div>
+                              <dt>格式</dt>
+                              <dd>{{ station.protocol }}</dd>
+                            </div>
+                          </dl>
+                        </article>
+                      </div>
+                    </div>
+
+                    <div class="printer-rule-overview" aria-label="印單規則">
+                      <div class="printer-config-heading">
+                        <strong>印單規則</strong>
+                        <span>{{ printerRuleSummary }}</span>
+                      </div>
+                      <div v-if="printerRuleRows.length > 0" class="printer-rule-list">
+                        <article
+                          v-for="rule in printerRuleRows"
+                          :key="rule.id"
+                          class="printer-rule-card"
+                          :class="{ 'printer-rule-card--disabled': !rule.enabled }"
+                        >
+                          <div class="printer-rule-main">
+                            <span>{{ printerRuleModeLabel(rule) }}</span>
+                            <strong>{{ rule.name }}</strong>
+                            <small>{{ printerStationName(rule.stationId) }}</small>
+                          </div>
+                          <div class="printer-rule-meta">
+                            <span>{{ printerRuleCategoriesLabel(rule) }}</span>
+                            <span>{{ rule.copies }} 份</span>
+                            <span>{{ rule.enabled ? '啟用' : '停用' }}</span>
+                          </div>
+                        </article>
+                      </div>
+                      <div v-else class="empty-state printer-rule-empty-state">
+                        <Printer :size="22" aria-hidden="true" />
+                        <span>尚未建立印單規則</span>
+                      </div>
                     </div>
                   </div>
 
-                  <label class="toggle-row">
-                    <input v-model="printStation.autoPrint" type="checkbox" />
-                    自動列印新訂單
-                  </label>
+                  <div class="printer-flow-panel" aria-label="列印流程">
+                    <strong>列印流程</strong>
+                    <div class="printer-flow-steps">
+                      <span>訂單送出</span>
+                      <ChevronRight :size="18" aria-hidden="true" />
+                      <span>匹配服務方式</span>
+                      <ChevronRight :size="18" aria-hidden="true" />
+                      <span>匹配品項分類</span>
+                      <ChevronRight :size="18" aria-hidden="true" />
+                      <span>產生列印單</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'printing'" class="printer-section printer-jobs-section">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="eyebrow">Print Queue</p>
+                      <h2>列印佇列</h2>
+                      <span class="panel-note">{{ printJobRows.length }} 筆 · 最後列印：{{ lastPrintTime }}</span>
+                    </div>
+                  </div>
+
+                  <div class="printer-control-strip">
+                    <div class="printer-health">
+                      <CheckCircle2 v-if="printStation.online" :size="20" aria-hidden="true" />
+                      <CircleAlert v-else :size="20" aria-hidden="true" />
+                      <div>
+                        <strong>{{ printStation.name }}</strong>
+                        <span>{{ printStation.protocol }} · {{ printStation.host }}:{{ printStation.port }}</span>
+                      </div>
+                    </div>
+
+                    <label class="toggle-row printer-auto-print-toggle">
+                      <input v-model="printStation.autoPrint" type="checkbox" />
+                      自動列印新訂單
+                    </label>
+                  </div>
 
                   <div class="print-job-panel" aria-label="列印單列表">
                     <div class="print-job-heading">
