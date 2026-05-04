@@ -491,7 +491,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .queue-command-actions > span {
@@ -501,6 +502,7 @@ button:disabled {
   border-radius: var(--radius);
   background: var(--surface-muted);
   color: var(--muted);
+  font-size: 0.82rem;
   font-weight: 900;
   white-space: nowrap;
 }
@@ -512,17 +514,19 @@ button:disabled {
 }
 
 .pos-command-bar--queue {
-  min-height: 68px;
+  min-height: 58px;
   margin: -12px -12px 0;
-  padding: 10px 28px;
+  padding: 8px 28px;
   border: 0;
   border-radius: 0;
   box-shadow: 0 4px 14px rgba(24, 26, 27, 0.14);
 }
 
 .pos-command-bar--queue h1 {
+  overflow: visible;
   font-size: clamp(1.08rem, 1.38vw, 1.36rem);
   line-height: 1.08;
+  text-overflow: clip;
 }
 
 .pos-command-bar--queue .eyebrow {
@@ -530,7 +534,7 @@ button:disabled {
   font-size: 0.66rem;
 }
 
-.pos-command-bar--queue span {
+.pos-command-bar--queue > div:first-child span {
   display: block;
   max-width: 44ch;
   overflow: hidden;
@@ -541,6 +545,11 @@ button:disabled {
 
 .pos-command-bar > div:first-child {
   min-width: 0;
+}
+
+.pos-command-bar--queue > div:first-child {
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 .pos-main-surface .workspace {
@@ -2523,12 +2532,14 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .queue-section {
+  display: flex;
+  flex-direction: column;
   max-height: none;
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
-  padding: calc(var(--pos-queue-padding-y) * 0.72) var(--pos-queue-padding-x) max(72px, var(--pos-queue-padding-y));
+  padding: calc(var(--pos-queue-padding-y) * 0.54) var(--pos-queue-padding-x) 0;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -2548,6 +2559,12 @@ button.cart-line-summary:focus-visible {
 
 .workspace--queue .panel-heading h2 {
   font-size: 1.18rem;
+}
+
+.queue-reset-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .queue-reset-button {
@@ -2602,7 +2619,8 @@ button.cart-line-summary:focus-visible {
 .workspace--queue .queue-tools {
   grid-template-columns: minmax(360px, 0.48fr) minmax(0, 1fr);
   gap: 12px;
-  margin-bottom: 18px;
+  flex: 0 0 auto;
+  margin-bottom: 10px;
 }
 
 .queue-search {
@@ -3152,7 +3170,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .queue-empty-state {
-  min-height: calc(var(--pos-stage-height) - 430px);
+  min-height: 240px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -3166,6 +3184,19 @@ button.cart-line-summary:focus-visible {
 
 .workspace--queue .order-swipe-row {
   border-top: 1px solid var(--line-strong);
+}
+
+.queue-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: max(96px, calc(var(--pos-queue-padding-y) * 2.2));
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.queue-list-scroll .order-swipe-row:first-child {
+  border-top: 0;
 }
 
 .workspace--queue .order-row {
@@ -3289,6 +3320,10 @@ button.cart-line-summary:focus-visible {
 }
 
 .queue-tools + .order-swipe-row .order-row {
+  padding-top: 0;
+}
+
+.queue-list-scroll .order-swipe-row:first-child .order-row {
   padding-top: 0;
 }
 
