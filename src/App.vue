@@ -5698,7 +5698,11 @@ onBeforeUnmount(() => {
               <button class="icon-button" type="button" title="關閉供應狀態" @click="closeSupplyStatus">
                 <X :size="26" aria-hidden="true" />
               </button>
-              <h2 id="supply-title">供應狀態</h2>
+              <div class="supply-modal-title">
+                <p class="eyebrow">Supply</p>
+                <h2 id="supply-title">供應狀態</h2>
+                <span>先調整販售狀態，需要時再展開管理功能</span>
+              </div>
               <div class="supply-modal-actions">
                 <label class="supply-pin-entry">
                   <span>管理 PIN</span>
@@ -5758,13 +5762,6 @@ onBeforeUnmount(() => {
                 >
                   {{ category.label }}
                 </button>
-                <form class="supply-rail-form" @submit.prevent="addMenuCategory">
-                  <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
-                  <button type="submit">
-                    <Plus :size="18" aria-hidden="true" />
-                    新增分類
-                  </button>
-                </form>
               </nav>
 
               <section class="supply-content" aria-label="供應狀態清單">
@@ -5789,24 +5786,37 @@ onBeforeUnmount(() => {
 
                 <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
 
-                <section v-if="selectedSupplyMenuCategory" class="supply-management-panel" aria-label="分類與商品管理">
-                  <div class="supply-management-title">
-                    <strong>分類與商品</strong>
-                    <button type="button" class="ghost-danger-button" @click="deleteSelectedMenuCategory">
+                <details v-if="selectedSupplyMenuCategory" class="supply-management-panel" aria-label="分類與商品管理">
+                  <summary>
+                    <span>
+                      <strong>管理商品與分類</strong>
+                      <small>新增商品、建立分類、刪除目前分類</small>
+                    </span>
+                    <ChevronDown :size="22" aria-hidden="true" />
+                  </summary>
+                  <div class="supply-management-body">
+                    <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
+                      <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
+                      <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
+                      <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
+                      <button type="submit">
+                        <Plus :size="18" aria-hidden="true" />
+                        新增商品
+                      </button>
+                    </form>
+                    <form class="supply-category-form" @submit.prevent="addMenuCategory">
+                      <input v-model="newCategoryName" type="text" placeholder="新增分類，例如：甜點" />
+                      <button type="submit">
+                        <Plus :size="18" aria-hidden="true" />
+                        新增分類
+                      </button>
+                    </form>
+                    <button type="button" class="ghost-danger-button supply-delete-category-button" @click="deleteSelectedMenuCategory">
                       <Trash2 :size="18" aria-hidden="true" />
-                      刪除分類
+                      刪除目前分類
                     </button>
                   </div>
-                  <form class="supply-product-form" @submit.prevent="addProductToSupplyCategory">
-                    <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
-                    <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
-                    <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
-                    <button type="submit">
-                      <Plus :size="18" aria-hidden="true" />
-                      新增商品
-                    </button>
-                  </form>
-                </section>
+                </details>
 
                 <section v-else-if="selectedSupplyCategoryIsNotes" class="supply-management-panel supply-management-panel--notes" aria-label="可用註記管理">
                   <div class="supply-management-title">
@@ -5940,17 +5950,22 @@ onBeforeUnmount(() => {
                       <ChevronDown :size="20" aria-hidden="true" />
                     </label>
                     <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
-                    <div v-if="row.kind === 'product' && row.product" class="supply-row-options">
-                      <span>註記群組</span>
-                      <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
-                        <input
-                          type="checkbox"
-                          :checked="productHasOptionGroup(row.product, group.id)"
-                          @change="toggleProductOptionGroup(row.product, group.id)"
-                        />
-                        {{ group.label }}
-                      </label>
-                    </div>
+                    <details v-if="row.kind === 'product' && row.product" class="supply-row-options">
+                      <summary>
+                        <span>註記群組</span>
+                        <ChevronDown :size="16" aria-hidden="true" />
+                      </summary>
+                      <div class="supply-row-option-list">
+                        <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
+                          <input
+                            type="checkbox"
+                            :checked="productHasOptionGroup(row.product, group.id)"
+                            @change="toggleProductOptionGroup(row.product, group.id)"
+                          />
+                          {{ group.label }}
+                        </label>
+                      </div>
+                    </details>
                   </article>
 
                   <div v-if="visibleSupplyRows.length === 0" class="empty-state supply-empty-state">
