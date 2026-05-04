@@ -4571,6 +4571,29 @@ button.cart-line-summary:focus-visible {
   padding-right: 16px;
 }
 
+.supply-pin-entry {
+  display: grid;
+  min-width: 178px;
+  gap: 4px;
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.supply-pin-entry input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 900;
+  outline: none;
+  padding: 0 10px;
+}
+
 .supply-save-button,
 .supply-undo-button {
   display: inline-flex;
@@ -4839,6 +4862,10 @@ button.cart-line-summary:focus-visible {
   grid-template-columns: minmax(220px, 1fr) auto 80px auto;
 }
 
+.supply-note-form--available {
+  grid-template-columns: minmax(260px, 1fr) 120px auto;
+}
+
 .supply-management-panel--notes {
   max-height: 340px;
   overflow: auto;
@@ -4871,7 +4898,14 @@ button.cart-line-summary:focus-visible {
   gap: 10px;
 }
 
-.supply-note-group {
+.supply-note-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.supply-note-group,
+.supply-note-catalog-card {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -4880,37 +4914,43 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-muted);
 }
 
-.supply-note-group header {
+.supply-note-group header,
+.supply-note-catalog-card header {
   display: flex;
   align-items: start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.supply-note-group header div {
+.supply-note-group header div,
+.supply-note-catalog-card header div {
   display: grid;
   gap: 3px;
 }
 
-.supply-note-group strong {
+.supply-note-group strong,
+.supply-note-catalog-card strong {
   color: var(--ink);
   font-size: 0.96rem;
   font-weight: 950;
 }
 
-.supply-note-group span {
+.supply-note-group span,
+.supply-note-catalog-card span {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 850;
 }
 
-.supply-note-choice-list {
+.supply-note-choice-list,
+.supply-note-checkbox-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.supply-note-choice-delete {
+.supply-note-choice-delete,
+.supply-note-checkbox {
   display: inline-flex;
   min-height: 36px;
   align-items: center;
@@ -4922,6 +4962,12 @@ button.cart-line-summary:focus-visible {
   font-size: 0.82rem;
   font-weight: 900;
   padding: 0 10px;
+}
+
+.supply-note-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
 }
 
 .supply-note-empty {
@@ -6721,6 +6767,16 @@ button.cart-line-summary:focus-visible {
     padding-right: 8px;
   }
 
+  .supply-pin-entry {
+    min-width: 128px;
+    font-size: 0.66rem;
+  }
+
+  .supply-pin-entry input {
+    min-height: 32px;
+    font-size: 0.78rem;
+  }
+
   .supply-save-button,
   .supply-undo-button {
     min-height: 48px;
@@ -6768,6 +6824,12 @@ button.cart-line-summary:focus-visible {
   .supply-content-header {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .supply-product-form,
+  .supply-note-form,
+  .supply-note-form--available {
+    grid-template-columns: 1fr;
   }
 
   .supply-batch-select {

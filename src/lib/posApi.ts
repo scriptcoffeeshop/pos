@@ -11,6 +11,7 @@ import type {
   DailySalesReport,
   CartLine,
   OnlineMenuCategory,
+  OnlineMenuOptionChoice,
   OnlineMenuOptionGroup,
   OnlineNotificationRepeatMode,
   OnlineOrderingSettings,
@@ -539,6 +540,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
+  availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -635,6 +637,46 @@ const normalizeOnlineMenuOptionGroups = (value: unknown): OnlineMenuOptionGroup[
   })
 }
 
+const choicesFromOnlineMenuOptionGroups = (groups: OnlineMenuOptionGroup[]): OnlineMenuOptionChoice[] => {
+  const seenChoiceIds = new Set<string>()
+  return groups.flatMap((group) =>
+    group.choices.flatMap((choice) => {
+      if (seenChoiceIds.has(choice.id)) {
+        return []
+      }
+      seenChoiceIds.add(choice.id)
+      return [{ ...choice }]
+    }),
+  )
+}
+
+const normalizeOnlineMenuOptionChoices = (
+  value: unknown,
+  fallbackChoices: OnlineMenuOptionChoice[] = [],
+): OnlineMenuOptionChoice[] => {
+  const sourceChoices = Array.isArray(value) ? [...value, ...fallbackChoices] : fallbackChoices
+  const seenChoiceIds = new Set<string>()
+  return sourceChoices.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const choice = entry as Partial<OnlineMenuOptionChoice>
+    const id = sanitizeOnlineText(choice.id)
+    const label = sanitizeOnlineText(choice.label)
+    if (!id || !label || seenChoiceIds.has(id)) {
+      return []
+    }
+
+    seenChoiceIds.add(id)
+    const normalizedChoice: OnlineMenuOptionChoice = { id, label }
+    if (Number.isFinite(choice.priceDelta)) {
+      normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0)
+    }
+    return [normalizedChoice]
+  })
+}
+
 const normalizeProductOptionAssignments = (
   value: unknown,
   groups: OnlineMenuOptionGroup[],
@@ -675,6 +717,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
   const settings = value as Partial<OnlineOrderingSettings>
   const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories)
   const menuOptionGroups = normalizeOnlineMenuOptionGroups(settings.menuOptionGroups)
+  const availableOptionChoices = normalizeOnlineMenuOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineMenuOptionGroups(menuOptionGroups),
+  )
   const notificationRepeatMode = notificationRepeatModes.has(settings.notificationRepeatMode as OnlineNotificationRepeatMode)
     ? (settings.notificationRepeatMode as OnlineNotificationRepeatMode)
     : defaults.notificationRepeatMode
@@ -705,6 +751,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
         ? settings.pauseMessage.trim().slice(0, 120)
         : defaults.pauseMessage,
     menuCategories,
+    availableOptionChoices,
     menuOptionGroups,
     productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
     noteSupplyStatuses:

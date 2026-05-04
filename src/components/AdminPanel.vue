@@ -260,6 +260,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   notificationVolume: 80,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
+  availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -278,6 +279,7 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
   ...defaultOnlineOrderingSettings(),
   ...settings,
   menuCategories: settings.menuCategories.map((category) => ({ ...category })),
+  availableOptionChoices: (settings.availableOptionChoices ?? []).map((choice) => ({ ...choice })),
   menuOptionGroups: settings.menuOptionGroups.map((group) => ({
     ...group,
     choices: group.choices.map((choice) => ({ ...choice })),
@@ -1326,6 +1328,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
         notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
+        availableOptionChoices: onlineOrdering.value.availableOptionChoices,
         menuOptionGroups: onlineOrdering.value.menuOptionGroups,
         productOptionAssignments: onlineOrdering.value.productOptionAssignments,
         noteSupplyStatuses: onlineOrdering.value.noteSupplyStatuses,

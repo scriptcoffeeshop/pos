@@ -250,6 +250,7 @@ interface OnlineOrderingSettings {
   notificationVolume: number;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
+  availableOptionChoices: OnlineMenuOptionChoice[];
   menuOptionGroups: OnlineMenuOptionGroup[];
   productOptionAssignments: Record<string, string[]>;
   noteSupplyStatuses: Record<string, ProductSupplyStatus>;
@@ -400,6 +401,7 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   notificationVolume: 80,
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
+  availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
@@ -3200,6 +3202,49 @@ const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] =>
   });
 };
 
+const choicesFromOnlineOptionGroups = (groups: OnlineMenuOptionGroup[]): OnlineMenuOptionChoice[] => {
+  const seenChoiceIds = new Set<string>();
+  return groups.flatMap((group) =>
+    group.choices.flatMap((choice) => {
+      if (seenChoiceIds.has(choice.id)) {
+        return [];
+      }
+      seenChoiceIds.add(choice.id);
+      return [{ ...choice }];
+    })
+  );
+};
+
+const normalizeOnlineOptionChoices = (
+  input: unknown,
+  fallbackChoices: OnlineMenuOptionChoice[] = [],
+): OnlineMenuOptionChoice[] => {
+  const sourceChoices = Array.isArray(input) ? [...input, ...fallbackChoices] : fallbackChoices;
+  const seenChoiceIds = new Set<string>();
+  return sourceChoices.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const choice = entry as Partial<OnlineMenuOptionChoice>;
+    const choiceId = sanitizeText(choice.id, "").slice(0, 80);
+    const choiceLabel = sanitizeText(choice.label, "").slice(0, 80);
+    if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+      return [];
+    }
+
+    seenChoiceIds.add(choiceId);
+    const normalizedChoice: OnlineMenuOptionChoice = {
+      id: choiceId,
+      label: choiceLabel,
+    };
+    if (Number.isFinite(choice.priceDelta)) {
+      normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0);
+    }
+    return [normalizedChoice];
+  });
+};
+
 const normalizeOnlineMenuCategories = (input: unknown): OnlineMenuCategory[] => {
   if (!Array.isArray(input)) {
     return [];
@@ -3281,6 +3326,10 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
       ? settings.notificationRepeatMode
       : defaultOnlineOrdering.notificationRepeatMode;
   const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
+  const availableOptionChoices = normalizeOnlineOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineOptionGroups(menuOptionGroups),
+  );
 
   return {
     enabled: settings.enabled !== false,
@@ -3300,6 +3349,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
       : defaultOnlineOrdering.notificationVolume,
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
+    availableOptionChoices,
     menuOptionGroups,
     productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
     noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
@@ -3341,6 +3391,10 @@ const validateOnlineOrdering = (input: unknown): {
       : defaultOnlineOrdering.notificationRepeatMode;
   const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories);
   const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
+  const availableOptionChoices = normalizeOnlineOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineOptionGroups(menuOptionGroups),
+  );
 
   return {
     value: {
@@ -3355,6 +3409,7 @@ const validateOnlineOrdering = (input: unknown): {
       notificationVolume,
       pauseMessage,
       menuCategories,
+      availableOptionChoices,
       menuOptionGroups,
       productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
       noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),

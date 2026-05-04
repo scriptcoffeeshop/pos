@@ -196,6 +196,7 @@ export interface OnlineOrderingSettings {
   notificationVolume: number
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
+  availableOptionChoices: OnlineMenuOptionChoice[]
   menuOptionGroups: OnlineMenuOptionGroup[]
   productOptionAssignments: Record<string, string[]>
   noteSupplyStatuses: Record<string, ProductSupplyStatus>

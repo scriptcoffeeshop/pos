@@ -162,7 +162,10 @@ const optionGroupMap = computed(() =>
 
 const visibleChoicesForGroup = (group: OnlineMenuOptionGroup): OnlineMenuOptionGroup['choices'] =>
   group.choices.filter((choice) => {
-    const status = onlineOrdering.value.noteSupplyStatuses[`${group.id}-${choice.id}`] ?? 'normal'
+    const status =
+      onlineOrdering.value.noteSupplyStatuses[choice.id] ??
+      onlineOrdering.value.noteSupplyStatuses[`${group.id}-${choice.id}`] ??
+      'normal'
     return status === 'normal'
   })
 

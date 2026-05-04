@@ -82,7 +82,7 @@ type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
-type SupplyCategoryFilter = MenuCategory | 'notes'
+type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
 type CategoryMoveDirection = -1 | 1
@@ -163,10 +163,10 @@ interface QueueAdminActionRequest {
 
 interface SupplyNoteItem {
   id: string
-  groupId: string
   choiceId: string
   name: string
   group: string
+  groupIds: string[]
 }
 
 interface MenuCategoryDefinition {
@@ -188,6 +188,7 @@ interface SupplyStatusRow {
 interface SupplyStateSnapshot {
   label: string
   menuCategories: MenuCategoryDefinition[]
+  availableNotes: MenuOptionChoice[]
   optionGroups: MenuOptionGroup[]
   productAssignments: Record<string, string[]>
   productStatuses: Record<string, ProductSupplyStatus>
@@ -201,9 +202,11 @@ const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
 const supplyNoteStatusStorageKey = 'script-coffee-pos-supply-note-statuses'
 const menuCategoryStorageKey = 'script-coffee-pos-menu-categories'
+const availableNoteStorageKey = 'script-coffee-pos-available-notes'
 const optionGroupStorageKey = 'script-coffee-pos-option-groups'
 const productOptionAssignmentStorageKey = 'script-coffee-pos-product-option-assignments'
 const supplyNotesFilterValue = '__notes__'
+const supplyNoteGroupsFilterValue = '__note_groups__'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
 const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
@@ -767,6 +770,52 @@ const writeOptionGroups = (groups: MenuOptionGroup[]): void => {
   writeStorageValue(optionGroupStorageKey, groups)
 }
 
+const mergeOptionChoices = (choices: MenuOptionChoice[]): MenuOptionChoice[] => {
+  const seenChoiceIds = new Set<string>()
+  return choices.flatMap((choice): MenuOptionChoice[] => {
+    const id = normalizeSpace(choice.id).slice(0, 64)
+    const label = normalizeSpace(choice.label).slice(0, 40)
+    if (!id || !label || seenChoiceIds.has(id)) {
+      return []
+    }
+
+    seenChoiceIds.add(id)
+    const normalizedChoice: MenuOptionChoice = { id, label }
+    if (typeof choice.priceDelta === 'number' && Number.isFinite(choice.priceDelta)) {
+      normalizedChoice.priceDelta = Math.trunc(choice.priceDelta)
+    }
+    return [normalizedChoice]
+  })
+}
+
+const normalizeAvailableNotes = (value: unknown, groups: MenuOptionGroup[]): MenuOptionChoice[] => {
+  const groupChoices = groups.flatMap((group) => group.choices)
+  const storedChoices = Array.isArray(value) ? value.flatMap((entry): MenuOptionChoice[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const source = entry as Partial<MenuOptionChoice>
+    const choice: MenuOptionChoice = {
+      id: typeof source.id === 'string' ? source.id : '',
+      label: typeof source.label === 'string' ? source.label : '',
+    }
+    if (typeof source.priceDelta === 'number') {
+      choice.priceDelta = source.priceDelta
+    }
+    return [choice]
+  }) : []
+
+  return mergeOptionChoices([...storedChoices, ...groupChoices])
+}
+
+const readAvailableNotes = (groups: MenuOptionGroup[]): MenuOptionChoice[] =>
+  normalizeAvailableNotes(readStorageValue<unknown>(availableNoteStorageKey, null), groups)
+
+const writeAvailableNotes = (choices: MenuOptionChoice[]): void => {
+  writeStorageValue(availableNoteStorageKey, choices)
+}
+
 const readProductOptionAssignments = (): Record<string, string[]> => {
   const parsed = readStorageValue<unknown>(productOptionAssignmentStorageKey, {})
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -802,17 +851,17 @@ const supplyStatusFilterOptions: Array<{ value: SupplyStatusFilter; label: strin
 
 const menuCategoryDefinitions = ref<MenuCategoryDefinition[]>(readMenuCategoryDefinitions())
 const optionGroupCatalog = ref<MenuOptionGroup[]>(readOptionGroups())
+const availableNoteCatalog = ref<MenuOptionChoice[]>(readAvailableNotes(optionGroupCatalog.value))
 const productOptionAssignments = ref<Record<string, string[]>>(readProductOptionAssignments())
 const newCategoryName = ref('')
 const newProductName = ref('')
 const newProductPrice = ref(0)
 const newProductSku = ref('')
+const newAvailableNoteName = ref('')
+const newAvailableNotePriceDelta = ref(0)
 const newOptionGroupName = ref('')
 const newOptionGroupRequired = ref(false)
 const newOptionGroupMax = ref(1)
-const newOptionChoiceGroupId = ref(optionGroupCatalog.value[0]?.id ?? '')
-const newOptionChoiceName = ref('')
-const newOptionChoicePriceDelta = ref(0)
 const supplyActionMessage = ref('')
 const supplyUndoStack = ref<SupplyStateSnapshot[]>([])
 const supplyHasUnsavedChanges = ref(false)
@@ -827,6 +876,9 @@ const cloneOptionGroups = (groups: MenuOptionGroup[]): MenuOptionGroup[] =>
     ...group,
     choices: group.choices.map((choice) => ({ ...choice })),
   }))
+
+const cloneOptionChoices = (choices: MenuOptionChoice[]): MenuOptionChoice[] =>
+  choices.map((choice) => ({ ...choice }))
 
 const cloneProducts = (products: MenuItem[]): MenuItem[] =>
   products.map((product) => ({ ...product, tags: [...product.tags] }))
@@ -845,6 +897,7 @@ const currentSupplyProducts = (): MenuItem[] =>
 const captureSupplySnapshot = (label: string): SupplyStateSnapshot => ({
   label,
   menuCategories: cloneMenuCategories(menuCategoryDefinitions.value),
+  availableNotes: cloneOptionChoices(availableNoteCatalog.value),
   optionGroups: cloneOptionGroups(optionGroupCatalog.value),
   productAssignments: cloneProductAssignments(productOptionAssignments.value),
   productStatuses: { ...productSupplyStatuses.value },
@@ -864,6 +917,7 @@ const pushSupplyUndo = (label: string): void => {
 
 const restoreSupplySnapshot = (snapshot: SupplyStateSnapshot): void => {
   menuCategoryDefinitions.value = cloneMenuCategories(snapshot.menuCategories)
+  availableNoteCatalog.value = cloneOptionChoices(snapshot.availableNotes)
   optionGroupCatalog.value = cloneOptionGroups(snapshot.optionGroups)
   productOptionAssignments.value = cloneProductAssignments(snapshot.productAssignments)
   productSupplyStatuses.value = { ...snapshot.productStatuses }
@@ -887,6 +941,9 @@ const undoLastSupplyAction = (): void => {
 const onlineOptionGroupsForSync = (): OnlineOrderingSettings['menuOptionGroups'] =>
   cloneOptionGroups(optionGroupCatalog.value)
 
+const onlineAvailableNotesForSync = (): OnlineOrderingSettings['availableOptionChoices'] =>
+  cloneOptionChoices(availableNoteCatalog.value)
+
 const onlineMenuCategoriesForSync = (): OnlineOrderingSettings['menuCategories'] =>
   cloneMenuCategories(menuCategoryDefinitions.value)
 
@@ -895,6 +952,7 @@ const onlineProductAssignmentsForSync = (): OnlineOrderingSettings['productOptio
 
 const runtimeSupplyConfigHasData = (settings: OnlineOrderingSettings): boolean =>
   settings.menuCategories.length > 0 ||
+  settings.availableOptionChoices.length > 0 ||
   settings.menuOptionGroups.length > 0 ||
   Object.keys(settings.productOptionAssignments).length > 0 ||
   Object.keys(settings.noteSupplyStatuses).length > 0
@@ -904,8 +962,10 @@ const applyRuntimeSupplyConfig = (settings: OnlineOrderingSettings): void => {
     return
   }
 
+  const runtimeOptionGroups = normalizeOptionGroups(settings.menuOptionGroups)
   menuCategoryDefinitions.value = normalizeCategoryDefinitions(settings.menuCategories)
-  optionGroupCatalog.value = normalizeOptionGroups(settings.menuOptionGroups)
+  optionGroupCatalog.value = runtimeOptionGroups
+  availableNoteCatalog.value = normalizeAvailableNotes(settings.availableOptionChoices, runtimeOptionGroups)
   productOptionAssignments.value = cloneProductAssignments(settings.productOptionAssignments)
   noteSupplyStatuses.value = { ...settings.noteSupplyStatuses }
 }
@@ -914,6 +974,7 @@ const saveSupplyChanges = async (): Promise<void> => {
   writeSupplyStatusMap(supplyProductStatusStorageKey, productSupplyStatuses.value)
   writeSupplyStatusMap(supplyNoteStatusStorageKey, noteSupplyStatuses.value)
   writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
+  writeAvailableNotes(availableNoteCatalog.value)
   writeOptionGroups(optionGroupCatalog.value)
   writeProductOptionAssignments(productOptionAssignments.value)
 
@@ -937,6 +998,7 @@ const saveSupplyChanges = async (): Promise<void> => {
       {
         ...onlineOrderingSettings.value,
         menuCategories: onlineMenuCategoriesForSync(),
+        availableOptionChoices: onlineAvailableNotesForSync(),
         menuOptionGroups: onlineOptionGroupsForSync(),
         productOptionAssignments: onlineProductAssignmentsForSync(),
         noteSupplyStatuses: { ...noteSupplyStatuses.value },
@@ -1599,15 +1661,41 @@ const productCurrentSupplyStatus = (product: MenuItem): ProductSupplyStatus => {
   return productSupplyStatuses.value[product.id] ?? 'normal'
 }
 
-const noteCurrentSupplyStatus = (note: SupplyNoteItem): ProductSupplyStatus =>
-  noteSupplyStatuses.value[note.id] ?? 'normal'
+const noteCurrentSupplyStatus = (note: SupplyNoteItem): ProductSupplyStatus => {
+  const directStatus = noteSupplyStatuses.value[note.id]
+  if (directStatus) {
+    return directStatus
+  }
 
-const supplyCategoryLabel = (category: SupplyCategoryFilter): string =>
-  supplyCategoryOptions.value.find((option) => option.value === category)?.label ?? categoryLabelFor(category)
+  for (const groupId of note.groupIds) {
+    const legacyStatus = noteSupplyStatuses.value[`${groupId}-${note.choiceId}`]
+    if (legacyStatus) {
+      return legacyStatus
+    }
+  }
 
-const supplyProductRows = computed<SupplyStatusRow[]>(() =>
-  stationProducts.value
-    .filter((product) => product.posVisible && product.category === supplyCategoryFilter.value)
+  return 'normal'
+}
+
+const optionChoiceSupplyStatus = (group: MenuOptionGroup, choice: MenuOptionChoice): ProductSupplyStatus =>
+  noteSupplyStatuses.value[choice.id] ?? noteSupplyStatuses.value[`${group.id}-${choice.id}`] ?? 'normal'
+
+const supplyCategoryLabel = (category: SupplyCategoryFilter): string => {
+  const optionLabel = supplyCategoryOptions.value.find((option) => option.value === category)?.label
+  if (optionLabel) {
+    return optionLabel
+  }
+  return category === supplyNotesFilterValue || category === supplyNoteGroupsFilterValue ? '註記' : categoryLabelFor(category)
+}
+
+const supplyProductRows = computed<SupplyStatusRow[]>(() => {
+  const category = selectedSupplyMenuCategory.value
+  if (!category) {
+    return []
+  }
+
+  return stationProducts.value
+    .filter((product) => product.posVisible && product.category === category)
     .map((product) => ({
       id: product.id,
       kind: 'product',
@@ -1618,8 +1706,8 @@ const supplyProductRows = computed<SupplyStatusRow[]>(() =>
       }`,
       status: productCurrentSupplyStatus(product),
       product,
-    })),
-)
+    }))
+})
 const supplyNoteRows = computed<SupplyStatusRow[]>(() =>
   supplyNoteItems.value.map((note) => ({
     id: note.id,
@@ -1633,7 +1721,11 @@ const supplyNoteRows = computed<SupplyStatusRow[]>(() =>
 )
 const visibleSupplyRows = computed<SupplyStatusRow[]>(() => {
   const keyword = supplySearchTerm.value.trim().toLowerCase()
-  const baseRows = supplyCategoryFilter.value === supplyNotesFilterValue ? supplyNoteRows.value : supplyProductRows.value
+  const baseRows = selectedSupplyCategoryIsNotes.value
+    ? supplyNoteRows.value
+    : selectedSupplyCategoryIsNoteGroups.value
+      ? []
+      : supplyProductRows.value
 
   return baseRows.filter((row) => {
     const matchesKeyword =
@@ -1874,17 +1966,29 @@ const supplyCategoryOptions = computed<Array<{ value: SupplyCategoryFilter; labe
     label: category.label,
   })),
   { value: supplyNotesFilterValue, label: '可用註記' },
+  { value: supplyNoteGroupsFilterValue, label: '註記群組' },
 ])
+const noteGroupLabelsForChoice = (choiceId: string): string[] =>
+  optionGroupCatalog.value
+    .filter((group) => group.choices.some((choice) => choice.id === choiceId))
+    .map((group) => group.label)
+
+const noteGroupIdsForChoice = (choiceId: string): string[] =>
+  optionGroupCatalog.value
+    .filter((group) => group.choices.some((choice) => choice.id === choiceId))
+    .map((group) => group.id)
+
 const supplyNoteItems = computed<SupplyNoteItem[]>(() =>
-  optionGroupCatalog.value.flatMap((group) =>
-    group.choices.map((choice) => ({
-      id: supplyNoteIdForChoice(group, choice),
-      groupId: group.id,
+  availableNoteCatalog.value.map((choice) => {
+    const groupLabels = noteGroupLabelsForChoice(choice.id)
+    return {
+      id: choice.id,
       choiceId: choice.id,
       name: choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label,
-      group: group.label,
-    })),
-  ),
+      group: groupLabels.length > 0 ? groupLabels.join('、') : '尚未加入群組',
+      groupIds: noteGroupIdsForChoice(choice.id),
+    }
+  }),
 )
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
@@ -1900,7 +2004,6 @@ const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.
 const ticketStartedLabel = computed(() =>
   counterDraftStartedAt.value ? formatOrderTime(counterDraftStartedAt.value) : currentClockLabel.value,
 )
-const supplyNoteIdForChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): string => `${group.id}-${choice.id}`
 const supplyNoteStatusForName = (name: string): ProductSupplyStatus => {
   const note = supplyNoteItems.value.find((item) => item.name === name)
   return note ? noteCurrentSupplyStatus(note) : 'normal'
@@ -1928,7 +2031,7 @@ const optionGroupsForProduct = (product: MenuItem): MenuOptionGroup[] => {
     .filter((group) => groupIds.has(group.id))
     .map((group) => ({
       ...group,
-      choices: group.choices.filter((choice) => noteSupplyStatuses.value[supplyNoteIdForChoice(group, choice)] !== 'stopped'),
+      choices: group.choices.filter((choice) => optionChoiceSupplyStatus(group, choice) !== 'stopped'),
     }))
     .filter((group) => group.choices.length > 0)
 }
@@ -3228,9 +3331,11 @@ const selectSupplyCategory = (category: SupplyCategoryFilter): void => {
 }
 
 const selectedSupplyCategoryIsNotes = computed(() => supplyCategoryFilter.value === supplyNotesFilterValue)
-const selectedSupplyMenuCategory = computed<MenuCategory | null>(() =>
-  selectedSupplyCategoryIsNotes.value ? null : supplyCategoryFilter.value,
-)
+const selectedSupplyCategoryIsNoteGroups = computed(() => supplyCategoryFilter.value === supplyNoteGroupsFilterValue)
+const selectedSupplyMenuCategory = computed<MenuCategory | null>(() => {
+  const category = supplyCategoryFilter.value
+  return category === supplyNotesFilterValue || category === supplyNoteGroupsFilterValue ? null : category
+})
 
 const addMenuCategory = (): void => {
   const label = normalizeSpace(newCategoryName.value).slice(0, 40)
@@ -3395,7 +3500,7 @@ const deleteSupplyProduct = async (product: MenuItem): Promise<void> => {
 const addOptionGroup = (): void => {
   const label = normalizeSpace(newOptionGroupName.value).slice(0, 40)
   if (!label) {
-    supplyActionMessage.value = '請輸入註記大項名稱'
+    supplyActionMessage.value = '請輸入註記群組名稱'
     return
   }
 
@@ -3404,7 +3509,7 @@ const addOptionGroup = (): void => {
   const max = Math.max(1, Math.trunc(Number(newOptionGroupMax.value) || 1))
   const required = newOptionGroupRequired.value
   const min = required ? 1 : 0
-  pushSupplyUndo('新增註記大項')
+  pushSupplyUndo('新增註記群組')
   const group: MenuOptionGroup = {
     id,
     label,
@@ -3416,7 +3521,6 @@ const addOptionGroup = (): void => {
   }
 
   optionGroupCatalog.value = [...optionGroupCatalog.value, group]
-  newOptionChoiceGroupId.value = id
   newOptionGroupName.value = ''
   newOptionGroupRequired.value = false
   newOptionGroupMax.value = 1
@@ -3425,7 +3529,7 @@ const addOptionGroup = (): void => {
 
 const deleteOptionGroup = (groupId: string): void => {
   const group = optionGroupCatalog.value.find((entry) => entry.id === groupId)
-  pushSupplyUndo('刪除註記大項')
+  pushSupplyUndo('刪除註記群組')
   optionGroupCatalog.value = optionGroupCatalog.value.filter((entry) => entry.id !== groupId)
   productOptionAssignments.value = Object.fromEntries(
     Object.entries(productOptionAssignments.value).map(([productId, groupIds]) => [
@@ -3436,54 +3540,70 @@ const deleteOptionGroup = (groupId: string): void => {
   noteSupplyStatuses.value = Object.fromEntries(
     Object.entries(noteSupplyStatuses.value).filter(([noteId]) => !noteId.startsWith(`${groupId}-`)),
   )
-  newOptionChoiceGroupId.value = optionGroupCatalog.value[0]?.id ?? ''
-  supplyActionMessage.value = `${group?.label ?? '註記大項'} 已刪除`
+  supplyActionMessage.value = `${group?.label ?? '註記群組'} 已刪除`
 }
 
-const addOptionChoice = (): void => {
-  const groupId = newOptionChoiceGroupId.value || optionGroupCatalog.value[0]?.id
-  const label = normalizeSpace(newOptionChoiceName.value).slice(0, 40)
-  if (!groupId || !label) {
-    supplyActionMessage.value = '請選擇大項並輸入選項名稱'
+const addAvailableNote = (): void => {
+  const label = normalizeSpace(newAvailableNoteName.value).slice(0, 40)
+  if (!label) {
+    supplyActionMessage.value = '請輸入註記名稱'
     return
   }
 
-  const priceDelta = Math.trunc(Number(newOptionChoicePriceDelta.value) || 0)
-  pushSupplyUndo('新增註記選項')
-  optionGroupCatalog.value = optionGroupCatalog.value.map((group) => {
-    if (group.id !== groupId) {
-      return group
-    }
+  const priceDelta = Math.trunc(Number(newAvailableNotePriceDelta.value) || 0)
+  const existingIds = new Set(availableNoteCatalog.value.map((choice) => choice.id))
+  const id = uniqueId(slugFromText(label, 'choice'), existingIds)
+  const choice: MenuOptionChoice = { id, label }
+  if (priceDelta > 0) {
+    choice.priceDelta = priceDelta
+  }
 
-    const existingIds = new Set(group.choices.map((choice) => choice.id))
-    const id = uniqueId(slugFromText(label, 'choice'), existingIds)
-    const choice: MenuOptionChoice = {
-      id,
-      label,
-    }
-    if (priceDelta > 0) {
-      choice.priceDelta = priceDelta
-    }
-    return {
-      ...group,
-      choices: [...group.choices, choice],
-    }
-  })
-  newOptionChoiceName.value = ''
-  newOptionChoicePriceDelta.value = 0
-  supplyActionMessage.value = `${label} 已新增`
+  pushSupplyUndo('新增可用註記')
+  availableNoteCatalog.value = [...availableNoteCatalog.value, choice]
+  newAvailableNoteName.value = ''
+  newAvailableNotePriceDelta.value = 0
+  supplyActionMessage.value = `${label} 已新增至可用註記`
 }
 
-const deleteOptionChoice = (groupId: string, choiceId: string): void => {
-  const noteId = `${groupId}-${choiceId}`
-  pushSupplyUndo('刪除註記選項')
-  optionGroupCatalog.value = optionGroupCatalog.value.map((group) =>
-    group.id === groupId
-      ? { ...group, choices: group.choices.filter((choice) => choice.id !== choiceId) }
-      : group,
+const deleteAvailableNote = (choiceId: string): void => {
+  const note = availableNoteCatalog.value.find((choice) => choice.id === choiceId)
+  pushSupplyUndo('刪除可用註記')
+  availableNoteCatalog.value = availableNoteCatalog.value.filter((choice) => choice.id !== choiceId)
+  optionGroupCatalog.value = optionGroupCatalog.value.map((group) => ({
+    ...group,
+    choices: group.choices.filter((choice) => choice.id !== choiceId),
+  }))
+  noteSupplyStatuses.value = Object.fromEntries(
+    Object.entries(noteSupplyStatuses.value).filter(([noteId]) => noteId !== choiceId && !noteId.endsWith(`-${choiceId}`)),
   )
-  noteSupplyStatuses.value = withoutRecordKey(noteSupplyStatuses.value, noteId)
-  supplyActionMessage.value = '註記選項已刪除'
+  supplyActionMessage.value = `${note?.label ?? '註記'} 已刪除`
+}
+
+const groupHasAvailableNote = (groupId: string, choiceId: string): boolean =>
+  optionGroupCatalog.value
+    .find((group) => group.id === groupId)
+    ?.choices.some((choice) => choice.id === choiceId) ?? false
+
+const toggleGroupAvailableNote = (groupId: string, choiceId: string): void => {
+  const choice = availableNoteCatalog.value.find((entry) => entry.id === choiceId)
+  const group = optionGroupCatalog.value.find((entry) => entry.id === groupId)
+  if (!choice || !group) {
+    return
+  }
+
+  pushSupplyUndo('更新註記群組')
+  const exists = group.choices.some((entry) => entry.id === choiceId)
+  optionGroupCatalog.value = optionGroupCatalog.value.map((entry) =>
+    entry.id === groupId
+      ? {
+          ...entry,
+          choices: exists
+            ? entry.choices.filter((entryChoice) => entryChoice.id !== choiceId)
+            : mergeOptionChoices([...entry.choices, choice]),
+        }
+      : entry,
+  )
+  supplyActionMessage.value = `${group.label} 已更新`
 }
 
 const productHasOptionGroup = (product: MenuItem, groupId: string): boolean =>
@@ -3623,10 +3743,15 @@ watch(menuCategoryDefinitions, (definitions) => {
   writeMenuCategoryDefinitions(definitions)
 }, { deep: true })
 
+watch(availableNoteCatalog, (choices) => {
+  writeAvailableNotes(choices)
+}, { deep: true })
+
 watch(optionGroupCatalog, (groups) => {
   writeOptionGroups(groups)
-  if (!groups.some((group) => group.id === newOptionChoiceGroupId.value)) {
-    newOptionChoiceGroupId.value = groups[0]?.id ?? ''
+  const mergedChoices = mergeOptionChoices([...availableNoteCatalog.value, ...groups.flatMap((group) => group.choices)])
+  if (mergedChoices.length !== availableNoteCatalog.value.length) {
+    availableNoteCatalog.value = mergedChoices
   }
 }, { deep: true })
 
@@ -5578,6 +5703,16 @@ onBeforeUnmount(() => {
               </button>
               <h2 id="supply-title">供應狀態</h2>
               <div class="supply-modal-actions">
+                <label class="supply-pin-entry">
+                  <span>管理 PIN</span>
+                  <input
+                    v-model="stationPin"
+                    type="password"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    placeholder="寫入資料庫"
+                  />
+                </label>
                 <button
                   class="supply-undo-button"
                   type="button"
@@ -5657,7 +5792,7 @@ onBeforeUnmount(() => {
 
                 <p v-if="supplyActionMessage" class="supply-action-message">{{ supplyActionMessage }}</p>
 
-                <section v-if="!selectedSupplyCategoryIsNotes" class="supply-management-panel" aria-label="分類與商品管理">
+                <section v-if="selectedSupplyMenuCategory" class="supply-management-panel" aria-label="分類與商品管理">
                   <div class="supply-management-title">
                     <strong>分類與商品</strong>
                     <button type="button" class="ghost-danger-button" @click="deleteSelectedMenuCategory">
@@ -5676,13 +5811,43 @@ onBeforeUnmount(() => {
                   </form>
                 </section>
 
-                <section v-else class="supply-management-panel supply-management-panel--notes" aria-label="註記管理">
+                <section v-else-if="selectedSupplyCategoryIsNotes" class="supply-management-panel supply-management-panel--notes" aria-label="可用註記管理">
                   <div class="supply-management-title">
-                    <strong>註記大項與選項</strong>
-                    <span>{{ optionGroupCatalog.length }} 個大項</span>
+                    <strong>可用註記</strong>
+                    <span>{{ availableNoteCatalog.length }} 個註記</span>
+                  </div>
+                  <form class="supply-note-form supply-note-form--available" @submit.prevent="addAvailableNote">
+                    <input v-model="newAvailableNoteName" type="text" placeholder="新增註記，例如：半糖" />
+                    <input v-model.number="newAvailableNotePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
+                    <button type="submit">
+                      <Plus :size="18" aria-hidden="true" />
+                      新增註記
+                    </button>
+                  </form>
+                  <div class="supply-note-catalog">
+                    <article v-for="choice in availableNoteCatalog" :key="choice.id" class="supply-note-catalog-card">
+                      <header>
+                        <div>
+                          <strong>{{ optionChoiceLabel(choice) }}</strong>
+                          <span>{{ noteGroupLabelsForChoice(choice.id).join('、') || '尚未加入群組' }}</span>
+                        </div>
+                        <button type="button" class="ghost-danger-button" @click="deleteAvailableNote(choice.id)">
+                          <Trash2 :size="16" aria-hidden="true" />
+                          刪除
+                        </button>
+                      </header>
+                    </article>
+                    <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">尚未建立可用註記</span>
+                  </div>
+                </section>
+
+                <section v-else-if="selectedSupplyCategoryIsNoteGroups" class="supply-management-panel supply-management-panel--notes" aria-label="註記群組管理">
+                  <div class="supply-management-title">
+                    <strong>註記群組</strong>
+                    <span>{{ optionGroupCatalog.length }} 個群組</span>
                   </div>
                   <form class="supply-note-form" @submit.prevent="addOptionGroup">
-                    <input v-model="newOptionGroupName" type="text" placeholder="新增大項，例如：冰量選擇" />
+                    <input v-model="newOptionGroupName" type="text" placeholder="新增群組，例如：冰量選擇" />
                     <label class="supply-inline-check">
                       <input v-model="newOptionGroupRequired" type="checkbox" />
                       必選
@@ -5690,20 +5855,7 @@ onBeforeUnmount(() => {
                     <input v-model.number="newOptionGroupMax" type="number" inputmode="numeric" min="1" max="6" aria-label="最多可選數" />
                     <button type="submit">
                       <Plus :size="18" aria-hidden="true" />
-                      新增大項
-                    </button>
-                  </form>
-                  <form class="supply-note-form" @submit.prevent="addOptionChoice">
-                    <select v-model="newOptionChoiceGroupId">
-                      <option v-for="group in optionGroupCatalog" :key="group.id" :value="group.id">
-                        {{ group.label }}
-                      </option>
-                    </select>
-                    <input v-model="newOptionChoiceName" type="text" placeholder="新增選項，例如：少冰" />
-                    <input v-model.number="newOptionChoicePriceDelta" type="number" inputmode="numeric" min="0" placeholder="加價" />
-                    <button type="submit">
-                      <Plus :size="18" aria-hidden="true" />
-                      新增選項
+                      新增群組
                     </button>
                   </form>
                   <div class="supply-note-groups">
@@ -5711,31 +5863,30 @@ onBeforeUnmount(() => {
                       <header>
                         <div>
                           <strong>{{ group.label }}</strong>
-                          <span>{{ group.requirement }} · {{ group.choices.length }} 個選項</span>
+                          <span>{{ group.requirement }} · {{ group.choices.length }} 個註記</span>
                         </div>
                         <button type="button" class="ghost-danger-button" @click="deleteOptionGroup(group.id)">
                           <Trash2 :size="16" aria-hidden="true" />
                           刪除
                         </button>
                       </header>
-                      <div class="supply-note-choice-list">
-                        <button
-                          v-for="choice in group.choices"
-                          :key="choice.id"
-                          type="button"
-                          class="supply-note-choice-delete"
-                          @click="deleteOptionChoice(group.id, choice.id)"
-                        >
-                          <span>{{ optionChoiceLabel(choice) }}</span>
-                          <X :size="15" aria-hidden="true" />
-                        </button>
-                        <span v-if="group.choices.length === 0" class="supply-note-empty">尚未建立選項</span>
+                      <div class="supply-note-checkbox-list">
+                        <label v-for="choice in availableNoteCatalog" :key="`${group.id}-${choice.id}`" class="supply-note-checkbox">
+                          <input
+                            type="checkbox"
+                            :checked="groupHasAvailableNote(group.id, choice.id)"
+                            @change="toggleGroupAvailableNote(group.id, choice.id)"
+                          />
+                          {{ optionChoiceLabel(choice) }}
+                        </label>
+                        <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">先到可用註記新增選項</span>
                       </div>
                     </article>
+                    <span v-if="optionGroupCatalog.length === 0" class="supply-note-empty">尚未建立註記群組</span>
                   </div>
                 </section>
 
-                <div class="supply-row-list">
+                <div v-if="!selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
                   <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
                     <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
                       <ChevronLeft :size="18" aria-hidden="true" />
@@ -5772,7 +5923,7 @@ onBeforeUnmount(() => {
                     </label>
                     <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
                     <div v-if="row.kind === 'product' && row.product" class="supply-row-options">
-                      <span>可用註記</span>
+                      <span>註記群組</span>
                       <label v-for="group in optionGroupCatalog" :key="`${row.id}-${group.id}`">
                         <input
                           type="checkbox"
