@@ -132,9 +132,11 @@ interface QueueTaskAction {
 
 interface SwipeState {
   key: string
+  pointerId: number
   startX: number
   startY: number
   currentX: number
+  hasPointerCapture: boolean
 }
 
 interface MenuOptionChoice {
@@ -1029,14 +1031,50 @@ const switchCategoryByOffset = (offset: CategoryMoveDirection): void => {
   }
 }
 
-const categorySwipeState = ref<{ pointerId: number; startX: number; startY: number } | null>(null)
+const categorySwipeState = ref<{
+  pointerId: number
+  startX: number
+  startY: number
+  horizontalIntent: boolean
+} | null>(null)
 const categorySwipeThreshold = 72
+const suppressNextProductSelect = ref(false)
 
 const startCategorySwipe = (event: PointerEvent): void => {
+  if (
+    event.target instanceof HTMLElement &&
+    event.target.closest('.product-quantity-control, input, textarea, select, a')
+  ) {
+    return
+  }
+
   categorySwipeState.value = {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
+    horizontalIntent: false,
+  }
+}
+
+const moveCategorySwipe = (event: PointerEvent): void => {
+  const swipe = categorySwipeState.value
+  if (!swipe || swipe.pointerId !== event.pointerId) {
+    return
+  }
+
+  const deltaX = event.clientX - swipe.startX
+  const deltaY = event.clientY - swipe.startY
+  const absX = Math.abs(deltaX)
+  const absY = Math.abs(deltaY)
+
+  if (!swipe.horizontalIntent && absY > absX && absY > 14) {
+    categorySwipeState.value = null
+    return
+  }
+
+  if (absX > 16 && absX > absY * 1.25) {
+    swipe.horizontalIntent = true
+    event.preventDefault()
   }
 }
 
@@ -1054,6 +1092,10 @@ const finishCategorySwipe = (event: PointerEvent): void => {
     return
   }
 
+  suppressNextProductSelect.value = true
+  globalThis.setTimeout(() => {
+    suppressNextProductSelect.value = false
+  }, 250)
   switchCategoryByOffset(deltaX < 0 ? 1 : -1)
 }
 
@@ -2051,6 +2093,11 @@ const resetOptionSelections = (): void => {
 }
 
 const selectMenuItem = (item: MenuItem): void => {
+  if (suppressNextProductSelect.value) {
+    suppressNextProductSelect.value = false
+    return
+  }
+
   activeCartQuickEditor.value = null
   activeOptionLineId.value = null
 
@@ -2630,18 +2677,16 @@ const startSwipe = (key: string, event: PointerEvent): void => {
 
   swipeState.value = {
     key,
+    pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
     currentX: event.clientX,
-  }
-
-  if (event.currentTarget instanceof HTMLElement) {
-    event.currentTarget.setPointerCapture(event.pointerId)
+    hasPointerCapture: false,
   }
 }
 
 const moveSwipe = (key: string, event: PointerEvent): void => {
-  if (swipeState.value?.key !== key) {
+  if (swipeState.value?.key !== key || swipeState.value.pointerId !== event.pointerId) {
     return
   }
 
@@ -2653,8 +2698,12 @@ const moveSwipe = (key: string, event: PointerEvent): void => {
     return
   }
 
-  if (deltaX < 0) {
+  if (Math.abs(deltaX) > 14 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15) {
     event.preventDefault()
+    if (!swipeState.value.hasPointerCapture && event.currentTarget instanceof HTMLElement) {
+      event.currentTarget.setPointerCapture(event.pointerId)
+      swipeState.value.hasPointerCapture = true
+    }
   }
 
   swipeState.value.currentX = event.clientX
@@ -4191,10 +4240,6 @@ onBeforeUnmount(() => {
 
                   <div
                     class="menu-workarea"
-                    @pointerdown="startCategorySwipe"
-                    @pointerup="finishCategorySwipe"
-                    @pointercancel="cancelCategorySwipe"
-                    @pointerleave="cancelCategorySwipe"
                   >
                     <aside class="category-rail" aria-label="品項分類">
                       <span class="category-rail-icon">
@@ -4232,7 +4277,14 @@ onBeforeUnmount(() => {
                       </div>
                     </aside>
 
-                    <div class="catalog-panel">
+                    <div
+                      class="catalog-panel"
+                      @pointerdown="startCategorySwipe"
+                      @pointermove="moveCategorySwipe"
+                      @pointerup="finishCategorySwipe"
+                      @pointercancel="cancelCategorySwipe"
+                      @pointerleave="cancelCategorySwipe"
+                    >
                       <div class="catalog-meta">
                         <span>{{ selectedCategoryLabel }} · 點選商品加入訂單</span>
                         <strong>{{ filteredMenu.length }} 項</strong>

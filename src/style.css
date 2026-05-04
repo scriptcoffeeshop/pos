@@ -567,8 +567,13 @@ button:disabled {
 }
 
 .pos-main-surface .workspace--queue {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   min-height: 0;
-  height: 100%;
+  height: calc(var(--pos-stage-height) - 78px);
+  max-height: calc(var(--pos-stage-height) - 78px);
   overflow: hidden;
 }
 
@@ -1189,6 +1194,7 @@ button:disabled {
 .pos-main-surface--ordering .catalog-panel {
   padding: var(--pos-catalog-padding-y) var(--pos-catalog-padding-x) var(--pos-catalog-padding-bottom);
   background: #ddd9d3;
+  touch-action: pan-y;
 }
 
 .pos-main-surface--ordering .catalog-meta {
@@ -2532,10 +2538,13 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .queue-section {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   max-height: none;
-  height: 100%;
+  height: auto;
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: contain;
@@ -3189,10 +3198,17 @@ button.cart-line-summary:focus-visible {
 .queue-list-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  padding-bottom: max(96px, calc(var(--pos-queue-padding-y) * 2.2));
+  overflow-y: scroll;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
   overscroll-behavior: contain;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
+}
+
+.queue-list-scroll::after {
+  content: '';
+  display: block;
+  height: max(340px, 30svh, env(safe-area-inset-bottom));
 }
 
 .queue-list-scroll .order-swipe-row:first-child {
