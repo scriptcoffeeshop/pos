@@ -1723,7 +1723,7 @@ api.patch("/orders/:id/status", async (c) => {
   const stationId = sanitizeStationId(input.stationId);
 
   if (
-    !["new", "preparing", "ready", "served", "failed"].includes(input.status)
+    !["new", "preparing", "ready", "served", "failed", "voided"].includes(input.status)
   ) {
     return c.json({ error: "Invalid order status" }, 400);
   }
@@ -1733,10 +1733,11 @@ api.patch("/orders/:id/status", async (c) => {
   }
 
   const now = new Date();
-  const shouldReleaseClaim = input.status === "served" || input.status === "failed";
+  const shouldReleaseClaim = input.status === "served" || input.status === "failed" || input.status === "voided";
   const payload = shouldReleaseClaim
     ? {
       status: input.status,
+      ...(input.status === "voided" ? { payment_status: "failed" as PaymentStatus } : {}),
       claimed_by: null,
       claimed_at: null,
       claim_expires_at: null,

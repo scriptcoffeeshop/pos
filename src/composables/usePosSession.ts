@@ -74,6 +74,7 @@ const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
 const localCounterOrdersStorageKey = 'script-coffee-pos-local-counter-orders'
 const localProductsStorageKey = 'script-coffee-pos-local-products'
 const acceptedOnlineOrderIdsStorageKey = 'script-coffee-pos-accepted-online-orders'
+const dismissedQueueOrderKeysStorageKey = 'script-coffee-pos-dismissed-queue-orders'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -416,6 +417,39 @@ const writeAcceptedOnlineOrderIds = (orderIds: string[]): void => {
       acceptedOnlineOrderIdsStorageKey,
       JSON.stringify([...new Set(orderIds)].slice(-100)),
     )
+  } catch {
+    return
+  }
+}
+
+const queueDismissalKeyFor = (order: PosOrder): string =>
+  `${order.remoteId ?? order.id}|${order.createdAt}`
+
+const readDismissedQueueOrderKeys = (): string[] => {
+  try {
+    const rawKeys = globalThis.localStorage?.getItem(dismissedQueueOrderKeysStorageKey)
+    if (!rawKeys) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawKeys)
+    return Array.isArray(parsed)
+      ? parsed.filter((key): key is string => typeof key === 'string').slice(-200)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeDismissedQueueOrderKeys = (keys: string[]): void => {
+  try {
+    const nextKeys = [...new Set(keys)].slice(-200)
+    if (nextKeys.length === 0) {
+      globalThis.localStorage?.removeItem(dismissedQueueOrderKeysStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(dismissedQueueOrderKeysStorageKey, JSON.stringify(nextKeys))
   } catch {
     return
   }
@@ -799,6 +833,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const onlineReminderClock = ref(Date.now())
   const acknowledgedOnlineReminderIds = ref<string[]>([])
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
+  const dismissedQueueOrderKeys = ref<string[]>(readDismissedQueueOrderKeys())
   const onlineReminderAudioMessage = ref('')
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
@@ -1054,6 +1089,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderQueue.value.filter((order) =>
       order.status !== 'served' &&
       order.status !== 'voided' &&
+      order.status !== 'failed' &&
       !onlineOrderRequiresAcceptance(order),
     ),
   )
@@ -1340,7 +1376,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const applyRemoteOrders = (remoteOrders: PosOrder[]): void => {
-    const remoteOrderIds = new Set(remoteOrders.map((order) => order.id))
+    const visibleRemoteOrders = remoteOrders.filter((order) =>
+      !dismissedQueueOrderKeys.value.includes(queueDismissalKeyFor(order)),
+    )
+    const remoteOrderIds = new Set(visibleRemoteOrders.map((order) => order.id))
     const nextPendingOrders = pendingLocalOrders.value.filter((order) => !remoteOrderIds.has(order.id))
     const nextLocalCounterOrders = localCounterOrders.value.filter((order) =>
       !remoteOrderIds.has(order.id) && !['served', 'voided', 'failed'].includes(order.status),
@@ -1356,7 +1395,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       writeLocalCounterOrders(localCounterOrders.value)
     }
 
-    orderQueue.value = mergeLocalCounterOrders(localCounterOrders.value, mergeLocalPendingOrders(pendingLocalOrders.value, remoteOrders))
+    orderQueue.value = mergeLocalCounterOrders(localCounterOrders.value, mergeLocalPendingOrders(pendingLocalOrders.value, visibleRemoteOrders))
   }
 
   const syncPendingLocalOrders = async (): Promise<number> => {
@@ -2625,7 +2664,22 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     return true
   }
 
+  const rememberDismissedQueueOrder = (order: PosOrder): void => {
+    const key = queueDismissalKeyFor(order)
+    if (dismissedQueueOrderKeys.value.includes(key)) {
+      return
+    }
+
+    dismissedQueueOrderKeys.value = [...dismissedQueueOrderKeys.value, key].slice(-200)
+    writeDismissedQueueOrderKeys(dismissedQueueOrderKeys.value)
+  }
+
   const removeOrderFromQueue = (orderId: string): void => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (order) {
+      rememberDismissedQueueOrder(order)
+    }
+
     orderQueue.value = orderQueue.value.filter((order) => order.id !== orderId)
     clearCounterOrderFromLocalStores(orderId)
 

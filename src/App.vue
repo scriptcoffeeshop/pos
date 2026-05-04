@@ -1769,6 +1769,8 @@ const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
     '--pos-interface-scale': interfaceScale.toFixed(4),
     '--pos-stage-width': `${100 / interfaceScale}vw`,
     '--pos-stage-height': `${100 / interfaceScale}svh`,
+    '--pos-density-scale': densityFactor.toFixed(4),
+    '--pos-text-scale': textFactor.toFixed(4),
     '--pos-font-size': `${16 * textFactor}px`,
     '--pos-command-min-height': '74px',
     '--pos-command-padding-y': `${12 * densityFactor}px`,
@@ -2436,12 +2438,17 @@ const orderCanBeDeletedFromQueue = (order: PosOrder): boolean =>
   !['served', 'failed', 'voided'].includes(order.status) && !orderClaimedByOtherStation(order)
 
 const orderSwipeDeleteLabel = (order: PosOrder): string => {
+  const isOnlineOrder = order.source === 'online' || order.source === 'qr'
   if (voidingOrderId.value === order.id) {
-    return '刪除中'
+    return isOnlineOrder ? '取消中' : '刪除中'
   }
 
   if (orderClaimedByOtherStation(order)) {
     return '先接手'
+  }
+
+  if (isOnlineOrder) {
+    return orderCanBeDeletedFromQueue(order) ? '取消訂單' : '不可取消'
   }
 
   return orderCanBeDeletedFromQueue(order) ? '刪除' : '不可刪除'
@@ -3836,7 +3843,10 @@ onBeforeUnmount(() => {
 
           <section
             class="pos-main-surface"
-            :class="{ 'pos-main-surface--ordering': activeWorkspaceTab === 'order' }"
+            :class="{
+              'pos-main-surface--ordering': activeWorkspaceTab === 'order',
+              'pos-main-surface--queue': activeWorkspaceTab === 'queue',
+            }"
           >
             <header
               v-if="activeWorkspaceTab !== 'order'"
@@ -4470,10 +4480,10 @@ onBeforeUnmount(() => {
                   <div class="panel-heading">
                     <div>
                       <p class="eyebrow">Orders</p>
-                      <h2 id="queue-title">
-                        桌況頁（有 {{ visibleQueueOrders.length }} 筆符合條件，總共 {{ queueBaseOrders.length }} 筆）
-                      </h2>
-                      <span class="panel-note">依狀態、付款與關鍵字快速查詢</span>
+                      <h2 id="queue-title">訂單佇列</h2>
+                      <span class="panel-note">
+                        顯示 {{ visibleQueueOrders.length }} 張 · 全部 {{ queueBaseOrders.length }} 張
+                      </span>
                     </div>
                     <button class="queue-reset-button" type="button" @click="resetQueueFilters">
                       重設篩選條件
@@ -4495,7 +4505,7 @@ onBeforeUnmount(() => {
                   </div>
 
                   <section
-                    v-if="onlineOrderReminder.activeOverdueCount > 0"
+                    v-if="activeOnlineReminderOrders.length > 0"
                     class="online-reminder-banner"
                     aria-live="assertive"
                   >
@@ -4503,7 +4513,7 @@ onBeforeUnmount(() => {
                       <CircleAlert :size="22" aria-hidden="true" />
                       <div>
                         <p class="eyebrow">Online Order</p>
-                        <h3>{{ onlineOrderReminder.activeOverdueCount }} 張線上/掃碼新單待接單</h3>
+                        <h3>{{ activeOnlineReminderOrders.length }} 張線上/掃碼新單待接單</h3>
                         <span>
                           {{ onlineReminderThresholdLabel }} · {{ onlineReminderToneLabel }} ·
                           目前 {{ onlineOrderReminder.unconfirmedCount }} 張等待確認
@@ -4702,7 +4712,8 @@ onBeforeUnmount(() => {
                         {{ orderSwipeCompleteLabel(order) }}
                       </button>
                       <button
-                        class="swipe-action swipe-action--danger"
+                        class="swipe-action"
+                        :class="order.source === 'counter' ? 'swipe-action--danger' : 'swipe-action--cancel'"
                         type="button"
                         :disabled="orderSwipeDeleteDisabled(order)"
                         @click.stop="orderSwipeDeleteAction(order)"
