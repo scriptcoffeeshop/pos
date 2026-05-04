@@ -255,13 +255,54 @@ button:disabled {
   --pos-product-tile-height: 166px;
   --pos-product-tile-padding: 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 100%;
   margin: 0;
   background: var(--bg);
   font-size: inherit;
+}
+
+.floating-toolbox-button {
+  position: absolute;
+  z-index: 64;
+  display: grid;
+  width: 82px;
+  height: 82px;
+  place-items: center;
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--primary) 82%, white);
+  border-radius: 16px;
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 14px 34px rgba(17, 24, 39, 0.26);
+  transform: translate(-50%, -50%);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.floating-toolbox-button:active,
+.floating-toolbox-button--dragging {
+  cursor: grabbing;
+}
+
+.floating-toolbox-button svg,
+.floating-toolbox-button span {
+  pointer-events: none;
+}
+
+.floating-toolbox-button span {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.floating-toolbox-button:focus-visible {
+  outline: 3px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 3px;
 }
 
 .pos-workbench--ordering {
@@ -859,7 +900,7 @@ button:disabled {
 
 .ticket-title-block h2 {
   color: #fff;
-  font-size: clamp(2rem, 3.8vw, 3.25rem);
+  font-size: clamp(1.55rem, 2.6vw, 2.35rem);
   line-height: 1;
 }
 
@@ -1033,7 +1074,7 @@ button:disabled {
 
 .ticket-action-group {
   display: grid;
-  grid-template-columns: 1fr 0.9fr 1.15fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   width: 100%;
   min-width: 0;
   gap: 7px;
@@ -1046,13 +1087,18 @@ button:disabled {
   min-width: 0;
   min-height: 52px;
   gap: 6px;
-  padding: 0 8px;
-  font-size: clamp(0.78rem, 0.82rem + 0.18vw, 0.94rem);
-  flex-wrap: wrap;
-  line-height: 1.08;
+  padding: 0 6px;
+  font-size: clamp(0.76rem, 0.78rem + 0.16vw, 0.9rem);
+  flex-wrap: nowrap;
+  line-height: 1.12;
   text-align: center;
-  white-space: normal;
+  white-space: nowrap;
   overflow-wrap: anywhere;
+}
+
+.ticket-action-group .primary-button {
+  min-width: 0;
+  padding-inline: 6px;
 }
 
 .ticket-submit-button--secondary {
@@ -2571,9 +2617,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .queue-reset-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
+  display: none;
 }
 
 .queue-reset-button {
@@ -2584,6 +2628,15 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-raised);
   color: var(--ink);
   font-weight: 900;
+}
+
+.queue-reset-button--inline {
+  align-self: end;
+  min-width: 126px;
+  min-height: 56px;
+  padding-inline: 14px;
+  background: var(--surface-raised);
+  white-space: nowrap;
 }
 
 .queue-count {
@@ -2626,10 +2679,15 @@ button.cart-line-summary:focus-visible {
 }
 
 .workspace--queue .queue-tools {
-  grid-template-columns: minmax(360px, 0.48fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(320px, 0.42fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
   flex: 0 0 auto;
   margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface-muted) 80%, var(--surface-raised));
 }
 
 .queue-search {
@@ -5027,6 +5085,41 @@ button.cart-line-summary:focus-visible {
   font-weight: 850;
 }
 
+.supply-note-group-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.supply-requirement-toggle {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 950;
+}
+
+.supply-requirement-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.supply-note-group-controls small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .supply-note-card-status {
   display: grid;
   gap: 6px;
@@ -6815,6 +6908,10 @@ button.cart-line-summary:focus-visible {
     margin: -12px;
   }
 
+  .workspace--queue .queue-tools {
+    grid-template-columns: 1fr;
+  }
+
   .pos-side-rail {
     position: static;
     grid-column: 1;
@@ -7294,6 +7391,11 @@ button.cart-line-summary:focus-visible {
   .side-rail-footer {
     grid-template-columns: 1fr auto;
     justify-items: start;
+  }
+
+  .floating-toolbox-button {
+    width: 72px;
+    height: 72px;
   }
 
   .utility-modal-backdrop {

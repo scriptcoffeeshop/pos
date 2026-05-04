@@ -139,6 +139,19 @@ interface SwipeState {
   hasPointerCapture: boolean
 }
 
+interface ToolboxPosition {
+  x: number
+  y: number
+}
+
+interface ToolboxDragState {
+  pointerId: number
+  startX: number
+  startY: number
+  startPosition: ToolboxPosition
+  moved: boolean
+}
+
 interface MenuOptionChoice {
   id: string
   label: string
@@ -194,6 +207,7 @@ interface SupplyStateSnapshot {
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const backendEditModeStorageKey = 'script-coffee-pos-backend-edit-mode'
+const toolboxPositionStorageKey = 'script-coffee-pos-toolbox-position'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
 const supplyNoteStatusStorageKey = 'script-coffee-pos-supply-note-statuses'
 const menuCategoryStorageKey = 'script-coffee-pos-menu-categories'
@@ -216,7 +230,9 @@ const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
 const backendEditTapTarget = 6
 const backendEditTapWindowMs = 3000
+const toolboxDragThreshold = 6
 const interfaceScaleBaselineOffset = -20
+const defaultToolboxPosition: ToolboxPosition = { x: 94, y: 86 }
 const defaultPosUiPreferences: PosUiPreferences = {
   schemaVersion: 2,
   interfaceScale: 0,
@@ -330,6 +346,34 @@ const writeStorageValue = (storageKey: string, value: unknown): void => {
   } catch {
     return
   }
+}
+
+const clampPercent = (value: unknown, fallback: number, min = 4, max = 96): number => {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, numericValue))
+}
+
+const normalizeToolboxPosition = (value: unknown): ToolboxPosition => {
+  if (!value || typeof value !== 'object') {
+    return { ...defaultToolboxPosition }
+  }
+
+  const source = value as Partial<ToolboxPosition>
+  return {
+    x: clampPercent(source.x, defaultToolboxPosition.x),
+    y: clampPercent(source.y, defaultToolboxPosition.y),
+  }
+}
+
+const readToolboxPosition = (): ToolboxPosition =>
+  normalizeToolboxPosition(readStorageValue<unknown>(toolboxPositionStorageKey, defaultToolboxPosition))
+
+const writeToolboxPosition = (position: ToolboxPosition): void => {
+  writeStorageValue(toolboxPositionStorageKey, normalizeToolboxPosition(position))
 }
 
 const normalizeSpace = (value: string): string => value.trim().replace(/\s+/g, ' ')
@@ -1651,6 +1695,9 @@ const eventSupplyStatus = (event: Event): ProductSupplyStatus => {
   return isProductSupplyStatus(value) ? value : 'normal'
 }
 
+const eventChecked = (event: Event): boolean =>
+  event.target instanceof HTMLInputElement ? event.target.checked : false
+
 const productCurrentSupplyStatus = (product: MenuItem): ProductSupplyStatus => {
   if (!product.available || product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
     return 'stopped'
@@ -1925,6 +1972,10 @@ const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
     '--pos-product-tile-padding': `${14 * densityFactor}px`,
   }
 })
+const floatingToolboxStyle = computed<Record<string, string>>(() => ({
+  left: `${toolboxPosition.value.x}%`,
+  top: `${toolboxPosition.value.y}%`,
+}))
 const resetPosUiPreferences = (): void => {
   posUiPreferences.value = { ...defaultPosUiPreferences }
 }
@@ -1946,6 +1997,9 @@ const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({})
 const optionWarning = ref('')
 const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
+const toolboxPosition = ref<ToolboxPosition>(readToolboxPosition())
+const toolboxDragState = ref<ToolboxDragState | null>(null)
+const suppressFloatingToolboxClick = ref(false)
 const backendEditTapCount = ref(0)
 const backendEditMessage = ref(
   backendEditModeEnabled.value ? '後台編輯模式已啟用' : '連點工具箱 6 下進入後台編輯模式',
@@ -2917,6 +2971,96 @@ const handleToolboxTap = (): void => {
   }, backendEditTapWindowMs)
 }
 
+const positionFromPointerEvent = (event: PointerEvent, fallback: ToolboxPosition): ToolboxPosition => {
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  const stage = target?.closest('.pos-scale-stage')
+  if (!(stage instanceof HTMLElement)) {
+    return fallback
+  }
+
+  const rect = stage.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return fallback
+  }
+
+  return {
+    x: clampPercent(((event.clientX - rect.left) / rect.width) * 100, fallback.x),
+    y: clampPercent(((event.clientY - rect.top) / rect.height) * 100, fallback.y),
+  }
+}
+
+const handleFloatingToolboxPointerDown = (event: PointerEvent): void => {
+  if (event.button !== 0) {
+    return
+  }
+
+  toolboxDragState.value = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startPosition: { ...toolboxPosition.value },
+    moved: false,
+  }
+
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+}
+
+const handleFloatingToolboxPointerMove = (event: PointerEvent): void => {
+  const dragState = toolboxDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  const deltaX = event.clientX - dragState.startX
+  const deltaY = event.clientY - dragState.startY
+  if (!dragState.moved && Math.hypot(deltaX, deltaY) < toolboxDragThreshold) {
+    return
+  }
+
+  dragState.moved = true
+  toolboxPosition.value = positionFromPointerEvent(event, dragState.startPosition)
+  event.preventDefault()
+}
+
+const finishFloatingToolboxDrag = (event: PointerEvent): void => {
+  const dragState = toolboxDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  toolboxDragState.value = null
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  if (!dragState.moved) {
+    return
+  }
+
+  writeToolboxPosition(toolboxPosition.value)
+  suppressFloatingToolboxClick.value = true
+  globalThis.setTimeout(() => {
+    suppressFloatingToolboxClick.value = false
+  }, 250)
+}
+
+const cancelFloatingToolboxDrag = (event: PointerEvent): void => {
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+  toolboxDragState.value = null
+}
+
+const handleFloatingToolboxClick = (): void => {
+  if (suppressFloatingToolboxClick.value) {
+    return
+  }
+
+  handleToolboxTap()
+}
+
 const requireBackendEditMode = (actionLabel = '後台編輯'): boolean => {
   if (backendEditModeEnabled.value) {
     return true
@@ -3547,6 +3691,31 @@ const deleteOptionGroup = (groupId: string): void => {
   supplyActionMessage.value = `${group?.label ?? '註記群組'} 已刪除`
 }
 
+const updateOptionGroupRequired = (groupId: string, required: boolean): void => {
+  const group = optionGroupCatalog.value.find((entry) => entry.id === groupId)
+  if (!group || group.required === required) {
+    return
+  }
+
+  pushSupplyUndo('更新註記群組必選狀態')
+  optionGroupCatalog.value = optionGroupCatalog.value.map((entry) => {
+    if (entry.id !== groupId) {
+      return entry
+    }
+
+    const max = Math.max(1, entry.max)
+    const min = required ? Math.max(1, Math.min(max, entry.min || 1)) : 0
+    return {
+      ...entry,
+      required,
+      min,
+      max,
+      requirement: optionGroupRequirement({ required, min, max }),
+    }
+  })
+  supplyActionMessage.value = `${group.label} 已改為${required ? '必選' : '選填'}`
+}
+
 const addAvailableNote = (): void => {
   const label = normalizeSpace(newAvailableNoteName.value).slice(0, 40)
   if (!label) {
@@ -3907,136 +4076,6 @@ onBeforeUnmount(() => {
           :class="{ 'pos-workbench--ordering': activeWorkspaceTab === 'order' }"
           aria-label="門市 POS 工作站"
         >
-          <aside v-show="activeWorkspaceTab !== 'order'" class="pos-side-rail" aria-label="POS 主選單">
-            <div class="side-brand">
-              <img :src="brandLogoSrc" alt="Script Coffee" class="side-brand-logo" />
-              <div>
-                <span>Script Coffee</span>
-                <strong>門市 POS</strong>
-              </div>
-            </div>
-
-            <div v-if="canSwitchWorkspace" class="side-mode-switch" aria-label="系統模式">
-              <button
-                class="side-mode-button side-mode-button--active"
-                type="button"
-                aria-current="page"
-                @click="setActiveView('pos')"
-              >
-                <LayoutDashboard :size="18" aria-hidden="true" />
-                POS
-              </button>
-              <button class="side-mode-button" type="button" @click="setActiveView('online')">
-                <ShoppingBag :size="18" aria-hidden="true" />
-                線上
-              </button>
-              <button class="side-mode-button" type="button" @click="setActiveView('admin')">
-                <Settings2 :size="18" aria-hidden="true" />
-                後台
-              </button>
-            </div>
-
-            <span v-else-if="isNativeApp" class="side-station-pill">
-              <LockKeyhole :size="18" aria-hidden="true" />
-              APK 工作站
-            </span>
-
-            <nav class="workstation-tabs quick-nav-bar" aria-label="快速導航列">
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'order' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'order' ? 'page' : undefined"
-                @click="setWorkspaceTab('order')"
-              >
-                <ShoppingCart :size="20" aria-hidden="true" />
-                <span>
-                  <strong>點餐</strong>
-                  <small>{{ workspaceTabSummaries.order }}</small>
-                </span>
-              </button>
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'details' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'details' ? 'page' : undefined"
-                @click="setWorkspaceTab('details')"
-              >
-                <Settings2 :size="20" aria-hidden="true" />
-                <span>
-                  <strong>資訊</strong>
-                  <small>{{ workspaceTabSummaries.details }}</small>
-                </span>
-              </button>
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'payment' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'payment' ? 'page' : undefined"
-                @click="setWorkspaceTab('payment')"
-              >
-                <CreditCard :size="20" aria-hidden="true" />
-                <span>
-                  <strong>付款</strong>
-                  <small>{{ workspaceTabSummaries.payment }}</small>
-                </span>
-              </button>
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'queue' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'queue' ? 'page' : undefined"
-                @click="setWorkspaceTab('queue')"
-              >
-                <ReceiptText :size="20" aria-hidden="true" />
-                <span>
-                  <strong>訂單</strong>
-                  <small>{{ workspaceTabSummaries.queue }}</small>
-                </span>
-              </button>
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'printing' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'printing' ? 'page' : undefined"
-                @click="setWorkspaceTab('printing')"
-              >
-                <Printer :size="20" aria-hidden="true" />
-                <span>
-                  <strong>列印</strong>
-                  <small>{{ workspaceTabSummaries.printing }}</small>
-                </span>
-              </button>
-              <button
-                class="workstation-tab quick-nav-button"
-                :class="{ 'workstation-tab--active': activeWorkspaceTab === 'closeout' }"
-                type="button"
-                :aria-current="activeWorkspaceTab === 'closeout' ? 'page' : undefined"
-                @click="setWorkspaceTab('closeout')"
-              >
-                <WalletCards :size="20" aria-hidden="true" />
-                <span>
-                  <strong>班別</strong>
-                  <small>{{ workspaceTabSummaries.closeout }}</small>
-                </span>
-              </button>
-            </nav>
-
-            <div class="side-rail-footer">
-              <button
-                class="icon-button side-toolbox-button"
-                type="button"
-                title="工具箱"
-                aria-controls="pos-toolbox-modal"
-                :aria-expanded="isToolboxOpen"
-                @click="handleToolboxTap"
-              >
-                <Settings2 :size="24" aria-hidden="true" />
-                <span>工具箱</span>
-              </button>
-            </div>
-          </aside>
-
           <section
             class="pos-main-surface"
             :class="{
@@ -4679,12 +4718,6 @@ onBeforeUnmount(() => {
                 </section>
 
                 <section v-if="activeWorkspaceTab === 'queue'" class="queue-section">
-                  <div class="queue-reset-row">
-                    <button class="queue-reset-button" type="button" @click="resetQueueFilters">
-                      重設篩選條件
-                    </button>
-                  </div>
-
                   <div class="segmented-control queue-filter" aria-label="訂單篩選">
                     <button
                       v-for="filter in queueFilterOptions"
@@ -4840,6 +4873,9 @@ onBeforeUnmount(() => {
                         </select>
                       </label>
                     </div>
+                    <button class="queue-reset-button queue-reset-button--inline" type="button" @click="resetQueueFilters">
+                      重設篩選
+                    </button>
                     <div class="segmented-control queue-fulfillment-filter" aria-label="履約時段篩選">
                       <button
                         v-for="filter in queueFulfillmentFilterOptions"
@@ -5503,6 +5539,25 @@ onBeforeUnmount(() => {
               </aside>
             </section>
           </section>
+
+          <button
+            v-show="activeWorkspaceTab !== 'order'"
+            class="floating-toolbox-button"
+            :class="{ 'floating-toolbox-button--dragging': toolboxDragState?.moved }"
+            type="button"
+            title="拖曳工具箱；點按開啟"
+            aria-controls="pos-toolbox-modal"
+            :aria-expanded="isToolboxOpen"
+            :style="floatingToolboxStyle"
+            @pointerdown="handleFloatingToolboxPointerDown"
+            @pointermove="handleFloatingToolboxPointerMove"
+            @pointerup="finishFloatingToolboxDrag"
+            @pointercancel="cancelFloatingToolboxDrag"
+            @click="handleFloatingToolboxClick"
+          >
+            <Settings2 :size="22" aria-hidden="true" />
+            <span>工具箱</span>
+          </button>
         </section>
 
         <section
@@ -5878,6 +5933,17 @@ onBeforeUnmount(() => {
                         刪除
                       </button>
                     </header>
+                    <div class="supply-note-group-controls" aria-label="註記群組規則">
+                      <label class="supply-requirement-toggle">
+                        <input
+                          type="checkbox"
+                          :checked="group.required"
+                          @change="updateOptionGroupRequired(group.id, eventChecked($event))"
+                        />
+                        <span>{{ group.required ? '必選' : '非必選' }}</span>
+                      </label>
+                      <small>{{ group.required ? `顧客至少需選 ${Math.max(1, group.min)} 個` : '顧客可以不選此群組' }}</small>
+                    </div>
                     <div class="supply-note-checkbox-list">
                       <label v-for="choice in availableNoteCatalog" :key="`${group.id}-${choice.id}`" class="supply-note-checkbox">
                         <input
