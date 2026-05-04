@@ -1648,6 +1648,9 @@ const stationFilterSummary = computed(() =>
 const supplyStatusDetail = (status: ProductSupplyStatus): string =>
   supplyStatusOptions.find((option) => option.value === status)?.detail ?? ''
 
+const supplyStatusLabel = (status: ProductSupplyStatus): string =>
+  supplyStatusOptions.find((option) => option.value === status)?.label ?? '正常供應'
+
 const eventSupplyStatus = (event: Event): ProductSupplyStatus => {
   const value = event.target instanceof HTMLSelectElement ? event.target.value : ''
   return isProductSupplyStatus(value) ? value : 'normal'
@@ -1990,6 +1993,10 @@ const supplyNoteItems = computed<SupplyNoteItem[]>(() =>
     }
   }),
 )
+const availableNoteSupplyStatus = (choiceId: string): ProductSupplyStatus => {
+  const note = supplyNoteItems.value.find((item) => item.choiceId === choiceId)
+  return note ? noteCurrentSupplyStatus(note) : 'normal'
+}
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
 const stationPin = ref('')
@@ -3577,6 +3584,16 @@ const deleteAvailableNote = (choiceId: string): void => {
     Object.entries(noteSupplyStatuses.value).filter(([noteId]) => noteId !== choiceId && !noteId.endsWith(`-${choiceId}`)),
   )
   supplyActionMessage.value = `${note?.label ?? '註記'} 已刪除`
+}
+
+const updateAvailableNoteSupplyStatus = (choice: MenuOptionChoice, status: ProductSupplyStatus): void => {
+  if (availableNoteSupplyStatus(choice.id) === status) {
+    return
+  }
+
+  pushSupplyUndo('變更註記供應狀態')
+  setNoteSupplyStatus(choice.id, status)
+  supplyActionMessage.value = `${choice.label} 已更新為${supplyStatusLabel(status)}`
 }
 
 const groupHasAvailableNote = (groupId: string, choiceId: string): boolean =>
@@ -5836,6 +5853,27 @@ onBeforeUnmount(() => {
                           刪除
                         </button>
                       </header>
+                      <div class="supply-note-card-status">
+                        <label
+                          class="supply-row-status supply-note-card-status-control"
+                          :class="`supply-row-status--${availableNoteSupplyStatus(choice.id)}`"
+                        >
+                          <CheckCircle2 v-if="availableNoteSupplyStatus(choice.id) === 'normal'" :size="20" aria-hidden="true" />
+                          <CircleAlert v-else-if="availableNoteSupplyStatus(choice.id) === 'online-stopped'" :size="20" aria-hidden="true" />
+                          <X v-else :size="20" aria-hidden="true" />
+                          <select
+                            :value="availableNoteSupplyStatus(choice.id)"
+                            :aria-label="`${choice.label} 供應狀態`"
+                            @change="updateAvailableNoteSupplyStatus(choice, eventSupplyStatus($event))"
+                          >
+                            <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                              {{ status.label }}
+                            </option>
+                          </select>
+                          <ChevronDown :size="18" aria-hidden="true" />
+                        </label>
+                        <small class="supply-note-card-hint">{{ supplyStatusDetail(availableNoteSupplyStatus(choice.id)) }}</small>
+                      </div>
                     </article>
                     <span v-if="availableNoteCatalog.length === 0" class="supply-note-empty">尚未建立可用註記</span>
                   </div>
@@ -5886,7 +5924,7 @@ onBeforeUnmount(() => {
                   </div>
                 </section>
 
-                <div v-if="!selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
+                <div v-if="!selectedSupplyCategoryIsNotes && !selectedSupplyCategoryIsNoteGroups" class="supply-row-list">
                   <article v-for="row in visibleSupplyRows" :key="`${row.kind}-${row.id}`" class="supply-row">
                     <button class="supply-row-disclosure" type="button" disabled aria-hidden="true">
                       <ChevronLeft :size="18" aria-hidden="true" />

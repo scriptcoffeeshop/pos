@@ -4867,7 +4867,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .supply-management-panel--notes {
-  max-height: 340px;
+  max-height: min(620px, calc(var(--pos-stage-height) - 380px));
   overflow: auto;
 }
 
@@ -4940,6 +4940,28 @@ button.cart-line-summary:focus-visible {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 850;
+}
+
+.supply-note-card-status {
+  display: grid;
+  gap: 6px;
+}
+
+.supply-note-card-status-control {
+  min-height: 52px;
+  padding: 0 12px;
+  font-size: 0.9rem;
+}
+
+.supply-note-card-status-control select {
+  font-size: 0.9rem;
+}
+
+.supply-note-card-hint {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .supply-note-choice-list,
