@@ -155,12 +155,6 @@ interface MenuOptionGroup {
   choices: MenuOptionChoice[]
 }
 
-interface QueueAdminActionRequest {
-  kind: QueueAdminActionKind
-  orderId: string
-  label: string
-}
-
 interface SupplyNoteItem {
   id: string
   choiceId: string
@@ -199,6 +193,7 @@ interface SupplyStateSnapshot {
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
+const backendEditModeStorageKey = 'script-coffee-pos-backend-edit-mode'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
 const supplyNoteStatusStorageKey = 'script-coffee-pos-supply-note-statuses'
 const menuCategoryStorageKey = 'script-coffee-pos-menu-categories'
@@ -219,6 +214,8 @@ const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
+const backendEditTapTarget = 6
+const backendEditTapWindowMs = 3000
 const interfaceScaleBaselineOffset = -20
 const defaultPosUiPreferences: PosUiPreferences = {
   schemaVersion: 2,
@@ -990,16 +987,8 @@ const saveSupplyChanges = async (): Promise<void> => {
     return
   }
 
-  const adminPin = stationPin.value.trim()
-  if (!adminPin) {
-    supplyHasUnsavedChanges.value = true
-    supplyActionMessage.value = '已暫存本機；輸入 PIN 後才能寫入資料庫'
-    return
-  }
-
   try {
     const syncedSettings = await updateAdminSetting<OnlineOrderingSettings>(
-      adminPin,
       'online_ordering',
       {
         ...onlineOrderingSettings.value,
@@ -1880,7 +1869,9 @@ const paymentCloseoutRows = computed(() =>
     .filter((payment) => payment.count > 0 || payment.visible),
 )
 const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime(printStation.lastPrintAt) : '尚未列印'))
-const activeView = ref<AppView>(readInitialView())
+const backendEditModeEnabled = ref(readStorageValue<boolean>(backendEditModeStorageKey, false))
+const initialView = readInitialView()
+const activeView = ref<AppView>(initialView === 'admin' && !backendEditModeEnabled.value ? 'pos' : initialView)
 const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
@@ -1953,10 +1944,12 @@ const activeOptionItem = ref<MenuItem | null>(null)
 const activeOptionLineId = ref<string | null>(null)
 const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({})
 const optionWarning = ref('')
-const pendingQueueAdminAction = ref<QueueAdminActionRequest | null>(null)
-const queueActionPin = ref('')
 const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
+const backendEditTapCount = ref(0)
+const backendEditMessage = ref(
+  backendEditModeEnabled.value ? '後台編輯模式已啟用' : '連點工具箱 6 下進入後台編輯模式',
+)
 const isSupplyStatusOpen = ref(false)
 const isKnowledgeOpen = ref(false)
 const knowledgeSearchTerm = ref('')
@@ -2007,13 +2000,12 @@ const availableNoteSupplyStatus = (choiceId: string): ProductSupplyStatus => {
 }
 const searchInput = ref<HTMLInputElement | null>(null)
 const customerNameInput = ref<HTMLInputElement | null>(null)
-const stationPin = ref('')
-const registerPin = ref('')
 const registerOpeningCash = ref(0)
 const registerClosingCash = ref(0)
 const registerNote = ref('')
 const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
+let backendEditTapTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
 const ticketStartedLabel = computed(() =>
@@ -2589,12 +2581,12 @@ const refundActionLabel = (order: PosOrder): string => (
   refundingOrderId.value === order.id ? '退款中' : '退款'
 )
 
-const voidOrderAction = async (order: PosOrder, adminPin = stationPin.value.trim()): Promise<void> => {
-  await voidOrderForStation(adminPin, order.id)
+const voidOrderAction = async (order: PosOrder): Promise<void> => {
+  await voidOrderForStation(order.id)
 }
 
-const refundOrderAction = async (order: PosOrder, adminPin = stationPin.value.trim()): Promise<void> => {
-  await refundOrderForStation(adminPin, order.id)
+const refundOrderAction = async (order: PosOrder): Promise<void> => {
+  await refundOrderForStation(order.id)
 }
 
 const orderSwipeKey = (order: PosOrder): string => `order:${order.id}`
@@ -2631,20 +2623,15 @@ const orderSwipeDeleteAction = (order: PosOrder): void => {
   openSwipeKey.value = null
 }
 
-const executeQueueAdminAction = async (
-  kind: QueueAdminActionKind,
-  order: PosOrder,
-  adminPin: string,
-): Promise<void> => {
+const executeQueueAdminAction = async (kind: QueueAdminActionKind, order: PosOrder): Promise<void> => {
   const label = queueAdminActionLabel(kind)
   queueActionMessage.value = `${order.id} ${label}處理中`
-  pendingQueueAdminAction.value = null
   openSwipeKey.value = null
 
   if (kind === 'void') {
-    await voidOrderAction(order, adminPin)
+    await voidOrderAction(order)
   } else {
-    await refundOrderAction(order, adminPin)
+    await refundOrderAction(order)
   }
 
   const latestOrder = orderQueue.value.find((entry) => entry.id === order.id)
@@ -2656,61 +2643,20 @@ const executeQueueAdminAction = async (
   queueActionMessage.value = backendStatus.detail || backendStatus.label
 
   if (!actionSucceeded) {
-    pendingQueueAdminAction.value = {
-      kind,
-      orderId: order.id,
-      label,
-    }
-    queueActionPin.value = ''
-    if (stationPin.value.trim() === adminPin) {
-      stationPin.value = ''
-    }
+    queueActionMessage.value = `${order.id} ${label}未完成：${queueActionMessage.value}`
     return
   }
-
-  stationPin.value = adminPin
 }
 
 const requestQueueAdminAction = (kind: QueueAdminActionKind, order: PosOrder): void => {
   const label = queueAdminActionLabel(kind)
-  const adminPin = stationPin.value.trim()
 
-  if (!adminPin) {
-    pendingQueueAdminAction.value = {
-      kind,
-      orderId: order.id,
-      label,
-    }
-    queueActionPin.value = ''
-    queueActionMessage.value = `${order.id} 需要管理 PIN 才能${label}`
+  if (!requireBackendEditMode(label)) {
+    queueActionMessage.value = `${order.id} ${label}需先進入後台編輯模式`
     return
   }
 
-  void executeQueueAdminAction(kind, order, adminPin)
-}
-
-const cancelQueueAdminAction = (): void => {
-  pendingQueueAdminAction.value = null
-  queueActionPin.value = ''
-  queueActionMessage.value = ''
-}
-
-const confirmQueueAdminAction = (): void => {
-  const action = pendingQueueAdminAction.value
-  const adminPin = queueActionPin.value.trim()
-  if (!action || !adminPin) {
-    return
-  }
-
-  const order = orderQueue.value.find((entry) => entry.id === action.orderId)
-  if (!order) {
-    queueActionMessage.value = `${action.orderId} 已不在目前佇列`
-    pendingQueueAdminAction.value = null
-    return
-  }
-
-  queueActionPin.value = ''
-  void executeQueueAdminAction(action.kind, order, adminPin)
+  void executeQueueAdminAction(kind, order)
 }
 
 const orderSwipeCompleteLabel = (order: PosOrder): string => {
@@ -2926,6 +2872,59 @@ const openToolbox = (): void => {
 const closeToolbox = (): void => {
   isToolboxOpen.value = false
   activeToolboxPanel.value = 'home'
+}
+
+const clearBackendEditTapTimer = (): void => {
+  if (backendEditTapTimer !== null) {
+    globalThis.clearTimeout(backendEditTapTimer)
+    backendEditTapTimer = null
+  }
+}
+
+const resetBackendEditTapProgress = (): void => {
+  backendEditTapCount.value = 0
+  clearBackendEditTapTimer()
+}
+
+const enableBackendEditMode = (): void => {
+  backendEditModeEnabled.value = true
+  writeStorageValue(backendEditModeStorageKey, true)
+  resetBackendEditTapProgress()
+  backendEditMessage.value = '後台編輯模式已啟用'
+}
+
+const handleToolboxTap = (): void => {
+  openToolbox()
+
+  if (backendEditModeEnabled.value) {
+    backendEditMessage.value = '後台編輯模式已啟用'
+    return
+  }
+
+  backendEditTapCount.value += 1
+  const remainingTaps = Math.max(backendEditTapTarget - backendEditTapCount.value, 0)
+
+  if (remainingTaps === 0) {
+    enableBackendEditMode()
+    return
+  }
+
+  backendEditMessage.value = `再點 ${remainingTaps} 下進入後台編輯模式`
+  clearBackendEditTapTimer()
+  backendEditTapTimer = globalThis.setTimeout(() => {
+    resetBackendEditTapProgress()
+    backendEditMessage.value = '連點工具箱 6 下進入後台編輯模式'
+  }, backendEditTapWindowMs)
+}
+
+const requireBackendEditMode = (actionLabel = '後台編輯'): boolean => {
+  if (backendEditModeEnabled.value) {
+    return true
+  }
+
+  backendEditMessage.value = `${actionLabel}需先連點工具箱 6 下`
+  openToolbox()
+  return false
 }
 
 const showToolboxHome = (): void => {
@@ -3249,6 +3248,10 @@ const startTakeoutOrder = (): void => {
 }
 
 const setActiveView = (view: AppView): void => {
+  if (view === 'admin' && !requireBackendEditMode('進入後台')) {
+    return
+  }
+
   if (isNativeApp) {
     activeView.value = 'pos'
     activeWorkspaceTab.value = 'queue'
@@ -3271,11 +3274,11 @@ const setActiveView = (view: AppView): void => {
 }
 
 const loadStationProducts = (): void => {
-  void loadProductStatusCatalog(stationPin.value.trim())
+  void loadProductStatusCatalog()
 }
 
 const toggleStationProduct = (product: MenuItem): void => {
-  void updateProductAvailability(stationPin.value.trim(), product.id, !product.available)
+  void updateProductAvailability(product.id, !product.available)
 }
 
 const stationBatchProductIdSet = computed(() => new Set(stationBatchProductIds.value))
@@ -3295,7 +3298,7 @@ const updateVisibleStationProducts = async (isAvailable: boolean): Promise<void>
 
   stationBatchProductIds.value = targetProducts.map((product) => product.id)
   for (const product of targetProducts) {
-    await updateProductAvailability(stationPin.value.trim(), product.id, isAvailable)
+    await updateProductAvailability(product.id, isAvailable)
   }
   stationBatchProductIds.value = []
 }
@@ -3315,6 +3318,10 @@ const setNoteSupplyStatus = (noteId: string, status: ProductSupplyStatus): void 
 }
 
 const openSupplyStatus = (): void => {
+  if (!requireBackendEditMode('供應狀態編輯')) {
+    return
+  }
+
   isToolboxOpen.value = false
   isSupplyStatusOpen.value = true
 }
@@ -3370,7 +3377,7 @@ const deleteSelectedMenuCategory = async (): Promise<void> => {
   let deletedCount = 0
 
   for (const product of products) {
-    const deleted = await deleteProductForStation(stationPin.value.trim(), product.id)
+    const deleted = await deleteProductForStation(product.id)
     if (deleted) {
       deletedCount += 1
       productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
@@ -3444,7 +3451,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
   }
 
   const undoSnapshot = captureSupplySnapshot('新增商品')
-  const product = await createProductForStation(stationPin.value.trim(), {
+  const product = await createProductForStation({
     sku: newProductSku.value.trim() || slugFromText(name, 'product'),
     name,
     category: categoryId,
@@ -3482,7 +3489,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
 
 const deleteSupplyProduct = async (product: MenuItem): Promise<void> => {
   const undoSnapshot = captureSupplySnapshot('刪除商品')
-  const deleted = await deleteProductForStation(stationPin.value.trim(), product.id)
+  const deleted = await deleteProductForStation(product.id)
   if (!deleted) {
     supplyActionMessage.value = `${product.name} 刪除失敗`
     return
@@ -3647,7 +3654,7 @@ const updateSupplyRowStatus = async (
   }
 
   if (row.kind === 'product') {
-    const updated = await updateProductSupplyStatus(stationPin.value.trim(), row.id, status)
+    const updated = await updateProductSupplyStatus(row.id, status)
     if (updated) {
       setProductSupplyStatus(row.id, status)
     }
@@ -3676,12 +3683,19 @@ const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<voi
 }
 
 const openRegisterSessionAction = (): void => {
-  void openRegisterSessionForStation(registerPin.value.trim(), registerOpeningCash.value, registerNote.value.trim())
+  if (!requireBackendEditMode('開班')) {
+    return
+  }
+
+  void openRegisterSessionForStation(registerOpeningCash.value, registerNote.value.trim())
 }
 
 const closeRegisterSessionAction = (): void => {
+  if (!requireBackendEditMode('關班')) {
+    return
+  }
+
   void closeRegisterSessionForStation(
-    registerPin.value.trim(),
     registerClosingCash.value,
     registerNote.value.trim(),
     forceCloseRegister.value,
@@ -3788,6 +3802,7 @@ onBeforeUnmount(() => {
   if (claimClockTimer !== null) {
     globalThis.clearInterval(claimClockTimer)
   }
+  clearBackendEditTapTimer()
 })
 </script>
 
@@ -4014,7 +4029,7 @@ onBeforeUnmount(() => {
                 title="工具箱"
                 aria-controls="pos-toolbox-modal"
                 :aria-expanded="isToolboxOpen"
-                @click="openToolbox"
+                @click="handleToolboxTap"
               >
                 <Settings2 :size="24" aria-hidden="true" />
                 <span>工具箱</span>
@@ -4320,7 +4335,7 @@ onBeforeUnmount(() => {
                         title="開啟工具箱"
                         aria-controls="pos-toolbox-modal"
                         :aria-expanded="isToolboxOpen"
-                        @click="openToolbox"
+                        @click="handleToolboxTap"
                       >
                         <MoreHorizontal :size="24" aria-hidden="true" />
                       </button>
@@ -4840,39 +4855,15 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
 
-                  <section
-                    v-if="pendingQueueAdminAction || queueActionMessage"
-                    class="queue-admin-card"
-                    :class="{ 'queue-admin-card--prompt': pendingQueueAdminAction }"
-                    aria-live="polite"
-                  >
+                  <section v-if="queueActionMessage" class="queue-admin-card" aria-live="polite">
                     <div class="queue-admin-card-copy">
                       <CircleAlert :size="20" aria-hidden="true" />
                       <div>
-                        <strong v-if="pendingQueueAdminAction">
-                          {{ pendingQueueAdminAction.orderId }} 確認{{ pendingQueueAdminAction.label }}
-                        </strong>
-                        <strong v-else>操作狀態</strong>
+                        <strong>操作狀態</strong>
                         <span>{{ queueActionMessage }}</span>
                       </div>
                     </div>
-                    <form v-if="pendingQueueAdminAction" class="queue-admin-pin-form" @submit.prevent="confirmQueueAdminAction">
-                      <label>
-                        管理 PIN
-                        <input
-                          v-model="queueActionPin"
-                          type="password"
-                          inputmode="numeric"
-                          autocomplete="off"
-                          placeholder="輸入 PIN 後確認"
-                        />
-                      </label>
-                      <button type="button" @click="cancelQueueAdminAction">取消</button>
-                      <button class="primary-button" type="submit" :disabled="!queueActionPin.trim()">
-                        確認{{ pendingQueueAdminAction.label }}
-                      </button>
-                    </form>
-                    <button v-else type="button" @click="queueActionMessage = ''">關閉</button>
+                    <button type="button" @click="queueActionMessage = ''">關閉</button>
                   </section>
 
                   <div class="queue-list-scroll" aria-label="桌況訂單列表">
@@ -5080,10 +5071,9 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="station-pin-row">
-                    <label>
-                      PIN
-                      <input v-model="stationPin" type="password" inputmode="numeric" autocomplete="off" placeholder="管理 PIN" />
-                    </label>
+                    <span class="backend-edit-status">
+                      {{ backendEditModeEnabled ? '後台編輯模式已啟用' : '連點工具箱 6 下解鎖後台編輯' }}
+                    </span>
                     <button type="button" :disabled="isLoadingProductStatus" @click="loadStationProducts">
                       <RefreshCw :size="16" aria-hidden="true" />
                       {{ isLoadingProductStatus ? '載入中' : '載入' }}
@@ -5406,10 +5396,6 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="register-form-grid">
-                      <label>
-                        管理 PIN
-                        <input v-model="registerPin" type="password" inputmode="numeric" autocomplete="off" />
-                      </label>
                       <label v-if="!registerIsOpen">
                         開班現金
                         <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
@@ -5580,6 +5566,16 @@ onBeforeUnmount(() => {
             </header>
 
             <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
+              <button
+                type="button"
+                class="toolbox-card toolbox-card--status"
+                aria-live="polite"
+                @click="handleToolboxTap"
+              >
+                <Settings2 :size="24" aria-hidden="true" />
+                <strong>{{ backendEditModeEnabled ? '後台編輯已啟用' : '後台編輯未啟用' }}</strong>
+                <span>{{ backendEditMessage }}</span>
+              </button>
               <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
                 <ShoppingCart :size="24" aria-hidden="true" />
                 <strong>新增外帶</strong>
@@ -5698,16 +5694,6 @@ onBeforeUnmount(() => {
               <span>先調整販售狀態，需要時再展開管理功能</span>
             </div>
             <div class="supply-modal-actions">
-              <label class="supply-pin-entry">
-                <span>管理 PIN</span>
-                <input
-                  v-model="stationPin"
-                  type="password"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  placeholder="寫入資料庫"
-                />
-              </label>
               <button
                 class="supply-undo-button"
                 type="button"
@@ -5995,7 +5981,7 @@ onBeforeUnmount(() => {
                 <p class="eyebrow">SOP</p>
                 <h2 id="knowledge-title">門市助手</h2>
               </div>
-              <button class="icon-button" type="button" title="開啟工具箱" @click="openToolbox">
+              <button class="icon-button" type="button" title="開啟工具箱" @click="handleToolboxTap">
                 <MoreHorizontal :size="18" aria-hidden="true" />
               </button>
             </header>

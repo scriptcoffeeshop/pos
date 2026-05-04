@@ -807,7 +807,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const refundingOrderId = ref<string | null>(null)
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
-  const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
+  const productStatusMessage = ref('後台編輯模式可載入完整商品清單，並在平板上暫停或恢復供應')
   const registerSession = ref<RegisterSession | null>(null)
   const registerMessage = ref('尚未載入開班資料')
   const stationHeartbeatMessage = ref('尚未回報平板在線狀態')
@@ -1947,12 +1947,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const voidOrderForStation = async (adminPin: string, orderId: string, note = ''): Promise<void> => {
-    if (!adminPin) {
-      setBackendStatus('fallback', '需要管理 PIN', '請先在前台操作區輸入管理 PIN')
-      return
-    }
-
+  const voidOrderForStation = async (orderId: string, note = ''): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return
@@ -1982,7 +1977,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     voidingOrderId.value = orderId
 
     try {
-      const voidedOrder = await voidOrder(adminPin, claimedOrder, note)
+      const voidedOrder = await voidOrder(claimedOrder, note)
       replaceOrder(orderId, {
         ...voidedOrder,
         lines: voidedOrder.lines.length > 0 ? voidedOrder.lines : claimedOrder.lines,
@@ -1997,12 +1992,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const refundOrderForStation = async (adminPin: string, orderId: string, note = ''): Promise<void> => {
-    if (!adminPin) {
-      setBackendStatus('fallback', '需要管理 PIN', '請先在前台操作區輸入管理 PIN')
-      return
-    }
-
+  const refundOrderForStation = async (orderId: string, note = ''): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return
@@ -2032,7 +2022,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     refundingOrderId.value = orderId
 
     try {
-      const refundedOrder = await refundOrder(adminPin, claimedOrder, note)
+      const refundedOrder = await refundOrder(claimedOrder, note)
       replaceOrder(orderId, {
         ...refundedOrder,
         lines: refundedOrder.lines.length > 0 ? refundedOrder.lines : claimedOrder.lines,
@@ -2179,17 +2169,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const loadProductStatusCatalog = async (adminPin: string): Promise<void> => {
-    if (!adminPin) {
-      productStatusMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
+  const loadProductStatusCatalog = async (): Promise<void> => {
     isLoadingProductStatus.value = true
     productStatusMessage.value = '載入完整商品狀態中'
 
     try {
-      const products = await fetchAdminProducts(adminPin)
+      const products = await fetchAdminProducts()
       writeLocalProducts([])
       productStatusCatalog.value = sortProducts(products.filter((product) => product.posVisible))
       productStatusMessage.value = `已載入 ${productStatusCatalog.value.length} 個 POS 商品，可直接暫停或恢復供應`
@@ -2201,15 +2186,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const updateProductAvailability = async (
-    adminPin: string,
     productId: string,
     isAvailable: boolean,
   ): Promise<void> => {
-    if (!adminPin) {
-      productStatusMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const product = productStatusCatalog.value.find((entry) => entry.id === productId)
       ?? menuCatalog.value.find((entry) => entry.id === productId)
     if (!product) {
@@ -2223,7 +2202,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusMessage.value = `${product.name} ${isAvailable ? '恢復供應中' : '暫停供應中'}`
 
     try {
-      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, { isAvailable }))
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, { isAvailable }))
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已${savedProduct.available ? '恢復供應' : '暫停供應'}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -2237,7 +2216,6 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const updateProductSupplyStatus = async (
-    adminPin: string,
     productId: string,
     status: ProductSupplyStatus,
   ): Promise<boolean> => {
@@ -2252,15 +2230,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     togglingProductId.value = productId
     productStatusMessage.value = `${product.name} 更新為${statusLabel}中`
 
-    if (!adminPin || !isPosApiConfigured) {
+    if (!isPosApiConfigured) {
       togglingProductId.value = null
-      productStatusMessage.value = `${product.name} 未更新：需輸入 PIN 並連線 POS API 才會寫入資料庫`
+      productStatusMessage.value = `${product.name} 已暫存本機；需連線 POS API 才會寫入資料庫`
       setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
       return false
     }
 
     try {
-      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, productSupplyOverrides(status)))
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, productSupplyOverrides(status)))
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已更新為${statusLabel}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -2275,20 +2253,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const createProductForStation = async (
-    adminPin: string,
     input: ProductUpdateInput,
   ): Promise<MenuItem | null> => {
     const fallbackProduct = buildLocalProduct(input)
     productStatusMessage.value = `${fallbackProduct.name} 建立中`
 
-    if (!adminPin || !isPosApiConfigured) {
-      productStatusMessage.value = `${fallbackProduct.name} 未新增：需輸入 PIN 並連線 POS API 才會寫入資料庫`
+    if (!isPosApiConfigured) {
+      productStatusMessage.value = `${fallbackProduct.name} 未新增：需連線 POS API 才會寫入資料庫`
       setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
       return null
     }
 
     try {
-      const savedProduct = await createProduct(adminPin, input)
+      const savedProduct = await createProduct(input)
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已新增`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -2300,7 +2277,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const deleteProductForStation = async (adminPin: string, productId: string): Promise<boolean> => {
+  const deleteProductForStation = async (productId: string): Promise<boolean> => {
     const product = productStatusCatalog.value.find((entry) => entry.id === productId)
       ?? menuCatalog.value.find((entry) => entry.id === productId)
     if (!product) {
@@ -2319,15 +2296,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return true
     }
 
-    if (!adminPin || !isPosApiConfigured) {
+    if (!isPosApiConfigured) {
       togglingProductId.value = null
-      productStatusMessage.value = `${product.name} 未刪除：需輸入 PIN 並連線 POS API 才會更新資料庫`
+      productStatusMessage.value = `${product.name} 未刪除：需連線 POS API 才會更新資料庫`
       setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
       return false
     }
 
     try {
-      await deleteProduct(adminPin, productId)
+      await deleteProduct(productId)
       removeSavedProduct(productId)
       productStatusMessage.value = `${product.name} 已刪除`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -2366,15 +2343,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const openRegisterSessionForStation = async (
-    adminPin: string,
     openingCashValue: number,
     note: string,
   ): Promise<void> => {
-    if (!adminPin) {
-      registerMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const openingCash = readRegisterCashAmount(openingCashValue)
     if (openingCash === null) {
       registerMessage.value = '開班現金需為 0 以上整數'
@@ -2390,7 +2361,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '開班中'
 
     try {
-      const session = await openRegisterSession(adminPin, openingCash, note)
+      const session = await openRegisterSession(openingCash, note)
       applyRegisterSession(session)
       registerMessage.value = `已開班，預期現金 ${session.expectedCash}`
       setBackendStatus('connected', '班別已開啟', `${stationClaimLabel} 已開班`)
@@ -2403,16 +2374,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const closeRegisterSessionForStation = async (
-    adminPin: string,
     closingCashValue: number,
     note: string,
     force = false,
   ): Promise<void> => {
-    if (!adminPin) {
-      registerMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const closingCash = readRegisterCashAmount(closingCashValue)
     if (closingCash === null) {
       registerMessage.value = '關班現金需為 0 以上整數'
@@ -2428,7 +2393,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '關班結算中'
 
     try {
-      const session = await closeRegisterSession(adminPin, closingCash, note, force)
+      const session = await closeRegisterSession(closingCash, note, force)
       applyRegisterSession(session)
       const variance = closingCash - session.expectedCash
       registerMessage.value = `已關班，現金差額 ${variance}`

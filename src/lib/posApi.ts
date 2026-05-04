@@ -828,20 +828,15 @@ export const fetchProducts = async (channel: ProductChannel = 'pos'): Promise<Me
   return data.products.map(normalizeProduct)
 }
 
-export const fetchAdminProducts = async (adminPin: string): Promise<MenuItem[]> => {
-  const data = await request<ProductsResponse>('/admin/products', {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+export const fetchAdminProducts = async (): Promise<MenuItem[]> => {
+  const data = await request<ProductsResponse>('/admin/products')
   return data.products.map(normalizeProduct)
 }
 
-export const createProduct = async (adminPin: string, input: ProductUpdateInput): Promise<MenuItem> => {
+export const createProduct = async (input: ProductUpdateInput): Promise<MenuItem> => {
   const data = await request<ProductResponse>('/admin/products', {
     method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(input),
@@ -851,14 +846,12 @@ export const createProduct = async (adminPin: string, input: ProductUpdateInput)
 }
 
 export const updateProduct = async (
-  adminPin: string,
   productId: string,
   input: ProductUpdateInput,
 ): Promise<MenuItem> => {
   const data = await request<ProductResponse>(`/admin/products/${productId}`, {
     method: 'PATCH',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(input),
@@ -867,11 +860,10 @@ export const updateProduct = async (
   return normalizeProduct(data.product)
 }
 
-export const deleteProduct = async (adminPin: string, productId: string): Promise<MenuItem> => {
+export const deleteProduct = async (productId: string): Promise<MenuItem> => {
   const data = await request<ProductResponse>(`/admin/products/${productId}`, {
     method: 'DELETE',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
   })
@@ -879,30 +871,21 @@ export const deleteProduct = async (adminPin: string, productId: string): Promis
   return normalizeProduct(data.product)
 }
 
-export const fetchAdminSettings = async (adminPin: string): Promise<PosAdminSettings> => {
-  const data = await request<AdminSettingsResponse>('/admin/settings', {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+export const fetchAdminSettings = async (): Promise<PosAdminSettings> => {
+  const data = await request<AdminSettingsResponse>('/admin/settings')
 
   return normalizeAdminSettings(data.settings)
 }
 
-export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promise<PosAuditEvent[]> => {
+export const fetchAdminAuditEvents = async (limit = 50): Promise<PosAuditEvent[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
-  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`)
 
   return data.events.map(normalizeAuditEvent)
 }
 
 export const fetchAdminPaymentEvents = async (
-  adminPin: string,
   limit = 50,
   provider = '',
 ): Promise<PosPaymentEvent[]> => {
@@ -914,26 +897,18 @@ export const fetchAdminPaymentEvents = async (
     params.set('provider', normalizedProvider)
   }
 
-  const data = await request<PaymentEventsResponse>(`/admin/payment-events?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<PaymentEventsResponse>(`/admin/payment-events?${params.toString()}`)
 
   return data.events.map(normalizePaymentEvent)
 }
 
-export const fetchAdminStations = async (adminPin: string): Promise<PosStationHeartbeat[]> => {
-  const data = await request<StationHeartbeatsResponse>('/admin/stations', {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+export const fetchAdminStations = async (): Promise<PosStationHeartbeat[]> => {
+  const data = await request<StationHeartbeatsResponse>('/admin/stations')
 
   return data.stations.map(normalizeStationHeartbeat)
 }
 
-export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = ''): Promise<PosMember[]> => {
+export const fetchAdminMembers = async (limit = 50, keyword = ''): Promise<PosMember[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
   const params = new URLSearchParams({ limit: String(cappedLimit) })
@@ -941,38 +916,28 @@ export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = 
     params.set('q', keyword.trim())
   }
 
-  const data = await request<MembersResponse>(`/admin/members?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<MembersResponse>(`/admin/members?${params.toString()}`)
 
   return data.members.map(normalizeMember)
 }
 
-export const fetchAdminDailyReport = async (adminPin: string, date: string): Promise<DailySalesReport> => {
+export const fetchAdminDailyReport = async (date: string): Promise<DailySalesReport> => {
   const params = new URLSearchParams()
   if (date.trim()) {
     params.set('date', date.trim())
   }
 
-  const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`)
 
   return data.report
 }
 
 export const createAdminMember = async (
-  adminPin: string,
   input: CreateMemberInput,
 ): Promise<PosMember> => {
   const data = await request<MemberResponse>('/admin/members', {
     method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify({
@@ -985,14 +950,12 @@ export const createAdminMember = async (
 }
 
 export const adjustMemberWallet = async (
-  adminPin: string,
   memberId: string,
   input: WalletAdjustmentInput,
 ): Promise<PosMember> => {
   const data = await request<MemberResponse>(`/admin/members/${memberId}/wallet-adjustments`, {
     method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify({
@@ -1020,14 +983,12 @@ export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {
 }
 
 export const updateAdminSetting = async <SettingValue>(
-  adminPin: string,
   key: AdminSettingKey,
   value: SettingValue,
 ): Promise<SettingValue> => {
   const data = await request<{ setting: ApiSettingRow }>(`/admin/settings/${key}`, {
     method: 'PATCH',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(value),
@@ -1055,15 +1016,11 @@ export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | n
 }
 
 export const openRegisterSession = async (
-  adminPin: string,
   openingCash: number,
   note = '',
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/open', {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ openingCash, note, stationId: currentStationId() }),
   })
 
@@ -1075,16 +1032,12 @@ export const openRegisterSession = async (
 }
 
 export const closeRegisterSession = async (
-  adminPin: string,
   closingCash: number,
   note = '',
   force = false,
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/close', {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force }),
   })
 
@@ -1176,15 +1129,11 @@ export const updateOrderPaymentStatus = async (
 }
 
 export const voidOrder = async (
-  adminPin: string,
   order: PosOrder,
   note = '',
 ): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/void`, {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ stationId: currentStationId(), note }),
   })
 
@@ -1192,15 +1141,11 @@ export const voidOrder = async (
 }
 
 export const refundOrder = async (
-  adminPin: string,
   order: PosOrder,
   note = '',
 ): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/refund`, {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ stationId: currentStationId(), note }),
   })
 

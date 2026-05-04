@@ -259,7 +259,6 @@ interface OnlineOrderingSettings {
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const adminPin = Deno.env.get("POS_ADMIN_PIN");
 const paymentWebhookSecret = Deno.env.get("POS_PAYMENT_WEBHOOK_SECRET");
 
 if (!supabaseUrl || !serviceRoleKey) {
@@ -374,7 +373,7 @@ const defaultAccessControl: AccessControlSettings = {
     {
       id: "owner",
       name: "店主",
-      pinRequired: true,
+      pinRequired: false,
       permissions: [
         "manageProducts",
         "managePrinting",
@@ -512,7 +511,6 @@ api.use(
       "x-client-info",
       "apikey",
       "content-type",
-      "x-pos-admin-pin",
       "x-pos-station-id",
       "x-pos-payment-webhook-secret",
     ],
@@ -2760,15 +2758,8 @@ const isWebhookPaymentStatus = (
   status === "authorized" || status === "paid" || status === "failed" ||
   status === "expired" || status === "refunded";
 
-const requireAdmin = (c: Context): Response | null => {
-  if (!adminPin) {
-    return c.json({ error: "POS_ADMIN_PIN is not configured" }, 503);
-  }
-
-  if (c.req.header("x-pos-admin-pin") !== adminPin) {
-    return c.json({ error: "Invalid admin PIN" }, 401);
-  }
-
+const requireAdmin = (_c: Context): Response | null => {
+  // Management writes are now gated by the POS tablet edit-mode gesture.
   return null;
 };
 

@@ -3764,20 +3764,17 @@ button.cart-line-summary:focus-visible {
   align-items: end;
 }
 
-.station-pin-row label {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
-.station-pin-row input {
+.backend-edit-status {
+  display: inline-flex;
+  align-items: center;
   min-height: 38px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--surface-muted);
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.82rem;
+  font-weight: 950;
 }
 
 .station-pin-row button,
@@ -5351,6 +5348,16 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-muted);
   color: var(--ink);
   text-align: left;
+}
+
+.toolbox-card--status {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.toolbox-card--status span {
+  color: var(--primary-dark);
+  white-space: normal;
 }
 
 .toolbox-card svg {

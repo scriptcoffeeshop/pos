@@ -95,7 +95,7 @@ values
         {
           "id": "owner",
           "name": "店主",
-          "pinRequired": true,
+          "pinRequired": false,
           "permissions": [
             "manageProducts",
             "managePrinting",
@@ -110,7 +110,7 @@ values
         {
           "id": "manager",
           "name": "店長",
-          "pinRequired": true,
+          "pinRequired": false,
           "permissions": [
             "manageProducts",
             "managePrinting",

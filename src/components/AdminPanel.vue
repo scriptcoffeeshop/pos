@@ -223,22 +223,6 @@ const isStationOnline = (iso: string): boolean => {
   return Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < 90_000
 }
 
-const readStoredPin = (): string => {
-  try {
-    return sessionStorage.getItem('script-coffee-pos-admin-pin') ?? ''
-  } catch {
-    return ''
-  }
-}
-
-const writeStoredPin = (pin: string): void => {
-  try {
-    sessionStorage.setItem('script-coffee-pos-admin-pin', pin)
-  } catch {
-    return
-  }
-}
-
 const emptyPrinterSettings = (): PrinterSettings => ({
   stations: [],
   rules: [],
@@ -299,7 +283,6 @@ const toDateInput = (date = new Date()): string => {
   return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 10)
 }
 
-const adminPin = ref(readStoredPin())
 const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
@@ -978,24 +961,18 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
 }
 
 const loadAdminData = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isLoading.value = true
   adminMessage.value = '讀取後台資料中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
     const [products, memberRows, report, settings, events, paymentRows, stations] = await Promise.all([
-      fetchAdminProducts(adminPin.value.trim()),
-      fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value),
-      fetchAdminDailyReport(adminPin.value.trim(), reportDate.value),
-      fetchAdminSettings(adminPin.value.trim()),
-      fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
-      fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value, paymentProviderFilter.value),
-      fetchAdminStations(adminPin.value.trim()),
+      fetchAdminProducts(),
+      fetchAdminMembers(50, memberSearchTerm.value),
+      fetchAdminDailyReport(reportDate.value),
+      fetchAdminSettings(),
+      fetchAdminAuditEvents(auditLimit.value),
+      fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value),
+      fetchAdminStations(),
     ])
     productDrafts.value = products.map(toDraft)
     members.value = memberRows
@@ -1015,21 +992,11 @@ const loadAdminData = async (): Promise<void> => {
 }
 
 const loadPaymentEvents = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isPaymentEventLoading.value = true
   adminMessage.value = '讀取支付事件中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    paymentEvents.value = await fetchAdminPaymentEvents(
-      adminPin.value.trim(),
-      paymentEventLimit.value,
-      paymentProviderFilter.value,
-    )
+    paymentEvents.value = await fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value)
     adminMessage.value = `已載入 ${paymentEvents.value.length} 筆支付事件`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '支付事件讀取失敗'
@@ -1039,17 +1006,11 @@ const loadPaymentEvents = async (): Promise<void> => {
 }
 
 const loadAuditEvents = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isAuditLoading.value = true
   adminMessage.value = '讀取稽核紀錄中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    auditEvents.value = await fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value)
+    auditEvents.value = await fetchAdminAuditEvents(auditLimit.value)
     adminMessage.value = `已載入 ${auditEvents.value.length} 筆稽核紀錄`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '稽核紀錄讀取失敗'
@@ -1059,17 +1020,11 @@ const loadAuditEvents = async (): Promise<void> => {
 }
 
 const loadStationHeartbeats = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isStationLoading.value = true
   adminMessage.value = '讀取平板在線狀態中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    stationHeartbeats.value = await fetchAdminStations(adminPin.value.trim())
+    stationHeartbeats.value = await fetchAdminStations()
     adminMessage.value = `已載入 ${stationHeartbeats.value.length} 台平板狀態`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
@@ -1079,19 +1034,13 @@ const loadStationHeartbeats = async (): Promise<void> => {
 }
 
 const loadOperationTimeline = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isOperationLoading.value = true
   adminMessage.value = '讀取營運紀錄中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
     const [events, stations] = await Promise.all([
-      fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
-      fetchAdminStations(adminPin.value.trim()),
+      fetchAdminAuditEvents(auditLimit.value),
+      fetchAdminStations(),
     ])
     auditEvents.value = events
     stationHeartbeats.value = stations
@@ -1104,17 +1053,11 @@ const loadOperationTimeline = async (): Promise<void> => {
 }
 
 const loadMembers = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isMemberLoading.value = true
   adminMessage.value = '讀取會員錢包中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    members.value = await fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value)
+    members.value = await fetchAdminMembers(50, memberSearchTerm.value)
     adminMessage.value = `已載入 ${members.value.length} 位會員`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '會員錢包讀取失敗'
@@ -1124,17 +1067,11 @@ const loadMembers = async (): Promise<void> => {
 }
 
 const loadDailyReport = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isReportLoading.value = true
   adminMessage.value = '讀取營運日報中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    dailyReport.value = await fetchAdminDailyReport(adminPin.value.trim(), reportDate.value)
+    dailyReport.value = await fetchAdminDailyReport(reportDate.value)
     adminMessage.value = `已載入 ${dailyReport.value.date} 日報，營收 ${formatCurrency(dailyReport.value.collectedTotal)}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
@@ -1144,16 +1081,11 @@ const loadDailyReport = async (): Promise<void> => {
 }
 
 const addMember = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   savingMemberId.value = 'new'
   adminMessage.value = '建立會員中'
 
   try {
-    const member = await createAdminMember(adminPin.value.trim(), {
+    const member = await createAdminMember({
       lineUserId: newMember.value.lineUserId.trim(),
       displayName: newMember.value.displayName.trim(),
       openingBalance: Math.max(0, Math.trunc(Number(newMember.value.openingBalance) || 0)),
@@ -1170,11 +1102,6 @@ const addMember = async (): Promise<void> => {
 }
 
 const saveWalletAdjustment = async (member: PosMember): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   const draft = walletAdjustmentDraft(member.id)
   const amount = Math.trunc(Number(draft.amount) || 0)
   if (amount === 0) {
@@ -1186,7 +1113,7 @@ const saveWalletAdjustment = async (member: PosMember): Promise<void> => {
   adminMessage.value = `調整 ${member.displayName} 錢包`
 
   try {
-    const savedMember = await adjustMemberWallet(adminPin.value.trim(), member.id, {
+    const savedMember = await adjustMemberWallet(member.id, {
       amount,
       note: draft.note.trim(),
     })
@@ -1226,7 +1153,7 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
   }
 
   try {
-    const savedProduct = await updateProduct(adminPin.value.trim(), product.id, payload)
+    const savedProduct = await updateProduct(product.id, payload)
     productDrafts.value = productDrafts.value.map((entry) => (entry.id === product.id ? toDraft(savedProduct) : entry))
     adminMessage.value = `${savedProduct.name} 已更新`
     emit('refreshPos')
@@ -1293,11 +1220,7 @@ const savePrinterSettings = async (): Promise<void> => {
   adminMessage.value = '儲存出單機設定'
 
   try {
-    const savedSettings = await updateAdminSetting<PrinterSettings>(
-      adminPin.value.trim(),
-      'printer_settings',
-      printerSettings.value,
-    )
+    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', printerSettings.value)
     printerSettings.value = clonePrinterSettings(savedSettings)
     adminMessage.value = '出單機設定已更新'
     emit('refreshPos')
@@ -1314,7 +1237,6 @@ const saveOnlineOrdering = async (): Promise<void> => {
 
   try {
     const savedSettings = await updateAdminSetting<OnlineOrderingSettings>(
-      adminPin.value.trim(),
       'online_ordering',
       {
         ...onlineOrdering.value,
@@ -1348,7 +1270,7 @@ const addRole = (): void => {
   accessControl.value.roles.push({
     id: buildId('role'),
     name: '新角色',
-    pinRequired: true,
+    pinRequired: false,
     permissions: ['manageProducts'],
   })
 }
@@ -1378,11 +1300,7 @@ const saveAccessControl = async (): Promise<void> => {
   adminMessage.value = '儲存權限設定'
 
   try {
-    const savedAccessControl = await updateAdminSetting<AccessControlSettings>(
-      adminPin.value.trim(),
-      'access_control',
-      accessControl.value,
-    )
+    const savedAccessControl = await updateAdminSetting<AccessControlSettings>('access_control', accessControl.value)
     accessControl.value = cloneAccessControl(savedAccessControl)
     adminMessage.value = '權限設定已更新'
   } catch (error) {
@@ -1404,15 +1322,12 @@ const saveAccessControl = async (): Promise<void> => {
         </div>
         <span class="status-pill status-pill--success">
           <ShieldCheck :size="18" aria-hidden="true" />
-          PIN 保護
+          編輯模式
         </span>
       </div>
 
       <div class="admin-access-grid">
-        <label>
-          管理 PIN
-          <input v-model="adminPin" type="password" autocomplete="off" />
-        </label>
+        <p class="panel-note">已由工具箱連點 6 下解鎖。</p>
         <button class="primary-button" type="button" :disabled="isLoading" @click="loadAdminData">
           <RefreshCw :size="18" aria-hidden="true" />
           {{ isLoading ? '讀取中' : '載入後台' }}
