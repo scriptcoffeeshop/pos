@@ -74,7 +74,7 @@ type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'knowledge' | 'sync' | 'appearance'
+type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance'
 type ToolboxPanel = 'home' | 'appearance'
 type StationAvailabilityFilter = 'all' | 'available' | 'stopped' | 'low-stock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
@@ -219,6 +219,7 @@ const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
 const fulfillmentAlertWindowMinutes = 15
+const interfaceScaleBaselineOffset = -20
 const defaultPosUiPreferences: PosUiPreferences = {
   schemaVersion: 2,
   interfaceScale: 0,
@@ -427,6 +428,11 @@ const migrateScalePercentToOffset = (value: unknown, fallback: number): number =
   return clampPreference(Math.round((numberValue - 100) * 10), fallback)
 }
 
+const normalizeSavedInterfaceScale = (value: unknown, fallback: number): number => {
+  const offset = clampPreference(value, fallback)
+  return offset === interfaceScaleBaselineOffset ? 0 : offset
+}
+
 const readPosUiPreferences = (): PosUiPreferences => {
   try {
     const rawPreferences = globalThis.localStorage?.getItem(posUiPreferenceStorageKey)
@@ -441,7 +447,7 @@ const readPosUiPreferences = (): PosUiPreferences => {
 
     return {
       schemaVersion: 2,
-      interfaceScale: clampPreference(
+      interfaceScale: normalizeSavedInterfaceScale(
         parsed.interfaceScale,
         migrateScalePercentToOffset(parsed.appearanceScale, defaultPosUiPreferences.interfaceScale),
       ),
@@ -1880,10 +1886,12 @@ const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const activeToolboxPanel = ref<ToolboxPanel>('home')
 const preferenceOffsetLabel = (value: number): string => `${value > 0 ? '+' : ''}${Math.round(value)}%`
-const scaleFactorFromOffset = (offset: number): number =>
-  offset >= 0
-    ? 1 + offset / 100
-    : Math.max(0.33, 1 + offset / 300)
+const scaleFactorFromOffset = (offset: number): number => {
+  const calibratedOffset = offset + interfaceScaleBaselineOffset
+  return calibratedOffset >= 0
+    ? 1 + calibratedOffset / 100
+    : Math.max(0.33, 1 + calibratedOffset / 300)
+}
 const densityFactorFromOffset = (offset: number): number =>
   offset >= 0
     ? 1 + offset / 220
@@ -2924,19 +2932,6 @@ const showToolboxHome = (): void => {
   activeToolboxPanel.value = 'home'
 }
 
-const openKnowledge = (articleId?: string): void => {
-  activeCartQuickEditor.value = null
-  isToolboxOpen.value = false
-  if (articleId) {
-    activeKnowledgeArticleId.value = articleId
-  } else {
-    knowledgeSearchTerm.value = ''
-    knowledgeCategoryFilter.value = 'all'
-    activeKnowledgeArticleId.value = posKnowledgeArticles[0]?.id ?? ''
-  }
-  isKnowledgeOpen.value = true
-}
-
 const closeKnowledge = (): void => {
   isKnowledgeOpen.value = false
 }
@@ -3029,11 +3024,6 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'online') {
     setActiveView('online')
-  }
-
-  if (action === 'knowledge') {
-    openKnowledge()
-    return
   }
 
   if (action === 'appearance') {
@@ -5624,16 +5614,6 @@ onBeforeUnmount(() => {
                 <ShoppingBag :size="24" aria-hidden="true" />
                 <strong>線上點餐</strong>
                 <span>顧客入口預覽</span>
-              </button>
-              <button
-                type="button"
-                class="toolbox-card"
-                aria-controls="pos-knowledge-modal"
-                @click="runToolboxAction('knowledge')"
-              >
-                <BookOpenCheck :size="24" aria-hidden="true" />
-                <strong>門市助手</strong>
-                <span>搜尋 SOP 與操作流程</span>
               </button>
               <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
                 <Settings2 :size="20" aria-hidden="true" />
