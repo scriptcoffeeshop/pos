@@ -1532,6 +1532,10 @@ const handleProductTileClick = (item: MenuItem): void => {
     return
   }
 
+  if (productOrderingDisabled(item)) {
+    return
+  }
+
   selectMenuItem(item)
 }
 
@@ -2508,6 +2512,15 @@ const lineQuantityByItem = (itemId: string): number =>
     .reduce((total, line) => total + line.quantity, 0)
 
 const productRequiresOptions = (item: MenuItem): boolean => optionGroupsForProduct(item).length > 0
+const productOrderingDisabled = (item: MenuItem): boolean => productCurrentSupplyStatus(item) === 'stopped'
+const productTileActionLabel = (item: MenuItem): string => {
+  if (productOrderingDisabled(item)) {
+    return '停售'
+  }
+
+  const quantity = lineQuantityByItem(item.id)
+  return quantity > 0 ? `已加 ${quantity}` : '點選加入'
+}
 
 const quantityFromInput = (event: Event): number | null => {
   if (!(event.target instanceof HTMLInputElement)) {
@@ -2568,6 +2581,10 @@ const resetOptionSelections = (): void => {
 const selectMenuItem = (item: MenuItem): void => {
   if (suppressNextProductSelect.value) {
     suppressNextProductSelect.value = false
+    return
+  }
+
+  if (productOrderingDisabled(item)) {
     return
   }
 
@@ -2737,6 +2754,10 @@ const productStockLabel = (product: MenuItem): string => {
     return '售完'
   }
 
+  if (productOrderingDisabled(product)) {
+    return '停售'
+  }
+
   if (product.inventoryCount === null) {
     return ''
   }
@@ -2749,7 +2770,7 @@ const productStockLabel = (product: MenuItem): string => {
 }
 
 const productStockClass = (product: MenuItem): string => {
-  if (product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
+  if (productOrderingDisabled(product) || product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
     return 'product-stock-badge--stopped'
   }
 
@@ -4477,27 +4498,29 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
-                  <div class="ticket-config-grid" aria-label="訂單設定">
-                    <button
-                      class="order-essential-action"
-                      :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
-                      type="button"
-                      aria-controls="cart-payment-editor"
-                      :aria-expanded="activeCartQuickEditor === 'payment'"
-                      @click="toggleCartQuickEditor('payment')"
-                    >
-                      <span class="order-essential-label">
-                        <CreditCard :size="15" aria-hidden="true" />
-                        付款
-                      </span>
-                      <strong>{{ paymentLabels[paymentMethod] }}</strong>
-                    </button>
-                  </div>
+                  <div class="ticket-compact-controls" aria-label="付款與常用備註">
+                    <div class="ticket-config-grid" aria-label="訂單設定">
+                      <button
+                        class="order-essential-action"
+                        :class="{ 'order-essential-action--active': activeCartQuickEditor === 'payment' }"
+                        type="button"
+                        aria-controls="cart-payment-editor"
+                        :aria-expanded="activeCartQuickEditor === 'payment'"
+                        @click="toggleCartQuickEditor('payment')"
+                      >
+                        <span class="order-essential-label">
+                          <CreditCard :size="15" aria-hidden="true" />
+                          付款
+                        </span>
+                        <strong>{{ paymentLabels[paymentMethod] }}</strong>
+                      </button>
+                    </div>
 
-                  <div class="ticket-note-chips" aria-label="常用備註">
-                    <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
-                      {{ note }}
-                    </button>
+                    <div class="ticket-note-chips" aria-label="常用備註">
+                      <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
+                        {{ note }}
+                      </button>
+                    </div>
                   </div>
 
                   <div v-if="activeCartQuickEditor" class="cart-inline-editor" aria-live="polite">
@@ -4580,11 +4603,25 @@ onBeforeUnmount(() => {
                         @click="editCartLineOptions(line)"
                       >
                         <h3>{{ line.name }}</h3>
-                        <p>{{ line.options.join(' / ') || '標準' }}</p>
+                        <p class="cart-line-options" :title="line.options.join(' / ') || '標準'">
+                          <span
+                            v-for="(option, optionIndex) in line.options.length > 0 ? line.options : ['標準']"
+                            :key="`${line.itemId}-${optionIndex}-${option}`"
+                          >
+                            {{ option }}
+                          </span>
+                        </p>
                       </button>
                       <div v-else class="cart-line-summary">
                         <h3>{{ line.name }}</h3>
-                        <p>{{ line.options.join(' / ') || '標準' }}</p>
+                        <p class="cart-line-options" :title="line.options.join(' / ') || '標準'">
+                          <span
+                            v-for="(option, optionIndex) in line.options.length > 0 ? line.options : ['標準']"
+                            :key="`${line.itemId}-${optionIndex}-${option}`"
+                          >
+                            {{ option }}
+                          </span>
+                        </p>
                       </div>
                       <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
                         <button type="button" title="減少" @click.stop="decreaseLine(line.itemId)">
@@ -4692,7 +4729,7 @@ onBeforeUnmount(() => {
                     <div>
                       <p class="eyebrow">Menu</p>
                       <h2 id="menu-title">商品菜單</h2>
-                      <span class="panel-note">顯示 {{ filteredMenu.length }} 個可售品項</span>
+                      <span class="panel-note">顯示 {{ filteredMenu.length }} 個品項</span>
                     </div>
                     <label class="search-box menu-search-box">
                       <Search :size="18" aria-hidden="true" />
@@ -4754,6 +4791,7 @@ onBeforeUnmount(() => {
                           :class="{
                             'product-tile--in-cart': lineQuantityByItem(item.id) > 0,
                             'product-tile--quantity-control': lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item),
+                            'product-tile--stopped': productOrderingDisabled(item),
                             'product-tile--sort-enabled': productSortEnabled(item),
                             'product-tile--dragging':
                               productSortDragState?.itemId === item.id && productSortDragState.dragging,
@@ -4765,7 +4803,12 @@ onBeforeUnmount(() => {
                           @pointerup="finishProductSortDrag"
                           @pointercancel="cancelProductSortDrag"
                         >
-                          <button class="product-tile-main" type="button" @click="handleProductTileClick(item)">
+                          <button
+                            class="product-tile-main"
+                            type="button"
+                            :disabled="productOrderingDisabled(item)"
+                            @click="handleProductTileClick(item)"
+                          >
                             <span class="product-tile-top">
                               <span v-if="productSortEnabled(item)" class="product-drag-handle">
                                 <GripVertical :size="18" aria-hidden="true" />
@@ -4776,7 +4819,7 @@ onBeforeUnmount(() => {
                             <span class="product-name">{{ item.name }}</span>
                             <span class="product-meta">
                               <strong>{{ formatCurrency(item.price) }}</strong>
-                              <span>{{ lineQuantityByItem(item.id) > 0 ? `已加 ${lineQuantityByItem(item.id)}` : '點選加入' }}</span>
+                              <span>{{ productTileActionLabel(item) }}</span>
                             </span>
                             <span v-if="productStockLabel(item)" class="product-stock-badge" :class="productStockClass(item)">
                               {{ productStockLabel(item) }}
@@ -4784,7 +4827,7 @@ onBeforeUnmount(() => {
                             <span class="product-tags">{{ item.tags.join(' / ') }}</span>
                           </button>
                           <div
-                            v-if="lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item)"
+                            v-if="lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item) && !productOrderingDisabled(item)"
                             class="product-quantity-control"
                             :aria-label="`${item.name} 數量`"
                           >

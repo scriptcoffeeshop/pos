@@ -732,6 +732,8 @@ const isProductOrderable = (product: MenuItem): boolean =>
   product.inventoryCount !== 0 &&
   !isProductTemporarilyStopped(product)
 
+const isProductVisibleInPos = (product: MenuItem): boolean => product.posVisible
+
 const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
   if (statuses.length === 0) {
     return 'skipped'
@@ -1054,7 +1056,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         keyword.length === 0 ||
         item.name.toLowerCase().includes(keyword) ||
         item.tags.some((tag) => tag.toLowerCase().includes(keyword))
-      return isProductOrderable(item) && matchesCategory && matchesKeyword
+      return isProductVisibleInPos(item) && matchesCategory && matchesKeyword
     })
   })
 
@@ -1585,7 +1587,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         : [...productStatusCatalog.value, product],
     )
 
-    const shouldShowInPos = isProductOrderable(product)
+    const shouldShowInPos = isProductVisibleInPos(product)
     if (!shouldShowInPos) {
       menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== product.id)
       cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id && line.productId !== product.id)
@@ -1609,7 +1611,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const restoreSupplyProductSnapshot = (products: MenuItem[]): void => {
     const restoredProducts = sortProducts(products.map((product) => ({ ...product, tags: [...product.tags] })))
     productStatusCatalog.value = restoredProducts
-    menuCatalog.value = sortProducts(restoredProducts.filter(isProductOrderable))
+    menuCatalog.value = sortProducts(restoredProducts.filter(isProductVisibleInPos))
     writeLocalProducts(restoredProducts.filter(isLocalProduct))
     cartLines.value = cartLines.value.filter((line) =>
       restoredProducts.some((product) => product.id === line.itemId || product.id === line.productId),

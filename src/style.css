@@ -1004,6 +1004,15 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+
+.ticket-compact-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   padding: 6px 12px 0;
 }
 
@@ -1036,7 +1045,6 @@ button:disabled {
   margin-top: 0;
 }
 
-.pos-main-surface--ordering .ticket-note-chips,
 .pos-main-surface--ordering .cart-inline-editor {
   padding-inline: 12px;
 }
@@ -1046,7 +1054,8 @@ button:disabled {
   gap: 6px;
   max-width: 100%;
   min-height: 36px;
-  margin-top: 6px;
+  margin-top: 0;
+  padding-inline: 0;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
@@ -1088,11 +1097,26 @@ button:disabled {
 }
 
 .pos-main-surface--ordering .cart-line p {
-  overflow: hidden;
   font-size: 0.72rem;
   line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.pos-main-surface--ordering .cart-line-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.pos-main-surface--ordering .cart-line-options span {
+  max-width: 100%;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  line-height: 1.18;
 }
 
 .pos-main-surface--ordering .cart-line strong {
@@ -1402,8 +1426,21 @@ button:disabled {
     var(--surface-muted);
 }
 
+.pos-main-surface--ordering .product-tile--stopped {
+  border-style: dashed;
+  border-color: rgba(105, 113, 119, 0.5);
+  background:
+    linear-gradient(180deg, rgba(244, 244, 241, 0.72), rgba(228, 226, 220, 0.76)),
+    var(--surface-muted);
+  box-shadow: none;
+}
+
 .pos-main-surface--ordering .product-tile:hover {
   transform: translateY(-1px);
+}
+
+.pos-main-surface--ordering .product-tile--stopped:hover {
+  transform: none;
 }
 
 .pos-main-surface--ordering .product-tile--dragging:hover {
@@ -1412,6 +1449,15 @@ button:disabled {
 
 .pos-main-surface--ordering .product-tile-main {
   grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.pos-main-surface--ordering .product-tile--stopped .product-tile-main:disabled {
+  opacity: 1;
+}
+
+.pos-main-surface--ordering .product-tile--stopped .product-name,
+.pos-main-surface--ordering .product-tile--stopped .product-meta strong {
+  color: var(--muted);
 }
 
 .pos-main-surface--ordering .product-tile--quantity-control .product-tile-main {
