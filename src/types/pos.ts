@@ -202,10 +202,19 @@ export interface OnlineOrderingSettings {
   noteSupplyStatuses: Record<string, ProductSupplyStatus>
 }
 
+export interface PosAppearanceSettings {
+  interfaceScale: number
+  densityScale: number
+  textSize: number
+  darkMode: boolean
+  toolboxOpacity: number
+}
+
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
   onlineOrdering: OnlineOrderingSettings
+  posAppearance: PosAppearanceSettings
 }
 
 export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'

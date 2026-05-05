@@ -267,11 +267,11 @@ button:disabled {
 }
 
 .floating-toolbox-button {
-  position: absolute;
-  z-index: 64;
+  position: fixed;
+  z-index: 100;
   display: grid;
-  width: 82px;
-  height: 82px;
+  width: calc(82px * var(--pos-interface-scale, 1));
+  height: calc(82px * var(--pos-interface-scale, 1));
   place-items: center;
   gap: 3px;
   border: 1px solid color-mix(in srgb, var(--primary) 82%, white);
@@ -836,6 +836,10 @@ button:disabled {
 }
 
 .ticket-note-chips button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-height: 34px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -844,6 +848,19 @@ button:disabled {
   color: var(--ink-soft);
   font-size: 0.82rem;
   font-weight: 900;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.ticket-note-chips button[aria-pressed='true'],
+.ticket-note-chip--active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.ticket-note-chips button[aria-pressed='true']:active,
+.ticket-note-chip--active:active {
+  transform: scale(0.98);
 }
 
 .pos-main-surface--ordering .workspace--order {
@@ -2641,6 +2658,10 @@ button.cart-line-summary:focus-visible {
 }
 
 .note-shortcuts button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-height: 34px;
   padding: 0 11px;
   border: 1px solid var(--line);
@@ -2651,9 +2672,21 @@ button.cart-line-summary:focus-visible {
   font-weight: 900;
 }
 
+.note-shortcuts button[aria-pressed='true'],
+.note-shortcut--active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
 .note-shortcuts button:hover {
   border-color: var(--primary);
   color: var(--primary-dark);
+}
+
+.note-shortcuts button[aria-pressed='true']:hover,
+.note-shortcut--active:hover {
+  color: #fff;
 }
 
 .order-info-section,
@@ -5010,7 +5043,7 @@ button.cart-line-summary:focus-visible {
 .utility-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 120;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -5020,7 +5053,7 @@ button.cart-line-summary:focus-visible {
 .utility-modal {
   display: grid;
   width: min(720px, 100%);
-  max-height: min(760px, calc(var(--pos-stage-height) - 48px));
+  max-height: min(760px, calc(var(--pos-stage-height, 100lvh) - 48px));
   overflow: auto;
   gap: 14px;
   padding: 16px;

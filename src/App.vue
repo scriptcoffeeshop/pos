@@ -55,6 +55,7 @@ import type {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  PosAppearanceSettings,
   PosOrder,
   ProductSupplyStatus,
   PrintLabelMode,
@@ -101,12 +102,13 @@ interface SavedQueueView {
   searchTerm: string
 }
 
-interface PosUiPreferences {
-  schemaVersion: 2
+interface PosUiPreferences extends PosAppearanceSettings {
+  schemaVersion: 3
   interfaceScale: number
   densityScale: number
   textSize: number
   darkMode: boolean
+  toolboxOpacity: number
 }
 
 interface PrintJobRow {
@@ -254,17 +256,21 @@ const fulfillmentAlertWindowMinutes = 15
 const backendEditTapTarget = 6
 const backendEditTapWindowMs = 3000
 const toolboxDragThreshold = 6
+const toolboxBackendEditLongPressMs = 2000
 const interfaceScaleBaselineOffset = -20
 const defaultToolboxPosition: ToolboxPosition = { x: 94, y: 86 }
 const defaultPosUiPreferences: PosUiPreferences = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   interfaceScale: 0,
   densityScale: 0,
   textSize: 0,
   darkMode: false,
+  toolboxOpacity: 100,
 }
 const preferenceOffsetMin = -200
 const preferenceOffsetMax = 200
+const toolboxOpacityMin = 35
+const toolboxOpacityMax = 100
 const defaultConfigurableCategoryIds: MenuCategory[] = ['coffee', 'tea']
 const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
   { id: 'coffee', label: '咖啡' },
@@ -483,6 +489,9 @@ const clampPreference = (value: unknown, fallback: number, min = preferenceOffse
   return Math.min(max, Math.max(min, Math.round(numberValue)))
 }
 
+const clampToolboxOpacityPreference = (value: unknown, fallback = defaultPosUiPreferences.toolboxOpacity): number =>
+  clampPreference(value, fallback, toolboxOpacityMin, toolboxOpacityMax)
+
 const migrateScalePercentToOffset = (value: unknown, fallback: number): number => {
   const numberValue = Number(value)
   if (!Number.isFinite(numberValue)) {
@@ -505,12 +514,13 @@ const readPosUiPreferences = (): PosUiPreferences => {
     }
 
     const parsed = JSON.parse(rawPreferences) as Partial<PosUiPreferences> & Record<string, unknown>
-    const isCurrentPreferenceSchema = parsed.schemaVersion === 2
+    const parsedSchemaVersion = Number(parsed.schemaVersion)
+    const isCurrentPreferenceSchema = parsedSchemaVersion === 2 || parsedSchemaVersion === 3
     const legacyDensityScale = parsed.density === 'compact' ? -80 : defaultPosUiPreferences.densityScale
     const legacyTextSize = parsed.textScale === 'large' ? 80 : defaultPosUiPreferences.textSize
 
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       interfaceScale: normalizeSavedInterfaceScale(
         parsed.interfaceScale,
         migrateScalePercentToOffset(parsed.appearanceScale, defaultPosUiPreferences.interfaceScale),
@@ -522,6 +532,7 @@ const readPosUiPreferences = (): PosUiPreferences => {
         ? clampPreference(parsed.textSize, defaultPosUiPreferences.textSize)
         : migrateScalePercentToOffset(parsed.textSize, legacyTextSize),
       darkMode: parsed.darkMode === true,
+      toolboxOpacity: clampToolboxOpacityPreference(parsed.toolboxOpacity),
     }
   } catch {
     return { ...defaultPosUiPreferences }
@@ -539,7 +550,6 @@ const writePosUiPreferences = (preferences: PosUiPreferences): void => {
 const {
   addConfiguredItem,
   addItem,
-  appendCustomerNote,
   acceptOnlineOrderForStation,
   acknowledgeOnlineOrderReminders,
   activeOnlineReminderOrders,
@@ -556,6 +566,7 @@ const {
   counterDraftStartedAt,
   createProductForStation,
   customer,
+  customerHasNote,
   deletingPrintJobId,
   decreaseLine,
   deleteOrderFromQueue,
@@ -579,6 +590,7 @@ const {
   onlineOrderingSettings,
   paymentMethod,
   pendingOrders,
+  posAppearanceSettings,
   printOrder,
   printingOrderId,
   printStation,
@@ -604,6 +616,7 @@ const {
   stationClaimLabel,
   stationHeartbeatMessage,
   togglingProductId,
+  toggleCustomerNote,
   updateConfiguredLine,
   openRegisterSessionForStation,
   updateOrderStatus,
@@ -2240,6 +2253,7 @@ const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const activeToolboxPanel = ref<ToolboxPanel>('home')
 const posStableViewportHeight = ref(0)
+const isApplyingRemoteAppearanceSettings = ref(false)
 const preferenceOffsetLabel = (value: number): string => `${value > 0 ? '+' : ''}${Math.round(value)}%`
 const scaleFactorFromOffset = (offset: number): number => {
   const calibratedOffset = offset + interfaceScaleBaselineOffset
@@ -2257,7 +2271,7 @@ const textFactorFromOffset = (offset: number): number =>
     : Math.max(0.5, 1 + offset / 400)
 const appearancePreferenceSummary = computed(
   () =>
-    `縮放 ${preferenceOffsetLabel(posUiPreferences.value.interfaceScale)} · 文字 ${preferenceOffsetLabel(posUiPreferences.value.textSize)} · ${posUiPreferences.value.darkMode ? 'Dark' : 'Light'}`,
+    `縮放 ${preferenceOffsetLabel(posUiPreferences.value.interfaceScale)} · 文字 ${preferenceOffsetLabel(posUiPreferences.value.textSize)} · 工具箱 ${Math.round(posUiPreferences.value.toolboxOpacity)}% · ${posUiPreferences.value.darkMode ? 'Dark' : 'Light'}`,
 )
 const readLayoutViewportHeight = (): number => {
   const documentHeight = document.documentElement?.clientHeight ?? 0
@@ -2325,9 +2339,56 @@ const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
 const floatingToolboxStyle = computed<Record<string, string>>(() => ({
   left: `${toolboxPosition.value.x}%`,
   top: `${toolboxPosition.value.y}%`,
+  opacity: (posUiPreferences.value.toolboxOpacity / 100).toFixed(2),
 }))
 const resetPosUiPreferences = (): void => {
   posUiPreferences.value = { ...defaultPosUiPreferences }
+}
+
+const posAppearancePayloadFromPreferences = (preferences: PosUiPreferences): PosAppearanceSettings => ({
+  interfaceScale: clampPreference(preferences.interfaceScale, defaultPosUiPreferences.interfaceScale),
+  densityScale: clampPreference(preferences.densityScale, defaultPosUiPreferences.densityScale),
+  textSize: clampPreference(preferences.textSize, defaultPosUiPreferences.textSize),
+  darkMode: preferences.darkMode === true,
+  toolboxOpacity: clampToolboxOpacityPreference(preferences.toolboxOpacity),
+})
+
+const uiPreferencesFromRuntimeAppearance = (settings: PosAppearanceSettings): PosUiPreferences => ({
+  schemaVersion: 3,
+  ...posAppearancePayloadFromPreferences({ ...defaultPosUiPreferences, ...settings, schemaVersion: 3 }),
+})
+
+const appearanceSettingsEqual = (left: PosUiPreferences, right: PosUiPreferences): boolean =>
+  left.interfaceScale === right.interfaceScale &&
+  left.densityScale === right.densityScale &&
+  left.textSize === right.textSize &&
+  left.darkMode === right.darkMode &&
+  left.toolboxOpacity === right.toolboxOpacity
+
+const clearAppearancePersistTimer = (): void => {
+  if (appearancePersistTimer !== null) {
+    globalThis.clearTimeout(appearancePersistTimer)
+    appearancePersistTimer = null
+  }
+}
+
+const persistPosAppearancePreferences = (preferences: PosUiPreferences): void => {
+  if (!isPosApiConfigured) {
+    return
+  }
+
+  clearAppearancePersistTimer()
+  const payload = posAppearancePayloadFromPreferences(preferences)
+  appearancePersistTimer = globalThis.setTimeout(() => {
+    appearancePersistTimer = null
+    void updateAdminSetting<PosAppearanceSettings>('pos_appearance', payload)
+      .then((settings) => {
+        posAppearanceSettings.value = settings
+      })
+      .catch(() => {
+        return
+      })
+  }, 650)
 }
 const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
@@ -2407,6 +2468,8 @@ const registerNote = ref('')
 const forceCloseRegister = ref(false)
 let claimClockTimer: number | null = null
 let backendEditTapTimer: number | null = null
+let toolboxBackendEditLongPressTimer: number | null = null
+let appearancePersistTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
 const ticketStartedLabel = computed(() =>
@@ -3299,6 +3362,13 @@ const clearBackendEditTapTimer = (): void => {
   }
 }
 
+const clearToolboxBackendEditLongPressTimer = (): void => {
+  if (toolboxBackendEditLongPressTimer !== null) {
+    globalThis.clearTimeout(toolboxBackendEditLongPressTimer)
+    toolboxBackendEditLongPressTimer = null
+  }
+}
+
 const resetBackendEditTapProgress = (): void => {
   backendEditTapCount.value = 0
   clearBackendEditTapTimer()
@@ -3309,6 +3379,13 @@ const enableBackendEditMode = (): void => {
   writeStorageValue(backendEditModeStorageKey, true)
   resetBackendEditTapProgress()
   backendEditMessage.value = '後台編輯模式已啟用'
+}
+
+const disableBackendEditMode = (): void => {
+  backendEditModeEnabled.value = false
+  writeStorageValue(backendEditModeStorageKey, false)
+  resetBackendEditTapProgress()
+  backendEditMessage.value = '後台編輯模式已關閉'
 }
 
 const handleToolboxTap = (): void => {
@@ -3337,12 +3414,8 @@ const handleToolboxTap = (): void => {
 
 const positionFromPointerEvent = (event: PointerEvent, fallback: ToolboxPosition): ToolboxPosition => {
   const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
-  const stage = target?.closest('.pos-scale-stage')
-  if (!(stage instanceof HTMLElement)) {
-    return fallback
-  }
-
-  const rect = stage.getBoundingClientRect()
+  const reference = target?.closest('.pos-scale-stage') ?? document.documentElement
+  const rect = reference.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) {
     return fallback
   }
@@ -3369,6 +3442,29 @@ const handleFloatingToolboxPointerDown = (event: PointerEvent): void => {
   if (event.currentTarget instanceof HTMLElement) {
     event.currentTarget.setPointerCapture(event.pointerId)
   }
+
+  clearToolboxBackendEditLongPressTimer()
+  if (backendEditModeEnabled.value) {
+    const pointerId = event.pointerId
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+    toolboxBackendEditLongPressTimer = globalThis.setTimeout(() => {
+      const dragState = toolboxDragState.value
+      if (!dragState || dragState.pointerId !== pointerId || dragState.moved) {
+        return
+      }
+
+      toolboxDragState.value = null
+      if (target?.hasPointerCapture(pointerId)) {
+        target.releasePointerCapture(pointerId)
+      }
+      suppressFloatingToolboxClick.value = true
+      closeToolbox()
+      disableBackendEditMode()
+      globalThis.setTimeout(() => {
+        suppressFloatingToolboxClick.value = false
+      }, 300)
+    }, toolboxBackendEditLongPressMs)
+  }
 }
 
 const handleFloatingToolboxPointerMove = (event: PointerEvent): void => {
@@ -3384,6 +3480,7 @@ const handleFloatingToolboxPointerMove = (event: PointerEvent): void => {
   }
 
   dragState.moved = true
+  clearToolboxBackendEditLongPressTimer()
   toolboxPosition.value = positionFromPointerEvent(event, dragState.startPosition)
   event.preventDefault()
 }
@@ -3395,6 +3492,7 @@ const finishFloatingToolboxDrag = (event: PointerEvent): void => {
   }
 
   toolboxDragState.value = null
+  clearToolboxBackendEditLongPressTimer()
   if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
     event.currentTarget.releasePointerCapture(event.pointerId)
   }
@@ -3414,6 +3512,7 @@ const cancelFloatingToolboxDrag = (event: PointerEvent): void => {
   if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
     event.currentTarget.releasePointerCapture(event.pointerId)
   }
+  clearToolboxBackendEditLongPressTimer()
   toolboxDragState.value = null
 }
 
@@ -4254,8 +4353,29 @@ watch(
   { immediate: true },
 )
 
+watch(posAppearanceSettings, (settings) => {
+  const nextPreferences = uiPreferencesFromRuntimeAppearance(settings)
+  if (appearanceSettingsEqual(posUiPreferences.value, nextPreferences)) {
+    return
+  }
+
+  isApplyingRemoteAppearanceSettings.value = true
+  posUiPreferences.value = nextPreferences
+  writePosUiPreferences(nextPreferences)
+  void nextTick(() => {
+    isApplyingRemoteAppearanceSettings.value = false
+  })
+}, { deep: true })
+
 watch(posUiPreferences, (preferences) => {
-  writePosUiPreferences(preferences)
+  const normalizedPreferences: PosUiPreferences = {
+    schemaVersion: 3,
+    ...posAppearancePayloadFromPreferences(preferences),
+  }
+  writePosUiPreferences(normalizedPreferences)
+  if (!isApplyingRemoteAppearanceSettings.value) {
+    persistPosAppearancePreferences(normalizedPreferences)
+  }
 }, { deep: true })
 
 watch(productSupplyStatuses, (statuses) => {
@@ -4316,6 +4436,8 @@ onBeforeUnmount(() => {
     globalThis.clearInterval(claimClockTimer)
   }
   clearBackendEditTapTimer()
+  clearToolboxBackendEditLongPressTimer()
+  clearAppearancePersistTimer()
   clearCategorySortTimer()
   clearProductSortTimer()
 })
@@ -4559,7 +4681,15 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="ticket-note-chips" aria-label="常用備註">
-                      <button v-for="note in visibleTicketNoteSnippets" :key="`ticket-${note}`" type="button" @click="appendCustomerNote(note)">
+                      <button
+                        v-for="note in visibleTicketNoteSnippets"
+                        :key="`ticket-${note}`"
+                        type="button"
+                        :class="{ 'ticket-note-chip--active': customerHasNote(note) }"
+                        :aria-pressed="customerHasNote(note)"
+                        @click="toggleCustomerNote(note)"
+                      >
+                        <Check v-if="customerHasNote(note)" :size="14" aria-hidden="true" />
                         {{ note }}
                       </button>
                     </div>
@@ -5006,7 +5136,15 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="note-shortcuts" aria-label="常用備註">
-                    <button v-for="note in visibleNoteSnippets" :key="note" type="button" @click="appendCustomerNote(note)">
+                    <button
+                      v-for="note in visibleNoteSnippets"
+                      :key="note"
+                      type="button"
+                      :class="{ 'note-shortcut--active': customerHasNote(note) }"
+                      :aria-pressed="customerHasNote(note)"
+                      @click="toggleCustomerNote(note)"
+                    >
+                      <Check v-if="customerHasNote(note)" :size="14" aria-hidden="true" />
                       {{ note }}
                     </button>
                   </div>
@@ -5901,25 +6039,6 @@ onBeforeUnmount(() => {
               </aside>
             </section>
           </section>
-
-          <button
-            v-show="activeWorkspaceTab !== 'order'"
-            class="floating-toolbox-button"
-            :class="{ 'floating-toolbox-button--dragging': toolboxDragState?.moved }"
-            type="button"
-            title="拖曳工具箱；點按開啟"
-            aria-controls="pos-toolbox-modal"
-            :aria-expanded="isToolboxOpen"
-            :style="floatingToolboxStyle"
-            @pointerdown="handleFloatingToolboxPointerDown"
-            @pointermove="handleFloatingToolboxPointerMove"
-            @pointerup="finishFloatingToolboxDrag"
-            @pointercancel="cancelFloatingToolboxDrag"
-            @click="handleFloatingToolboxClick"
-          >
-            <Settings2 :size="22" aria-hidden="true" />
-            <span>工具箱</span>
-          </button>
         </section>
 
         <section
@@ -5943,157 +6062,6 @@ onBeforeUnmount(() => {
             接單
           </button>
         </section>
-
-        <div
-          v-if="isToolboxOpen"
-          class="utility-modal-backdrop"
-          @click.self="closeToolbox"
-        >
-          <section
-            id="pos-toolbox-modal"
-            class="utility-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="toolbox-title"
-          >
-            <header class="utility-modal-header">
-              <button
-                class="icon-button"
-                type="button"
-                :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
-                @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
-              >
-                <ChevronLeft :size="20" aria-hidden="true" />
-              </button>
-              <div>
-                <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
-                <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
-              </div>
-              <button
-                v-if="activeToolboxPanel === 'home'"
-                class="icon-button sync-button"
-                :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
-                type="button"
-                title="重新同步 POS API"
-                :disabled="backendStatus.mode === 'syncing'"
-                @click="runToolboxAction('sync')"
-              >
-                <RefreshCw :size="18" aria-hidden="true" />
-              </button>
-            </header>
-
-            <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
-              <button
-                type="button"
-                class="toolbox-card toolbox-card--status"
-                aria-live="polite"
-                @click="handleToolboxTap"
-              >
-                <Settings2 :size="24" aria-hidden="true" />
-                <strong>{{ backendEditModeEnabled ? '後台編輯已啟用' : '後台編輯未啟用' }}</strong>
-                <span>{{ backendEditMessage }}</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
-                <ShoppingCart :size="24" aria-hidden="true" />
-                <strong>新增外帶</strong>
-                <span>{{ workspaceTabSummaries.order }}</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
-                <ReceiptText :size="24" aria-hidden="true" />
-                <strong>桌況頁</strong>
-                <span>{{ queueFilterNote }}</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
-                <Eye :size="24" aria-hidden="true" />
-                <strong>供應狀態</strong>
-                <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
-                <Printer :size="24" aria-hidden="true" />
-                <strong>列印站</strong>
-                <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
-                <WalletCards :size="24" aria-hidden="true" />
-                <strong>班別關帳</strong>
-                <span>{{ workspaceTabSummaries.closeout }}</span>
-              </button>
-              <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
-                <Settings2 :size="24" aria-hidden="true" />
-                <strong>後台</strong>
-                <span>商品 · 報表 · 權限</span>
-              </button>
-              <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
-                <ShoppingBag :size="24" aria-hidden="true" />
-                <strong>線上點餐</strong>
-                <span>顧客入口預覽</span>
-              </button>
-              <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
-                <Settings2 :size="20" aria-hidden="true" />
-                <strong>外觀設定</strong>
-                <span>{{ appearancePreferenceSummary }}</span>
-              </button>
-            </div>
-
-            <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
-              <div class="preference-slider-list">
-                <label class="preference-toggle">
-                  <input v-model="posUiPreferences.darkMode" type="checkbox" />
-                  <span>
-                    <strong>深色模式</strong>
-                    <small>{{ posUiPreferences.darkMode ? 'Dark' : 'Light' }}</small>
-                  </span>
-                </label>
-                <label class="preference-slider">
-                  <span>
-                    <strong>整體縮放</strong>
-                    <small>{{ preferenceOffsetLabel(posUiPreferences.interfaceScale) }}</small>
-                  </span>
-                  <input
-                    v-model.number="posUiPreferences.interfaceScale"
-                    type="range"
-                    :min="preferenceOffsetMin"
-                    :max="preferenceOffsetMax"
-                    step="1"
-                    aria-label="整體縮放"
-                  />
-                </label>
-                <label class="preference-slider">
-                  <span>
-                    <strong>畫面密度</strong>
-                    <small>{{ preferenceOffsetLabel(posUiPreferences.densityScale) }}</small>
-                  </span>
-                  <input
-                    v-model.number="posUiPreferences.densityScale"
-                    type="range"
-                    :min="preferenceOffsetMin"
-                    :max="preferenceOffsetMax"
-                    step="1"
-                    aria-label="畫面密度"
-                  />
-                </label>
-                <label class="preference-slider">
-                  <span>
-                    <strong>文字大小</strong>
-                    <small>{{ preferenceOffsetLabel(posUiPreferences.textSize) }}</small>
-                  </span>
-                  <input
-                    v-model.number="posUiPreferences.textSize"
-                    type="range"
-                    :min="preferenceOffsetMin"
-                    :max="preferenceOffsetMax"
-                    step="1"
-                    aria-label="文字大小"
-                  />
-                </label>
-              </div>
-              <button class="secondary-button preference-reset-button" type="button" @click="resetPosUiPreferences">
-                <RefreshCw :size="18" aria-hidden="true" />
-                重設
-              </button>
-            </section>
-          </section>
-        </div>
 
         <section
           v-if="isSupplyStatusOpen"
@@ -6485,5 +6453,188 @@ onBeforeUnmount(() => {
     </div>
 
     <AdminPanel v-else @refresh-pos="refreshBackendData" />
+
+    <button
+      class="floating-toolbox-button"
+      :class="{ 'floating-toolbox-button--dragging': toolboxDragState?.moved }"
+      type="button"
+      title="拖曳工具箱；點按開啟"
+      aria-controls="pos-toolbox-modal"
+      :aria-expanded="isToolboxOpen"
+      :style="floatingToolboxStyle"
+      @pointerdown="handleFloatingToolboxPointerDown"
+      @pointermove="handleFloatingToolboxPointerMove"
+      @pointerup="finishFloatingToolboxDrag"
+      @pointercancel="cancelFloatingToolboxDrag"
+      @click="handleFloatingToolboxClick"
+    >
+      <Settings2 :size="22" aria-hidden="true" />
+      <span>工具箱</span>
+    </button>
+
+    <div
+      v-if="isToolboxOpen"
+      class="utility-modal-backdrop"
+      @click.self="closeToolbox"
+    >
+      <section
+        id="pos-toolbox-modal"
+        class="utility-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="toolbox-title"
+      >
+        <header class="utility-modal-header">
+          <button
+            class="icon-button"
+            type="button"
+            :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
+            @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
+          >
+            <ChevronLeft :size="20" aria-hidden="true" />
+          </button>
+          <div>
+            <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
+            <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
+          </div>
+          <button
+            v-if="activeToolboxPanel === 'home'"
+            class="icon-button sync-button"
+            :class="{ 'sync-button--active': backendStatus.mode === 'syncing' }"
+            type="button"
+            title="重新同步 POS API"
+            :disabled="backendStatus.mode === 'syncing'"
+            @click="runToolboxAction('sync')"
+          >
+            <RefreshCw :size="18" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div v-if="activeToolboxPanel === 'home'" class="toolbox-grid" aria-label="常用工具">
+          <button
+            type="button"
+            class="toolbox-card toolbox-card--status"
+            aria-live="polite"
+            @click="handleToolboxTap"
+          >
+            <Settings2 :size="24" aria-hidden="true" />
+            <strong>{{ backendEditModeEnabled ? '後台編輯已啟用' : '後台編輯未啟用' }}</strong>
+            <span>{{ backendEditMessage }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
+            <ShoppingCart :size="24" aria-hidden="true" />
+            <strong>新增外帶</strong>
+            <span>{{ workspaceTabSummaries.order }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
+            <ReceiptText :size="24" aria-hidden="true" />
+            <strong>桌況頁</strong>
+            <span>{{ queueFilterNote }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
+            <Eye :size="24" aria-hidden="true" />
+            <strong>供應狀態</strong>
+            <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
+            <Printer :size="24" aria-hidden="true" />
+            <strong>列印站</strong>
+            <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
+            <WalletCards :size="24" aria-hidden="true" />
+            <strong>班別關帳</strong>
+            <span>{{ workspaceTabSummaries.closeout }}</span>
+          </button>
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
+            <Settings2 :size="24" aria-hidden="true" />
+            <strong>後台</strong>
+            <span>商品 · 報表 · 權限</span>
+          </button>
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
+            <ShoppingBag :size="24" aria-hidden="true" />
+            <strong>線上點餐</strong>
+            <span>顧客入口預覽</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
+            <Settings2 :size="20" aria-hidden="true" />
+            <strong>外觀設定</strong>
+            <span>{{ appearancePreferenceSummary }}</span>
+          </button>
+        </div>
+
+        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+          <div class="preference-slider-list">
+            <label class="preference-toggle">
+              <input v-model="posUiPreferences.darkMode" type="checkbox" />
+              <span>
+                <strong>深色模式</strong>
+                <small>{{ posUiPreferences.darkMode ? 'Dark' : 'Light' }}</small>
+              </span>
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>整體縮放</strong>
+                <small>{{ preferenceOffsetLabel(posUiPreferences.interfaceScale) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.interfaceScale"
+                type="range"
+                :min="preferenceOffsetMin"
+                :max="preferenceOffsetMax"
+                step="1"
+                aria-label="整體縮放"
+              />
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>畫面密度</strong>
+                <small>{{ preferenceOffsetLabel(posUiPreferences.densityScale) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.densityScale"
+                type="range"
+                :min="preferenceOffsetMin"
+                :max="preferenceOffsetMax"
+                step="1"
+                aria-label="畫面密度"
+              />
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>文字大小</strong>
+                <small>{{ preferenceOffsetLabel(posUiPreferences.textSize) }}</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.textSize"
+                type="range"
+                :min="preferenceOffsetMin"
+                :max="preferenceOffsetMax"
+                step="1"
+                aria-label="文字大小"
+              />
+            </label>
+            <label class="preference-slider">
+              <span>
+                <strong>工具箱透明度</strong>
+                <small>{{ Math.round(posUiPreferences.toolboxOpacity) }}%</small>
+              </span>
+              <input
+                v-model.number="posUiPreferences.toolboxOpacity"
+                type="range"
+                :min="toolboxOpacityMin"
+                :max="toolboxOpacityMax"
+                step="1"
+                aria-label="工具箱透明度"
+              />
+            </label>
+          </div>
+          <button class="secondary-button preference-reset-button" type="button" @click="resetPosUiPreferences">
+            <RefreshCw :size="18" aria-hidden="true" />
+            重設
+          </button>
+        </section>
+      </section>
+    </div>
   </main>
 </template>

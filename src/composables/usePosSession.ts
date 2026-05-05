@@ -9,6 +9,7 @@ import {
   createPrintJob,
   closeRegisterSession,
   createProduct,
+  defaultPosAppearanceSettings,
   defaultOnlineOrderingSettings,
   deleteProduct,
   deletePrintJob,
@@ -49,6 +50,7 @@ import type {
   OnlineOrderingSettings,
   PaymentMethod,
   PaymentStatus,
+  PosAppearanceSettings,
   PosOrder,
   ProductSupplyStatus,
   PrintJob,
@@ -832,6 +834,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
   const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+  const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
   const onlineReminderClock = ref(Date.now())
   const acknowledgedOnlineReminderIds = ref<string[]>([])
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
@@ -866,6 +869,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
+    posAppearanceSettings.value = runtimeSettings.posAppearance
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
       : buildDefaultPrinterSettings(printStation)
@@ -1193,28 +1197,48 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const noteTokensFromText = (value: string): string[] =>
+    value
+      .split(/[、，,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+
+  const customerHasNote = (note: string): boolean => {
+    const nextNote = note.trim()
+    if (!nextNote) {
+      return false
+    }
+
+    return noteTokensFromText(customer.note).includes(nextNote)
+  }
+
   const appendCustomerNote = (note: string): void => {
     const nextNote = note.trim()
     if (!nextNote) {
       return
     }
 
-    const currentNote = customer.note.trim()
-    if (!currentNote) {
-      customer.note = nextNote
+    if (customerHasNote(nextNote)) {
       return
     }
 
-    const existingNotes = currentNote
-      .split(/[、，,]/)
-      .map((entry) => entry.trim())
-      .filter(Boolean)
+    const existingNotes = noteTokensFromText(customer.note)
+    customer.note = [...existingNotes, nextNote].join('、')
+  }
 
-    if (existingNotes.includes(nextNote)) {
+  const toggleCustomerNote = (note: string): void => {
+    const nextNote = note.trim()
+    if (!nextNote) {
       return
     }
 
-    customer.note = `${currentNote}、${nextNote}`
+    const existingNotes = noteTokensFromText(customer.note)
+    if (!existingNotes.includes(nextNote)) {
+      customer.note = [...existingNotes, nextNote].join('、')
+      return
+    }
+
+    customer.note = existingNotes.filter((entry) => entry !== nextNote).join('、')
   }
 
   const mergePrintJobs = (order: PosOrder, printJobs: PrintJob[]): PrintJob[] => {
@@ -2843,6 +2867,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     counterDraftOrderId,
     counterDraftStartedAt,
     customer,
+    customerHasNote,
     deletingPrintJobId,
     createProductForStation,
     decreaseLine,
@@ -2872,6 +2897,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     onlineOrderingSettings,
     paymentMethod,
     pendingOrders,
+    posAppearanceSettings,
     printOrder,
     printingOrderId,
     printStation,
@@ -2897,6 +2923,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationClaimLabel,
     stationHeartbeatMessage,
     togglingProductId,
+    toggleCustomerNote,
     unconfirmedOnlineOrders,
     updatingPaymentOrderId,
     addConfiguredItem,

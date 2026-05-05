@@ -12,7 +12,7 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance";
 type ProductChannel = "pos" | "online" | "qr";
 
 interface OrderLineInput {
@@ -256,6 +256,14 @@ interface OnlineOrderingSettings {
   noteSupplyStatuses: Record<string, ProductSupplyStatus>;
 }
 
+interface PosAppearanceSettings {
+  interfaceScale: number;
+  densityScale: number;
+  textSize: number;
+  darkMode: boolean;
+  toolboxOpacity: number;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -404,6 +412,14 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
+};
+
+const defaultPosAppearance: PosAppearanceSettings = {
+  interfaceScale: 0,
+  densityScale: 0,
+  textSize: 0,
+  darkMode: false,
+  toolboxOpacity: 100,
 };
 
 const loadOrder = (orderId: string) =>
@@ -623,8 +639,16 @@ api.get("/settings/runtime", async (c) => {
     "online_ordering",
     defaultOnlineOrdering,
   );
+  const posAppearance = await loadSetting<PosAppearanceSettings>(
+    "pos_appearance",
+    defaultPosAppearance,
+  );
 
-  return c.json({ printerSettings, onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering) });
+  return c.json({
+    printerSettings,
+    onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
+    posAppearance: normalizePosAppearanceForRuntime(posAppearance),
+  });
 });
 
 api.post("/station/heartbeat", async (c) => {
@@ -1291,7 +1315,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control", "online_ordering"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -3347,6 +3371,53 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
   };
 };
 
+const clampAppearanceOffset = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numberValue), -200), 200);
+};
+
+const clampAppearanceOpacity = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numberValue), 35), 100);
+};
+
+const normalizePosAppearanceForRuntime = (input: unknown): PosAppearanceSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultPosAppearance;
+  }
+
+  const settings = input as Partial<PosAppearanceSettings>;
+  return {
+    interfaceScale: clampAppearanceOffset(settings.interfaceScale, defaultPosAppearance.interfaceScale),
+    densityScale: clampAppearanceOffset(settings.densityScale, defaultPosAppearance.densityScale),
+    textSize: clampAppearanceOffset(settings.textSize, defaultPosAppearance.textSize),
+    darkMode: settings.darkMode === true,
+    toolboxOpacity: clampAppearanceOpacity(settings.toolboxOpacity, defaultPosAppearance.toolboxOpacity),
+  };
+};
+
+const validatePosAppearance = (input: unknown): {
+  value: PosAppearanceSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "pos_appearance must be an object" };
+  }
+
+  return {
+    value: normalizePosAppearanceForRuntime(input),
+    error: null,
+  };
+};
+
 const validateOnlineOrdering = (input: unknown): {
   value: OnlineOrderingSettings | null;
   error: string | null;
@@ -3413,7 +3484,7 @@ const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
@@ -3422,6 +3493,10 @@ const validateAdminSetting = (
 
   if (key === "online_ordering") {
     return validateOnlineOrdering(input);
+  }
+
+  if (key === "pos_appearance") {
+    return validatePosAppearance(input);
   }
 
   return validateAccessControl(input);

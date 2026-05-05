@@ -15,6 +15,7 @@ import type {
   OnlineMenuOptionGroup,
   OnlineNotificationRepeatMode,
   OnlineOrderingSettings,
+  PosAppearanceSettings,
   PosMember,
   PosOrder,
   PosPaymentEvent,
@@ -225,6 +226,7 @@ interface AdminSettingsResponse {
 interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
   onlineOrdering: OnlineOrderingSettings
+  posAppearance: PosAppearanceSettings
 }
 
 interface DailyReportResponse {
@@ -266,7 +268,7 @@ interface ProductResponse {
   product: ApiProduct
 }
 
-export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering'
+export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering' | 'pos_appearance'
 export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -769,15 +771,59 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
   }
 }
 
+export const defaultPosAppearanceSettings = (): PosAppearanceSettings => ({
+  interfaceScale: 0,
+  densityScale: 0,
+  textSize: 0,
+  darkMode: false,
+  toolboxOpacity: 100,
+})
+
+const clampPosAppearanceOffset = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return Math.min(200, Math.max(-200, Math.round(numberValue)))
+}
+
+const clampToolboxOpacity = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return Math.min(100, Math.max(35, Math.round(numberValue)))
+}
+
+export const normalizePosAppearanceSettings = (value: unknown): PosAppearanceSettings => {
+  const defaults = defaultPosAppearanceSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<PosAppearanceSettings>
+  return {
+    interfaceScale: clampPosAppearanceOffset(settings.interfaceScale, defaults.interfaceScale),
+    densityScale: clampPosAppearanceOffset(settings.densityScale, defaults.densityScale),
+    textSize: clampPosAppearanceOffset(settings.textSize, defaults.textSize),
+    darkMode: settings.darkMode === true,
+    toolboxOpacity: clampToolboxOpacity(settings.toolboxOpacity, defaults.toolboxOpacity),
+  }
+}
+
 const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
   const accessControl = rows.find((row) => row.key === 'access_control')?.value
   const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
+  const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
 
   return {
     printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
     accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
+    posAppearance: normalizePosAppearanceSettings(posAppearance),
   }
 }
 
@@ -1002,6 +1048,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
   return {
     printerSettings: isPrinterSettings(data.printerSettings) ? data.printerSettings : { stations: [], rules: [] },
     onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
+    posAppearance: normalizePosAppearanceSettings(data.posAppearance),
   }
 }
 
