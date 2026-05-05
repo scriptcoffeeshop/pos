@@ -23,7 +23,7 @@
   --shadow-tight: 0 6px 16px rgba(24, 26, 27, 0.08);
   --radius: 8px;
   --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  --pos-stage-height: 100svh;
+  --pos-stage-height: 100lvh;
   color: var(--ink);
   background: var(--bg);
   font-family:
@@ -218,12 +218,12 @@ button:disabled {
 .pos-scale-viewport {
   --pos-interface-scale: 1;
   --pos-stage-width: 100vw;
-  --pos-stage-height: 100svh;
+  --pos-stage-height: 100lvh;
   --pos-font-size: 16px;
   --pos-density-scale: 1;
   --pos-text-scale: 1;
   width: 100vw;
-  height: 100svh;
+  height: 100lvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -4598,16 +4598,25 @@ button.cart-line-summary:focus-visible {
 
 .closeout-section {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 10px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .closeout-section > .panel-heading svg {
   color: var(--secondary);
 }
 
+.closeout-heading {
+  min-height: 0;
+  margin-bottom: 0;
+}
+
 .closeout-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -4619,8 +4628,8 @@ button.cart-line-summary:focus-visible {
 }
 
 .closeout-grid article {
-  min-height: 70px;
-  padding: 10px;
+  min-height: 58px;
+  padding: 8px 10px;
 }
 
 .closeout-grid span,
@@ -4633,23 +4642,35 @@ button.cart-line-summary:focus-visible {
 
 .closeout-grid strong {
   display: block;
-  margin-top: 5px;
+  margin-top: 3px;
   color: var(--ink);
-  font-size: 1.08rem;
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.closeout-body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.06fr) minmax(360px, 0.94fr);
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .closeout-preflight {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
-  padding: 12px;
+  min-height: 0;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
+  overflow: hidden;
 }
 
 .closeout-preflight-heading {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
@@ -4694,7 +4715,11 @@ button.cart-line-summary:focus-visible {
 
 .closeout-preflight-list {
   display: grid;
+  align-content: start;
   gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .closeout-preflight-item {
@@ -4702,8 +4727,8 @@ button.cart-line-summary:focus-visible {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 64px;
-  padding: 10px;
+  min-height: 56px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-muted);
@@ -4725,8 +4750,8 @@ button.cart-line-summary:focus-visible {
 
 .closeout-preflight-icon {
   display: inline-flex;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line);
@@ -4764,8 +4789,8 @@ button.cart-line-summary:focus-visible {
 
 .closeout-preflight-button {
   display: inline-flex;
-  min-width: 76px;
-  min-height: 44px;
+  min-width: 72px;
+  min-height: 40px;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -4782,8 +4807,18 @@ button.cart-line-summary:focus-visible {
   font-size: 0.86rem;
 }
 
+.closeout-side-stack {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .payment-closeout-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -4797,7 +4832,7 @@ button.cart-line-summary:focus-visible {
 
 .payment-closeout-list strong {
   color: var(--ink);
-  font-size: 0.94rem;
+  font-size: 0.92rem;
 }
 
 .payment-closeout-list small {
@@ -4806,9 +4841,15 @@ button.cart-line-summary:focus-visible {
 
 .register-session-panel {
   display: grid;
+  grid-template-rows: auto auto auto auto auto;
   gap: 10px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .register-session-heading {
@@ -4839,13 +4880,13 @@ button.cart-line-summary:focus-visible {
 
 .register-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
 }
 
 .register-metrics article {
-  min-height: 64px;
-  padding: 10px;
+  min-height: 52px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-muted);
@@ -4853,9 +4894,10 @@ button.cart-line-summary:focus-visible {
 
 .register-metrics strong {
   display: block;
-  margin-top: 5px;
+  margin-top: 3px;
   color: var(--ink);
-  font-size: 0.98rem;
+  font-size: 0.88rem;
+  line-height: 1.1;
 }
 
 .register-variance--balanced {
@@ -4875,7 +4917,7 @@ button.cart-line-summary:focus-visible {
 
 .register-form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr);
   gap: 8px;
 }
 
@@ -4886,7 +4928,7 @@ button.cart-line-summary:focus-visible {
 
 .register-form-grid input {
   width: 100%;
-  min-height: 38px;
+  min-height: 36px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -4901,7 +4943,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .register-force-close {
-  min-height: 38px;
+  min-height: 36px;
   margin: 0;
   padding: 8px 10px;
   border: 1px solid #dfc58e;
@@ -7336,6 +7378,24 @@ button.cart-line-summary:focus-visible {
 
   .printer-rule-meta {
     justify-content: flex-start;
+  }
+
+  .closeout-section {
+    overflow: auto;
+  }
+
+  .closeout-body-grid {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .closeout-side-stack,
+  .register-session-panel {
+    overflow: visible;
+  }
+
+  .register-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

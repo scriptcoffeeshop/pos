@@ -2267,7 +2267,7 @@ const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
   return {
     '--pos-interface-scale': interfaceScale.toFixed(4),
     '--pos-stage-width': `${100 / interfaceScale}vw`,
-    '--pos-stage-height': `${100 / interfaceScale}svh`,
+    '--pos-stage-height': `${100 / interfaceScale}lvh`,
     '--pos-density-scale': densityFactor.toFixed(4),
     '--pos-text-scale': textFactor.toFixed(4),
     '--pos-font-size': `${16 * textFactor}px`,
@@ -5599,7 +5599,7 @@ onBeforeUnmount(() => {
                 </section>
 
                 <section v-if="activeWorkspaceTab === 'closeout'" class="closeout-section" aria-labelledby="closeout-title">
-                  <div class="panel-heading">
+                  <div class="panel-heading closeout-heading">
                     <div>
                       <p class="eyebrow">Closeout</p>
                       <h2 id="closeout-title">關帳摘要</h2>
@@ -5610,7 +5610,7 @@ onBeforeUnmount(() => {
                     <WalletCards :size="22" aria-hidden="true" />
                   </div>
 
-                  <div class="closeout-grid">
+                  <div class="closeout-grid closeout-grid--summary">
                     <article>
                       <span>已收</span>
                       <strong>{{ formatCurrency(closeoutSummary.collectedTotal) }}</strong>
@@ -5633,160 +5633,164 @@ onBeforeUnmount(() => {
                     </article>
                   </div>
 
-                  <section class="closeout-preflight" aria-labelledby="closeout-preflight-title">
-                    <div class="closeout-preflight-heading">
-                      <div>
-                        <p class="eyebrow">Preflight</p>
-                        <h3 id="closeout-preflight-title">交班預檢</h3>
-                        <span>{{ closeoutPreflightSummary }}</span>
-                      </div>
-                      <span
-                        class="closeout-preflight-status"
-                        :class="closeoutPreflightReady ? 'closeout-preflight-status--ready' : 'closeout-preflight-status--danger'"
-                      >
-                        <CheckCircle2 v-if="closeoutPreflightReady" :size="16" aria-hidden="true" />
-                        <CircleAlert v-else :size="16" aria-hidden="true" />
-                        {{ closeoutPreflightReady ? '可關班' : '需處理' }}
-                      </span>
-                    </div>
-
-                    <div class="closeout-preflight-list">
-                      <article
-                        v-for="item in closeoutPreflightItems"
-                        :key="item.id"
-                        class="closeout-preflight-item"
-                        :class="`closeout-preflight-item--${item.status}`"
-                      >
-                        <span class="closeout-preflight-icon">
-                          <CheckCircle2 v-if="item.status === 'ready'" :size="17" aria-hidden="true" />
-                          <CircleAlert v-else :size="17" aria-hidden="true" />
-                        </span>
+                  <div class="closeout-body-grid">
+                    <section class="closeout-preflight" aria-labelledby="closeout-preflight-title">
+                      <div class="closeout-preflight-heading">
                         <div>
-                          <strong>{{ item.label }}</strong>
-                          <small>{{ item.detail }}</small>
+                          <p class="eyebrow">Preflight</p>
+                          <h3 id="closeout-preflight-title">交班預檢</h3>
+                          <span>{{ closeoutPreflightSummary }}</span>
                         </div>
-                        <button
-                          type="button"
-                          class="closeout-preflight-button"
-                          :aria-label="`${item.label}${item.count}筆，${item.actionLabel}`"
-                          @click="runCloseoutPreflightAction(item)"
+                        <span
+                          class="closeout-preflight-status"
+                          :class="closeoutPreflightReady ? 'closeout-preflight-status--ready' : 'closeout-preflight-status--danger'"
                         >
-                          <span>{{ item.count }}</span>
-                          {{ item.actionLabel }}
-                        </button>
-                      </article>
-                    </div>
-                  </section>
-
-                  <div class="payment-closeout-list" aria-label="付款方式對帳">
-                    <article v-for="payment in paymentCloseoutRows" :key="payment.value">
-                      <span>{{ payment.label }}</span>
-                      <strong>{{ formatCurrency(payment.total) }}</strong>
-                      <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
-                    </article>
-                  </div>
-
-                  <div class="register-session-panel" aria-label="班別開關帳">
-                    <div class="register-session-heading">
-                      <div>
-                        <span>班別</span>
-                        <strong>{{ registerStatusLabel }}</strong>
-                        <small>{{ registerMessage }}</small>
+                          <CheckCircle2 v-if="closeoutPreflightReady" :size="16" aria-hidden="true" />
+                          <CircleAlert v-else :size="16" aria-hidden="true" />
+                          {{ closeoutPreflightReady ? '可關班' : '需處理' }}
+                        </span>
                       </div>
-                      <button
-                        class="icon-button"
-                        type="button"
-                        title="重新載入班別"
-                        :disabled="isRegisterBusy"
-                        @click="loadRegisterSession"
-                      >
-                        <RefreshCw :size="18" aria-hidden="true" />
-                      </button>
-                    </div>
 
-                    <div v-if="registerSession" class="register-metrics">
-                      <article>
-                        <span>預期現金</span>
-                        <strong>{{ formatCurrency(registerSession.expectedCash) }}</strong>
-                      </article>
-                      <article>
-                        <span>現金銷售</span>
-                        <strong>{{ formatCurrency(registerSession.cashSales) }}</strong>
-                      </article>
-                      <article>
-                        <span>非現金</span>
-                        <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
-                      </article>
-                      <article>
-                        <span>待收</span>
-                        <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
-                      </article>
-                      <article>
-                        <span>單數</span>
-                        <strong>{{ registerSession.orderCount }}</strong>
-                      </article>
-                      <article>
-                        <span>未交付</span>
-                        <strong>{{ registerSession.openOrderCount }}</strong>
-                      </article>
-                      <article>
-                        <span>付款異常</span>
-                        <strong>{{ registerSession.failedPaymentCount }}</strong>
-                      </article>
-                      <article>
-                        <span>列印失敗</span>
-                        <strong>{{ registerSession.failedPrintCount }}</strong>
-                      </article>
-                      <article>
-                        <span>作廢</span>
-                        <strong>{{ registerSession.voidedOrderCount }}</strong>
-                      </article>
-                      <article :class="registerVarianceClass">
-                        <span>現金差額</span>
-                        <strong>{{ formatCurrency(registerVariance) }}</strong>
-                      </article>
-                    </div>
+                      <div class="closeout-preflight-list">
+                        <article
+                          v-for="item in closeoutPreflightItems"
+                          :key="item.id"
+                          class="closeout-preflight-item"
+                          :class="`closeout-preflight-item--${item.status}`"
+                        >
+                          <span class="closeout-preflight-icon">
+                            <CheckCircle2 v-if="item.status === 'ready'" :size="17" aria-hidden="true" />
+                            <CircleAlert v-else :size="17" aria-hidden="true" />
+                          </span>
+                          <div>
+                            <strong>{{ item.label }}</strong>
+                            <small>{{ item.detail }}</small>
+                          </div>
+                          <button
+                            type="button"
+                            class="closeout-preflight-button"
+                            :aria-label="`${item.label}${item.count}筆，${item.actionLabel}`"
+                            @click="runCloseoutPreflightAction(item)"
+                          >
+                            <span>{{ item.count }}</span>
+                            {{ item.actionLabel }}
+                          </button>
+                        </article>
+                      </div>
+                    </section>
 
-                    <div class="register-form-grid">
-                      <label v-if="!registerIsOpen">
-                        開班現金
-                        <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
-                      </label>
-                      <label v-else>
-                        實點現金
-                        <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
-                      </label>
-                      <label class="wide-field">
-                        備註
-                        <input v-model="registerNote" type="text" placeholder="交接、差額或補充說明" />
-                      </label>
-                    </div>
+                    <aside class="closeout-side-stack" aria-label="班別對帳與關帳">
+                      <div class="payment-closeout-list" aria-label="付款方式對帳">
+                        <article v-for="payment in paymentCloseoutRows" :key="payment.value">
+                          <span>{{ payment.label }}</span>
+                          <strong>{{ formatCurrency(payment.total) }}</strong>
+                          <small>{{ payment.count }} 張<span v-if="payment.pending"> · 待收 {{ payment.pending }}</span></small>
+                        </article>
+                      </div>
 
-                    <label v-if="registerHasCloseoutExceptions" class="toggle-row register-force-close">
-                      <input v-model="forceCloseRegister" type="checkbox" />
-                      異常仍要關班
-                    </label>
+                      <div class="register-session-panel" aria-label="班別開關帳">
+                        <div class="register-session-heading">
+                          <div>
+                            <span>班別</span>
+                            <strong>{{ registerStatusLabel }}</strong>
+                            <small>{{ registerMessage }}</small>
+                          </div>
+                          <button
+                            class="icon-button"
+                            type="button"
+                            title="重新載入班別"
+                            :disabled="isRegisterBusy"
+                            @click="loadRegisterSession"
+                          >
+                            <RefreshCw :size="18" aria-hidden="true" />
+                          </button>
+                        </div>
 
-                    <button
-                      v-if="registerIsOpen"
-                      class="register-action-button register-action-button--close"
-                      type="button"
-                      :disabled="isRegisterBusy"
-                      @click="closeRegisterSessionAction"
-                    >
-                      <WalletCards :size="18" aria-hidden="true" />
-                      {{ isRegisterBusy ? '關班中' : forceCloseRegister ? '強制關班' : '關班' }}
-                    </button>
-                    <button
-                      v-else
-                      class="register-action-button"
-                      type="button"
-                      :disabled="isRegisterBusy"
-                      @click="openRegisterSessionAction"
-                    >
-                      <WalletCards :size="18" aria-hidden="true" />
-                      {{ isRegisterBusy ? '開班中' : '開班' }}
-                    </button>
+                        <div v-if="registerSession" class="register-metrics">
+                          <article>
+                            <span>預期現金</span>
+                            <strong>{{ formatCurrency(registerSession.expectedCash) }}</strong>
+                          </article>
+                          <article>
+                            <span>現金銷售</span>
+                            <strong>{{ formatCurrency(registerSession.cashSales) }}</strong>
+                          </article>
+                          <article>
+                            <span>非現金</span>
+                            <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
+                          </article>
+                          <article>
+                            <span>待收</span>
+                            <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
+                          </article>
+                          <article>
+                            <span>單數</span>
+                            <strong>{{ registerSession.orderCount }}</strong>
+                          </article>
+                          <article>
+                            <span>未交付</span>
+                            <strong>{{ registerSession.openOrderCount }}</strong>
+                          </article>
+                          <article>
+                            <span>付款異常</span>
+                            <strong>{{ registerSession.failedPaymentCount }}</strong>
+                          </article>
+                          <article>
+                            <span>列印失敗</span>
+                            <strong>{{ registerSession.failedPrintCount }}</strong>
+                          </article>
+                          <article>
+                            <span>作廢</span>
+                            <strong>{{ registerSession.voidedOrderCount }}</strong>
+                          </article>
+                          <article :class="registerVarianceClass">
+                            <span>現金差額</span>
+                            <strong>{{ formatCurrency(registerVariance) }}</strong>
+                          </article>
+                        </div>
+
+                        <div class="register-form-grid">
+                          <label v-if="!registerIsOpen">
+                            開班現金
+                            <input v-model.number="registerOpeningCash" type="number" min="0" step="1" inputmode="numeric" />
+                          </label>
+                          <label v-else>
+                            實點現金
+                            <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
+                          </label>
+                          <label class="wide-field">
+                            備註
+                            <input v-model="registerNote" type="text" placeholder="交接、差額或補充說明" />
+                          </label>
+                        </div>
+
+                        <label v-if="registerHasCloseoutExceptions" class="toggle-row register-force-close">
+                          <input v-model="forceCloseRegister" type="checkbox" />
+                          異常仍要關班
+                        </label>
+
+                        <button
+                          v-if="registerIsOpen"
+                          class="register-action-button register-action-button--close"
+                          type="button"
+                          :disabled="isRegisterBusy"
+                          @click="closeRegisterSessionAction"
+                        >
+                          <WalletCards :size="18" aria-hidden="true" />
+                          {{ isRegisterBusy ? '關班中' : forceCloseRegister ? '強制關班' : '關班' }}
+                        </button>
+                        <button
+                          v-else
+                          class="register-action-button"
+                          type="button"
+                          :disabled="isRegisterBusy"
+                          @click="openRegisterSessionAction"
+                        >
+                          <WalletCards :size="18" aria-hidden="true" />
+                          {{ isRegisterBusy ? '開班中' : '開班' }}
+                        </button>
+                      </div>
+                    </aside>
                   </div>
                 </section>
 
