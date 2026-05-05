@@ -5408,188 +5408,190 @@ onBeforeUnmount(() => {
                   </section>
 
                   <div class="queue-list-scroll" aria-label="桌況訂單列表">
-                    <div
-                      v-for="order in visibleQueueOrders"
-                      :key="order.id"
-                      class="swipe-row order-swipe-row"
-                      :class="swipeRowClass(orderSwipeKey(order))"
-                    >
-                      <div class="swipe-action-stack" aria-label="訂單滑動動作">
-                        <button
-                          class="swipe-action swipe-action--complete"
-                          type="button"
-                          :disabled="orderSwipeCompleteDisabled(order)"
-                          @click.stop="orderSwipeCompleteAction(order)"
-                        >
-                          <CheckCircle2 :size="18" aria-hidden="true" />
-                          {{ orderSwipeCompleteLabel(order) }}
-                        </button>
-                        <button
-                          class="swipe-action"
-                          :class="order.source === 'counter' ? 'swipe-action--danger' : 'swipe-action--cancel'"
-                          type="button"
-                          :disabled="orderSwipeDeleteDisabled(order)"
-                          @click.stop="orderSwipeDeleteAction(order)"
-                        >
-                          <Trash2 :size="18" aria-hidden="true" />
-                          {{ orderSwipeDeleteLabel(order) }}
-                        </button>
-                      </div>
-                      <article
-                        class="order-row swipe-card"
-                        :class="[
-                          `order-row--${order.status}`,
-                          fulfillmentRowClass(order),
-                          {
-                            'order-row--claimed-other': orderClaimedByOtherStation(order),
-                            'order-row--online-reminder': orderNeedsOnlineReminder(order),
-                          },
-                        ]"
-                        :style="swipeCardStyle(orderSwipeKey(order))"
-                        @pointerdown="startSwipe(orderSwipeKey(order), $event)"
-                        @pointermove="moveSwipe(orderSwipeKey(order), $event)"
-                        @pointerup="endOrderSwipe(order)"
-                        @pointercancel="cancelSwipe(orderSwipeKey(order))"
-                        @click="handleOrderRowClick(order, $event)"
+                    <div v-if="visibleQueueOrders.length > 0" class="queue-list-card">
+                      <div
+                        v-for="order in visibleQueueOrders"
+                        :key="order.id"
+                        class="swipe-row order-swipe-row"
+                        :class="swipeRowClass(orderSwipeKey(order))"
                       >
-                        <div class="order-row-main">
-                          <div class="order-row-title">
-                            <span class="order-id" :title="order.id">{{ compactOrderId(order.id) }}</span>
+                        <div class="swipe-action-stack" aria-label="訂單滑動動作">
+                          <button
+                            class="swipe-action swipe-action--complete"
+                            type="button"
+                            :disabled="orderSwipeCompleteDisabled(order)"
+                            @click.stop="orderSwipeCompleteAction(order)"
+                          >
+                            <CheckCircle2 :size="18" aria-hidden="true" />
+                            {{ orderSwipeCompleteLabel(order) }}
+                          </button>
+                          <button
+                            class="swipe-action"
+                            :class="order.source === 'counter' ? 'swipe-action--danger' : 'swipe-action--cancel'"
+                            type="button"
+                            :disabled="orderSwipeDeleteDisabled(order)"
+                            @click.stop="orderSwipeDeleteAction(order)"
+                          >
+                            <Trash2 :size="18" aria-hidden="true" />
+                            {{ orderSwipeDeleteLabel(order) }}
+                          </button>
+                        </div>
+                        <article
+                          class="order-row swipe-card"
+                          :class="[
+                            `order-row--${order.status}`,
+                            fulfillmentRowClass(order),
+                            {
+                              'order-row--claimed-other': orderClaimedByOtherStation(order),
+                              'order-row--online-reminder': orderNeedsOnlineReminder(order),
+                            },
+                          ]"
+                          :style="swipeCardStyle(orderSwipeKey(order))"
+                          @pointerdown="startSwipe(orderSwipeKey(order), $event)"
+                          @pointermove="moveSwipe(orderSwipeKey(order), $event)"
+                          @pointerup="endOrderSwipe(order)"
+                          @pointercancel="cancelSwipe(orderSwipeKey(order))"
+                          @click="handleOrderRowClick(order, $event)"
+                        >
+                          <div class="order-row-main">
+                            <div class="order-row-title">
+                              <span class="order-id" :title="order.id">{{ compactOrderId(order.id) }}</span>
+                            </div>
+                            <strong>{{ order.customerName }}</strong>
+                            <span>
+                              {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
+                              {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
+                            </span>
+                            <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
+                              {{ fulfillmentLabel(order) }}
+                            </small>
                           </div>
-                          <strong>{{ order.customerName }}</strong>
-                          <span>
-                            {{ serviceModeLabels[order.mode] }} · {{ order.lines.length }} 項 ·
-                            {{ formatOrderTime(order.createdAt) }} · {{ formatRelativeMinutes(order.createdAt) }}
-                          </span>
-                          <small v-if="fulfillmentLabel(order)" class="order-fulfillment" :class="fulfillmentUrgencyClass(order)">
-                            {{ fulfillmentLabel(order) }}
-                          </small>
-                        </div>
-                        <div class="order-row-badges order-row-title-chips" aria-label="訂單狀態">
-                          <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
-                            <LockKeyhole :size="13" aria-hidden="true" />
-                            {{ claimLabelFor(order) }}
-                          </span>
-                          <span v-if="orderPendingSync(order)" class="sync-chip">
-                            <Clock3 :size="13" aria-hidden="true" />
-                            本機待同步
-                          </span>
-                          <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
-                            <CircleAlert :size="13" aria-hidden="true" />
-                            未確認
-                          </span>
-                          <span
-                            v-if="fulfillmentUrgencyLabel(order)"
-                            class="fulfillment-chip"
-                            :class="fulfillmentUrgencyClass(order)"
-                          >
-                            <Clock3 :size="13" aria-hidden="true" />
-                            {{ fulfillmentUrgencyLabel(order) }}
-                          </span>
-                          <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
-                        </div>
-                        <div class="order-row-meta">
-                          <span>{{ formatCurrency(order.subtotal) }}</span>
-                          <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
-                          <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
-                            {{ printSummary(order) }}
-                          </span>
-                        </div>
-                        <div class="order-actions">
-                          <button
-                            v-if="paymentActionLabel(order)"
-                            class="order-action--payment"
-                            type="button"
-                            :disabled="paymentActionDisabled(order)"
-                            @click="confirmPaymentAction(order)"
-                          >
-                            <CreditCard :size="16" aria-hidden="true" />
-                            {{ paymentActionLabel(order) }}
-                          </button>
-                          <button
-                            class="order-action--print"
-                            type="button"
-                            :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
-                            @click="printOrder(order.id)"
-                          >
-                            <Printer :size="16" aria-hidden="true" />
-                            {{ printActionLabel(order) }}
-                          </button>
-                          <button
-                            class="order-action--claim"
-                            type="button"
-                            :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
-                            :disabled="claimActionDisabled(order)"
-                            @click="claimOrderAction(order)"
-                          >
-                            <LockKeyhole :size="16" aria-hidden="true" />
-                            {{ claimActionLabel(order) }}
-                          </button>
-                          <button
-                            v-if="orderCanBeVoided(order)"
-                            class="order-action--void"
-                            type="button"
-                            :disabled="voidingOrderId === order.id"
-                            @click="requestQueueAdminAction('void', order)"
-                          >
-                            <Trash2 :size="16" aria-hidden="true" />
-                            {{ voidActionLabel(order) }}
-                          </button>
-                          <button
-                            v-if="orderCanBeRefunded(order)"
-                            class="order-action--refund"
-                            type="button"
-                            :disabled="refundingOrderId === order.id"
-                            @click="requestQueueAdminAction('refund', order)"
-                          >
-                            <WalletCards :size="16" aria-hidden="true" />
-                            {{ refundActionLabel(order) }}
-                          </button>
-                          <button
-                            class="order-action--detail"
-                            type="button"
-                            :class="{ 'order-action--active': expandedOrderId === order.id }"
-                            @click="toggleOrderDetail(order)"
-                          >
-                            <ReceiptText :size="16" aria-hidden="true" />
-                            明細
-                          </button>
-                          <button
-                            v-for="action in statusActions"
-                            :key="action.value"
-                            :class="{ 'order-action--active': order.status === action.value }"
-                            type="button"
-                            :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
-                            @click="updateOrderStatus(order.id, action.value)"
-                          >
-                            {{ action.label }}
-                          </button>
-                        </div>
-                        <div v-if="expandedOrderId === order.id" class="order-detail-panel">
-                          <div class="order-detail-grid">
-                            <span>來源</span>
-                            <strong>{{ sourceLabels[order.source] }}</strong>
-                            <span>電話</span>
-                            <strong>{{ order.customerPhone || '未留' }}</strong>
-                            <span>付款</span>
-                            <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
-                            <span>履約</span>
-                            <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
-                            <span>備註</span>
-                            <strong>{{ order.note || '無' }}</strong>
+                          <div class="order-row-badges order-row-title-chips" aria-label="訂單狀態">
+                            <span v-if="claimLabelFor(order)" class="claim-chip" :class="claimChipClass(order)">
+                              <LockKeyhole :size="13" aria-hidden="true" />
+                              {{ claimLabelFor(order) }}
+                            </span>
+                            <span v-if="orderPendingSync(order)" class="sync-chip">
+                              <Clock3 :size="13" aria-hidden="true" />
+                              本機待同步
+                            </span>
+                            <span v-if="orderNeedsOnlineReminder(order)" class="online-reminder-chip">
+                              <CircleAlert :size="13" aria-hidden="true" />
+                              未確認
+                            </span>
+                            <span
+                              v-if="fulfillmentUrgencyLabel(order)"
+                              class="fulfillment-chip"
+                              :class="fulfillmentUrgencyClass(order)"
+                            >
+                              <Clock3 :size="13" aria-hidden="true" />
+                              {{ fulfillmentUrgencyLabel(order) }}
+                            </span>
+                            <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                           </div>
-                          <div class="order-detail-lines">
-                            <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
-                              <div>
-                                <strong>{{ line.name }}</strong>
-                                <span>{{ line.options.join(' / ') || '標準' }}</span>
-                              </div>
-                              <span>x{{ line.quantity }}</span>
-                              <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
-                            </article>
+                          <div class="order-row-meta">
+                            <span>{{ formatCurrency(order.subtotal) }}</span>
+                            <span>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</span>
+                            <span :class="{ 'order-print-summary--failed': order.printStatus === 'failed' }">
+                              {{ printSummary(order) }}
+                            </span>
                           </div>
-                        </div>
-                      </article>
+                          <div class="order-actions">
+                            <button
+                              v-if="paymentActionLabel(order)"
+                              class="order-action--payment"
+                              type="button"
+                              :disabled="paymentActionDisabled(order)"
+                              @click="confirmPaymentAction(order)"
+                            >
+                              <CreditCard :size="16" aria-hidden="true" />
+                              {{ paymentActionLabel(order) }}
+                            </button>
+                            <button
+                              class="order-action--print"
+                              type="button"
+                              :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
+                              @click="printOrder(order.id)"
+                            >
+                              <Printer :size="16" aria-hidden="true" />
+                              {{ printActionLabel(order) }}
+                            </button>
+                            <button
+                              class="order-action--claim"
+                              type="button"
+                              :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
+                              :disabled="claimActionDisabled(order)"
+                              @click="claimOrderAction(order)"
+                            >
+                              <LockKeyhole :size="16" aria-hidden="true" />
+                              {{ claimActionLabel(order) }}
+                            </button>
+                            <button
+                              v-if="orderCanBeVoided(order)"
+                              class="order-action--void"
+                              type="button"
+                              :disabled="voidingOrderId === order.id"
+                              @click="requestQueueAdminAction('void', order)"
+                            >
+                              <Trash2 :size="16" aria-hidden="true" />
+                              {{ voidActionLabel(order) }}
+                            </button>
+                            <button
+                              v-if="orderCanBeRefunded(order)"
+                              class="order-action--refund"
+                              type="button"
+                              :disabled="refundingOrderId === order.id"
+                              @click="requestQueueAdminAction('refund', order)"
+                            >
+                              <WalletCards :size="16" aria-hidden="true" />
+                              {{ refundActionLabel(order) }}
+                            </button>
+                            <button
+                              class="order-action--detail"
+                              type="button"
+                              :class="{ 'order-action--active': expandedOrderId === order.id }"
+                              @click="toggleOrderDetail(order)"
+                            >
+                              <ReceiptText :size="16" aria-hidden="true" />
+                              明細
+                            </button>
+                            <button
+                              v-for="action in statusActions"
+                              :key="action.value"
+                              :class="{ 'order-action--active': order.status === action.value }"
+                              type="button"
+                              :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
+                              @click="updateOrderStatus(order.id, action.value)"
+                            >
+                              {{ action.label }}
+                            </button>
+                          </div>
+                          <div v-if="expandedOrderId === order.id" class="order-detail-panel">
+                            <div class="order-detail-grid">
+                              <span>來源</span>
+                              <strong>{{ sourceLabels[order.source] }}</strong>
+                              <span>電話</span>
+                              <strong>{{ order.customerPhone || '未留' }}</strong>
+                              <span>付款</span>
+                              <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                              <span>履約</span>
+                              <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
+                              <span>備註</span>
+                              <strong>{{ order.note || '無' }}</strong>
+                            </div>
+                            <div class="order-detail-lines">
+                              <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
+                                <div>
+                                  <strong>{{ line.name }}</strong>
+                                  <span>{{ line.options.join(' / ') || '標準' }}</span>
+                                </div>
+                                <span>x{{ line.quantity }}</span>
+                                <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                              </article>
+                            </div>
+                          </div>
+                        </article>
+                      </div>
                     </div>
 
                     <div v-if="visibleQueueOrders.length === 0" class="empty-state queue-empty-state">

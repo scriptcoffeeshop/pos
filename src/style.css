@@ -3498,6 +3498,14 @@ button.cart-line-summary:focus-visible {
   -webkit-overflow-scrolling: touch;
 }
 
+.queue-list-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-tight);
+}
+
 .queue-list-scroll::after {
   content: '';
   display: block;
@@ -3633,7 +3641,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .queue-list-scroll .order-swipe-row:first-child .order-row {
-  padding-top: 0;
+  padding-top: calc(var(--pos-order-row-padding) * 0.86);
 }
 
 .order-row--claimed-other {
@@ -3677,6 +3685,10 @@ button.cart-line-summary:focus-visible {
   min-width: 0;
 }
 
+.workspace--queue .order-row-main {
+  align-self: center;
+}
+
 .order-row-main strong {
   color: var(--ink);
 }
@@ -3703,6 +3715,11 @@ button.cart-line-summary:focus-visible {
   align-items: flex-start;
   justify-content: flex-start;
   gap: 10px;
+}
+
+.workspace--queue .order-row-title {
+  min-height: 1.05em;
+  align-items: center;
 }
 
 .order-row-title-chips {
@@ -3734,10 +3751,14 @@ button.cart-line-summary:focus-visible {
 }
 
 .order-id {
+  display: inline-block;
+  min-width: 7.5ch;
   color: var(--secondary);
   font-family: var(--mono);
   font-size: 0.84rem;
   font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-chip {
