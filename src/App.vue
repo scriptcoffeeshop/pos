@@ -14,9 +14,9 @@ import {
   Eye,
   EyeOff,
   Filter,
+  GripVertical,
   LayoutDashboard,
   LockKeyhole,
-  Menu as MenuIcon,
   Minus,
   MoreHorizontal,
   Plus,
@@ -88,6 +88,7 @@ type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
 type CategoryMoveDirection = -1 | 1
+type MenuCategoryOptionValue = 'all' | MenuCategory
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -152,6 +153,26 @@ interface ToolboxDragState {
   startY: number
   startPosition: ToolboxPosition
   moved: boolean
+}
+
+interface ProductSortDragState {
+  pointerId: number
+  itemId: string
+  startX: number
+  startY: number
+  dragging: boolean
+  overItemId: string | null
+  longPressTimer: number | null
+}
+
+interface CategorySortDragState {
+  pointerId: number
+  category: MenuCategoryOptionValue
+  startX: number
+  startY: number
+  dragging: boolean
+  overCategory: MenuCategory | null
+  longPressTimer: number | null
 }
 
 interface MenuOptionChoice {
@@ -570,6 +591,7 @@ const {
   refundingOrderId,
   refundOrderForStation,
   releaseOrderClaimForStation,
+  reorderProductsForStation,
   restoreSupplyProductSnapshot,
   searchTerm,
   selectedCategory,
@@ -1058,6 +1080,38 @@ const saveSupplyChanges = async (): Promise<void> => {
   }
 }
 
+const persistMenuCategoryOrder = async (message: string): Promise<void> => {
+  writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
+  supplyHasUnsavedChanges.value = true
+  supplyActionMessage.value = message
+
+  if (!isPosApiConfigured) {
+    supplyActionMessage.value = `${message}，已暫存本機`
+    return
+  }
+
+  try {
+    const syncedSettings = await updateAdminSetting<OnlineOrderingSettings>(
+      'online_ordering',
+      {
+        ...onlineOrderingSettings.value,
+        menuCategories: onlineMenuCategoriesForSync(),
+        availableOptionChoices: onlineAvailableNotesForSync(),
+        menuOptionGroups: onlineOptionGroupsForSync(),
+        productOptionAssignments: onlineProductAssignmentsForSync(),
+        noteSupplyStatuses: { ...noteSupplyStatuses.value },
+      },
+    )
+    onlineOrderingSettings.value = syncedSettings
+    supplyHasUnsavedChanges.value = false
+    supplyActionMessage.value = `${message}，已寫入資料庫`
+  } catch (error) {
+    const failedReason = error instanceof Error ? error.message : '線上同步失敗'
+    supplyHasUnsavedChanges.value = true
+    supplyActionMessage.value = `${message}，資料庫同步失敗：${failedReason}`
+  }
+}
+
 const categoryLabelFor = (category: MenuCategory): string =>
   menuCategoryDefinitions.value.find((definition) => definition.id === category)?.label ??
   categoryLabels[category] ??
@@ -1078,7 +1132,7 @@ const menuCategoryOptions = computed<MenuCategoryDefinition[]>(() => {
   return [...definitions.values()]
 })
 
-const categoryOptions = computed<Array<{ value: 'all' | MenuCategory; label: string }>>(() => [
+const categoryOptions = computed<Array<{ value: MenuCategoryOptionValue; label: string }>>(() => [
   { value: 'all', label: '全部' },
   ...menuCategoryOptions.value.map((category) => ({
     value: category.id,
@@ -1091,37 +1145,164 @@ const selectedCategoryLabel = computed(
 const selectedCategoryIndex = computed(() =>
   categoryOptions.value.findIndex((category) => category.value === selectedCategory.value),
 )
-const selectedMenuCategoryIndex = computed(() =>
-  menuCategoryDefinitions.value.findIndex((category) => category.id === selectedCategory.value),
-)
 
-const selectCategory = (category: 'all' | MenuCategory): void => {
+const selectCategory = (category: MenuCategoryOptionValue): void => {
   selectedCategory.value = category
 }
 
-const canMoveSelectedCategory = (direction: CategoryMoveDirection): boolean => {
-  const currentIndex = selectedMenuCategoryIndex.value
-  const nextIndex = currentIndex + direction
+const productSortDragState = ref<ProductSortDragState | null>(null)
+const categorySortDragState = ref<CategorySortDragState | null>(null)
+const suppressProductTileClick = ref(false)
+const suppressCategoryClick = ref(false)
+const sortDragLongPressMs = 420
+const sortDragMoveTolerance = 10
 
-  return currentIndex >= 0 && nextIndex >= 0 && nextIndex < menuCategoryDefinitions.value.length
+const isEditableMenuCategory = (category: MenuCategoryOptionValue): category is MenuCategory =>
+  category !== 'all'
+
+const categorySortEnabled = (category: MenuCategoryOptionValue): boolean =>
+  backendEditModeEnabled.value && isEditableMenuCategory(category)
+
+const clearCategorySortTimer = (state: CategorySortDragState | null = categorySortDragState.value): void => {
+  if (state?.longPressTimer != null) {
+    globalThis.clearTimeout(state.longPressTimer)
+  }
 }
 
-const moveSelectedCategory = (direction: CategoryMoveDirection): void => {
-  if (!canMoveSelectedCategory(direction)) {
+const categoryFromPoint = (event: PointerEvent): MenuCategory | null => {
+  const element = globalThis.document?.elementFromPoint(event.clientX, event.clientY)
+  const target = element?.closest<HTMLElement>('[data-category-id]')
+  const category = target?.dataset.categoryId
+
+  return category && category !== 'all' ? (category as MenuCategory) : null
+}
+
+const swapMenuCategories = (sourceId: MenuCategory, targetId: MenuCategory): void => {
+  if (sourceId === targetId) {
     return
   }
 
-  const currentIndex = selectedMenuCategoryIndex.value
-  const nextIndex = currentIndex + direction
+  const currentIndex = menuCategoryDefinitions.value.findIndex((category) => category.id === sourceId)
+  const targetIndex = menuCategoryDefinitions.value.findIndex((category) => category.id === targetId)
+  if (currentIndex < 0 || targetIndex < 0) {
+    return
+  }
+
+  pushSupplyUndo('調整分類順序')
   const nextDefinitions = cloneMenuCategories(menuCategoryDefinitions.value)
-  const [movedCategory] = nextDefinitions.splice(currentIndex, 1)
-  if (!movedCategory) {
+  const sourceCategory = nextDefinitions[currentIndex]
+  const targetCategory = nextDefinitions[targetIndex]
+  if (!sourceCategory || !targetCategory) {
     return
   }
 
-  nextDefinitions.splice(nextIndex, 0, movedCategory)
+  nextDefinitions[currentIndex] = targetCategory
+  nextDefinitions[targetIndex] = sourceCategory
   menuCategoryDefinitions.value = nextDefinitions
-  supplyActionMessage.value = `${movedCategory.label} 已${direction < 0 ? '往左' : '往右'}移動`
+  selectCategory(sourceId)
+  void persistMenuCategoryOrder(`${sourceCategory.label} 已與 ${targetCategory.label} 交換位置`)
+}
+
+const startCategorySortDrag = (category: MenuCategoryOptionValue, event: PointerEvent): void => {
+  if (!categorySortEnabled(category) || event.button !== 0) {
+    return
+  }
+
+  event.stopPropagation()
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const nextState: CategorySortDragState = {
+    pointerId: event.pointerId,
+    category,
+    startX: event.clientX,
+    startY: event.clientY,
+    dragging: false,
+    overCategory: null,
+    longPressTimer: null,
+  }
+  nextState.longPressTimer = globalThis.setTimeout(() => {
+    const current = categorySortDragState.value
+    if (!current || current.pointerId !== event.pointerId) {
+      return
+    }
+
+    categorySortDragState.value = {
+      ...current,
+      dragging: true,
+      overCategory: null,
+      longPressTimer: null,
+    }
+    suppressCategoryClick.value = true
+  }, sortDragLongPressMs)
+  categorySortDragState.value = nextState
+}
+
+const moveCategorySortDrag = (event: PointerEvent): void => {
+  const dragState = categorySortDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  const moved = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY)
+  if (!dragState.dragging && moved > sortDragMoveTolerance) {
+    clearCategorySortTimer(dragState)
+    categorySortDragState.value = null
+    return
+  }
+
+  if (!dragState.dragging) {
+    return
+  }
+
+  event.preventDefault()
+  const overCategory = categoryFromPoint(event)
+  categorySortDragState.value = {
+    ...dragState,
+    overCategory: overCategory && overCategory !== dragState.category ? overCategory : null,
+  }
+}
+
+const finishCategorySortDrag = (event: PointerEvent): void => {
+  const dragState = categorySortDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
+  clearCategorySortTimer(dragState)
+  categorySortDragState.value = null
+  if (dragState.dragging && dragState.overCategory && isEditableMenuCategory(dragState.category)) {
+    event.preventDefault()
+    swapMenuCategories(dragState.category, dragState.overCategory)
+  }
+
+  if (dragState.dragging) {
+    globalThis.setTimeout(() => {
+      suppressCategoryClick.value = false
+    }, 0)
+  }
+}
+
+const cancelCategorySortDrag = (): void => {
+  clearCategorySortTimer()
+  categorySortDragState.value = null
+  globalThis.setTimeout(() => {
+    suppressCategoryClick.value = false
+  }, 0)
+}
+
+const handleCategoryClick = (category: MenuCategoryOptionValue): void => {
+  if (suppressCategoryClick.value) {
+    suppressCategoryClick.value = false
+    return
+  }
+
+  selectCategory(category)
 }
 
 const switchCategoryByOffset = (offset: CategoryMoveDirection): void => {
@@ -1207,6 +1388,151 @@ const finishCategorySwipe = (event: PointerEvent): void => {
 
 const cancelCategorySwipe = (): void => {
   categorySwipeState.value = null
+}
+
+const productSortEnabled = (item: MenuItem): boolean =>
+  backendEditModeEnabled.value &&
+  selectedCategory.value !== 'all' &&
+  searchTerm.value.trim().length === 0 &&
+  item.category === selectedCategory.value
+
+const clearProductSortTimer = (state: ProductSortDragState | null = productSortDragState.value): void => {
+  if (state?.longPressTimer != null) {
+    globalThis.clearTimeout(state.longPressTimer)
+  }
+}
+
+const productIdFromPoint = (event: PointerEvent): string | null => {
+  const element = globalThis.document?.elementFromPoint(event.clientX, event.clientY)
+  const target = element?.closest<HTMLElement>('[data-product-id]')
+
+  return target?.dataset.productId ?? null
+}
+
+const swapVisibleProducts = async (sourceId: string, targetId: string): Promise<void> => {
+  if (sourceId === targetId || selectedCategory.value === 'all') {
+    return
+  }
+
+  const visibleProducts = filteredMenu.value.filter((item) => item.category === selectedCategory.value)
+  const sourceIndex = visibleProducts.findIndex((item) => item.id === sourceId)
+  const targetIndex = visibleProducts.findIndex((item) => item.id === targetId)
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return
+  }
+
+  const nextProducts = [...visibleProducts]
+  const sourceProduct = nextProducts[sourceIndex]
+  const targetProduct = nextProducts[targetIndex]
+  if (!sourceProduct || !targetProduct) {
+    return
+  }
+
+  nextProducts[sourceIndex] = targetProduct
+  nextProducts[targetIndex] = sourceProduct
+  await reorderProductsForStation(nextProducts.map((item) => item.id))
+}
+
+const startProductSortDrag = (item: MenuItem, event: PointerEvent): void => {
+  if (!productSortEnabled(item) || event.button !== 0) {
+    return
+  }
+
+  event.stopPropagation()
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const nextState: ProductSortDragState = {
+    pointerId: event.pointerId,
+    itemId: item.id,
+    startX: event.clientX,
+    startY: event.clientY,
+    dragging: false,
+    overItemId: null,
+    longPressTimer: null,
+  }
+  nextState.longPressTimer = globalThis.setTimeout(() => {
+    const current = productSortDragState.value
+    if (!current || current.pointerId !== event.pointerId) {
+      return
+    }
+
+    productSortDragState.value = {
+      ...current,
+      dragging: true,
+      overItemId: null,
+      longPressTimer: null,
+    }
+    suppressProductTileClick.value = true
+  }, sortDragLongPressMs)
+  productSortDragState.value = nextState
+}
+
+const moveProductSortDrag = (event: PointerEvent): void => {
+  const dragState = productSortDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  const moved = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY)
+  if (!dragState.dragging && moved > sortDragMoveTolerance) {
+    clearProductSortTimer(dragState)
+    productSortDragState.value = null
+    return
+  }
+
+  if (!dragState.dragging) {
+    return
+  }
+
+  event.preventDefault()
+  const overItemId = productIdFromPoint(event)
+  productSortDragState.value = {
+    ...dragState,
+    overItemId: overItemId && overItemId !== dragState.itemId ? overItemId : null,
+  }
+}
+
+const finishProductSortDrag = (event: PointerEvent): void => {
+  const dragState = productSortDragState.value
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return
+  }
+
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
+  clearProductSortTimer(dragState)
+  productSortDragState.value = null
+  if (dragState.dragging && dragState.overItemId) {
+    event.preventDefault()
+    void swapVisibleProducts(dragState.itemId, dragState.overItemId)
+  }
+
+  if (dragState.dragging) {
+    globalThis.setTimeout(() => {
+      suppressProductTileClick.value = false
+    }, 0)
+  }
+}
+
+const cancelProductSortDrag = (): void => {
+  clearProductSortTimer()
+  productSortDragState.value = null
+  globalThis.setTimeout(() => {
+    suppressProductTileClick.value = false
+  }, 0)
+}
+
+const handleProductTileClick = (item: MenuItem): void => {
+  if (suppressProductTileClick.value) {
+    suppressProductTileClick.value = false
+    return
+  }
+
+  selectMenuItem(item)
 }
 
 const compactOrderId = (orderId: string): string => {
@@ -3928,6 +4254,8 @@ onBeforeUnmount(() => {
     globalThis.clearInterval(claimClockTimer)
   }
   clearBackendEditTapTimer()
+  clearCategorySortTimer()
+  clearProductSortTimer()
 })
 </script>
 
@@ -4342,8 +4670,10 @@ onBeforeUnmount(() => {
                         :disabled="ticketActionDisabled()"
                         @click="handleTicketAction('checkout-print')"
                       >
-                        <ReceiptText :size="20" aria-hidden="true" />
-                        {{ activeTicketAction === 'checkout-print' ? '處理中' : '結帳' }}
+                        <span class="ticket-action-icon">
+                          <ReceiptText :size="24" aria-hidden="true" />
+                        </span>
+                        <span class="ticket-action-label">{{ activeTicketAction === 'checkout-print' ? '處理中' : '結帳' }}</span>
                       </button>
                       <button
                         class="ticket-submit-button ticket-submit-button--secondary"
@@ -4351,8 +4681,10 @@ onBeforeUnmount(() => {
                         :disabled="ticketActionDisabled()"
                         @click="handleTicketAction('print')"
                       >
-                        <Printer :size="20" aria-hidden="true" />
-                        {{ activeTicketAction === 'print' ? '出單中' : '出單' }}
+                        <span class="ticket-action-icon">
+                          <Printer :size="24" aria-hidden="true" />
+                        </span>
+                        <span class="ticket-action-label">{{ activeTicketAction === 'print' ? '出單中' : '出單' }}</span>
                       </button>
                       <button
                         class="ticket-submit-button ticket-submit-button--secondary ticket-submit-button--wide"
@@ -4360,8 +4692,10 @@ onBeforeUnmount(() => {
                         :disabled="ticketActionDisabled()"
                         @click="handleTicketAction('checkout-only')"
                       >
-                        <CreditCard :size="20" aria-hidden="true" />
-                        {{ activeTicketAction === 'checkout-only' ? '結帳中' : '結帳不出單' }}
+                        <span class="ticket-action-icon">
+                          <CreditCard :size="24" aria-hidden="true" />
+                        </span>
+                        <span class="ticket-action-label">{{ activeTicketAction === 'checkout-only' ? '結帳中' : '結帳不出單' }}</span>
                       </button>
                     </div>
                   </footer>
@@ -4384,39 +4718,33 @@ onBeforeUnmount(() => {
                     class="menu-workarea"
                   >
                     <aside class="category-rail" aria-label="品項分類">
-                      <span class="category-rail-icon">
-                        <MenuIcon :size="26" aria-hidden="true" />
-                      </span>
                       <button
                         v-for="category in categoryOptions"
                         :key="category.value"
                         class="category-rail-button"
-                        :class="{ 'category-rail-button--active': selectedCategory === category.value }"
+                        :class="{
+                          'category-rail-button--active': selectedCategory === category.value,
+                          'category-rail-button--sortable': categorySortEnabled(category.value),
+                          'category-rail-button--dragging':
+                            categorySortDragState?.category === category.value && categorySortDragState.dragging,
+                          'category-rail-button--drop-target': categorySortDragState?.overCategory === category.value,
+                        }"
                         type="button"
-                        @click="selectCategory(category.value)"
+                        :data-category-id="category.value"
+                        @pointerdown="startCategorySortDrag(category.value, $event)"
+                        @pointermove="moveCategorySortDrag"
+                        @pointerup="finishCategorySortDrag"
+                        @pointercancel="cancelCategorySortDrag"
+                        @click="handleCategoryClick(category.value)"
                       >
-                        {{ category.label }}
+                        <span>{{ category.label }}</span>
+                        <GripVertical
+                          v-if="categorySortEnabled(category.value)"
+                          class="category-drag-grip"
+                          :size="18"
+                          aria-hidden="true"
+                        />
                       </button>
-                      <div v-if="selectedCategory !== 'all'" class="category-order-controls" aria-label="分類順序" @pointerdown.stop>
-                        <button
-                          class="category-order-button"
-                          type="button"
-                          title="分類往左移"
-                          :disabled="!canMoveSelectedCategory(-1)"
-                          @click.stop="moveSelectedCategory(-1)"
-                        >
-                          <ChevronLeft :size="18" aria-hidden="true" />
-                        </button>
-                        <button
-                          class="category-order-button"
-                          type="button"
-                          title="分類往右移"
-                          :disabled="!canMoveSelectedCategory(1)"
-                          @click.stop="moveSelectedCategory(1)"
-                        >
-                          <ChevronRight :size="18" aria-hidden="true" />
-                        </button>
-                      </div>
                     </aside>
 
                     <div
@@ -4440,10 +4768,22 @@ onBeforeUnmount(() => {
                           :class="{
                             'product-tile--in-cart': lineQuantityByItem(item.id) > 0,
                             'product-tile--quantity-control': lineQuantityByItem(item.id) > 0 && !productRequiresOptions(item),
+                            'product-tile--sort-enabled': productSortEnabled(item),
+                            'product-tile--dragging':
+                              productSortDragState?.itemId === item.id && productSortDragState.dragging,
+                            'product-tile--drop-target': productSortDragState?.overItemId === item.id,
                           }"
+                          :data-product-id="item.id"
+                          @pointerdown="startProductSortDrag(item, $event)"
+                          @pointermove="moveProductSortDrag"
+                          @pointerup="finishProductSortDrag"
+                          @pointercancel="cancelProductSortDrag"
                         >
-                          <button class="product-tile-main" type="button" @click="selectMenuItem(item)">
+                          <button class="product-tile-main" type="button" @click="handleProductTileClick(item)">
                             <span class="product-tile-top">
+                              <span v-if="productSortEnabled(item)" class="product-drag-handle">
+                                <GripVertical :size="18" aria-hidden="true" />
+                              </span>
                               <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
                               <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
                             </span>

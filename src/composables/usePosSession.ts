@@ -2252,6 +2252,70 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const reorderProductsForStation = async (orderedProductIds: string[]): Promise<boolean> => {
+    const productMap = new Map(
+      [...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product]),
+    )
+    const orderedProducts = orderedProductIds
+      .map((productId) => productMap.get(productId))
+      .filter((product): product is MenuItem => Boolean(product))
+
+    if (orderedProducts.length < 2) {
+      return true
+    }
+
+    const category = orderedProducts[0]?.category
+    if (!category || orderedProducts.some((product) => product.category !== category)) {
+      productStatusMessage.value = '只能在同一分類內調整商品順序'
+      return false
+    }
+
+    const previousProducts = orderedProducts.map((product) => ({ ...product, tags: [...product.tags] }))
+    const reorderedProducts = orderedProducts.map((product, index) => ({
+      ...product,
+      sortOrder: (index + 1) * 10,
+    }))
+    const changedProducts = reorderedProducts.filter((product, index) =>
+      product.sortOrder !== previousProducts[index]?.sortOrder,
+    )
+
+    if (changedProducts.length === 0) {
+      return true
+    }
+
+    for (const product of reorderedProducts) {
+      applySavedProduct(product)
+    }
+    productStatusMessage.value = `${category} 商品順序更新中`
+
+    if (!isPosApiConfigured) {
+      productStatusMessage.value = '商品順序已暫存在本機；需連線 POS API 才會寫入資料庫'
+      setBackendStatus('fallback', '商品排序未同步', productStatusMessage.value)
+      return false
+    }
+
+    try {
+      const savedProducts = await Promise.all(
+        changedProducts.map((product) =>
+          isLocalProduct(product) ? Promise.resolve(product) : updateProduct(product.id, productToUpdateInput(product)),
+        ),
+      )
+      for (const product of savedProducts) {
+        applySavedProduct(product)
+      }
+      productStatusMessage.value = '商品順序已寫入資料庫'
+      setBackendStatus('connected', '商品排序已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      for (const product of previousProducts) {
+        applySavedProduct(product)
+      }
+      productStatusMessage.value = `商品順序更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '商品排序失敗', productStatusMessage.value)
+      return false
+    }
+  }
+
   const createProductForStation = async (
     input: ProductUpdateInput,
   ): Promise<MenuItem | null> => {
@@ -2818,6 +2882,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     refundingOrderId,
     refundOrderForStation,
     releaseOrderClaimForStation,
+    reorderProductsForStation,
     restoreSupplyProductSnapshot,
     searchTerm,
     selectedCategory,
