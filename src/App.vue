@@ -1093,14 +1093,14 @@ const saveSupplyChanges = async (): Promise<void> => {
   }
 }
 
-const persistMenuCategoryOrder = async (message: string): Promise<void> => {
+const persistMenuCategoryOrder = async (message: string): Promise<boolean> => {
   writeMenuCategoryDefinitions(menuCategoryDefinitions.value)
   supplyHasUnsavedChanges.value = true
   supplyActionMessage.value = message
 
   if (!isPosApiConfigured) {
     supplyActionMessage.value = `${message}，已暫存本機`
-    return
+    return false
   }
 
   try {
@@ -1118,10 +1118,12 @@ const persistMenuCategoryOrder = async (message: string): Promise<void> => {
     onlineOrderingSettings.value = syncedSettings
     supplyHasUnsavedChanges.value = false
     supplyActionMessage.value = `${message}，已寫入資料庫`
+    return true
   } catch (error) {
     const failedReason = error instanceof Error ? error.message : '線上同步失敗'
     supplyHasUnsavedChanges.value = true
     supplyActionMessage.value = `${message}，資料庫同步失敗：${failedReason}`
+    return false
   }
 }
 
@@ -1167,14 +1169,40 @@ const productSortDragState = ref<ProductSortDragState | null>(null)
 const categorySortDragState = ref<CategorySortDragState | null>(null)
 const suppressProductTileClick = ref(false)
 const suppressCategoryClick = ref(false)
+const isProductSortPersisting = ref(false)
+const isCategorySortPersisting = ref(false)
 const sortDragLongPressMs = 420
 const sortDragMoveTolerance = 10
+let productSortSuppressTimer: number | null = null
+let categorySortSuppressTimer: number | null = null
 
 const isEditableMenuCategory = (category: MenuCategoryOptionValue): category is MenuCategory =>
   category !== 'all'
 
 const categorySortEnabled = (category: MenuCategoryOptionValue): boolean =>
-  backendEditModeEnabled.value && isEditableMenuCategory(category)
+  backendEditModeEnabled.value && !isCategorySortPersisting.value && isEditableMenuCategory(category)
+
+const suppressProductClickAfterSortGesture = (duration = 320): void => {
+  if (productSortSuppressTimer !== null) {
+    globalThis.clearTimeout(productSortSuppressTimer)
+  }
+  suppressProductTileClick.value = true
+  productSortSuppressTimer = globalThis.setTimeout(() => {
+    suppressProductTileClick.value = false
+    productSortSuppressTimer = null
+  }, duration)
+}
+
+const suppressCategoryClickAfterSortGesture = (duration = 320): void => {
+  if (categorySortSuppressTimer !== null) {
+    globalThis.clearTimeout(categorySortSuppressTimer)
+  }
+  suppressCategoryClick.value = true
+  categorySortSuppressTimer = globalThis.setTimeout(() => {
+    suppressCategoryClick.value = false
+    categorySortSuppressTimer = null
+  }, duration)
+}
 
 const clearCategorySortTimer = (state: CategorySortDragState | null = categorySortDragState.value): void => {
   if (state?.longPressTimer != null) {
@@ -1190,8 +1218,8 @@ const categoryFromPoint = (event: PointerEvent): MenuCategory | null => {
   return category && category !== 'all' ? (category as MenuCategory) : null
 }
 
-const swapMenuCategories = (sourceId: MenuCategory, targetId: MenuCategory): void => {
-  if (sourceId === targetId) {
+const swapMenuCategories = async (sourceId: MenuCategory, targetId: MenuCategory): Promise<void> => {
+  if (sourceId === targetId || isCategorySortPersisting.value) {
     return
   }
 
@@ -1213,7 +1241,16 @@ const swapMenuCategories = (sourceId: MenuCategory, targetId: MenuCategory): voi
   nextDefinitions[targetIndex] = sourceCategory
   menuCategoryDefinitions.value = nextDefinitions
   selectCategory(sourceId)
-  void persistMenuCategoryOrder(`${sourceCategory.label} 已與 ${targetCategory.label} 交換位置`)
+
+  isCategorySortPersisting.value = true
+  try {
+    const synced = await persistMenuCategoryOrder(`${sourceCategory.label} 已與 ${targetCategory.label} 交換位置`)
+    if (synced) {
+      await refreshBackendData()
+    }
+  } finally {
+    isCategorySortPersisting.value = false
+  }
 }
 
 const startCategorySortDrag = (category: MenuCategoryOptionValue, event: PointerEvent): void => {
@@ -1247,7 +1284,7 @@ const startCategorySortDrag = (category: MenuCategoryOptionValue, event: Pointer
       overCategory: null,
       longPressTimer: null,
     }
-    suppressCategoryClick.value = true
+    suppressCategoryClickAfterSortGesture()
   }, sortDragLongPressMs)
   categorySortDragState.value = nextState
 }
@@ -1262,6 +1299,7 @@ const moveCategorySortDrag = (event: PointerEvent): void => {
   if (!dragState.dragging && moved > sortDragMoveTolerance) {
     clearCategorySortTimer(dragState)
     categorySortDragState.value = null
+    suppressCategoryClickAfterSortGesture()
     return
   }
 
@@ -1291,22 +1329,21 @@ const finishCategorySortDrag = (event: PointerEvent): void => {
   categorySortDragState.value = null
   if (dragState.dragging && dragState.overCategory && isEditableMenuCategory(dragState.category)) {
     event.preventDefault()
-    swapMenuCategories(dragState.category, dragState.overCategory)
+    void swapMenuCategories(dragState.category, dragState.overCategory)
   }
 
   if (dragState.dragging) {
-    globalThis.setTimeout(() => {
-      suppressCategoryClick.value = false
-    }, 0)
+    suppressCategoryClickAfterSortGesture()
   }
 }
 
 const cancelCategorySortDrag = (): void => {
+  const wasDragging = categorySortDragState.value?.dragging ?? false
   clearCategorySortTimer()
   categorySortDragState.value = null
-  globalThis.setTimeout(() => {
-    suppressCategoryClick.value = false
-  }, 0)
+  if (wasDragging) {
+    suppressCategoryClickAfterSortGesture()
+  }
 }
 
 const handleCategoryClick = (category: MenuCategoryOptionValue): void => {
@@ -1405,6 +1442,7 @@ const cancelCategorySwipe = (): void => {
 
 const productSortEnabled = (item: MenuItem): boolean =>
   backendEditModeEnabled.value &&
+  !isProductSortPersisting.value &&
   selectedCategory.value !== 'all' &&
   searchTerm.value.trim().length === 0 &&
   item.category === selectedCategory.value
@@ -1423,7 +1461,7 @@ const productIdFromPoint = (event: PointerEvent): string | null => {
 }
 
 const swapVisibleProducts = async (sourceId: string, targetId: string): Promise<void> => {
-  if (sourceId === targetId || selectedCategory.value === 'all') {
+  if (sourceId === targetId || selectedCategory.value === 'all' || isProductSortPersisting.value) {
     return
   }
 
@@ -1443,11 +1481,26 @@ const swapVisibleProducts = async (sourceId: string, targetId: string): Promise<
 
   nextProducts[sourceIndex] = targetProduct
   nextProducts[targetIndex] = sourceProduct
-  await reorderProductsForStation(nextProducts.map((item) => item.id))
+  isProductSortPersisting.value = true
+  try {
+    const synced = await reorderProductsForStation(nextProducts.map((item) => item.id))
+    if (synced && isPosApiConfigured) {
+      await refreshBackendData()
+    }
+  } finally {
+    isProductSortPersisting.value = false
+  }
 }
 
 const startProductSortDrag = (item: MenuItem, event: PointerEvent): void => {
   if (!productSortEnabled(item) || event.button !== 0) {
+    return
+  }
+
+  if (
+    event.target instanceof HTMLElement &&
+    event.target.closest('.product-quantity-control, input, textarea, select, a')
+  ) {
     return
   }
 
@@ -1477,7 +1530,7 @@ const startProductSortDrag = (item: MenuItem, event: PointerEvent): void => {
       overItemId: null,
       longPressTimer: null,
     }
-    suppressProductTileClick.value = true
+    suppressProductClickAfterSortGesture()
   }, sortDragLongPressMs)
   productSortDragState.value = nextState
 }
@@ -1492,6 +1545,7 @@ const moveProductSortDrag = (event: PointerEvent): void => {
   if (!dragState.dragging && moved > sortDragMoveTolerance) {
     clearProductSortTimer(dragState)
     productSortDragState.value = null
+    suppressProductClickAfterSortGesture()
     return
   }
 
@@ -1525,18 +1579,17 @@ const finishProductSortDrag = (event: PointerEvent): void => {
   }
 
   if (dragState.dragging) {
-    globalThis.setTimeout(() => {
-      suppressProductTileClick.value = false
-    }, 0)
+    suppressProductClickAfterSortGesture()
   }
 }
 
 const cancelProductSortDrag = (): void => {
+  const wasDragging = productSortDragState.value?.dragging ?? false
   clearProductSortTimer()
   productSortDragState.value = null
-  globalThis.setTimeout(() => {
-    suppressProductTileClick.value = false
-  }, 0)
+  if (wasDragging) {
+    suppressProductClickAfterSortGesture()
+  }
 }
 
 const handleProductTileClick = (item: MenuItem): void => {
@@ -4440,6 +4493,12 @@ onBeforeUnmount(() => {
   clearAppearancePersistTimer()
   clearCategorySortTimer()
   clearProductSortTimer()
+  if (categorySortSuppressTimer !== null) {
+    globalThis.clearTimeout(categorySortSuppressTimer)
+  }
+  if (productSortSuppressTimer !== null) {
+    globalThis.clearTimeout(productSortSuppressTimer)
+  }
 })
 </script>
 

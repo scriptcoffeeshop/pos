@@ -29,6 +29,7 @@ import type {
   CustomerDraft,
   MenuCategory,
   MenuItem,
+  OnlineMenuCategory,
   OnlineMenuOptionGroup,
   OnlineOrderingSettings,
   PaymentMethod,
@@ -40,8 +41,8 @@ type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
 type OptionSelectionMap = Record<string, string[]>
 
-const baseCategoryOptions: Array<{ value: CategoryFilter; label: string }> = [
-  { value: 'all', label: '全部' },
+const allCategoryOption: { value: 'all'; label: string } = { value: 'all', label: '全部' }
+const defaultCategoryOptions: Array<{ value: MenuCategory; label: string }> = [
   { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
   { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
   { value: 'food', label: categoryLabels.food ?? '輕食' },
@@ -94,11 +95,37 @@ const onlineFallbackMenu = (): MenuItem[] =>
       onlineVisible: true,
     }))
 
+const runtimeCategoryDefinitions = computed<OnlineMenuCategory[]>(() => {
+  const definitions = new Map<MenuCategory, OnlineMenuCategory>()
+  for (const category of onlineOrdering.value.menuCategories) {
+    definitions.set(category.id, category)
+  }
+
+  return [...definitions.values()]
+})
+
 const categoryLabelFor = (category: MenuCategory): string =>
-  baseCategoryOptions.find((option) => option.value === category)?.label ?? categoryLabels[category] ?? category
+  runtimeCategoryDefinitions.value.find((definition) => definition.id === category)?.label ??
+  defaultCategoryOptions.find((option) => option.value === category)?.label ??
+  categoryLabels[category] ??
+  category
 
 const categoryOptions = computed<Array<{ value: CategoryFilter; label: string }>>(() => {
-  const options = new Map(baseCategoryOptions.map((option) => [option.value, option]))
+  const options = new Map<MenuCategory, { value: MenuCategory; label: string }>()
+
+  for (const definition of runtimeCategoryDefinitions.value) {
+    options.set(definition.id, {
+      value: definition.id,
+      label: definition.label,
+    })
+  }
+
+  for (const option of defaultCategoryOptions) {
+    if (!options.has(option.value) && menuCatalog.value.some((item) => item.category === option.value)) {
+      options.set(option.value, option)
+    }
+  }
+
   for (const item of menuCatalog.value) {
     if (!options.has(item.category)) {
       options.set(item.category, {
@@ -107,7 +134,8 @@ const categoryOptions = computed<Array<{ value: CategoryFilter; label: string }>
       })
     }
   }
-  return [...options.values()]
+
+  return [allCategoryOption, ...options.values()]
 })
 
 const itemMatchesFilter = (item: MenuItem): boolean => {
@@ -607,7 +635,7 @@ watch(
         >
           <span class="product-tile-top">
             <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-            <span class="product-category">{{ categoryLabels[item.category] }}</span>
+            <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
           </span>
           <span class="product-name">{{ item.name }}</span>
           <span class="product-tags">{{ productDescription(item) }}</span>
