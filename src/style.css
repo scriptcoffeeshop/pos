@@ -23,6 +23,7 @@
   --shadow-tight: 0 6px 16px rgba(24, 26, 27, 0.08);
   --radius: 8px;
   --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --pos-viewport-height: 100lvh;
   --pos-stage-height: 100lvh;
   color: var(--ink);
   background: var(--bg);
@@ -131,13 +132,13 @@ button:disabled {
 }
 
 .pos-shell {
-  min-height: var(--pos-stage-height);
+  min-height: var(--pos-viewport-height, var(--pos-stage-height));
   padding: 18px;
 }
 
 .pos-shell--workspace {
   width: 100vw;
-  height: var(--pos-stage-height);
+  height: var(--pos-viewport-height, var(--pos-stage-height));
   min-height: 0;
   overflow: hidden;
   padding: 0;
@@ -218,12 +219,13 @@ button:disabled {
 .pos-scale-viewport {
   --pos-interface-scale: 1;
   --pos-stage-width: 100vw;
+  --pos-viewport-height: 100lvh;
   --pos-stage-height: 100lvh;
   --pos-font-size: 16px;
   --pos-density-scale: 1;
   --pos-text-scale: 1;
   width: 100vw;
-  height: 100lvh;
+  height: var(--pos-viewport-height);
   overflow: hidden;
   background: var(--bg);
 }

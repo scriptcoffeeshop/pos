@@ -2239,6 +2239,7 @@ const activeWorkspaceTab = ref<WorkspaceTab>('queue')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const activeToolboxPanel = ref<ToolboxPanel>('home')
+const posStableViewportHeight = ref(0)
 const preferenceOffsetLabel = (value: number): string => `${value > 0 ? '+' : ''}${Math.round(value)}%`
 const scaleFactorFromOffset = (offset: number): number => {
   const calibratedOffset = offset + interfaceScaleBaselineOffset
@@ -2258,16 +2259,49 @@ const appearancePreferenceSummary = computed(
   () =>
     `縮放 ${preferenceOffsetLabel(posUiPreferences.value.interfaceScale)} · 文字 ${preferenceOffsetLabel(posUiPreferences.value.textSize)} · ${posUiPreferences.value.darkMode ? 'Dark' : 'Light'}`,
 )
+const readLayoutViewportHeight = (): number => {
+  const documentHeight = document.documentElement?.clientHeight ?? 0
+  const visualHeight = globalThis.visualViewport?.height ?? 0
+  return Math.round(Math.max(globalThis.innerHeight || 0, documentHeight, visualHeight))
+}
+const updatePosStableViewportHeight = (force = false): void => {
+  const nextHeight = readLayoutViewportHeight()
+  if (nextHeight <= 0) {
+    return
+  }
+
+  const currentHeight = posStableViewportHeight.value
+  const keyboardLikeResize = currentHeight > 0 && nextHeight < currentHeight * 0.82
+  if (!force && keyboardLikeResize) {
+    return
+  }
+
+  if (force || currentHeight === 0 || nextHeight > currentHeight || Math.abs(nextHeight - currentHeight) > 160) {
+    posStableViewportHeight.value = Math.max(360, nextHeight)
+  }
+}
+const scheduleForcedViewportRefresh = (): void => {
+  globalThis.setTimeout(() => updatePosStableViewportHeight(true), 220)
+}
+const handleViewportResize = (): void => {
+  updatePosStableViewportHeight()
+}
 const posWorkbenchPreferenceStyle = computed<Record<string, string>>(() => {
   const interfaceScale = scaleFactorFromOffset(posUiPreferences.value.interfaceScale)
   const densityFactor = densityFactorFromOffset(posUiPreferences.value.densityScale)
   const textFactor = textFactorFromOffset(posUiPreferences.value.textSize)
   const orderTicketWidth = Math.max(156, Math.min(420, 420 / interfaceScale))
+  const stableViewportHeight = posStableViewportHeight.value
+  const viewportHeight = stableViewportHeight > 0 ? `${stableViewportHeight}px` : '100lvh'
+  const stageHeight = stableViewportHeight > 0
+    ? `${stableViewportHeight / interfaceScale}px`
+    : `${100 / interfaceScale}lvh`
 
   return {
     '--pos-interface-scale': interfaceScale.toFixed(4),
     '--pos-stage-width': `${100 / interfaceScale}vw`,
-    '--pos-stage-height': `${100 / interfaceScale}lvh`,
+    '--pos-viewport-height': viewportHeight,
+    '--pos-stage-height': stageHeight,
     '--pos-density-scale': densityFactor.toFixed(4),
     '--pos-text-scale': textFactor.toFixed(4),
     '--pos-font-size': `${16 * textFactor}px`,
@@ -4263,7 +4297,11 @@ watch(supplyCategoryOptions, (options) => {
 }, { immediate: true })
 
 onMounted(() => {
+  updatePosStableViewportHeight(true)
   globalThis.addEventListener('keydown', handlePosShortcut)
+  globalThis.addEventListener('resize', handleViewportResize)
+  globalThis.addEventListener('orientationchange', scheduleForcedViewportRefresh)
+  globalThis.visualViewport?.addEventListener('resize', handleViewportResize)
   claimClockTimer = globalThis.setInterval(() => {
     currentTime.value = Date.now()
   }, 15_000)
@@ -4271,6 +4309,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handlePosShortcut)
+  globalThis.removeEventListener('resize', handleViewportResize)
+  globalThis.removeEventListener('orientationchange', scheduleForcedViewportRefresh)
+  globalThis.visualViewport?.removeEventListener('resize', handleViewportResize)
   if (claimClockTimer !== null) {
     globalThis.clearInterval(claimClockTimer)
   }
@@ -4288,6 +4329,7 @@ onBeforeUnmount(() => {
       'pos-shell--workspace': activeView === 'pos',
       'pos-shell--dark': activeView === 'pos' && posUiPreferences.darkMode,
     }"
+    :style="activeView === 'pos' ? posWorkbenchPreferenceStyle : undefined"
   >
     <header v-if="activeView !== 'pos'" class="topbar">
       <div class="brand">
