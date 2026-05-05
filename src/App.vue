@@ -4492,20 +4492,6 @@ onBeforeUnmount(() => {
                       </span>
                       <strong>{{ paymentLabels[paymentMethod] }}</strong>
                     </button>
-                    <button
-                      class="order-essential-action"
-                      :class="{ 'order-essential-action--active': activeCartQuickEditor === 'service' }"
-                      type="button"
-                      aria-controls="cart-service-editor"
-                      :aria-expanded="activeCartQuickEditor === 'service'"
-                      @click="toggleCartQuickEditor('service')"
-                    >
-                      <span class="order-essential-label">
-                        <ShoppingBag :size="15" aria-hidden="true" />
-                        方式
-                      </span>
-                      <strong>{{ serviceModeLabels[serviceMode] }}</strong>
-                    </button>
                   </div>
 
                   <div class="ticket-note-chips" aria-label="常用備註">
