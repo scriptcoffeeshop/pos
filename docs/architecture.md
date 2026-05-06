@@ -13,7 +13,7 @@
 - 所有互動都由 Vue component event 與 composable 管理。
 - 禁止新增 inline event handler、`data-action` bridge、`window.*` API 與手動 `innerHTML` 資料渲染。
 - Web 內部工作區可切換 POS / 線上點餐 / 後台；APK 只保留前台點餐、線上訂單接單、立即出單與商品暫停供應等門市操作。完整商品菜單、出單規則與權限管理需先在前端連點工具箱 6 下進入後台編輯模式。
-- POS 工作台會訂閱 Supabase Realtime invalidation event，讓訂單佇列、runtime 設定、收銀班別與商品供應變更先由事件觸發重新載入；每 20 秒短輪詢仍保留為斷線 fallback，平板回到前景時也會立即補同步一次，避免多平板 claim lease 釋放或逾時後仍顯示舊狀態。API 失敗建立的櫃台單會先存在平板本機，後續同步成功時補寫 Supabase 並以訂單編號去重。
+- POS 工作台會訂閱 Supabase Realtime invalidation event，讓訂單佇列、runtime 設定、收銀班別與商品供應變更先由事件觸發重新載入；每 20 秒短輪詢仍保留為斷線 fallback，平板回到前景時也會立即補同步一次，避免多平板 claim lease 釋放或逾時後仍顯示舊狀態。Android APK 背景或熄屏後由 `OnlineOrderNotifier` native plugin 依 `online_ordering` runtime 短輪詢 `/settings/runtime` 與 `/orders`，用系統 notification 和原生 tone 補上線上/掃碼新單提醒；Web 背景只提供 Browser Notification API fallback。API 失敗建立的櫃台單會先存在平板本機，後續同步成功時補寫 Supabase 並以訂單編號去重。
 
 ## 後端
 
@@ -39,7 +39,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 - LINE Login：會員登入與 profile 綁定。會員顯示名稱不可被訂單收件人姓名覆蓋。
 - LINE Pay / 街口支付：線上付款與回呼。付款逾期會落到 `status=failed` 與 `payment_status=expired`，正式 provider adapter 需先驗簽，再 mapping 到 `/payments/webhook/:provider` 的冪等契約。
-- Capacitor TCP socket：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；GitHub Pages 瀏覽器版只做預覽與雲端 print job。消費者線上點餐只以 Web 形式提供，不包進 APK 操作介面。
+- Capacitor native plugins：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；`OnlineOrderNotifier` native plugin 在背景處理線上/掃碼新單 notification、提示音、稍後提醒與已讀同步。GitHub Pages 瀏覽器版只做預覽、雲端 print job 與 Browser Notification fallback。消費者線上點餐只以 Web 形式提供，不包進 APK 操作介面。
 
 ## 前端同步邊界
 

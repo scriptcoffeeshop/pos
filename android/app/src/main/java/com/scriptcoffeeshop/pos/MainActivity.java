@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(LanPrinterPlugin.class);
+        registerPlugin(OnlineOrderNotifierPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

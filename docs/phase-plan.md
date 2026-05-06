@@ -49,7 +49,7 @@
 - 供應狀態批次操作：支援依搜尋、分類與狀態篩選後批次暫停/恢復商品，仍沿用單品更新 API 與稽核紀錄。
 - 瀏覽紀錄/打卡型營運工具：後台新增營運紀錄時間線，復用現有稽核事件與平板心跳資料，支援搜尋、類型/平板篩選與 CSV 匯出。
 - 線上點餐設定面板：新增 `online_ordering` runtime setting 與後台面板，控制外帶外送接單、預約開關、平均備餐時間、未確認提醒與提示音；消費者頁與建單 API 都會遵守暫停/預約設定。
-- 線上新單未確認提醒：POS 佇列會依 `online_ordering.unconfirmedReminderMinutes` 標示逾時未確認的線上/掃碼新單，提供查看與已讀操作；`soundEnabled` 開啟時在平板前景播放短提示音。
+- 線上新單未確認提醒：POS 佇列會依 `online_ordering.unconfirmedReminderMinutes` 標示逾時未確認的線上/掃碼新單，提供查看與已讀操作；`soundEnabled` 開啟時在平板前景播放短提示音。Android APK 背景或熄屏後由 `OnlineOrderNotifier` native plugin 依同一組 runtime 設定顯示 Android notification 並播放原生提示音，Web 背景則以 Browser Notification API 授權狀態提供 fallback。
 - 門市 SOP 助手：工具箱新增可搜尋的門市助手，先內建點餐、線上新單、付款異常、供應狀態、列印與班別關帳流程，並可直接跳到相關工作區。
 - 交班/關帳預檢：班別關帳頁新增未交付、待收款、付款異常、列印失敗與作廢記錄清單；每項可一鍵帶入今日訂單查詢篩選，工具箱也會顯示待處理項目數。
 - 履約時間預警與快篩：POS 佇列會提示已逾時與 15 分鐘內到點訂單，列表標示時段狀態，並提供全部時段、已逾時、15 分鐘內與已排程快篩。

@@ -279,6 +279,11 @@ const apiBaseUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/functions/v1
 
 export const isPosApiConfigured = Boolean(apiBaseUrl && supabaseAnonKey)
 
+export const posApiConnection = (): { apiBaseUrl: string; supabaseAnonKey: string } | null =>
+  isPosApiConfigured && supabaseAnonKey
+    ? { apiBaseUrl, supabaseAnonKey }
+    : null
+
 export const currentStationId = (): string => {
   try {
     const savedId = globalThis.localStorage?.getItem(stationIdStorageKey)

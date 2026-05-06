@@ -4,6 +4,14 @@ import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
 import {
+  clearOnlineOrderNotifier,
+  markOnlineOrderNotifierSeen,
+  notifyBackgroundOnlineOrders,
+  setOnlineOrderNotifierAppActive,
+  snoozeOnlineOrderNotifier,
+  syncOnlineOrderNotifier,
+} from '../lib/onlineOrderNotifier'
+import {
   createCounterDraftOrder,
   createOrder,
   createPrintJob,
@@ -75,6 +83,8 @@ type WebAudioGlobal = typeof globalThis & { webkitAudioContext?: typeof AudioCon
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
 const onlineReminderClockIntervalMs = 30_000
+const onlineReminderShortSnoozeMs = 60_000
+const onlineReminderLongSnoozeMs = 24 * 60 * 60_000
 const realtimeRefreshDebounceMs = 350
 const realtimeBusyRetryMs = 1_200
 const realtimeReconnectBaseDelayMs = 2_000
@@ -968,6 +978,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     audioMessage: onlineReminderAudioMessage.value,
   }))
 
+  const isDocumentActive = (): boolean =>
+    !globalThis.document?.visibilityState || globalThis.document.visibilityState === 'visible'
+
+  const syncOnlineReminderNotifier = (): void => {
+    syncOnlineOrderNotifier({
+      settings: onlineOrderingSettings.value,
+      activeOrders: activeOnlineReminderOrders.value,
+      acceptedOrderIds: acceptedOnlineOrderIds.value,
+      appActive: isDocumentActive(),
+    })
+  }
+
   const playOnlineOrderTone = async (): Promise<void> => {
     const AudioContextCtor = globalThis.AudioContext ?? (globalThis as WebAudioGlobal).webkitAudioContext
     if (!AudioContextCtor) {
@@ -1019,7 +1041,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (globalThis.document?.visibilityState && globalThis.document.visibilityState !== 'visible') {
+    if (!isDocumentActive()) {
+      const notified = notifyBackgroundOnlineOrders({
+        signature,
+        orders: activeOnlineReminderOrders.value,
+        settings: onlineOrderingSettings.value,
+      })
+      if (notified) {
+        lastPlayedOnlineReminderSignature = signature
+      }
       return
     }
 
@@ -1035,6 +1065,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     acknowledgedOnlineReminderIds.value = [...nextAcknowledgedIds]
+    const snoozeMs = onlineOrderingSettings.value.acceptanceRequired
+      ? onlineReminderShortSnoozeMs
+      : onlineReminderLongSnoozeMs
+    snoozeOnlineOrderNotifier(snoozedIds, Date.now() + snoozeMs)
+
     if (onlineOrderingSettings.value.acceptanceRequired && snoozedIds.length > 0) {
       globalThis.setTimeout(() => {
         acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
@@ -1062,12 +1097,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     },
   )
 
+  watch(
+    [
+      activeOnlineReminderOrders,
+      acceptedOnlineOrderIds,
+      () => onlineOrderingSettings.value.acceptanceRequired,
+      () => onlineOrderingSettings.value.soundEnabled,
+      () => onlineOrderingSettings.value.notificationRepeatMode,
+      () => onlineOrderingSettings.value.notificationVolume,
+      () => onlineOrderingSettings.value.unconfirmedReminderMinutes,
+    ],
+    () => {
+      syncOnlineReminderNotifier()
+    },
+  )
+
   watch(orderQueue, (orders) => {
     const activeOrderIds = new Set(orders.filter((order) => !['served', 'voided', 'failed'].includes(order.status)).map((order) => order.id))
     const nextAcceptedIds = acceptedOnlineOrderIds.value.filter((orderId) => activeOrderIds.has(orderId))
     if (nextAcceptedIds.length !== acceptedOnlineOrderIds.value.length) {
       acceptedOnlineOrderIds.value = nextAcceptedIds
       writeAcceptedOnlineOrderIds(nextAcceptedIds)
+      markOnlineOrderNotifierSeen(nextAcceptedIds)
     }
   })
 
@@ -1569,6 +1620,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const markOnlineOrderAccepted = (orderId: string): void => {
     acceptedOnlineOrderIds.value = [...new Set([...acceptedOnlineOrderIds.value, orderId])].slice(-100)
     acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((entry) => entry !== orderId)
+    markOnlineOrderNotifierSeen([orderId])
     writeAcceptedOnlineOrderIds(acceptedOnlineOrderIds.value)
   }
 
@@ -2972,7 +3024,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const handleVisibilitySync = (): void => {
-    if (globalThis.document?.visibilityState === 'visible') {
+    const visible = isDocumentActive()
+    setOnlineOrderNotifierAppActive(visible)
+    syncOnlineReminderNotifier()
+
+    if (visible) {
       onlineReminderClock.value = Date.now()
       maybePlayOnlineOrderReminder()
       void refreshQueueState(true)
@@ -2985,6 +3041,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       void refreshBackendData()
       void syncStationHeartbeat()
       connectRealtime()
+      syncOnlineReminderNotifier()
       queueSyncTimer = globalThis.setInterval(() => {
         void refreshQueueState(true)
       }, queueSyncIntervalMs)
@@ -3038,6 +3095,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
+    clearOnlineOrderNotifier()
   })
 
   const refreshPosData = async (): Promise<void> => {
