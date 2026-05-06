@@ -1645,6 +1645,52 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     return true
   }
 
+  const rejectOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order || (order.source !== 'online' && order.source !== 'qr')) {
+      return false
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return false
+    }
+
+    voidingOrderId.value = orderId
+
+    try {
+      const rejectedOrder =
+        isPosApiConfigured && order.remoteId
+          ? order.paymentStatus === 'pending'
+            ? await voidOrder(order, '拒絕接單')
+            : await persistOrderStatus(order, 'voided')
+          : {
+              ...order,
+              status: 'voided' as OrderStatus,
+              paymentStatus: 'failed' as PaymentStatus,
+              note: [order.note, '拒絕接單'].filter(Boolean).join(' / '),
+              claimedBy: null,
+              claimedAt: null,
+              claimExpiresAt: null,
+            }
+
+      replaceOrder(orderId, {
+        ...rejectedOrder,
+        lines: rejectedOrder.lines.length > 0 ? rejectedOrder.lines : order.lines,
+        printStatus: rejectedOrder.printStatus === 'skipped' ? order.printStatus : rejectedOrder.printStatus,
+      })
+      markOnlineOrderAccepted(order.id)
+      setBackendStatus('connected', '已拒絕接單', `${order.id} 已從待接單移除`)
+      void loadRegisterSession()
+      return true
+    } catch (error) {
+      setBackendStatus('fallback', '拒絕接單失敗', `${order.id} 拒絕失敗：${getErrorMessage(error)}`)
+      return false
+    } finally {
+      voidingOrderId.value = null
+    }
+  }
+
   const releaseOrderClaimForStation = async (orderId: string): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order || !orderClaimedByCurrentStation(order)) {
@@ -3156,6 +3202,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     quickAddItems,
     registerMessage,
     registerSession,
+    rejectOnlineOrderForStation,
     refundingOrderId,
     refundOrderForStation,
     releaseOrderClaimForStation,

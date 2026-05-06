@@ -600,6 +600,7 @@ const {
   refreshBackendData,
   registerMessage,
   registerSession,
+  rejectOnlineOrderForStation,
   refundingOrderId,
   refundOrderForStation,
   releaseOrderClaimForStation,
@@ -2016,6 +2017,10 @@ const activeOnlineReminderIds = computed(() =>
   new Set(activeOnlineReminderOrders.value.map((order) => order.id)),
 )
 const primaryOnlineReminderOrder = computed(() => activeOnlineReminderOrders.value[0] ?? null)
+const activeOnlineReminderDetailId = ref<string | null>(null)
+const onlineReminderDetailOrder = computed(() =>
+  activeOnlineReminderOrders.value.find((order) => order.id === activeOnlineReminderDetailId.value) ?? null,
+)
 const onlineReminderToneLabel = computed(() =>
   onlineOrderReminder.value.soundEnabled ? '提示音已開啟' : '提示音已關閉',
 )
@@ -3812,21 +3817,43 @@ const resetQueueFilters = (): void => {
   queueSearchTerm.value = ''
 }
 
-const showOnlineReminderOrders = (): void => {
-  queueFilter.value = 'active'
-  queuePaymentFilter.value = 'all'
-  queueDateFilter.value = 'all'
-  queueServiceFilter.value = 'all'
-  queueSourceFilter.value = 'all'
-  queueFulfillmentFilter.value = 'all'
-  queueSortMode.value = 'fulfillment-asc'
-  queueSearchTerm.value = '未確認'
-  setWorkspaceTab('queue')
+const onlineReminderLineOptions = (line: CartLine): string => line.options.join(' / ') || '標準'
+
+const onlineReminderOrderLineSummary = (order: PosOrder): string => {
+  if (order.lines.length === 0) {
+    return '尚無品項明細'
+  }
+
+  const visibleLines = order.lines
+    .slice(0, 2)
+    .map((line) => `${line.name} x${line.quantity}`)
+    .join('、')
+  const hiddenCount = order.lines.length - 2
+  return hiddenCount > 0 ? `${visibleLines}，另 ${hiddenCount} 項` : visibleLines
+}
+
+const onlineReminderOrderMeta = (order: PosOrder): string =>
+  `${order.customerName || '線上顧客'} · ${serviceModeLabels[order.mode]} · ${formatCurrency(order.subtotal)}`
+
+const openOnlineReminderDetail = (order: PosOrder): void => {
+  activeOnlineReminderDetailId.value = order.id
+}
+
+const closeOnlineReminderDetail = (): void => {
+  activeOnlineReminderDetailId.value = null
+}
+
+const snoozeOnlineReminderFromDetail = (): void => {
+  acknowledgeOnlineOrderReminders()
+  closeOnlineReminderDetail()
 }
 
 const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
   const accepted = await acceptOnlineOrderForStation(order.id)
   if (accepted) {
+    if (activeOnlineReminderDetailId.value === order.id) {
+      closeOnlineReminderDetail()
+    }
     queueActionMessage.value = `${compactOrderId(order.id)} 已接單並排入桌況頁`
     setWorkspaceTab('queue')
     return
@@ -3834,6 +3861,26 @@ const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
 
   queueActionMessage.value = `${compactOrderId(order.id)} 接單失敗，請稍後重試`
 }
+
+const rejectOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+  const rejected = await rejectOnlineOrderForStation(order.id)
+  if (rejected) {
+    if (activeOnlineReminderDetailId.value === order.id) {
+      closeOnlineReminderDetail()
+    }
+    queueActionMessage.value = `${compactOrderId(order.id)} 已拒絕接單`
+    setWorkspaceTab('queue')
+    return
+  }
+
+  queueActionMessage.value = `${compactOrderId(order.id)} 拒絕失敗，請查看訂單狀態`
+}
+
+watch(onlineReminderDetailOrder, (order) => {
+  if (!order && activeOnlineReminderDetailId.value) {
+    closeOnlineReminderDetail()
+  }
+})
 
 const orderNeedsOnlineReminder = (order: PosOrder): boolean => activeOnlineReminderIds.value.has(order.id)
 
@@ -5313,18 +5360,53 @@ onBeforeUnmount(() => {
                         <small v-if="onlineOrderReminder.audioMessage">{{ onlineOrderReminder.audioMessage }}</small>
                         <div class="online-reminder-list">
                           <article v-for="order in activeOnlineReminderOrders.slice(0, 3)" :key="order.id">
-                            <strong>{{ compactOrderId(order.id) }}</strong>
-                            <span>{{ order.customerName || '線上顧客' }} · {{ serviceModeLabels[order.mode] }} · {{ formatCurrency(order.subtotal) }}</span>
-                            <button type="button" @click="acceptOnlineReminderOrder(order)">接單</button>
+                            <div class="online-reminder-item-copy">
+                              <strong>{{ compactOrderId(order.id) }}</strong>
+                              <span class="online-reminder-item-meta">{{ onlineReminderOrderMeta(order) }}</span>
+                              <span class="online-reminder-item-lines">{{ onlineReminderOrderLineSummary(order) }}</span>
+                            </div>
+                            <div class="online-reminder-item-actions">
+                              <button
+                                type="button"
+                                class="online-reminder-detail-button"
+                                @click.stop="openOnlineReminderDetail(order)"
+                              >
+                                查看訂單內容
+                              </button>
+                              <button
+                                type="button"
+                                class="online-reminder-reject-button"
+                                :disabled="voidingOrderId === order.id"
+                                @click.stop="rejectOnlineReminderOrder(order)"
+                              >
+                                {{ voidingOrderId === order.id ? '拒絕中' : '拒絕接單' }}
+                              </button>
+                              <button
+                                type="button"
+                                class="online-reminder-accept-button"
+                                :disabled="claimingOrderId === order.id"
+                                @click.stop="acceptOnlineReminderOrder(order)"
+                              >
+                                {{ claimingOrderId === order.id ? '接單中' : '接單' }}
+                              </button>
+                            </div>
                           </article>
+                          <small v-if="activeOnlineReminderOrders.length > 3" class="online-reminder-more-count">
+                            另 {{ activeOnlineReminderOrders.length - 3 }} 張待確認
+                          </small>
                         </div>
                       </div>
                     </div>
                     <div class="online-reminder-actions">
                       <button type="button" @click="acknowledgeOnlineOrderReminders">稍後提醒</button>
-                      <button class="primary-button" type="button" @click="showOnlineReminderOrders">
+                      <button
+                        class="primary-button"
+                        type="button"
+                        :disabled="!primaryOnlineReminderOrder"
+                        @click="primaryOnlineReminderOrder && openOnlineReminderDetail(primaryOnlineReminderOrder)"
+                      >
                         <ReceiptText :size="18" aria-hidden="true" />
-                        查看待接單
+                        查看訂單內容
                       </button>
                     </div>
                   </section>
@@ -6102,25 +6184,150 @@ onBeforeUnmount(() => {
           </section>
         </section>
 
+        <div
+          v-if="onlineReminderDetailOrder"
+          class="utility-modal-backdrop online-order-detail-backdrop"
+          @click.self="closeOnlineReminderDetail"
+        >
+          <section
+            class="utility-modal online-order-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="online-order-detail-title"
+          >
+            <header class="utility-modal-header online-order-detail-header">
+              <button class="icon-button" type="button" title="返回" @click="closeOnlineReminderDetail">
+                <ChevronLeft :size="24" aria-hidden="true" />
+              </button>
+              <div>
+                <p class="eyebrow">Online Order</p>
+                <h2 id="online-order-detail-title">查看訂單內容</h2>
+              </div>
+              <strong class="online-order-detail-total">{{ formatCurrency(onlineReminderDetailOrder.subtotal) }}</strong>
+            </header>
+
+            <div class="online-order-detail-summary" aria-label="線上訂單摘要">
+              <article>
+                <span>單號</span>
+                <strong>{{ compactOrderId(onlineReminderDetailOrder.id) }}</strong>
+              </article>
+              <article>
+                <span>顧客</span>
+                <strong>{{ onlineReminderDetailOrder.customerName || '線上顧客' }}</strong>
+              </article>
+              <article>
+                <span>電話</span>
+                <strong>{{ onlineReminderDetailOrder.customerPhone || '未留' }}</strong>
+              </article>
+              <article>
+                <span>方式</span>
+                <strong>{{ serviceModeLabels[onlineReminderDetailOrder.mode] }}</strong>
+              </article>
+              <article>
+                <span>來源</span>
+                <strong>{{ sourceLabels[onlineReminderDetailOrder.source] }}</strong>
+              </article>
+              <article>
+                <span>付款</span>
+                <strong>
+                  {{ paymentLabels[onlineReminderDetailOrder.paymentMethod] }} /
+                  {{ paymentStatusLabels[onlineReminderDetailOrder.paymentStatus] }}
+                </strong>
+              </article>
+              <article>
+                <span>下單時間</span>
+                <strong>{{ formatOrderTime(onlineReminderDetailOrder.createdAt) }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.requestedFulfillmentAt">
+                <span>取餐時間</span>
+                <strong>{{ formatOrderTime(onlineReminderDetailOrder.requestedFulfillmentAt) }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.deliveryAddress" class="online-order-detail-address">
+                <span>地址</span>
+                <strong>{{ onlineReminderDetailOrder.deliveryAddress }}</strong>
+              </article>
+            </div>
+
+            <section class="online-order-detail-lines" aria-label="點餐明細">
+              <div class="online-order-detail-section-title">
+                <h3>點餐內容</h3>
+                <span>{{ onlineReminderDetailOrder.lines.length }} 項</span>
+              </div>
+              <article v-for="line in onlineReminderDetailOrder.lines" :key="`${onlineReminderDetailOrder.id}-${line.itemId}`">
+                <div>
+                  <strong>{{ line.name }}</strong>
+                  <span>{{ onlineReminderLineOptions(line) }}</span>
+                </div>
+                <span>x{{ line.quantity }}</span>
+                <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+              </article>
+              <div v-if="onlineReminderDetailOrder.lines.length === 0" class="empty-state online-order-detail-empty">
+                <ShoppingCart :size="24" aria-hidden="true" />
+                <span>尚無品項明細</span>
+              </div>
+            </section>
+
+            <section v-if="onlineReminderDetailOrder.note" class="online-order-detail-note">
+              <span>備註</span>
+              <strong>{{ onlineReminderDetailOrder.note }}</strong>
+            </section>
+
+            <footer class="online-order-detail-actions">
+              <button type="button" @click="snoozeOnlineReminderFromDetail">稍後提醒</button>
+              <button
+                type="button"
+                class="online-order-reject-button"
+                :disabled="voidingOrderId === onlineReminderDetailOrder.id"
+                @click="rejectOnlineReminderOrder(onlineReminderDetailOrder)"
+              >
+                <X :size="18" aria-hidden="true" />
+                {{ voidingOrderId === onlineReminderDetailOrder.id ? '拒絕中' : '拒絕接單' }}
+              </button>
+              <button
+                type="button"
+                class="primary-button"
+                :disabled="claimingOrderId === onlineReminderDetailOrder.id"
+                @click="acceptOnlineReminderOrder(onlineReminderDetailOrder)"
+              >
+                <Check :size="18" aria-hidden="true" />
+                {{ claimingOrderId === onlineReminderDetailOrder.id ? '接單中' : '接單' }}
+              </button>
+            </footer>
+          </section>
+        </div>
+
         <section
-          v-if="primaryOnlineReminderOrder"
+          v-if="primaryOnlineReminderOrder && activeWorkspaceTab !== 'queue' && !onlineReminderDetailOrder"
           class="online-order-notification"
           role="alertdialog"
           aria-live="assertive"
           aria-label="線上訂單待接單"
         >
-          <div>
+          <div class="online-order-notification-copy">
             <p class="eyebrow">Online Order</p>
             <h3>{{ compactOrderId(primaryOnlineReminderOrder.id) }} 待接單</h3>
             <span>
-              {{ primaryOnlineReminderOrder.customerName || '線上顧客' }} ·
-              {{ serviceModeLabels[primaryOnlineReminderOrder.mode] }} ·
-              {{ formatCurrency(primaryOnlineReminderOrder.subtotal) }}
+              {{ onlineReminderOrderMeta(primaryOnlineReminderOrder) }}
             </span>
+            <small>{{ onlineReminderOrderLineSummary(primaryOnlineReminderOrder) }}</small>
           </div>
           <button type="button" @click="acknowledgeOnlineOrderReminders">稍後</button>
-          <button class="primary-button" type="button" @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder)">
-            接單
+          <button type="button" @click="openOnlineReminderDetail(primaryOnlineReminderOrder)">查看內容</button>
+          <button
+            type="button"
+            class="online-order-reject-button"
+            :disabled="voidingOrderId === primaryOnlineReminderOrder.id"
+            @click="rejectOnlineReminderOrder(primaryOnlineReminderOrder)"
+          >
+            {{ voidingOrderId === primaryOnlineReminderOrder.id ? '拒絕中' : '拒絕' }}
+          </button>
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="claimingOrderId === primaryOnlineReminderOrder.id"
+            @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder)"
+          >
+            {{ claimingOrderId === primaryOnlineReminderOrder.id ? '接單中' : '接單' }}
           </button>
         </section>
 

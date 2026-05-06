@@ -3046,12 +3046,12 @@ button.cart-line-summary:focus-visible {
 }
 
 .online-reminder-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 14px;
   margin-bottom: 14px;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid #d5b16b;
   border-radius: var(--radius);
   background: var(--amber-soft);
@@ -3061,8 +3061,8 @@ button.cart-line-summary:focus-visible {
 .online-reminder-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  align-items: start;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -3099,35 +3099,86 @@ button.cart-line-summary:focus-visible {
 
 .online-reminder-list article {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 12px;
+  padding: 10px;
   border: 1px solid rgba(128, 96, 24, 0.22);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
 }
 
-.online-reminder-list strong {
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.82rem;
+.online-reminder-item-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
-.online-reminder-list span {
+.online-reminder-item-copy strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: calc(0.9rem * var(--pos-text-scale));
+}
+
+.online-reminder-item-meta,
+.online-reminder-item-lines {
+  display: block;
   overflow: hidden;
+  color: var(--ink-soft);
+  font-size: calc(0.78rem * var(--pos-text-scale));
+  font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.online-reminder-list button {
-  min-height: 34px;
-  padding: 6px 10px;
+.online-reminder-item-lines {
+  color: var(--ink);
+}
+
+.online-reminder-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.online-reminder-item-actions button {
+  min-height: 40px;
+  padding: 7px 10px;
   border: 1px solid var(--primary);
   border-radius: 6px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.online-reminder-detail-button {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.online-reminder-reject-button,
+.online-order-reject-button {
+  border-color: #e4b1aa !important;
+  background: var(--surface-raised);
+  color: var(--danger);
+}
+
+.online-reminder-accept-button {
   background: var(--primary);
   color: white;
-  font-weight: 950;
+}
+
+.online-reminder-item-actions button:disabled,
+.online-order-detail-actions button:disabled,
+.online-order-notification button:disabled {
+  opacity: 0.58;
+}
+
+.online-reminder-more-count {
+  display: inline-flex !important;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(128, 96, 24, 0.1);
 }
 
 .online-reminder-actions {
@@ -3152,13 +3203,151 @@ button.cart-line-summary:focus-visible {
   border-color: var(--primary);
 }
 
+.online-order-detail-backdrop {
+  z-index: 125;
+}
+
+.online-order-detail-modal {
+  width: min(820px, 100%);
+  gap: 12px;
+}
+
+.pos-scale-stage .online-order-detail-modal {
+  width: min(820px, calc(var(--pos-stage-width) - 48px));
+}
+
+.online-order-detail-header h2 {
+  margin: 0;
+  font-size: calc(1.28rem * var(--pos-text-scale));
+  line-height: 1.2;
+}
+
+.online-order-detail-total {
+  color: var(--ink);
+  font-size: calc(1.8rem * var(--pos-text-scale));
+  font-weight: 1000;
+}
+
+.online-order-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.online-order-detail-summary article,
+.online-order-detail-note {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.online-order-detail-summary span,
+.online-order-detail-note span {
+  color: var(--ink-soft);
+  font-size: calc(0.76rem * var(--pos-text-scale));
+  font-weight: 900;
+}
+
+.online-order-detail-summary strong,
+.online-order-detail-note strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: calc(0.92rem * var(--pos-text-scale));
+}
+
+.online-order-detail-address {
+  grid-column: span 2;
+}
+
+.online-order-detail-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.online-order-detail-section-title,
+.online-order-detail-lines article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.online-order-detail-section-title h3 {
+  margin: 0;
+  font-size: calc(1.02rem * var(--pos-text-scale));
+}
+
+.online-order-detail-section-title span {
+  color: var(--ink-soft);
+  font-weight: 900;
+}
+
+.online-order-detail-lines article {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.online-order-detail-lines article div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.online-order-detail-lines article strong {
+  color: var(--ink);
+  font-size: calc(0.95rem * var(--pos-text-scale));
+}
+
+.online-order-detail-lines article span {
+  color: var(--ink-soft);
+  font-size: calc(0.8rem * var(--pos-text-scale));
+  font-weight: 850;
+}
+
+.online-order-detail-empty {
+  min-height: 96px;
+}
+
+.online-order-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.online-order-detail-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.online-order-detail-actions .primary-button {
+  border-color: var(--primary);
+  color: #fff;
+}
+
 .online-order-notification {
   position: fixed;
   right: calc(28px * var(--pos-density-scale));
   bottom: calc(28px * var(--pos-density-scale));
   z-index: 90;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   width: min(620px, calc(100vw - 56px));
   gap: 10px;
@@ -3172,8 +3361,15 @@ button.cart-line-summary:focus-visible {
 
 .online-order-notification h3,
 .online-order-notification p,
-.online-order-notification span {
+.online-order-notification span,
+.online-order-notification small {
   margin: 0;
+}
+
+.online-order-notification-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .online-order-notification h3 {
@@ -3182,7 +3378,8 @@ button.cart-line-summary:focus-visible {
   line-height: 1.2;
 }
 
-.online-order-notification span {
+.online-order-notification span,
+.online-order-notification small {
   display: block;
   overflow: hidden;
   color: var(--ink-soft);
@@ -3190,6 +3387,10 @@ button.cart-line-summary:focus-visible {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.online-order-notification small {
+  color: var(--ink);
 }
 
 .online-order-notification button {
@@ -7543,10 +7744,25 @@ button.cart-line-summary:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .online-reminder-banner,
+  .online-reminder-banner {
+    grid-template-columns: 1fr;
+  }
+
   .fulfillment-alert-banner {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .online-reminder-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .online-reminder-item-actions {
+    flex-wrap: wrap;
+  }
+
+  .online-reminder-item-actions button {
+    flex: 1;
   }
 
   .online-reminder-actions,
@@ -7567,6 +7783,10 @@ button.cart-line-summary:focus-visible {
     bottom: 14px;
     width: auto;
     grid-template-columns: 1fr;
+  }
+
+  .online-order-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .queue-advanced-filters {
@@ -7968,6 +8188,20 @@ button.cart-line-summary:focus-visible {
 
   .utility-modal {
     max-height: calc(var(--pos-stage-height) - 20px);
+  }
+
+  .online-order-detail-summary,
+  .online-order-detail-section-title,
+  .online-order-detail-lines article {
+    grid-template-columns: 1fr;
+  }
+
+  .online-order-detail-address {
+    grid-column: auto;
+  }
+
+  .online-order-detail-actions {
+    flex-direction: column;
   }
 
   .toolbox-grid,
