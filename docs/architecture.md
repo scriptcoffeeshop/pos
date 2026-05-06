@@ -13,7 +13,7 @@
 - 所有互動都由 Vue component event 與 composable 管理。
 - 禁止新增 inline event handler、`data-action` bridge、`window.*` API 與手動 `innerHTML` 資料渲染。
 - Web 內部工作區可切換 POS / 線上點餐 / 後台；APK 只保留前台點餐、線上訂單接單、立即出單與商品暫停供應等門市操作。完整商品菜單、出單規則與權限管理需先在前端連點工具箱 6 下進入後台編輯模式。
-- POS 工作台會每 20 秒短輪詢訂單佇列與收銀班別；平板回到前景時會立即補同步一次，避免多平板 claim lease 釋放或逾時後仍顯示舊狀態。API 失敗建立的櫃台單會先存在平板本機，後續同步成功時補寫 Supabase 並以訂單編號去重。
+- POS 工作台會訂閱 Supabase Realtime invalidation event，讓訂單佇列、runtime 設定、收銀班別與商品供應變更先由事件觸發重新載入；每 20 秒短輪詢仍保留為斷線 fallback，平板回到前景時也會立即補同步一次，避免多平板 claim lease 釋放或逾時後仍顯示舊狀態。API 失敗建立的櫃台單會先存在平板本機，後續同步成功時補寫 Supabase 並以訂單編號去重。
 
 ## 後端
 
@@ -22,6 +22,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - PostgreSQL 保存商品、訂單、會員、付款、交易日誌、列印任務與收銀班別。
 - Deno/Hono Edge Functions 處理商業邏輯、金流回呼與訂單狀態。
 - `pos-api` 對公開前台提供依 channel 過濾的商品與建單端點，對 POS 提供櫃台草稿單、正式化建單、收款確認、未收款作廢與 runtime 出單機/線上點餐設定端點，對後台提供商品與設定端點；讀取訂單時會自動將逾時的線上/QR 待付款新單標成付款逾期，線上/QR 建單也會遵守 `online_ordering` 的接單與預約開關。
+- `pos_realtime_events` 是前端唯一直接訂閱的 Realtime 表；`orders`、`pos_settings`、`register_sessions` 與 `products` trigger 只寫入低敏感 topic/event/entity payload，POS 與線上點餐收到事件後仍回到 `pos-api` 取得正式資料，不直接訂閱受保護的來源表。
 - 會員錢包由 `members.wallet_balance` 保存摘要，所有儲值/扣款走 `transaction_ledger`；後台 API 透過 DB function 在同一個 transaction 更新餘額與流水，避免兩者不一致。
 - 商品資料除了人工上架/停售，也保存 `inventory_count`、`low_stock_threshold` 與 `sold_out_until`；前台以這些欄位決定低庫存提示、售完與暫停供應狀態，建單時由 `create_pos_order()` 原子扣庫存。
 - 訂單主檔保存 `requested_fulfillment_at`、`delivery_address` 與櫃台草稿 `draft_lines`，讓外送地址、希望取餐/送達時間與未出單購物車能跨平板追溯，而不是只混在備註或 localStorage 裡。
@@ -40,11 +41,18 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - LINE Pay / 街口支付：線上付款與回呼。付款逾期會落到 `status=failed` 與 `payment_status=expired`，正式 provider adapter 需先驗簽，再 mapping 到 `/payments/webhook/:provider` 的冪等契約。
 - Capacitor TCP socket：Android APK 內的 `LanPrinter` native plugin 直接連線出單機 IP，送出 EZPL；GitHub Pages 瀏覽器版只做預覽與雲端 print job。消費者線上點餐只以 Web 形式提供，不包進 APK 操作介面。
 
+## 前端同步邊界
+
+- `src/lib/posApi.ts` 仍是唯一正式資料入口，負責呼叫 `pos-api` 並把 snake_case 回應轉成 Vue view model。
+- `src/lib/posRealtime.ts` 只建立瀏覽器端 Supabase Realtime client，訂閱 `pos_realtime_events` 的 `INSERT`。事件只作為 invalidation signal，不承載完整訂單、商品或設定資料。
+- `usePosSession()` 訂閱 `orders`、`runtime_settings`、`register_sessions` 與 `products` topic；收到事件會 debounce 後重新呼叫 `/orders`、`/settings/runtime`、`/register/current` 或 `/products`。若正在建單、出單、claim、收款、作廢或退款，訂單同步會延後重試，避免背景更新踩到操作中的狀態。
+- Realtime 狀態為 `CHANNEL_ERROR`、`TIMED_OUT` 或 `CLOSED` 時，前端會以 2 秒到 30 秒退避重連並立即補同步一次；原本的 20 秒 POS polling、15 秒線上點餐 polling、前景補同步與 30 秒 station heartbeat 都保留。
+
 ## 初始資料流
 
 1. 櫃台來源先建立 Supabase 草稿單並持續更新 `draft_lines`；正式結帳/出單或線上來源建單時，後端在同一個資料庫 transaction 寫入正式品項並扣庫存，庫存不足則整筆 rollback。
-2. POS 訂單佇列即時顯示新訂單。
-3. POS 平板每 20 秒同步訂單佇列與班別摘要；操作中若正在建單、出單或鎖單，會略過該輪背景同步。若先前有本機待同步櫃台單，會先嘗試補寫遠端再載入佇列。
+2. 來源表 trigger 寫入 `pos_realtime_events`，POS 平板收到 `orders` event 後重新拉取 `/orders`，線上新單提醒、claim lease 釋放與狀態更新不用等待下一輪 polling。
+3. POS 平板每 20 秒仍會 fallback 同步訂單佇列與班別摘要；操作中若正在建單、出單或鎖單，會略過該輪背景同步。若 Realtime 斷線，前端會以 2 秒到 30 秒退避重連，同時保留輪詢。若先前有本機待同步櫃台單，會先嘗試補寫遠端再載入佇列。
 4. POS 平板先對訂單建立 3 分鐘 claim lease；同一張單若被其他平板持有且未逾時，前端會停用收款、出單與狀態按鈕，後端也會拒絕付款狀態、訂單狀態與 print job 寫入。
 5. 收款確認會把 `pending` 或 `authorized` 更新成 `paid`，並即時刷新班別摘要。
 6. 未收款訂單可在後台編輯模式下作廢成 `voided`；已收款訂單可在後台編輯模式下退款成 `payment_status=refunded`，同時寫入交易流水並排除銷售。

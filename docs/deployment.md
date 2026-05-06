@@ -45,6 +45,8 @@ rtk npm run supabase:db:push
 rtk npm run supabase:functions:deploy
 ```
 
+只有 Realtime event table / trigger / publication 變更時，執行 `rtk npm run supabase:db:push` 即可；沒有 Edge Function diff 時不需要重部署 `pos-api`。`20260506110000_add_pos_realtime_events.sql` 會建立 `pos_realtime_events`，把 `orders`、runtime settings、`register_sessions` 與 `products` 的低敏感異動寫成 Realtime invalidation event。
+
 `main` 分支的 GitHub Actions 會在 verify 通過後自動執行 Supabase migration 與 `pos-api` Edge Function deploy。
 
 ## Android APK

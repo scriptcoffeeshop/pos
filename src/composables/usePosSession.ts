@@ -36,6 +36,12 @@ import {
 } from '../lib/posApi'
 import type { ProductUpdateInput } from '../lib/posApi'
 import {
+  isPosRealtimeConfigured,
+  subscribeToPosRealtimeEvents,
+  type PosRealtimeEvent,
+  type PosRealtimeStatus,
+} from '../lib/posRealtime'
+import {
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
   buildPrinterHealthcheckPreview,
@@ -69,6 +75,10 @@ type WebAudioGlobal = typeof globalThis & { webkitAudioContext?: typeof AudioCon
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
 const onlineReminderClockIntervalMs = 30_000
+const realtimeRefreshDebounceMs = 350
+const realtimeBusyRetryMs = 1_200
+const realtimeReconnectBaseDelayMs = 2_000
+const realtimeReconnectMaxDelayMs = 30_000
 const maxCartLineQuantity = 999
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
@@ -846,6 +856,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let stationHeartbeatTimer: number | null = null
   let onlineReminderClockTimer: number | null = null
   let counterDraftSyncTimer: number | null = null
+  let realtimeUnsubscribe: (() => void) | null = null
+  let realtimeReconnectTimer: number | null = null
+  let realtimeQueueRefreshTimer: number | null = null
+  let realtimeRuntimeRefreshTimer: number | null = null
+  let realtimeRegisterRefreshTimer: number | null = null
+  let realtimeProductRefreshTimer: number | null = null
+  let realtimeReconnectAttempt = 0
+  let realtimeSubscriptionToken = 0
+  let realtimeClosedByClient = false
   let lastPlayedOnlineReminderSignature = ''
 
   const currentPrinterSettings = (): PrinterSettings => ({
@@ -1105,6 +1124,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     backendStatus.label = label
     backendStatus.detail = detail
   }
+
+  const orderSyncOperationBusy = (): boolean =>
+    isSubmitting.value ||
+    Boolean(printingOrderId.value) ||
+    Boolean(claimingOrderId.value) ||
+    Boolean(updatingPaymentOrderId.value) ||
+    Boolean(voidingOrderId.value) ||
+    Boolean(refundingOrderId.value)
 
   const applyRegisterSession = (session: RegisterSession | null): void => {
     registerSession.value = session
@@ -1717,6 +1744,154 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const refreshRuntimeSettings = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      return
+    }
+
+    try {
+      applyRuntimeSettings(await fetchRuntimeSettings())
+    } catch {
+      return
+    }
+  }
+
+  const scheduleRealtimeQueueRefresh = (delay = realtimeRefreshDebounceMs): void => {
+    if (realtimeQueueRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeQueueRefreshTimer)
+    }
+
+    realtimeQueueRefreshTimer = globalThis.setTimeout(() => {
+      realtimeQueueRefreshTimer = null
+      if (orderSyncOperationBusy()) {
+        scheduleRealtimeQueueRefresh(realtimeBusyRetryMs)
+        return
+      }
+
+      void refreshQueueState(true)
+    }, delay)
+  }
+
+  const scheduleRealtimeRuntimeRefresh = (): void => {
+    if (realtimeRuntimeRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRuntimeRefreshTimer)
+    }
+
+    realtimeRuntimeRefreshTimer = globalThis.setTimeout(() => {
+      realtimeRuntimeRefreshTimer = null
+      void refreshRuntimeSettings()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const scheduleRealtimeRegisterRefresh = (): void => {
+    if (realtimeRegisterRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRegisterRefreshTimer)
+    }
+
+    realtimeRegisterRefreshTimer = globalThis.setTimeout(() => {
+      realtimeRegisterRefreshTimer = null
+      void loadRegisterSession()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const scheduleRealtimeProductRefresh = (): void => {
+    if (realtimeProductRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeProductRefreshTimer)
+    }
+
+    realtimeProductRefreshTimer = globalThis.setTimeout(() => {
+      realtimeProductRefreshTimer = null
+      void refreshProductCatalog()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const handleRealtimeEvent = (event: PosRealtimeEvent): void => {
+    if (event.topic === 'orders') {
+      scheduleRealtimeQueueRefresh()
+      onlineReminderClock.value = Date.now()
+      return
+    }
+
+    if (event.topic === 'runtime_settings') {
+      scheduleRealtimeRuntimeRefresh()
+      return
+    }
+
+    if (event.topic === 'register_sessions') {
+      scheduleRealtimeRegisterRefresh()
+      return
+    }
+
+    if (event.topic === 'products') {
+      scheduleRealtimeProductRefresh()
+    }
+  }
+
+  const disconnectRealtime = (): void => {
+    realtimeClosedByClient = true
+    realtimeSubscriptionToken += 1
+    realtimeUnsubscribe?.()
+    realtimeUnsubscribe = null
+  }
+
+  const connectRealtime = (): void => {
+    if (!isPosApiConfigured || !isPosRealtimeConfigured) {
+      return
+    }
+
+    disconnectRealtime()
+    realtimeClosedByClient = false
+    const subscriptionToken = realtimeSubscriptionToken + 1
+    realtimeSubscriptionToken = subscriptionToken
+    realtimeUnsubscribe = subscribeToPosRealtimeEvents({
+      topics: ['orders', 'runtime_settings', 'register_sessions', 'products'],
+      onEvent: handleRealtimeEvent,
+      onStatus: (status) => {
+        if (subscriptionToken === realtimeSubscriptionToken) {
+          handleRealtimeStatus(status)
+        }
+      },
+    })
+  }
+
+  const scheduleRealtimeReconnect = (error?: string): void => {
+    if (realtimeClosedByClient || realtimeReconnectTimer !== null) {
+      return
+    }
+
+    const delay = Math.min(
+      realtimeReconnectMaxDelayMs,
+      realtimeReconnectBaseDelayMs * 2 ** realtimeReconnectAttempt,
+    )
+    realtimeReconnectAttempt = Math.min(realtimeReconnectAttempt + 1, 5)
+    realtimeReconnectTimer = globalThis.setTimeout(() => {
+      realtimeReconnectTimer = null
+      connectRealtime()
+      void refreshQueueState(true)
+      void refreshRuntimeSettings()
+      void loadRegisterSession()
+    }, delay)
+
+    if (error) {
+      backendStatus.detail = `Realtime 斷線，保留 ${queueSyncIntervalMs / 1000} 秒輪詢：${error}`
+    }
+  }
+
+  function handleRealtimeStatus(status: PosRealtimeStatus): void {
+    if (status.status === 'SUBSCRIBED') {
+      realtimeReconnectAttempt = 0
+      if (realtimeReconnectTimer !== null) {
+        globalThis.clearTimeout(realtimeReconnectTimer)
+        realtimeReconnectTimer = null
+      }
+      return
+    }
+
+    if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status.status)) {
+      scheduleRealtimeReconnect(status.error ?? status.status)
+    }
+  }
+
   const refreshQueueState = async (quiet = false): Promise<void> => {
     if (!isPosApiConfigured) {
       if (!quiet) {
@@ -1725,14 +1900,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (
-      isSubmitting.value ||
-      printingOrderId.value ||
-      claimingOrderId.value ||
-      updatingPaymentOrderId.value ||
-      voidingOrderId.value ||
-      refundingOrderId.value
-    ) {
+    if (orderSyncOperationBusy()) {
       return
     }
 
@@ -2816,6 +2984,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (autoLoad) {
       void refreshBackendData()
       void syncStationHeartbeat()
+      connectRealtime()
       queueSyncTimer = globalThis.setInterval(() => {
         void refreshQueueState(true)
       }, queueSyncIntervalMs)
@@ -2830,6 +2999,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
 
   onBeforeUnmount(() => {
+    disconnectRealtime()
+
     if (queueSyncTimer !== null) {
       globalThis.clearInterval(queueSyncTimer)
     }
@@ -2844,6 +3015,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (counterDraftSyncTimer !== null) {
       globalThis.clearTimeout(counterDraftSyncTimer)
+    }
+
+    if (realtimeReconnectTimer !== null) {
+      globalThis.clearTimeout(realtimeReconnectTimer)
+    }
+
+    if (realtimeQueueRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeQueueRefreshTimer)
+    }
+
+    if (realtimeRuntimeRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRuntimeRefreshTimer)
+    }
+
+    if (realtimeRegisterRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRegisterRefreshTimer)
+    }
+
+    if (realtimeProductRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeProductRefreshTimer)
     }
 
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)

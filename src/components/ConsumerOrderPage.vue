@@ -24,6 +24,7 @@ import {
   fetchRuntimeSettings,
   isPosApiConfigured,
 } from '../lib/posApi'
+import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
 import type {
   CartLine,
   CustomerDraft,
@@ -79,6 +80,8 @@ const optionPanelItem = ref<MenuItem | null>(null)
 const optionSelections = ref<OptionSelectionMap>({})
 const optionError = ref('')
 let onlineMenuSyncTimer: number | null = null
+let onlineRealtimeRefreshTimer: number | null = null
+let onlineRealtimeUnsubscribe: (() => void) | null = null
 const customer = reactive<CustomerDraft>({
   name: '',
   phone: '',
@@ -532,13 +535,33 @@ const refreshOnlineMenuQuietly = (): void => {
   void loadOnlineMenu(true)
 }
 
+const scheduleOnlineRealtimeRefresh = (): void => {
+  if (onlineRealtimeRefreshTimer !== null) {
+    globalThis.clearTimeout(onlineRealtimeRefreshTimer)
+  }
+
+  onlineRealtimeRefreshTimer = globalThis.setTimeout(() => {
+    onlineRealtimeRefreshTimer = null
+    void loadOnlineMenu(true)
+  }, 350)
+}
+
 onMounted(() => {
   void loadOnlineMenu()
   onlineMenuSyncTimer = globalThis.setInterval(refreshOnlineMenuQuietly, 15_000)
+  onlineRealtimeUnsubscribe = subscribeToPosRealtimeEvents({
+    topics: ['runtime_settings', 'products'],
+    onEvent: scheduleOnlineRealtimeRefresh,
+  })
   globalThis.addEventListener('focus', refreshOnlineMenuQuietly)
 })
 
 onBeforeUnmount(() => {
+  onlineRealtimeUnsubscribe?.()
+  onlineRealtimeUnsubscribe = null
+  if (onlineRealtimeRefreshTimer !== null) {
+    globalThis.clearTimeout(onlineRealtimeRefreshTimer)
+  }
   if (onlineMenuSyncTimer !== null) {
     globalThis.clearInterval(onlineMenuSyncTimer)
   }

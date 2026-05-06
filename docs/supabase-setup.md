@@ -39,6 +39,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
 - `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台稽核頁查詢。
 - `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
+- `pos_realtime_events`：Realtime invalidation 專用表，只保存低敏感 topic、來源表、entity id 與精簡 payload；前端收到事件後仍透過 `pos-api` 重新拉取正式資料。
 
 ## 邊界
 
@@ -71,6 +72,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 線上點餐 runtime 設定：`20260503001500_add_online_ordering_settings.sql`
 - 商品分類放寬為自訂文字：`20260503163000_make_product_categories_custom.sql`
 - 櫃台草稿單與正式化函式：`20260504090000_add_counter_order_drafts.sql`
+- POS Realtime invalidation：`20260506110000_add_pos_realtime_events.sql`
 - Edge Function：`pos-api`
 - 驗證端點：`/functions/v1/pos-api/health`
 - 商品端點：`/functions/v1/pos-api/products`
@@ -101,8 +103,9 @@ SUPABASE_DB_PASSWORD=<database-password>
 ## 前端同步邊界
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
+- `src/lib/posRealtime.ts` 只訂閱 `pos_realtime_events`，不直接讀 `orders`、`pos_settings`、`register_sessions` 或 `products` 等受保護來源表；事件用來通知前端重拉 `pos-api`，避免把完整訂單或設定資料放進 public realtime stream。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間、商品註記選項與加價，並阻擋暫停時送單。
-- POS 工作台會每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current`，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。平板回到前景時也會補同步一次。消費者線上點餐頁會每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
+- POS 工作台會訂閱 `orders`、runtime settings、`register_sessions` 與 `products` 的 Realtime invalidation event，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。Realtime 斷線時會以 2 秒到 30 秒退避重連，且每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current` 仍保留為 fallback。平板回到前景時也會補同步一次。消費者線上點餐頁會訂閱 runtime/products event，並保留每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
 - 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
