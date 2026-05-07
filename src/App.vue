@@ -2580,6 +2580,8 @@ const knowledgeSearchTerm = ref('')
 const knowledgeCategoryFilter = ref<KnowledgeCategoryFilter>('all')
 const activeKnowledgeArticleId = ref(posKnowledgeArticles[0]?.id ?? '')
 const stationBatchProductIds = ref<string[]>([])
+const supplyBatchStatusSelection = ref<ProductSupplyStatus | ''>('')
+const isSupplyBatchRunning = ref(false)
 const supplySearchTerm = ref('')
 const supplyCategoryFilter = ref<SupplyCategoryFilter>('coffee')
 const supplyStatusFilter = ref<SupplyStatusFilter>('all')
@@ -4082,7 +4084,7 @@ const setActiveView = (view: AppView): void => {
 }
 
 const stationBatchProductIdSet = computed(() => new Set(stationBatchProductIds.value))
-const isStationBatchBusy = computed(() => stationBatchProductIds.value.length > 0)
+const isStationBatchBusy = computed(() => isSupplyBatchRunning.value || stationBatchProductIds.value.length > 0)
 
 const setProductSupplyStatus = (productId: string, status: ProductSupplyStatus): void => {
   productSupplyStatuses.value = {
@@ -4450,9 +4452,9 @@ const updateSupplyRowStatus = async (
   row: SupplyStatusRow,
   status: ProductSupplyStatus,
   options: { recordUndo?: boolean } = {},
-): Promise<void> => {
+): Promise<boolean> => {
   if (row.status === status) {
-    return
+    return true
   }
 
   if (options.recordUndo !== false) {
@@ -4464,10 +4466,11 @@ const updateSupplyRowStatus = async (
     if (updated) {
       setProductSupplyStatus(row.id, status)
     }
-    return
+    return updated
   }
 
   setNoteSupplyStatus(row.id, status)
+  return true
 }
 
 const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<void> => {
@@ -4475,17 +4478,39 @@ const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<voi
     return
   }
 
-  const targetRows = visibleSupplyRows.value.filter((row) => row.status !== status)
+  const targetRows = [...visibleSupplyRows.value.filter((row) => row.status !== status)]
   if (targetRows.length === 0) {
+    supplyBatchStatusSelection.value = ''
     return
   }
 
   pushSupplyUndo('批次變更供應狀態')
+  isSupplyBatchRunning.value = true
   stationBatchProductIds.value = targetRows.filter((row) => row.kind === 'product').map((row) => row.id)
-  for (const row of targetRows) {
-    await updateSupplyRowStatus(row, status, { recordUndo: false })
+  try {
+    let updatedCount = 0
+    for (const row of targetRows) {
+      if (await updateSupplyRowStatus(row, status, { recordUndo: false })) {
+        updatedCount += 1
+      }
+    }
+    supplyActionMessage.value = updatedCount === targetRows.length
+      ? `已批次更新 ${targetRows.length} 個項目為${supplyStatusLabel(status)}`
+      : `已更新 ${updatedCount}/${targetRows.length} 個項目，其餘未完成`
+  } finally {
+    stationBatchProductIds.value = []
+    isSupplyBatchRunning.value = false
+    supplyBatchStatusSelection.value = ''
   }
-  stationBatchProductIds.value = []
+}
+
+const updateVisibleSupplyRowsFromSelection = async (): Promise<void> => {
+  const status = supplyBatchStatusSelection.value
+  if (!isProductSupplyStatus(status)) {
+    return
+  }
+
+  await updateVisibleSupplyRows(status)
 }
 
 const openRegisterSessionAction = (): void => {
@@ -6582,12 +6607,14 @@ onBeforeUnmount(() => {
                 <label class="supply-batch-select">
                   <span>批次變更狀態</span>
                   <select
+                    v-model="supplyBatchStatusSelection"
                     :disabled="visibleSupplyRows.length === 0 || isStationBatchBusy"
-                    @change="updateVisibleSupplyRows(eventSupplyStatus($event))"
+                    @change="updateVisibleSupplyRowsFromSelection"
                   >
-                    <option value="normal">正常供應</option>
-                    <option value="online-stopped">線上停售</option>
-                    <option value="stopped">全部停售</option>
+                    <option value="" disabled>選擇狀態</option>
+                    <option v-for="status in supplyStatusOptions" :key="status.value" :value="status.value">
+                      {{ status.label }}
+                    </option>
                   </select>
                   <ChevronDown :size="22" aria-hidden="true" />
                 </label>
