@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core'
 import {
+  Bell,
   BookOpenCheck,
   CalendarDays,
   Check,
@@ -28,6 +29,7 @@ import {
   ShoppingCart,
   WalletCards,
   Trash2,
+  UsersRound,
   UserRound,
   Wifi,
   X,
@@ -66,8 +68,9 @@ import type {
 } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
-type WorkspaceTab = 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
+type WorkspaceTab = 'floor' | 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
 type CartQuickEditor = 'customer' | 'service' | 'payment' | null
+type FloorServiceView = 'dine-in' | 'takeout-delivery'
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
 type QueueDateFilter = 'today' | 'older' | 'all'
@@ -78,7 +81,7 @@ type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance'
 type ToolboxPanel = 'home' | 'appearance'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
@@ -109,6 +112,52 @@ interface PosUiPreferences extends PosAppearanceSettings {
   textSize: number
   darkMode: boolean
   toolboxOpacity: number
+}
+
+interface DiningTableDefinition {
+  id: string
+  label: string
+  capacity: number
+  x: number
+  y: number
+  width: number
+}
+
+interface FloorDisplayPreferences {
+  showPeople: boolean
+  showUnsubmittedWait: boolean
+  showTableStay: boolean
+  showWaitlinePeople: boolean
+  showWaitlineTime: boolean
+  showOrderLabels: boolean
+}
+
+interface FloorTableState {
+  table: DiningTableDefinition
+  order: PosOrder | null
+  partySize: number
+  status: 'empty' | 'active' | 'ready' | 'locked'
+  amountLabel: string
+  orderLabel: string
+  peopleLabel: string
+  waitLabel: string
+  stayLabel: string
+}
+
+interface WaitlineEntry {
+  id: string
+  name: string
+  partySize: number
+  createdAt: string
+  note: string
+}
+
+interface PosNotificationItem {
+  id: string
+  title: string
+  summary: string
+  dateLabel: string
+  target: WorkspaceTab | 'supply' | 'knowledge'
 }
 
 interface PrintJobRow {
@@ -231,6 +280,9 @@ interface SupplyStateSnapshot {
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
+const floorDisplayStorageKey = 'script-coffee-pos-floor-display'
+const floorPartyStorageKey = 'script-coffee-pos-floor-parties'
+const waitlineStorageKey = 'script-coffee-pos-waitline'
 const backendEditModeStorageKey = 'script-coffee-pos-backend-edit-mode'
 const toolboxPositionStorageKey = 'script-coffee-pos-toolbox-position'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
@@ -278,6 +330,19 @@ const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
   { id: 'food', label: '輕食' },
   { id: 'retail', label: '零售' },
 ]
+const diningTables: DiningTableDefinition[] = [
+  { id: 'A2', label: 'A2', capacity: 2, x: 34, y: 28, width: 13 },
+  { id: 'A3', label: 'A3', capacity: 2, x: 58, y: 28, width: 13 },
+  { id: 'A1', label: 'A1', capacity: 4, x: 36, y: 58, width: 20 },
+]
+const defaultFloorDisplayPreferences: FloorDisplayPreferences = {
+  showPeople: true,
+  showUnsubmittedWait: true,
+  showTableStay: true,
+  showWaitlinePeople: true,
+  showWaitlineTime: true,
+  showOrderLabels: false,
+}
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -376,6 +441,72 @@ const writeStorageValue = (storageKey: string, value: unknown): void => {
     return
   }
 }
+
+const normalizeFloorDisplayPreferences = (value: unknown): FloorDisplayPreferences => {
+  const source = value && typeof value === 'object' ? value as Partial<FloorDisplayPreferences> : {}
+  return {
+    showPeople: source.showPeople !== false,
+    showUnsubmittedWait: source.showUnsubmittedWait !== false,
+    showTableStay: source.showTableStay !== false,
+    showWaitlinePeople: source.showWaitlinePeople !== false,
+    showWaitlineTime: source.showWaitlineTime !== false,
+    showOrderLabels: source.showOrderLabels === true,
+  }
+}
+
+const readFloorDisplayPreferences = (): FloorDisplayPreferences =>
+  normalizeFloorDisplayPreferences(readStorageValue<unknown>(floorDisplayStorageKey, defaultFloorDisplayPreferences))
+
+const normalizeFloorPartySizes = (value: unknown): Record<string, number> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const tableCapacities = new Map(diningTables.map((table) => [table.id, table.capacity]))
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((sizes, [tableId, rawSize]) => {
+    const capacity = tableCapacities.get(tableId)
+    const size = Number(rawSize)
+    if (!capacity || !Number.isFinite(size)) {
+      return sizes
+    }
+
+    sizes[tableId] = Math.min(capacity, Math.max(0, Math.trunc(size)))
+    return sizes
+  }, {})
+}
+
+const readFloorPartySizes = (): Record<string, number> =>
+  normalizeFloorPartySizes(readStorageValue<unknown>(floorPartyStorageKey, {}))
+
+const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((entry): WaitlineEntry[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const source = entry as Partial<WaitlineEntry>
+    const createdAt = typeof source.createdAt === 'string' ? source.createdAt : ''
+    const timestamp = new Date(createdAt).getTime()
+    if (!Number.isFinite(timestamp)) {
+      return []
+    }
+
+    return [{
+      id: typeof source.id === 'string' && source.id ? source.id : `wait-${timestamp}`,
+      name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 40) : '候位客',
+      partySize: Math.min(12, Math.max(1, Math.trunc(Number(source.partySize) || 1))),
+      createdAt,
+      note: typeof source.note === 'string' ? source.note.trim().slice(0, 80) : '',
+    }]
+  }).slice(0, 30)
+}
+
+const readWaitlineEntries = (): WaitlineEntry[] =>
+  normalizeWaitlineEntries(readStorageValue<unknown>(waitlineStorageKey, []))
 
 const clampPercent = (value: unknown, fallback: number, min = 4, max = 96): number => {
   const numericValue = Number(value)
@@ -1628,10 +1759,11 @@ const orderSequenceLabel = (orderId: string | null): string => {
 
 const currentTime = ref(Date.now())
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
-  order: '外帶 / 外送點餐',
+  floor: '桌位地圖',
+  order: '點餐',
   details: '顧客與備註',
   payment: '付款確認',
-  queue: '桌況頁',
+  queue: '外帶 / 外送',
   printing: '列印站',
   closeout: '班別關帳',
 }
@@ -2407,9 +2539,14 @@ const lastPrintTime = computed(() => (printStation.lastPrintAt ? formatOrderTime
 const backendEditModeEnabled = ref(readStorageValue<boolean>(backendEditModeStorageKey, false))
 const initialView = readInitialView()
 const activeView = ref<AppView>(initialView === 'admin' && !backendEditModeEnabled.value ? 'pos' : initialView)
-const activeWorkspaceTab = ref<WorkspaceTab>('queue')
+const activeWorkspaceTab = ref<WorkspaceTab>('floor')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
+const floorDisplayPreferences = ref<FloorDisplayPreferences>(readFloorDisplayPreferences())
+const floorPartySizes = ref<Record<string, number>>(readFloorPartySizes())
+const waitlineEntries = ref<WaitlineEntry[]>(readWaitlineEntries())
+const activeFloorServiceView = ref<FloorServiceView>('dine-in')
+const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
@@ -2736,6 +2873,7 @@ const registerStatusLabel = computed(() => {
   return `已關班 · ${formatOrderTime(registerSession.value.closedAt ?? registerSession.value.openedAt)}`
 })
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
+  floor: `${activeDineInOrders.value.length} 桌內用 · 候位 ${waitlineEntries.value.length}`,
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
   details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
   payment: paymentLabels[paymentMethod.value],
@@ -2743,6 +2881,110 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   printing: printStation.online ? '列印在線' : '列印離線',
   closeout: closeoutPreflightBlockingCount.value > 0 ? `${closeoutPreflightBlockingCount.value} 項待處理` : registerStatusLabel.value,
 }))
+const tableNoteToken = (tableLabel: string): string => `桌位 ${tableLabel}`
+const tableIdFromOrder = (order: PosOrder): string | null => {
+  const tableLabels = new Set(diningTables.map((table) => table.label))
+  const noteMatch = order.note.match(/桌位\s*([A-Z]\d+)/i)
+  const nameMatch = order.customerName.match(/^([A-Z]\d+)\b/i)
+  const label = (noteMatch?.[1] ?? nameMatch?.[1] ?? '').toUpperCase()
+
+  return tableLabels.has(label) ? label : null
+}
+const activeDineInOrders = computed(() =>
+  orderQueue.value.filter((order) => order.mode === 'dine-in' && orderIsOpenForFulfillment(order)),
+)
+const dineInOrderForTable = (tableId: string): PosOrder | null =>
+  activeDineInOrders.value.find((order) => tableIdFromOrder(order) === tableId) ?? null
+const elapsedMinutesSince = (timestamp: string | null): number => {
+  if (!timestamp) {
+    return 0
+  }
+
+  const startedAt = new Date(timestamp).getTime()
+  if (!Number.isFinite(startedAt)) {
+    return 0
+  }
+
+  return Math.max(0, Math.floor((currentTime.value - startedAt) / 60_000))
+}
+const elapsedMinuteLabel = (timestamp: string | null): string => `${elapsedMinutesSince(timestamp)} min`
+const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null): number => {
+  if (!order) {
+    return 0
+  }
+
+  const storedSize = floorPartySizes.value[table.id]
+  return Math.min(table.capacity, Math.max(1, Math.trunc(Number(storedSize) || 1)))
+}
+const floorTableStates = computed<FloorTableState[]>(() =>
+  diningTables.map((table) => {
+    const order = dineInOrderForTable(table.id)
+    const isLocked = Boolean(order && orderClaimedByOtherStation(order))
+    const status: FloorTableState['status'] = !order
+      ? 'empty'
+      : isLocked
+        ? 'locked'
+        : order.status === 'ready'
+          ? 'ready'
+          : 'active'
+
+    return {
+      table,
+      order,
+      partySize: partySizeForTable(table, order),
+      status,
+      amountLabel: order ? formatCurrency(order.subtotal) : formatCurrency(0),
+      orderLabel: order ? orderSequenceLabel(order.id) : '',
+      peopleLabel: `${partySizeForTable(table, order)}/${table.capacity}`,
+      waitLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
+      stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
+    }
+  }),
+)
+const selectedFloorTable = computed(() =>
+  floorTableStates.value.find((state) => state.table.id === selectedFloorTableId.value) ?? floorTableStates.value[0] ?? null,
+)
+const waitlinePeopleCount = computed(() =>
+  waitlineEntries.value.reduce((total, entry) => total + entry.partySize, 0),
+)
+const averageWaitlineMinutes = computed(() => {
+  if (waitlineEntries.value.length === 0) {
+    return 0
+  }
+
+  const totalMinutes = waitlineEntries.value.reduce((total, entry) => total + elapsedMinutesSince(entry.createdAt), 0)
+  return Math.round(totalMinutes / waitlineEntries.value.length)
+})
+const floorNotificationItems = computed<PosNotificationItem[]>(() => [
+  {
+    id: 'display-controls',
+    title: '桌位顯示設定',
+    summary: '可切換人數、未出單等待、桌內滯留、候位等待與訂單標籤顯示。',
+    dateLabel: 'iCHEF 對照',
+    target: 'floor',
+  },
+  {
+    id: 'takeout-flow',
+    title: '外帶 / 外送訂單中心',
+    summary: '外帶外送以搜尋、今日/較舊、取餐方式與取餐/送達時間排序管理，不預設人數。',
+    dateLabel: 'iCHEF 對照',
+    target: 'queue',
+  },
+  {
+    id: 'supply-statuses',
+    title: '正常供應 / 線上停售 / 全部停售',
+    summary: '今日訂單停售會阻擋現場加入，線上停售只隱藏線上入口。',
+    dateLabel: '供應狀態',
+    target: 'supply',
+  },
+  {
+    id: 'print-and-checkout',
+    title: '出單與結帳分離',
+    summary: '訂單可結帳出單、只出單或結帳不出單，列印異常在列印站追蹤。',
+    dateLabel: '工作流',
+    target: 'printing',
+  },
+])
 const registerVariance = computed(() => {
   if (!registerSession.value) {
     return 0
@@ -2984,7 +3226,15 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
     }
 
     expandedOrderId.value = order.id
-    setWorkspaceTab('queue')
+    if (order.mode === 'dine-in') {
+      const tableId = tableIdFromOrder(order)
+      if (tableId) {
+        selectedFloorTableId.value = tableId
+      }
+      setWorkspaceTab('floor')
+    } else {
+      setWorkspaceTab('queue')
+    }
   } finally {
     activeTicketAction.value = null
   }
@@ -3469,6 +3719,107 @@ const editOrderFromQueue = async (order: PosOrder): Promise<void> => {
   setWorkspaceTab('order')
 }
 
+const updateFloorPartySize = (table: DiningTableDefinition, delta: number): void => {
+  const currentSize = floorPartySizes.value[table.id] ?? 0
+  const nextSize = Math.min(table.capacity, Math.max(0, currentSize + delta))
+  floorPartySizes.value = {
+    ...floorPartySizes.value,
+    [table.id]: nextSize,
+  }
+}
+
+const startDineInTableOrder = async (
+  table: DiningTableDefinition,
+  options: { partySize?: number; waitlineEntry?: WaitlineEntry } = {},
+): Promise<void> => {
+  await startCounterDraft('dine-in')
+  const partySize = Math.min(table.capacity, Math.max(1, options.partySize ?? floorPartySizes.value[table.id] ?? 1))
+  floorPartySizes.value = {
+    ...floorPartySizes.value,
+    [table.id]: partySize,
+  }
+  customer.name = `${table.label} 內用客`
+  customer.note = [
+    tableNoteToken(table.label),
+    `${partySize} 人`,
+    options.waitlineEntry?.name ? `候位 ${options.waitlineEntry.name}` : '',
+    options.waitlineEntry?.note ?? '',
+  ].filter(Boolean).join('、')
+  activeCartQuickEditor.value = null
+  closeOptionPanel()
+  setWorkspaceTab('order')
+}
+
+const selectFloorTable = (state: FloorTableState): void => {
+  selectedFloorTableId.value = state.table.id
+}
+
+const openFloorTableOrder = async (state: FloorTableState): Promise<void> => {
+  selectFloorTable(state)
+  if (!state.order || !orderCanBeEdited(state.order)) {
+    return
+  }
+
+  await editOrderFromQueue(state.order)
+}
+
+const returnFromOrderWorkspace = (): void => {
+  setWorkspaceTab(serviceMode.value === 'dine-in' ? 'floor' : 'queue')
+}
+
+const markFloorTableServed = (state: FloorTableState): void => {
+  if (!state.order || orderClaimedByOtherStation(state.order)) {
+    return
+  }
+
+  void updateOrderStatus(state.order.id, 'served')
+}
+
+const addWaitlineEntry = (): void => {
+  const now = new Date()
+  waitlineEntries.value = [
+    ...waitlineEntries.value,
+    {
+      id: `wait-${now.getTime()}`,
+      name: `候位 ${waitlineEntries.value.length + 1}`,
+      partySize: 2,
+      createdAt: now.toISOString(),
+      note: '',
+    },
+  ]
+}
+
+const updateWaitlinePartySize = (entry: WaitlineEntry, delta: number): void => {
+  waitlineEntries.value = waitlineEntries.value.map((currentEntry) =>
+    currentEntry.id === entry.id
+      ? { ...currentEntry, partySize: Math.min(12, Math.max(1, currentEntry.partySize + delta)) }
+      : currentEntry,
+  )
+}
+
+const removeWaitlineEntry = (entryId: string): void => {
+  waitlineEntries.value = waitlineEntries.value.filter((entry) => entry.id !== entryId)
+}
+
+const seatWaitlineEntryAtTable = async (entry: WaitlineEntry, table: DiningTableDefinition): Promise<void> => {
+  removeWaitlineEntry(entry.id)
+  await startDineInTableOrder(table, { partySize: Math.min(table.capacity, entry.partySize), waitlineEntry: entry })
+}
+
+const openFloorNotificationTarget = (item: PosNotificationItem): void => {
+  if (item.target === 'supply') {
+    openSupplyStatus()
+    return
+  }
+
+  if (item.target === 'knowledge') {
+    isKnowledgeOpen.value = true
+    return
+  }
+
+  setWorkspaceTab(item.target)
+}
+
 const handleOrderRowClick = (order: PosOrder, event: MouseEvent): void => {
   if (event.target instanceof HTMLElement && event.target.closest('button, input, textarea, select, a')) {
     return
@@ -3764,6 +4115,10 @@ const runCloseoutPreflightAction = (item: CloseoutPreflightItem): void => {
 }
 
 const runToolboxAction = (action: ToolboxAction): void => {
+  if (action === 'floor') {
+    setWorkspaceTab('floor')
+  }
+
   if (action === 'order') {
     startTakeoutOrder()
   }
@@ -3905,6 +4260,12 @@ const setWorkspaceTab = (tab: WorkspaceTab): void => {
   activeCartQuickEditor.value = null
   if (tab !== 'order') {
     closeOptionPanel()
+  }
+  if (tab === 'floor') {
+    activeFloorServiceView.value = 'dine-in'
+  }
+  if (tab === 'queue') {
+    activeFloorServiceView.value = 'takeout-delivery'
   }
   activeWorkspaceTab.value = tab
 }
@@ -4064,14 +4425,14 @@ const setActiveView = (view: AppView): void => {
 
   if (isNativeApp) {
     activeView.value = 'pos'
-    activeWorkspaceTab.value = 'queue'
+    activeWorkspaceTab.value = 'floor'
     globalThis.history.replaceState(null, '', globalThis.location.pathname)
     return
   }
 
   activeView.value = view
   if (view === 'pos') {
-    activeWorkspaceTab.value = 'queue'
+    activeWorkspaceTab.value = 'floor'
   }
 
   if (isConsumerDomain) {
@@ -4604,6 +4965,18 @@ watch(posUiPreferences, (preferences) => {
   }
 }, { deep: true })
 
+watch(floorDisplayPreferences, (preferences) => {
+  writeStorageValue(floorDisplayStorageKey, normalizeFloorDisplayPreferences(preferences))
+}, { deep: true })
+
+watch(floorPartySizes, (sizes) => {
+  writeStorageValue(floorPartyStorageKey, normalizeFloorPartySizes(sizes))
+}, { deep: true })
+
+watch(waitlineEntries, (entries) => {
+  writeStorageValue(waitlineStorageKey, normalizeWaitlineEntries(entries))
+}, { deep: true })
+
 watch(productSupplyStatuses, (statuses) => {
   writeSupplyStatusMap(supplyProductStatusStorageKey, statuses)
 }, { deep: true })
@@ -4781,16 +5154,16 @@ onBeforeUnmount(() => {
             class="pos-main-surface"
             :class="{
               'pos-main-surface--ordering': activeWorkspaceTab === 'order',
-              'pos-main-surface--queue': activeWorkspaceTab === 'queue',
+              'pos-main-surface--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor',
             }"
           >
             <header
               v-if="activeWorkspaceTab !== 'order'"
               class="pos-command-bar"
-              :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' }"
+              :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor' }"
             >
               <div>
-                <template v-if="activeWorkspaceTab === 'queue'">
+                <template v-if="activeWorkspaceTab === 'floor' || activeWorkspaceTab === 'queue'">
                   <h1>{{ activeWorkspaceTitle }}</h1>
                 </template>
                 <template v-else>
@@ -4799,7 +5172,15 @@ onBeforeUnmount(() => {
                   <span>{{ registerStatusLabel }} · {{ currentClockLabel }}</span>
                 </template>
               </div>
-              <div v-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
+              <div v-if="activeWorkspaceTab === 'floor'" class="queue-command-actions floor-command-actions">
+                <span>{{ activeDineInOrders.length }} 桌內用</span>
+                <span>候位 {{ waitlineEntries.length }} 組 · {{ waitlinePeopleCount }} 人</span>
+                <button class="primary-button queue-new-order-button" type="button" @click="addWaitlineEntry">
+                  <UsersRound :size="22" aria-hidden="true" />
+                  新增候位
+                </button>
+              </div>
+              <div v-else-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
                 <span>{{ pendingOrders.length }} 張待處理</span>
                 <span>顯示 {{ visibleQueueOrders.length }} 張 · 全部 {{ queueBaseOrders.length }} 張</span>
                 <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
@@ -4835,7 +5216,7 @@ onBeforeUnmount(() => {
               <template v-if="activeWorkspaceTab === 'order'">
                 <section class="cart-panel" aria-labelledby="cart-title">
                   <div class="ticket-topline">
-                    <button class="ticket-back-button" type="button" title="返回桌況頁" @click="setWorkspaceTab('queue')">
+                    <button class="ticket-back-button" type="button" title="返回上一個工作區" @click="returnFromOrderWorkspace">
                       <ChevronLeft :size="38" aria-hidden="true" />
                     </button>
                     <div class="ticket-title-block">
@@ -5321,6 +5702,226 @@ onBeforeUnmount(() => {
               </template>
 
               <aside v-else class="queue-panel workstation-panel-stack" aria-label="工作站內容">
+                <section v-if="activeWorkspaceTab === 'floor'" class="floor-section" aria-labelledby="floor-title">
+                  <div class="floor-mode-switch" aria-label="訂單區域切換">
+                    <button
+                      type="button"
+                      :class="{ 'floor-mode-button--active': activeFloorServiceView === 'dine-in' }"
+                      @click="setWorkspaceTab('floor')"
+                    >
+                      內用
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ 'floor-mode-button--active': activeFloorServiceView === 'takeout-delivery' }"
+                      @click="setWorkspaceTab('queue')"
+                    >
+                      外帶 / 外送
+                    </button>
+                  </div>
+
+                  <div class="floor-layout">
+                    <section class="floor-map-panel" aria-labelledby="floor-title">
+                      <header class="floor-panel-heading">
+                        <div>
+                          <p class="eyebrow">Dine In</p>
+                          <h2 id="floor-title">桌位地圖</h2>
+                          <span>
+                            {{ activeDineInOrders.length }} 桌進行中 ·
+                            候位 {{ waitlineEntries.length }} 組
+                          </span>
+                        </div>
+                        <button class="secondary-button" type="button" @click="addWaitlineEntry">
+                          <UsersRound :size="18" aria-hidden="true" />
+                          新增候位
+                        </button>
+                      </header>
+
+                      <div class="floor-map" aria-label="內用桌位">
+                        <button
+                          v-for="state in floorTableStates"
+                          :key="state.table.id"
+                          class="floor-table-card"
+                          :class="[
+                            `floor-table-card--${state.status}`,
+                            { 'floor-table-card--selected': selectedFloorTable?.table.id === state.table.id },
+                          ]"
+                          type="button"
+                          :style="{ left: `${state.table.x}%`, top: `${state.table.y}%`, width: `${state.table.width}%` }"
+                          @click="selectFloorTable(state)"
+                        >
+                          <span class="floor-table-card-top">
+                            <strong>{{ state.table.label }}</strong>
+                            <small v-if="floorDisplayPreferences.showPeople">{{ state.peopleLabel }}</small>
+                          </span>
+                          <span v-if="state.order" class="floor-table-order">
+                            <strong>{{ state.amountLabel }}</strong>
+                            <small v-if="floorDisplayPreferences.showOrderLabels">No. {{ state.orderLabel }}</small>
+                          </span>
+                          <span v-else class="floor-table-empty">
+                            <Plus :size="28" aria-hidden="true" />
+                          </span>
+                          <span v-if="state.order" class="floor-table-metrics">
+                            <small v-if="floorDisplayPreferences.showUnsubmittedWait">{{ state.waitLabel }}</small>
+                            <small v-if="floorDisplayPreferences.showTableStay">{{ state.stayLabel }}</small>
+                          </span>
+                        </button>
+                      </div>
+                    </section>
+
+                    <aside class="floor-side-panel" aria-label="桌位、候位與通知">
+                      <section v-if="selectedFloorTable" class="floor-control-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>目前桌位</span>
+                            <strong>{{ selectedFloorTable.table.label }}</strong>
+                          </div>
+                          <small>{{ selectedFloorTable.status === 'empty' ? '空桌' : statusLabels[selectedFloorTable.order?.status ?? 'new'] }}</small>
+                        </div>
+                        <div class="floor-party-stepper" aria-label="桌位人數">
+                          <button type="button" @click.stop="updateFloorPartySize(selectedFloorTable.table, -1)">
+                            <Minus :size="16" aria-hidden="true" />
+                          </button>
+                          <strong>{{ floorPartySizes[selectedFloorTable.table.id] ?? selectedFloorTable.partySize }}/{{ selectedFloorTable.table.capacity }}</strong>
+                          <button type="button" @click.stop="updateFloorPartySize(selectedFloorTable.table, 1)">
+                            <Plus :size="16" aria-hidden="true" />
+                          </button>
+                        </div>
+                        <div class="floor-control-actions">
+                          <button
+                            v-if="selectedFloorTable.order"
+                            type="button"
+                            class="secondary-button"
+                            @click="openFloorTableOrder(selectedFloorTable)"
+                          >
+                            <ReceiptText :size="18" aria-hidden="true" />
+                            開啟訂單
+                          </button>
+                          <button
+                            v-if="selectedFloorTable.order"
+                            type="button"
+                            class="secondary-button"
+                            :disabled="orderClaimedByOtherStation(selectedFloorTable.order)"
+                            @click="markFloorTableServed(selectedFloorTable)"
+                          >
+                            <CheckCircle2 :size="18" aria-hidden="true" />
+                            清桌
+                          </button>
+                          <button
+                            v-else
+                            type="button"
+                            class="primary-button"
+                            @click="startDineInTableOrder(selectedFloorTable.table)"
+                          >
+                            <ShoppingCart :size="18" aria-hidden="true" />
+                            開桌點餐
+                          </button>
+                        </div>
+                      </section>
+
+                      <section class="floor-control-block floor-waitline-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>候位</span>
+                            <strong>{{ waitlineEntries.length }} 組</strong>
+                          </div>
+                          <small>
+                            <template v-if="floorDisplayPreferences.showWaitlinePeople">{{ waitlinePeopleCount }} 人</template>
+                            <template v-if="floorDisplayPreferences.showWaitlineTime"> · 平均 {{ averageWaitlineMinutes }} min</template>
+                          </small>
+                        </div>
+                        <div class="waitline-list">
+                          <article v-for="entry in waitlineEntries" :key="entry.id" class="waitline-row">
+                            <div>
+                              <strong>{{ entry.name }}</strong>
+                              <span>{{ entry.partySize }} 人 · {{ elapsedMinuteLabel(entry.createdAt) }}</span>
+                            </div>
+                            <div class="waitline-actions">
+                              <button type="button" title="減少人數" @click="updateWaitlinePartySize(entry, -1)">
+                                <Minus :size="14" aria-hidden="true" />
+                              </button>
+                              <button type="button" title="增加人數" @click="updateWaitlinePartySize(entry, 1)">
+                                <Plus :size="14" aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                :disabled="!selectedFloorTable || selectedFloorTable.status !== 'empty'"
+                                @click="selectedFloorTable && seatWaitlineEntryAtTable(entry, selectedFloorTable.table)"
+                              >
+                                入座
+                              </button>
+                              <button type="button" title="移除候位" @click="removeWaitlineEntry(entry.id)">
+                                <X :size="14" aria-hidden="true" />
+                              </button>
+                            </div>
+                          </article>
+                          <div v-if="waitlineEntries.length === 0" class="empty-state floor-empty-state">
+                            <UsersRound :size="22" aria-hidden="true" />
+                            <span>目前沒有候位</span>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section class="floor-control-block floor-display-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>顯示設定</span>
+                            <strong>桌況資訊</strong>
+                          </div>
+                        </div>
+                        <div class="floor-display-options">
+                          <label>
+                            <input v-model="floorDisplayPreferences.showPeople" type="checkbox" />
+                            顯示人數
+                          </label>
+                          <label>
+                            <input v-model="floorDisplayPreferences.showUnsubmittedWait" type="checkbox" />
+                            顯示未出單等待
+                          </label>
+                          <label>
+                            <input v-model="floorDisplayPreferences.showTableStay" type="checkbox" />
+                            顯示店內滯留
+                          </label>
+                          <label>
+                            <input v-model="floorDisplayPreferences.showWaitlinePeople" type="checkbox" />
+                            顯示候位人數
+                          </label>
+                          <label>
+                            <input v-model="floorDisplayPreferences.showWaitlineTime" type="checkbox" />
+                            顯示候位等待
+                          </label>
+                          <label>
+                            <input v-model="floorDisplayPreferences.showOrderLabels" type="checkbox" />
+                            顯示訂單標籤
+                          </label>
+                        </div>
+                      </section>
+
+                      <section class="floor-control-block floor-notification-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>通知中心</span>
+                            <strong>{{ floorNotificationItems.length }} 則</strong>
+                          </div>
+                          <Bell :size="18" aria-hidden="true" />
+                        </div>
+                        <div class="floor-notification-list">
+                          <button
+                            v-for="item in floorNotificationItems"
+                            :key="item.id"
+                            type="button"
+                            @click="openFloorNotificationTarget(item)"
+                          >
+                            <span>{{ item.dateLabel }}</span>
+                            <strong>{{ item.title }}</strong>
+                            <small>{{ item.summary }}</small>
+                          </button>
+                        </div>
+                      </section>
+                    </aside>
+                  </div>
+                </section>
+
                 <section v-if="activeWorkspaceTab === 'details'" class="order-info-section" aria-labelledby="order-info-title">
                   <div class="panel-heading">
                     <div>
@@ -6997,9 +7598,14 @@ onBeforeUnmount(() => {
             <strong>新增外帶</strong>
             <span>{{ workspaceTabSummaries.order }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('floor')">
+            <LayoutDashboard :size="24" aria-hidden="true" />
+            <strong>桌位地圖</strong>
+            <span>{{ workspaceTabSummaries.floor }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
             <ReceiptText :size="24" aria-hidden="true" />
-            <strong>桌況頁</strong>
+            <strong>外帶 / 外送</strong>
             <span>{{ queueFilterNote }}</span>
           </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
