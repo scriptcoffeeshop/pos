@@ -22,6 +22,8 @@ import type {
   PosStationHeartbeat,
   RegisterSession,
   PrintJob,
+  PrintLabelMode,
+  PrintRuleSetting,
   PrintStatus,
   PrinterSettings,
   PrintStation,
@@ -517,6 +519,34 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   soldOutUntil: product.sold_out_until ?? null,
 })
 
+const legacyPrintRuleName = (name: string, serviceMode: ServiceMode): string => {
+  if (name === '內用收據' || (name.includes('內用') && name.includes('收據'))) {
+    return '內用貼紙'
+  }
+
+  if (name === '外送收據' || (name.includes('外送') && name.includes('收據'))) {
+    return '外送貼紙'
+  }
+
+  if (serviceMode === 'dine-in' && name === '新印單規則') {
+    return '內用貼紙'
+  }
+
+  if (serviceMode === 'delivery' && name === '新印單規則') {
+    return '外送貼紙'
+  }
+
+  return name
+}
+
+const legacyPrintRuleLabelMode = (rule: PrintRuleSetting): PrintLabelMode => {
+  if (rule.name === '內用收據' || rule.name === '外送收據') {
+    return 'label'
+  }
+
+  return rule.labelMode
+}
+
 const isPrinterSettings = (value: unknown): value is PrinterSettings => {
   if (!value || typeof value !== 'object') {
     return false
@@ -524,6 +554,26 @@ const isPrinterSettings = (value: unknown): value is PrinterSettings => {
 
   const settings = value as PrinterSettings
   return Array.isArray(settings.stations) && Array.isArray(settings.rules)
+}
+
+const normalizePrinterSettings = (value: unknown): PrinterSettings => {
+  if (!isPrinterSettings(value)) {
+    return { stations: [], rules: [] }
+  }
+
+  return {
+    stations: value.stations.map((station) => ({ ...station })),
+    rules: value.rules.map((rule) => {
+      const labelMode = legacyPrintRuleLabelMode(rule)
+      return {
+        ...rule,
+        name: legacyPrintRuleName(rule.name, rule.serviceMode),
+        labelMode,
+        categories: Array.isArray(rule.categories) ? [...rule.categories] : [],
+        itemIds: Array.isArray(rule.itemIds) ? [...rule.itemIds] : [],
+      }
+    }),
+  }
 }
 
 const isAccessControlSettings = (value: unknown): value is AccessControlSettings => {
@@ -825,7 +875,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
 
   return {
-    printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
+    printerSettings: normalizePrinterSettings(printerSettings),
     accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(posAppearance),
@@ -1051,7 +1101,7 @@ export const updateAdminSetting = async <SettingValue>(
 export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> => {
   const data = await request<Partial<RuntimeSettingsResponse>>('/settings/runtime')
   return {
-    printerSettings: isPrinterSettings(data.printerSettings) ? data.printerSettings : { stations: [], rules: [] },
+    printerSettings: normalizePrinterSettings(data.printerSettings),
     onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(data.posAppearance),
   }

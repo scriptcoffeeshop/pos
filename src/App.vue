@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
   CircleAlert,
   Clock3,
   CreditCard,
@@ -57,6 +56,7 @@ import type {
   PaymentStatus,
   PosAppearanceSettings,
   PosOrder,
+  PrinterSettings,
   ProductSupplyStatus,
   PrintLabelMode,
   PrintJob,
@@ -700,6 +700,12 @@ const printLabelModeLabels: Record<PrintLabelMode, string> = {
   label: '貼紙',
   both: '收據 + 貼紙',
 }
+
+const printLabelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
+  { value: 'label', label: '貼紙' },
+  { value: 'receipt', label: '收據' },
+  { value: 'both', label: '收據 + 貼紙' },
+]
 
 const noteSnippets = ['需要袋子']
 const ticketNoteSnippets = ['需要袋子']
@@ -1983,13 +1989,101 @@ const enabledPrintRules = computed(() => printerRuleRows.value.filter((rule) => 
 const printerRuleSummary = computed(() =>
   `${enabledPrintRules.value.length} 條啟用 · ${printerRuleRows.value.length} 條全部`,
 )
+const printerSettingsSaving = ref(false)
+const printerSettingsActionMessage = ref('')
+const printRuleMenuItems = computed<MenuItem[]>(() =>
+  [
+    ...new Map([...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product])).values(),
+  ].sort((a, b) => {
+    if (a.category !== b.category) {
+      return categoryLabelFor(a.category).localeCompare(categoryLabelFor(b.category), 'zh-Hant')
+    }
+
+    return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, 'zh-Hant')
+  }),
+)
 const printerStationName = (stationId: string): string =>
   printerStationRows.value.find((station) => station.id === stationId)?.name ?? printStation.name
 const printerConnectionLabel = (station: PrintStationSetting): string => `${station.host}:${station.port}`
 const printerRuleCategoriesLabel = (rule: PrintRuleSetting): string =>
-  rule.categories.length === 0 ? '全部品項' : rule.categories.map(categoryLabelFor).join('、')
+  rule.categories.length === 0 ? '未選分類' : rule.categories.map(categoryLabelFor).join('、')
+const printerRuleItemsLabel = (rule: PrintRuleSetting): string => {
+  const itemIds = new Set(rule.itemIds ?? [])
+  if (itemIds.size === 0) {
+    return '未指定品項'
+  }
+
+  const names = printRuleMenuItems.value.filter((item) => itemIds.has(item.id)).map((item) => item.name)
+  const missingCount = itemIds.size - names.length
+  return [...names.slice(0, 3), ...(missingCount > 0 ? [`另 ${missingCount} 項`] : [])].join('、')
+}
+const printerRuleScopeLabel = (rule: PrintRuleSetting): string => {
+  const categoryCount = rule.categories.length
+  const itemCount = (rule.itemIds ?? []).length
+  if (categoryCount === 0 && itemCount === 0) {
+    return '未加入品項，出單時不列印'
+  }
+
+  return `${categoryCount} 類 · ${itemCount} 個指定品項`
+}
 const printerRuleModeLabel = (rule: PrintRuleSetting): string =>
   `${serviceModeLabels[rule.serviceMode]} · ${printLabelModeLabels[rule.labelMode]}`
+const printerRuleProductOptions = (rule: PrintRuleSetting): MenuItem[] => {
+  const categorySet = new Set(rule.categories)
+  const selectedItemIds = new Set(rule.itemIds ?? [])
+  if (categorySet.size === 0) {
+    return printRuleMenuItems.value
+  }
+
+  return printRuleMenuItems.value.filter((item) => categorySet.has(item.category) || selectedItemIds.has(item.id))
+}
+const togglePrinterRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
+  if (rule.categories.includes(category)) {
+    rule.categories = rule.categories.filter((entry) => entry !== category)
+    return
+  }
+
+  rule.categories = [...rule.categories, category]
+}
+const togglePrinterRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
+  const itemIds = rule.itemIds ?? []
+  if (itemIds.includes(itemId)) {
+    rule.itemIds = itemIds.filter((entry) => entry !== itemId)
+    return
+  }
+
+  rule.itemIds = [...itemIds, itemId]
+}
+const clonePrinterSettingsForSave = (): PrinterSettings => ({
+  stations: printerSettings.value.stations.map((station) => ({ ...station })),
+  rules: printerSettings.value.rules.map((rule) => ({
+    ...rule,
+    categories: [...new Set(rule.categories)],
+    itemIds: [...new Set(rule.itemIds ?? [])],
+    copies: Math.min(5, Math.max(1, Number(rule.copies) || 1)),
+  })),
+})
+const savePrinterSettingsFromWorkstation = async (): Promise<void> => {
+  printerSettingsSaving.value = true
+  printerSettingsActionMessage.value = '正在儲存印單規則'
+
+  try {
+    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', clonePrinterSettingsForSave())
+    printerSettings.value = {
+      stations: savedSettings.stations.map((station) => ({ ...station })),
+      rules: savedSettings.rules.map((rule) => ({
+        ...rule,
+        categories: [...rule.categories],
+        itemIds: [...(rule.itemIds ?? [])],
+      })),
+    }
+    printerSettingsActionMessage.value = '印單規則已儲存'
+  } catch (error) {
+    printerSettingsActionMessage.value = `印單規則儲存失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    printerSettingsSaving.value = false
+  }
+}
 const queueFilterNote = computed(() => {
   const filtersApplied =
     queueSearchTerm.value.trim().length > 0 ||
@@ -5793,8 +5887,22 @@ onBeforeUnmount(() => {
                     <div class="printer-rule-overview" aria-label="印單規則">
                       <div class="printer-config-heading">
                         <strong>印單規則</strong>
-                        <span>{{ printerRuleSummary }}</span>
+                        <div class="printer-rule-heading-actions">
+                          <span>{{ printerRuleSummary }}</span>
+                          <button
+                            type="button"
+                            class="printer-rule-save-button"
+                            :disabled="printerSettingsSaving"
+                            @click="savePrinterSettingsFromWorkstation"
+                          >
+                            <Check :size="16" aria-hidden="true" />
+                            {{ printerSettingsSaving ? '儲存中' : '儲存規則' }}
+                          </button>
+                        </div>
                       </div>
+                      <p v-if="printerSettingsActionMessage" class="printer-settings-message">
+                        {{ printerSettingsActionMessage }}
+                      </p>
                       <div v-if="printerRuleRows.length > 0" class="printer-rule-list">
                         <article
                           v-for="rule in printerRuleRows"
@@ -5803,14 +5911,88 @@ onBeforeUnmount(() => {
                           :class="{ 'printer-rule-card--disabled': !rule.enabled }"
                         >
                           <div class="printer-rule-main">
-                            <span>{{ printerRuleModeLabel(rule) }}</span>
-                            <strong>{{ rule.name }}</strong>
-                            <small>{{ printerStationName(rule.stationId) }}</small>
+                            <div class="printer-rule-title-row">
+                              <label class="printer-rule-name-field">
+                                規則名稱
+                                <input v-model="rule.name" type="text" />
+                              </label>
+                              <label class="printer-rule-enable-toggle">
+                                <input v-model="rule.enabled" type="checkbox" />
+                                啟用
+                              </label>
+                            </div>
+                            <div class="printer-rule-control-grid">
+                              <label>
+                                服務方式
+                                <select v-model="rule.serviceMode">
+                                  <option v-for="mode in serviceModeOptions" :key="mode.value" :value="mode.value">
+                                    {{ mode.label }}
+                                  </option>
+                                </select>
+                              </label>
+                              <label>
+                                單據
+                                <select v-model="rule.labelMode">
+                                  <option v-for="mode in printLabelModeOptions" :key="mode.value" :value="mode.value">
+                                    {{ mode.label }}
+                                  </option>
+                                </select>
+                              </label>
+                              <label>
+                                份數
+                                <input v-model.number="rule.copies" type="number" min="1" max="5" />
+                              </label>
+                            </div>
+                            <small>{{ printerStationName(rule.stationId) }} · {{ printerRuleModeLabel(rule) }}</small>
                           </div>
-                          <div class="printer-rule-meta">
-                            <span>{{ printerRuleCategoriesLabel(rule) }}</span>
-                            <span>{{ rule.copies }} 份</span>
-                            <span>{{ rule.enabled ? '啟用' : '停用' }}</span>
+                          <div class="printer-rule-scope">
+                            <div class="printer-rule-scope-heading">
+                              <strong>列印範圍</strong>
+                              <span>{{ printerRuleScopeLabel(rule) }}</span>
+                            </div>
+                            <div class="printer-rule-picker-section">
+                              <div class="printer-rule-picker-title">
+                                <strong>分類</strong>
+                                <span>{{ printerRuleCategoriesLabel(rule) }}</span>
+                              </div>
+                              <div class="printer-rule-chip-grid" aria-label="印單規則分類">
+                                <label
+                                  v-for="category in menuCategoryOptions"
+                                  :key="category.id"
+                                  class="printer-rule-chip"
+                                  :class="{ 'printer-rule-chip--active': rule.categories.includes(category.id) }"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    :checked="rule.categories.includes(category.id)"
+                                    @change="togglePrinterRuleCategory(rule, category.id)"
+                                  />
+                                  {{ category.label }}
+                                </label>
+                              </div>
+                            </div>
+                            <div class="printer-rule-picker-section">
+                              <div class="printer-rule-picker-title">
+                                <strong>指定品項</strong>
+                                <span>{{ printerRuleItemsLabel(rule) }}</span>
+                              </div>
+                              <div class="printer-rule-product-grid" aria-label="印單規則指定品項">
+                                <label
+                                  v-for="item in printerRuleProductOptions(rule)"
+                                  :key="item.id"
+                                  class="printer-rule-product-chip"
+                                  :class="{ 'printer-rule-chip--active': (rule.itemIds ?? []).includes(item.id) }"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    :checked="(rule.itemIds ?? []).includes(item.id)"
+                                    @change="togglePrinterRuleItem(rule, item.id)"
+                                  />
+                                  <span>{{ item.name }}</span>
+                                  <small>{{ categoryLabelFor(item.category) }}</small>
+                                </label>
+                              </div>
+                            </div>
                           </div>
                         </article>
                       </div>
@@ -5818,19 +6000,6 @@ onBeforeUnmount(() => {
                         <Printer :size="22" aria-hidden="true" />
                         <span>尚未建立印單規則</span>
                       </div>
-                    </div>
-                  </div>
-
-                  <div class="printer-flow-panel" aria-label="列印流程">
-                    <strong>列印流程</strong>
-                    <div class="printer-flow-steps">
-                      <span>訂單送出</span>
-                      <ChevronRight :size="18" aria-hidden="true" />
-                      <span>匹配服務方式</span>
-                      <ChevronRight :size="18" aria-hidden="true" />
-                      <span>匹配品項分類</span>
-                      <ChevronRight :size="18" aria-hidden="true" />
-                      <span>產生列印單</span>
                     </div>
                   </div>
                 </section>

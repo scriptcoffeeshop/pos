@@ -41,7 +41,7 @@
 - 平板心跳：`pos_station_heartbeats` 由 `20260429144500_add_pos_station_heartbeats.sql` 新增；POS 工作台每 30 秒 upsert 一次，後台 `/admin/stations` 可看最後在線時間。
 - 平板測試：`rtk npm run tablet:url` 會輸出同 Wi-Fi 平板可開啟的本機網址；瀏覽器版不能直連 TCP 出單機。
 - APK 測試：已加入 Capacitor Android 專案、`Android APK` workflow、Android `LanPrinter` TCP socket plugin 與 `OnlineOrderNotifier` 背景新單提醒 plugin；本機 `rtk npm run apk:debug` 會先同步 Capacitor，macOS arm64 預設改用暫存 x86_64 Temurin 21 建置，並把 JVM fatal error 檔導到 `~/.cache/script-coffee-pos/`，避免 `hs_err_pid*.log` 污染專案資料夾。Android 13 以上首次進入 POS 會要求通知權限，若拒絕仍會保留前景提醒，但背景通知無法顯示。
-- 列印計畫：`src/lib/printing.ts` 會依 `printer_settings` 的服務方式、品項分類、貼紙/收據模式與 copies 建立多筆 EZPL payload；前台列印站已整理為 iCHEF 式出單機清單、印單規則與列印佇列，不再承擔庫存/供應管理。列印站 healthcheck 會分離畫面預覽與實際 EZPL payload，`usePosSession()` 逐筆建立/回寫 print job，列印頁會列出 print jobs 並可滑動刪除，Android APK 逐筆送 TCP。
+- 列印計畫：`src/lib/printing.ts` 會依 `printer_settings` 的服務方式、品項分類、指定品項、貼紙/收據模式與 copies 建立多筆 EZPL payload；未被印單規則的分類或品項納入時不會列印。前台列印站已整理為 iCHEF 式出單機清單、印單規則與列印佇列，印單規則可在列印站直接勾選分類與品項，底部「列印流程」提示已移除，不再承擔庫存/供應管理。內用與外送舊收據規則載入時會正規化為「內用貼紙」「外送貼紙」。列印站 healthcheck 會分離畫面預覽與實際 EZPL payload，`usePosSession()` 逐筆建立/回寫 print job，列印頁會列出 print jobs 並可滑動刪除，Android APK 逐筆送 TCP。
 - 本機驗證：2026-04-28 已跑 `rtk npm run ci-local` 通過；`rtk npm run pages:check` 在 Codex 沙盒內因 `dig` socket 與 GitHub API 網路限制無法二次驗證 HTTPS，需以一般終端、GitHub Pages UI 或 GitHub Actions 為準。
 
 ## 來源藍圖

@@ -252,7 +252,11 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
 
 const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
   stations: settings.stations.map((station) => ({ ...station })),
-  rules: settings.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
+  rules: settings.rules.map((rule) => ({
+    ...rule,
+    categories: [...rule.categories],
+    itemIds: [...(rule.itemIds ?? [])],
+  })),
 })
 
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
@@ -405,6 +409,24 @@ const stationOptions = computed(() => {
     },
   ]
 })
+
+const printRuleProductOptions = (rule: PrintRuleSetting): ProductDraft[] => {
+  const selectedCategories = new Set(rule.categories)
+  const selectedItemIds = new Set(rule.itemIds ?? [])
+  const sourceProducts = [...productDrafts.value].sort((first, second) =>
+    first.category.localeCompare(second.category, 'zh-TW') ||
+    first.sortOrder - second.sortOrder ||
+    first.name.localeCompare(second.name, 'zh-TW'),
+  )
+
+  if (selectedCategories.size === 0) {
+    return sourceProducts
+  }
+
+  return sourceProducts.filter((product) =>
+    selectedCategories.has(product.category) || selectedItemIds.has(product.id),
+  )
+}
 
 const operationStationOptions = computed(() => {
   const stations = new Map<string, string>()
@@ -1196,6 +1218,7 @@ const addPrintRule = (): void => {
     serviceMode: 'takeout',
     stationId: stationOptions.value[0]?.id ?? 'bar',
     categories: ['coffee', 'tea', 'food'],
+    itemIds: [],
     copies: 1,
     labelMode: 'label',
     enabled: true,
@@ -1213,6 +1236,16 @@ const toggleRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): voi
   }
 
   rule.categories = [...rule.categories, category]
+}
+
+const toggleRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
+  const itemIds = rule.itemIds ?? []
+  if (itemIds.includes(itemId)) {
+    rule.itemIds = itemIds.filter((entry) => entry !== itemId)
+    return
+  }
+
+  rule.itemIds = [...itemIds, itemId]
 }
 
 const savePrinterSettings = async (): Promise<void> => {
@@ -2113,6 +2146,29 @@ const saveAccessControl = async (): Promise<void> => {
                   />
                   {{ category.label }}
                 </label>
+              </div>
+
+              <div class="admin-rule-scope">
+                <div>
+                  <strong>指定品項</strong>
+                  <span>可不選；若有勾選，會與上方分類一起納入這條規則。</span>
+                </div>
+                <div class="admin-rule-item-grid">
+                  <label
+                    v-for="product in printRuleProductOptions(rule)"
+                    :key="`${rule.id}-${product.id}`"
+                    class="toggle-row"
+                    :class="{ 'toggle-row--active': (rule.itemIds ?? []).includes(product.id) }"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="(rule.itemIds ?? []).includes(product.id)"
+                      @change="toggleRuleItem(rule, product.id)"
+                    />
+                    <span>{{ product.name }}</span>
+                    <small>{{ categoryLabels[product.category] ?? product.category }}</small>
+                  </label>
+                </div>
               </div>
             </article>
           </section>

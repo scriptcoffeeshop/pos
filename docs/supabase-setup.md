@@ -108,7 +108,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - POS 工作台會訂閱 `orders`、runtime settings、`register_sessions` 與 `products` 的 Realtime invalidation event，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。Realtime 斷線時會以 2 秒到 30 秒退避重連，且每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current` 仍保留為 fallback。Android APK 進入背景或螢幕熄滅後，`OnlineOrderNotifier` native plugin 會以同一組 `online_ordering` 提醒設定短輪詢 `/settings/runtime` 與 `/orders?limit=30`，顯示系統通知並播放原生提示音；POS 內的稍後提醒、接單與已讀狀態會同步給 native plugin。Web 背景只在 Browser Notification API 已授權時顯示 fallback notification。平板回到前景時也會補同步一次。消費者線上點餐頁會訂閱 runtime/products event，並保留每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
-- 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依貼紙/收據/copies 拆分多筆 `POST /print-jobs`。
+- 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依服務方式、品項分類、指定品項、貼紙/收據/copies 拆分多筆 `POST /print-jobs`，未被規則納入的品項不會列印。
 - 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
 - 收款確認會走 `PATCH /orders/:id/payment` 並帶 station id；後端同樣檢查 claim lease，避免兩台平板同時改同一張單的付款狀態。
 - 未收款作廢會走 `POST /orders/:id/void`，需有效 claim lease；前端會要求先進入後台編輯模式，只允許 `payment_status=pending` 的訂單作廢。
@@ -119,7 +119,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。平板端新增/刪除商品或改商品供應狀態時，未成功寫入 API 不會視為完成，只保留舊本機資料作為離線 fallback。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
-- 後台出單機、權限與線上點餐 runtime 修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`、`online_ordering`。
+- 後台出單機、權限與線上點餐 runtime 修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`、`online_ordering`；`printer_settings.rules` 會保存分類 `categories` 與指定品項 `itemIds`。
 - 後台稽核讀取走 `GET /admin/audit-events?limit=50`，最多一次回傳 100 筆。
 - 後台支付事件讀取走 `GET /admin/payment-events?limit=50`，最多一次回傳 100 筆；可用 `provider=line-pay` 之類 query 篩選 provider。
 

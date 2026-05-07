@@ -56,7 +56,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 4. POS 平板先對訂單建立 3 分鐘 claim lease；同一張單若被其他平板持有且未逾時，前端會停用收款、出單與狀態按鈕，後端也會拒絕付款狀態、訂單狀態與 print job 寫入。
 5. 收款確認會把 `pending` 或 `authorized` 更新成 `paid`，並即時刷新班別摘要。
 6. 未收款訂單可在後台編輯模式下作廢成 `voided`；已收款訂單可在後台編輯模式下退款成 `payment_status=refunded`，同時寫入交易流水並排除銷售。
-7. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、貼紙/收據模式與份數建立列印計畫；消費者頁依 `pos_settings.online_ordering` 顯示接單狀態、平均備餐時間與預約欄位。
+7. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、指定品項、貼紙/收據模式與份數建立列印計畫；未被規則納入的品項不列印。消費者頁依 `pos_settings.online_ordering` 顯示接單狀態、平均備餐時間與預約欄位。
 8. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
 9. 列印成功或失敗後回寫列印任務狀態。
 10. POS 依目前 `register_sessions` 彙整開班後訂單，提供預期現金、現金銷售、非現金、待收款、單數、未交付、付款異常、列印失敗、作廢與現金差額，關班時把彙總值寫回 Supabase。

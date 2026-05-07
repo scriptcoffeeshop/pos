@@ -193,6 +193,7 @@ interface PrintRuleSetting {
   serviceMode: ServiceMode;
   stationId: string;
   categories: MenuCategory[];
+  itemIds: string[];
   copies: number;
   labelMode: PrintLabelMode;
   enabled: boolean;
@@ -349,28 +350,31 @@ const defaultPrinterSettings: PrinterSettings = {
       serviceMode: "takeout",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
       labelMode: "label",
       enabled: true,
     },
     {
       id: "dine-in-receipt",
-      name: "內用收據",
+      name: "內用貼紙",
       serviceMode: "dine-in",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
-      labelMode: "receipt",
+      labelMode: "label",
       enabled: true,
     },
     {
       id: "delivery-receipt",
-      name: "外送收據",
+      name: "外送貼紙",
       serviceMode: "delivery",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
-      labelMode: "both",
+      labelMode: "label",
       enabled: true,
     },
   ],
@@ -645,7 +649,7 @@ api.get("/settings/runtime", async (c) => {
   );
 
   return c.json({
-    printerSettings,
+    printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
     onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
     posAppearance: normalizePosAppearanceForRuntime(posAppearance),
   });
@@ -3037,6 +3041,65 @@ const sanitizeIdentifier = (value: unknown, fallback: string): string =>
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
+const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
+  if (name === "內用收據" || (name.includes("內用") && name.includes("收據"))) {
+    return "內用貼紙";
+  }
+
+  if (name === "外送收據" || (name.includes("外送") && name.includes("收據"))) {
+    return "外送貼紙";
+  }
+
+  if (serviceMode === "dine-in" && name === "新印單規則") {
+    return "內用貼紙";
+  }
+
+  if (serviceMode === "delivery" && name === "新印單規則") {
+    return "外送貼紙";
+  }
+
+  return name;
+};
+
+const normalizePrintRuleLabelMode = (
+  labelMode: PrintLabelMode,
+  originalName: string,
+): PrintLabelMode => {
+  if (originalName === "內用收據" || originalName === "外送收據") {
+    return "label";
+  }
+
+  return labelMode;
+};
+
+const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterSettings => ({
+  stations: Array.isArray(settings.stations)
+    ? settings.stations.map((station) => ({ ...station }))
+    : [],
+  rules: Array.isArray(settings.rules)
+    ? settings.rules.map((rule) => {
+      const originalName = sanitizeText(rule.name, "印單規則");
+      const serviceMode = serviceModes.includes(rule.serviceMode) ? rule.serviceMode : "takeout";
+      const labelMode = labelModes.includes(rule.labelMode) ? rule.labelMode : "label";
+      const categories = Array.isArray(rule.categories)
+        ? rule.categories.map(sanitizeMenuCategory).filter(Boolean)
+        : [];
+      const itemIds = Array.isArray(rule.itemIds)
+        ? rule.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+        : [];
+
+      return {
+        ...rule,
+        name: normalizePrintRuleName(originalName, serviceMode),
+        serviceMode,
+        categories,
+        itemIds,
+        labelMode: normalizePrintRuleLabelMode(labelMode, originalName),
+      };
+    })
+    : [],
+});
+
 const validatePrinterSettings = (input: unknown): {
   value: PrinterSettings | null;
   error: string | null;
@@ -3102,14 +3165,19 @@ const validatePrinterSettings = (input: unknown): {
     const categories = Array.isArray(entry.categories)
       ? entry.categories.map(sanitizeMenuCategory).filter(Boolean)
       : [];
+    const itemIds = Array.isArray(entry.itemIds)
+      ? entry.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+      : [];
+    const name = sanitizeText(entry.name, `規則 ${index + 1}`);
     rules.push({
       id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),
-      name: sanitizeText(entry.name, `規則 ${index + 1}`),
+      name: normalizePrintRuleName(name, serviceMode),
       serviceMode,
       stationId,
       categories,
+      itemIds,
       copies,
-      labelMode,
+      labelMode: normalizePrintRuleLabelMode(labelMode, name),
       enabled: Boolean(entry.enabled),
     });
   }

@@ -539,28 +539,31 @@ const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => 
       serviceMode: 'takeout',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
       labelMode: 'label',
       enabled: true,
     },
     {
       id: 'counter-dine-in-receipt',
-      name: '內用收據',
+      name: '內用貼紙',
       serviceMode: 'dine-in',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
-      labelMode: 'receipt',
+      labelMode: 'label',
       enabled: true,
     },
     {
       id: 'counter-delivery-receipt',
-      name: '外送收據',
+      name: '外送貼紙',
       serviceMode: 'delivery',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
-      labelMode: 'both',
+      labelMode: 'label',
       enabled: true,
     },
   ],
@@ -893,7 +896,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         name: printStation.name,
       }
     }),
-    rules: printerSettings.value.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
+    rules: printerSettings.value.rules.map((rule) => ({
+      ...rule,
+      categories: [...rule.categories],
+      itemIds: [...(rule.itemIds ?? [])],
+    })),
   })
 
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {

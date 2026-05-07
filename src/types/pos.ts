@@ -130,6 +130,7 @@ export interface PrintRuleSetting {
   serviceMode: ServiceMode
   stationId: string
   categories: MenuCategory[]
+  itemIds: string[]
   copies: number
   labelMode: PrintLabelMode
   enabled: boolean

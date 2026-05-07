@@ -4467,8 +4467,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-config-panel,
-.printer-rule-overview,
-.printer-flow-panel {
+.printer-rule-overview {
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -4486,8 +4485,7 @@ button.cart-line-summary:focus-visible {
   min-width: 0;
 }
 
-.printer-config-heading strong,
-.printer-flow-panel > strong {
+.printer-config-heading strong {
   color: var(--ink);
   font-size: 0.96rem;
   font-weight: 950;
@@ -4498,6 +4496,39 @@ button.cart-line-summary:focus-visible {
   font-size: 0.78rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.printer-rule-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.printer-rule-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.printer-rule-save-button:disabled {
+  opacity: 0.58;
+}
+
+.printer-settings-message {
+  margin: 0;
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .printer-station-list,
@@ -4607,29 +4638,102 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-rule-card {
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.52fr);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .printer-rule-card--disabled {
   opacity: 0.58;
 }
 
-.printer-rule-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 0;
+.printer-rule-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
 }
 
-.printer-rule-meta span {
-  max-width: 100%;
-  overflow: hidden;
-  padding: 6px 8px;
+.printer-rule-name-field,
+.printer-rule-control-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.printer-rule-name-field input,
+.printer-rule-control-grid input,
+.printer-rule-control-grid select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 900;
+}
+
+.printer-rule-enable-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  gap: 7px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
+  color: var(--primary-dark);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.printer-rule-enable-toggle input,
+.printer-rule-chip input,
+.printer-rule-product-chip input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--primary);
+}
+
+.printer-rule-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 86px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.printer-rule-scope {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.printer-rule-scope-heading,
+.printer-rule-picker-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.printer-rule-scope-heading strong,
+.printer-rule-picker-title strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.printer-rule-scope-heading span,
+.printer-rule-picker-title span {
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 900;
@@ -4637,30 +4741,74 @@ button.cart-line-summary:focus-visible {
   white-space: nowrap;
 }
 
-.printer-rule-empty-state {
-  min-height: 126px;
+.printer-rule-picker-section {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
 }
 
-.printer-flow-panel {
-  align-items: center;
-}
-
-.printer-flow-steps {
+.printer-rule-chip-grid,
+.printer-rule-product-grid {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 900;
+  gap: 6px;
+  min-width: 0;
 }
 
-.printer-flow-steps span {
-  padding: 7px 10px;
+.printer-rule-product-grid {
+  max-height: 150px;
+  overflow: auto;
+  padding-right: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.printer-rule-chip,
+.printer-rule-product-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  gap: 6px;
+  padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--surface);
+  background: var(--surface-muted);
   color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.printer-rule-product-chip {
+  display: grid;
+  grid-template-columns: auto minmax(78px, 1fr);
+  align-items: center;
+  min-width: 144px;
+  border-radius: 8px;
+}
+
+.printer-rule-product-chip span {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-rule-product-chip small {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-rule-chip--active {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.printer-rule-empty-state {
+  min-height: 126px;
 }
 
 .printer-control-strip {
@@ -7167,6 +7315,79 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-muted);
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.admin-toggle-grid .toggle-row--active,
+.admin-rule-item-grid .toggle-row--active {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.admin-rule-scope {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.admin-rule-scope > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin-rule-scope strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 950;
+}
+
+.admin-rule-scope span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.admin-rule-item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 7px;
+  max-height: 176px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-rule-item-grid .toggle-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-height: 42px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.admin-rule-item-grid .toggle-row span,
+.admin-rule-item-grid .toggle-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-rule-item-grid .toggle-row small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .admin-save-button {
