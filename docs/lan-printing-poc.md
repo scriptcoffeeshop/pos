@@ -24,11 +24,11 @@ rtk npm run apk:debug
 
 4. APK 內已加入 `LanPrinter` Capacitor native plugin，會透過 Android TCP socket 送出 EZPL payload。
 5. 在平板安裝 APK，按 POS 列印站的印表機按鈕送出 healthcheck label；畫面會顯示預覽與 TCP 狀態，但送到 GODEX 的內容是純 EZPL payload。
-6. 建立櫃台訂單時，若有符合目前服務方式、商品分類與貼紙設定的啟用規則，前端會依規則拆成多筆 EZPL payload 與 `print_jobs`；Android APK 會逐筆嘗試送出 EZPL，再回寫 `printed` 或 `failed`。
+6. 建立櫃台訂單時，若有符合目前服務方式、商品分類或指定品項與貼紙設定的啟用規則，前端會依規則拆成多筆 EZPL payload 與 `print_jobs`；未被規則納入的品項不會列印，Android APK 會逐筆嘗試送出 EZPL，再回寫 `printed` 或 `failed`。
 
 ## 後台設定邊界
 
-- `pos_settings.printer_settings` 保存出單機、服務方式、商品類別、單據類型與份數。
+- `pos_settings.printer_settings` 保存出單機、服務方式、商品類別、指定品項、單據類型與份數。
 - 前台會讀取 runtime 出單規則，依規則選擇啟用且自動列印的出單機。
 - 同一張訂單可依規則拆成貼紙、收據與多份 copies；瀏覽器版建立雲端 `print_jobs` 並顯示預覽，Android APK 則逐筆送出 TCP payload 並回寫列印結果。
 

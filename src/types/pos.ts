@@ -1,4 +1,4 @@
-export type MenuCategory = 'coffee' | 'tea' | 'food' | 'retail'
+export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'
@@ -6,6 +6,7 @@ export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 export type RegisterSessionStatus = 'open' | 'closed'
+export type ProductSupplyStatus = 'normal' | 'online-stopped' | 'stopped'
 
 export interface MenuItem {
   id: string
@@ -51,6 +52,7 @@ export interface CustomerDraft {
 export interface PosOrder {
   id: string
   remoteId?: string
+  isDraft?: boolean
   source: OrderSource
   mode: ServiceMode
   customerName: string
@@ -128,6 +130,7 @@ export interface PrintRuleSetting {
   serviceMode: ServiceMode
   stationId: string
   categories: MenuCategory[]
+  itemIds: string[]
   copies: number
   labelMode: PrintLabelMode
   enabled: boolean
@@ -159,9 +162,60 @@ export interface AccessControlSettings {
   roles: RoleSetting[]
 }
 
+export interface OnlineMenuOptionChoice {
+  id: string
+  label: string
+  priceDelta?: number
+}
+
+export interface OnlineMenuOptionGroup {
+  id: string
+  label: string
+  requirement: string
+  required: boolean
+  min: number
+  max: number
+  choices: OnlineMenuOptionChoice[]
+}
+
+export interface OnlineMenuCategory {
+  id: MenuCategory
+  label: string
+}
+
+export type OnlineNotificationRepeatMode = 'once' | 'continuous'
+
+export interface OnlineOrderingSettings {
+  enabled: boolean
+  allowScheduledOrders: boolean
+  averagePrepMinutes: number
+  unconfirmedReminderMinutes: number
+  acceptanceRequired: boolean
+  acceptWithoutPrinting: boolean
+  soundEnabled: boolean
+  notificationRepeatMode: OnlineNotificationRepeatMode
+  notificationVolume: number
+  pauseMessage: string
+  menuCategories: OnlineMenuCategory[]
+  availableOptionChoices: OnlineMenuOptionChoice[]
+  menuOptionGroups: OnlineMenuOptionGroup[]
+  productOptionAssignments: Record<string, string[]>
+  noteSupplyStatuses: Record<string, ProductSupplyStatus>
+}
+
+export interface PosAppearanceSettings {
+  interfaceScale: number
+  densityScale: number
+  textSize: number
+  darkMode: boolean
+  toolboxOpacity: number
+}
+
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
+  onlineOrdering: OnlineOrderingSettings
+  posAppearance: PosAppearanceSettings
 }
 
 export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'

@@ -3,7 +3,7 @@ import { cors } from "@hono/hono/cors";
 import type { Context } from "@hono/hono";
 import { createClient } from "@supabase/supabase-js";
 
-type MenuCategory = "coffee" | "tea" | "food" | "retail";
+type MenuCategory = string;
 type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
@@ -12,7 +12,7 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance";
 type ProductChannel = "pos" | "online" | "qr";
 
 interface OrderLineInput {
@@ -37,7 +37,7 @@ interface CreateOrderInput {
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
   stationId?: string;
-  lines: OrderLineInput[];
+  lines?: OrderLineInput[];
 }
 
 interface UpdateStatusInput {
@@ -159,6 +159,7 @@ interface CloseRegisterInput {
 }
 
 interface ProductUpdateInput {
+  sku?: string;
   name?: string;
   category?: MenuCategory;
   price?: number;
@@ -192,6 +193,7 @@ interface PrintRuleSetting {
   serviceMode: ServiceMode;
   stationId: string;
   categories: MenuCategory[];
+  itemIds: string[];
   copies: number;
   labelMode: PrintLabelMode;
   enabled: boolean;
@@ -213,10 +215,59 @@ interface AccessControlSettings {
   roles: RoleSetting[];
 }
 
+interface OnlineMenuOptionChoice {
+  id: string;
+  label: string;
+  priceDelta?: number;
+}
+
+interface OnlineMenuOptionGroup {
+  id: string;
+  label: string;
+  requirement: string;
+  required: boolean;
+  min: number;
+  max: number;
+  choices: OnlineMenuOptionChoice[];
+}
+
+interface OnlineMenuCategory {
+  id: MenuCategory;
+  label: string;
+}
+
+type OnlineNotificationRepeatMode = "once" | "continuous";
+type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
+
+interface OnlineOrderingSettings {
+  enabled: boolean;
+  allowScheduledOrders: boolean;
+  averagePrepMinutes: number;
+  unconfirmedReminderMinutes: number;
+  acceptanceRequired: boolean;
+  acceptWithoutPrinting: boolean;
+  soundEnabled: boolean;
+  notificationRepeatMode: OnlineNotificationRepeatMode;
+  notificationVolume: number;
+  pauseMessage: string;
+  menuCategories: OnlineMenuCategory[];
+  availableOptionChoices: OnlineMenuOptionChoice[];
+  menuOptionGroups: OnlineMenuOptionGroup[];
+  productOptionAssignments: Record<string, string[]>;
+  noteSupplyStatuses: Record<string, ProductSupplyStatus>;
+}
+
+interface PosAppearanceSettings {
+  interfaceScale: number;
+  densityScale: number;
+  textSize: number;
+  darkMode: boolean;
+  toolboxOpacity: number;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const adminPin = Deno.env.get("POS_ADMIN_PIN");
 const paymentWebhookSecret = Deno.env.get("POS_PAYMENT_WEBHOOK_SECRET");
 
 if (!supabaseUrl || !serviceRoleKey) {
@@ -299,28 +350,31 @@ const defaultPrinterSettings: PrinterSettings = {
       serviceMode: "takeout",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
       labelMode: "label",
       enabled: true,
     },
     {
       id: "dine-in-receipt",
-      name: "內用收據",
+      name: "內用貼紙",
       serviceMode: "dine-in",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
-      labelMode: "receipt",
+      labelMode: "label",
       enabled: true,
     },
     {
       id: "delivery-receipt",
-      name: "外送收據",
+      name: "外送貼紙",
       serviceMode: "delivery",
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
+      itemIds: [],
       copies: 1,
-      labelMode: "both",
+      labelMode: "label",
       enabled: true,
     },
   ],
@@ -331,7 +385,7 @@ const defaultAccessControl: AccessControlSettings = {
     {
       id: "owner",
       name: "店主",
-      pinRequired: true,
+      pinRequired: false,
       permissions: [
         "manageProducts",
         "managePrinting",
@@ -346,12 +400,57 @@ const defaultAccessControl: AccessControlSettings = {
   ],
 };
 
+const defaultOnlineOrdering: OnlineOrderingSettings = {
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
+  soundEnabled: true,
+  notificationRepeatMode: "continuous",
+  notificationVolume: 80,
+  pauseMessage: "目前暫停線上點餐，請稍後再試",
+  menuCategories: [],
+  availableOptionChoices: [],
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
+};
+
+const defaultPosAppearance: PosAppearanceSettings = {
+  interfaceScale: 0,
+  densityScale: 0,
+  textSize: 0,
+  darkMode: false,
+  toolboxOpacity: 100,
+};
+
 const loadOrder = (orderId: string) =>
   supabase
     .from("orders")
     .select(orderSelect)
     .eq("id", orderId)
     .single();
+
+const loadOrderByNumber = (orderNumber: string) =>
+  supabase
+    .from("orders")
+    .select(orderSelect)
+    .eq("order_number", orderNumber)
+    .maybeSingle();
+
+const loadOrderByIdOrNumber = (orderIdOrNumber: string) => {
+  if (normalizeUuid(orderIdOrNumber)) {
+    return supabase
+      .from("orders")
+      .select(orderSelect)
+      .eq("id", orderIdOrNumber)
+      .maybeSingle();
+  }
+
+  return loadOrderByNumber(orderIdOrNumber);
+};
 
 const loadMemberWithLedger = async (memberId: string) => {
   const { data: member, error: memberError } = await supabase
@@ -432,11 +531,10 @@ api.use(
       "x-client-info",
       "apikey",
       "content-type",
-      "x-pos-admin-pin",
       "x-pos-station-id",
       "x-pos-payment-webhook-secret",
     ],
-    allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
@@ -513,12 +611,17 @@ api.get("/products", async (c) => {
     qr: "qr_visible",
   }[channel];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("products")
     .select(productSelect)
-    .eq("is_available", true)
     .eq(channelColumn, true)
     .order("sort_order", { ascending: true });
+
+  if (channel !== "pos") {
+    query = query.eq("is_available", true);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     const existingSession = await loadOpenRegisterSession();
@@ -541,8 +644,20 @@ api.get("/settings/runtime", async (c) => {
     "printer_settings",
     defaultPrinterSettings,
   );
+  const onlineOrdering = await loadSetting<OnlineOrderingSettings>(
+    "online_ordering",
+    defaultOnlineOrdering,
+  );
+  const posAppearance = await loadSetting<PosAppearanceSettings>(
+    "pos_appearance",
+    defaultPosAppearance,
+  );
 
-  return c.json({ printerSettings });
+  return c.json({
+    printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
+    onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
+    posAppearance: normalizePosAppearanceForRuntime(posAppearance),
+  });
 });
 
 api.post("/station/heartbeat", async (c) => {
@@ -750,6 +865,43 @@ api.get("/admin/products", async (c) => {
   return c.json({ products: data });
 });
 
+api.post("/admin/products", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ProductUpdateInput>();
+  const { payload, error: validationError } = validateProductUpdateInput(input, { includeSku: true });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("products")
+    .insert(payload)
+    .select(productSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "product.create",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      productId: data.id,
+      sku: data.sku,
+      name: data.name,
+      category: data.category,
+      price: data.price,
+    },
+  });
+
+  return c.json({ product: data }, 201);
+});
+
 api.patch("/admin/products/:id", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -837,6 +989,51 @@ api.patch("/admin/products/:id", async (c) => {
   }
 
   return c.json({ product: data });
+});
+
+api.delete("/admin/products/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const productId = c.req.param("id");
+  const { data: previousProduct, error: previousProductError } = await supabase
+    .from("products")
+    .select(productSelect)
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (previousProductError) {
+    return c.json({ error: previousProductError.message }, 500);
+  }
+
+  if (!previousProduct) {
+    return c.json({ error: "Product not found" }, 404);
+  }
+
+  const { error } = await supabase
+    .from("products")
+    .delete()
+    .eq("id", productId);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "product.delete",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id")),
+    metadata: {
+      productId,
+      sku: previousProduct.sku,
+      name: previousProduct.name,
+      category: previousProduct.category,
+      price: previousProduct.price,
+    },
+  });
+
+  return c.json({ product: previousProduct });
 });
 
 api.get("/admin/members", async (c) => {
@@ -1030,7 +1227,7 @@ api.get("/admin/settings", async (c) => {
   const { data, error } = await supabase
     .from("pos_settings")
     .select("key, value")
-    .in("key", ["printer_settings", "access_control"]);
+    .in("key", ["printer_settings", "access_control", "online_ordering"]);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -1127,7 +1324,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -1183,11 +1380,26 @@ api.post("/orders", async (c) => {
   }
 
   const stationId = sanitizeStationId(input.stationId);
+  const orderLines = input.lines ?? [];
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const orderSource = input.source ?? "counter";
+  if (orderSource === "online" || orderSource === "qr") {
+    const onlineOrdering = await loadSetting<OnlineOrderingSettings>(
+      "online_ordering",
+      defaultOnlineOrdering,
+    );
+    if (!onlineOrdering.enabled) {
+      return c.json({ error: onlineOrdering.pauseMessage }, 409);
+    }
+    if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
+      return c.json({ error: "Scheduled online orders are disabled" }, 409);
+    }
+  }
+
   const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
     p_order_number: input.orderNumber,
-    p_source: input.source ?? "counter",
+    p_source: orderSource,
     p_service_mode: input.serviceMode ?? "takeout",
     p_customer_name: input.customerName?.trim() || "現場客",
     p_customer_phone: input.customerPhone?.trim() ?? "",
@@ -1197,7 +1409,7 @@ api.post("/orders", async (c) => {
     p_subtotal: input.subtotal,
     p_payment_method: input.paymentMethod ?? "cash",
     p_payment_status: input.paymentStatus ?? "pending",
-    p_lines: input.lines.map((line) => ({
+    p_lines: orderLines.map((line) => ({
       productId: line.productId ?? null,
       productSku: line.productSku,
       name: line.name,
@@ -1224,7 +1436,7 @@ api.post("/orders", async (c) => {
     metadata: {
       orderNumber: savedOrder.order_number,
       subtotal: savedOrder.subtotal,
-      lineCount: input.lines.length,
+      lineCount: orderLines.length,
       paymentStatus: savedOrder.payment_status,
       deliveryAddress: savedOrder.delivery_address,
       requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
@@ -1232,6 +1444,219 @@ api.post("/orders", async (c) => {
   });
 
   return c.json({ order: savedOrder }, 201);
+});
+
+api.post("/orders/drafts", async (c) => {
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateCounterDraftInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  const now = new Date();
+  const draftLines = normalizeDraftOrderLines(input.lines ?? []);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const existing = await loadOrderByNumber(input.orderNumber);
+  if (existing.error) {
+    return c.json({ error: existing.error.message }, 500);
+  }
+
+  if ((existing.data?.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: existing.data }, 409);
+  }
+
+  const payload = {
+    source: "counter" as OrderSource,
+    service_mode: input.serviceMode ?? "takeout",
+    customer_name: input.customerName?.trim() || "現場客",
+    customer_phone: input.customerPhone?.trim() ?? "",
+    delivery_address: (input.serviceMode ?? "takeout") === "delivery" ? deliveryAddress : "",
+    requested_fulfillment_at: requestedFulfillmentAt,
+    note: input.note?.trim() ?? "",
+    subtotal: input.subtotal,
+    payment_method: input.paymentMethod ?? "cash",
+    payment_status: input.paymentStatus ?? "pending",
+    status: "new" as OrderStatus,
+    draft_lines: draftLines,
+    ...(stationId ? buildClaimPayload(stationId, now) : {}),
+  };
+
+  const result = existing.data
+    ? await supabase
+      .from("orders")
+      .update(payload)
+      .eq("id", existing.data.id)
+      .select(orderSelect)
+      .single()
+    : await supabase
+      .from("orders")
+      .insert({
+        ...payload,
+        order_number: input.orderNumber,
+      })
+      .select(orderSelect)
+      .single();
+
+  if (result.error) {
+    return c.json({ error: result.error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: existing.data ? "order.draft_update" : "order.draft_create",
+    orderId: result.data.id,
+    stationId,
+    metadata: {
+      orderNumber: result.data.order_number,
+      subtotal: result.data.subtotal,
+      draftLineCount: draftLines.length,
+    },
+  });
+
+  return c.json({ order: result.data }, existing.data ? 200 : 201);
+});
+
+api.patch("/orders/:id/draft", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateCounterDraftInput({
+    ...input,
+    orderNumber: input.orderNumber || orderId,
+  });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const current = await loadOrderByIdOrNumber(orderId);
+  if (current.error) {
+    return c.json({ error: current.error.message }, 500);
+  }
+  if (!current.data) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  if (current.data.source !== "counter") {
+    return c.json({ error: "Only counter orders can be edited as drafts" }, 409);
+  }
+  if (terminalOrderStatuses.has(current.data.status as OrderStatus)) {
+    return c.json({ error: "Completed or voided orders cannot be edited", order: current.data }, 409);
+  }
+  if ((current.data.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: current.data }, 409);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  if (isLeaseActiveForOtherStation(current.data, stationId)) {
+    return claimConflictResponse(c, String(current.data.id), stationId);
+  }
+
+  const now = new Date();
+  const draftLines = normalizeDraftOrderLines(input.lines ?? []);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      service_mode: input.serviceMode ?? current.data.service_mode,
+      customer_name: input.customerName?.trim() || "現場客",
+      customer_phone: input.customerPhone?.trim() ?? "",
+      delivery_address: (input.serviceMode ?? current.data.service_mode) === "delivery" ? deliveryAddress : "",
+      requested_fulfillment_at: requestedFulfillmentAt,
+      note: input.note?.trim() ?? "",
+      subtotal: input.subtotal,
+      payment_method: input.paymentMethod ?? current.data.payment_method,
+      payment_status: input.paymentStatus ?? current.data.payment_status,
+      draft_lines: draftLines,
+      ...(stationId ? buildClaimPayload(stationId, now) : {}),
+    })
+    .eq("id", current.data.id)
+    .select(orderSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ order: data });
+});
+
+api.post("/orders/:id/finalize", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<CreateOrderInput>();
+  const validationError = validateOrderInput({
+    ...input,
+    orderNumber: input.orderNumber || orderId,
+  });
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const current = await loadOrderByIdOrNumber(orderId);
+  if (current.error) {
+    return c.json({ error: current.error.message }, 500);
+  }
+  if (!current.data) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  if (current.data.source !== "counter") {
+    return c.json({ error: "Only counter draft orders can be finalized" }, 409);
+  }
+  if ((current.data.order_items ?? []).length > 0) {
+    return c.json({ error: "Order is already finalized", order: current.data }, 409);
+  }
+
+  const stationId = sanitizeStationId(input.stationId);
+  if (isLeaseActiveForOtherStation(current.data, stationId)) {
+    return claimConflictResponse(c, String(current.data.id), stationId);
+  }
+
+  const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
+  const orderLines = input.lines ?? [];
+  const { data: finalizedOrderId, error: finalizeError } = await supabase.rpc("finalize_pos_order", {
+    p_order_id: current.data.id,
+    p_service_mode: input.serviceMode ?? "takeout",
+    p_customer_name: input.customerName?.trim() || "現場客",
+    p_customer_phone: input.customerPhone?.trim() ?? "",
+    p_delivery_address: deliveryAddress,
+    p_requested_fulfillment_at: requestedFulfillmentAt,
+    p_note: input.note?.trim() ?? "",
+    p_subtotal: input.subtotal,
+    p_payment_method: input.paymentMethod ?? "cash",
+    p_payment_status: input.paymentStatus ?? "pending",
+    p_lines: orderLines.map((line) => ({
+      productId: line.productId ?? null,
+      productSku: line.productSku,
+      name: line.name,
+      unitPrice: line.unitPrice,
+      quantity: line.quantity,
+      options: line.options ?? [],
+    })),
+  });
+
+  if (finalizeError) {
+    const status = /inventory|Product not found|quantity|finalized/i.test(finalizeError.message) ? 409 : 500;
+    return c.json({ error: finalizeError.message }, status);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(String(finalizedOrderId));
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.draft_finalize",
+    orderId: savedOrder.id,
+    stationId,
+    metadata: {
+      orderNumber: savedOrder.order_number,
+      subtotal: savedOrder.subtotal,
+      lineCount: orderLines.length,
+      paymentStatus: savedOrder.payment_status,
+    },
+  });
+
+  return c.json({ order: savedOrder });
 });
 
 api.post("/orders/:id/claim", async (c) => {
@@ -1331,7 +1756,7 @@ api.patch("/orders/:id/status", async (c) => {
   const stationId = sanitizeStationId(input.stationId);
 
   if (
-    !["new", "preparing", "ready", "served", "failed"].includes(input.status)
+    !["new", "preparing", "ready", "served", "failed", "voided"].includes(input.status)
   ) {
     return c.json({ error: "Invalid order status" }, 400);
   }
@@ -1341,10 +1766,11 @@ api.patch("/orders/:id/status", async (c) => {
   }
 
   const now = new Date();
-  const shouldReleaseClaim = input.status === "served" || input.status === "failed";
+  const shouldReleaseClaim = input.status === "served" || input.status === "failed" || input.status === "voided";
   const payload = shouldReleaseClaim
     ? {
       status: input.status,
+      ...(input.status === "voided" ? { payment_status: "failed" as PaymentStatus } : {}),
       claimed_by: null,
       claimed_at: null,
       claim_expires_at: null,
@@ -2228,6 +2654,60 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
   return null;
 };
 
+const validateCounterDraftInput = (input: CreateOrderInput): string | null => {
+  if (!input.orderNumber?.trim()) {
+    return "orderNumber is required";
+  }
+
+  if (input.source && input.source !== "counter") {
+    return "counter drafts must use counter source";
+  }
+
+  if (input.requestedFulfillmentAt && !normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt)) {
+    return "requestedFulfillmentAt must be a valid ISO datetime";
+  }
+
+  if (!Number.isInteger(input.subtotal) || input.subtotal < 0) {
+    return "subtotal must be a non-negative integer";
+  }
+
+  return null;
+};
+
+const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
+  if (!Array.isArray(lines)) {
+    return [];
+  }
+
+  return lines.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const line = entry as Partial<OrderLineInput>;
+    const productSku = sanitizeText(line.productSku, "").slice(0, 80);
+    const name = sanitizeText(line.name, "").slice(0, 120);
+    const unitPrice = Number(line.unitPrice);
+    const quantity = Number(line.quantity);
+    if (!productSku || !name || !Number.isInteger(unitPrice) || unitPrice < 0 || !Number.isInteger(quantity) || quantity <= 0) {
+      return [];
+    }
+
+    const productId = normalizeUuid(line.productId) ?? undefined;
+    const normalizedLine: OrderLineInput = {
+      productSku,
+      name,
+      unitPrice,
+      quantity,
+      options: Array.isArray(line.options) ? line.options.filter((option) => typeof option === "string").slice(0, 12) : [],
+    };
+    if (productId) {
+      normalizedLine.productId = productId;
+    }
+    return [normalizedLine];
+  });
+};
+
 const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -2237,7 +2717,6 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
-const productCategories: MenuCategory[] = ["coffee", "tea", "food", "retail"];
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
 const knownPermissions = [
@@ -2276,6 +2755,29 @@ const readProductChannel = (channel: string | undefined): ProductChannel => {
   return "pos";
 };
 
+const sanitizeMenuCategory = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().replace(/\s+/g, " ").slice(0, 40);
+};
+
+const sanitizeSku = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const sku = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 64);
+
+  return sku || `product-${Date.now().toString(36)}`;
+};
+
 const isPrintStatus = (status: unknown): status is PrintStatus =>
   status === "queued" || status === "printed" || status === "skipped" ||
   status === "failed";
@@ -2289,15 +2791,8 @@ const isWebhookPaymentStatus = (
   status === "authorized" || status === "paid" || status === "failed" ||
   status === "expired" || status === "refunded";
 
-const requireAdmin = (c: Context): Response | null => {
-  if (!adminPin) {
-    return c.json({ error: "POS_ADMIN_PIN is not configured" }, 503);
-  }
-
-  if (c.req.header("x-pos-admin-pin") !== adminPin) {
-    return c.json({ error: "Invalid admin PIN" }, 401);
-  }
-
+const requireAdmin = (_c: Context): Response | null => {
+  // Management writes are now gated by the POS tablet edit-mode gesture.
   return null;
 };
 
@@ -2353,21 +2848,31 @@ const validatePaymentWebhookInput = (input: PaymentWebhookInput): string | null 
 
 const validateProductUpdateInput = (
   input: ProductUpdateInput,
+  options: { includeSku?: boolean } = {},
 ): {
   payload: Record<string, unknown>;
   error: string | null;
 } => {
   const payload: Record<string, unknown> = {};
 
+  if (options.includeSku) {
+    const sku = sanitizeSku(input.sku ?? input.name);
+    if (!sku) {
+      return { payload, error: "sku is required" };
+    }
+    payload.sku = sku;
+  }
+
   if (typeof input.name !== "string" || input.name.trim().length === 0) {
     return { payload, error: "name is required" };
   }
   payload.name = input.name.trim();
 
-  if (!input.category || !productCategories.includes(input.category)) {
+  const category = sanitizeMenuCategory(input.category);
+  if (!category) {
     return { payload, error: "category is invalid" };
   }
-  payload.category = input.category;
+  payload.category = category;
 
   const price = input.price;
   if (!Number.isInteger(price) || typeof price !== "number" || price < 0) {
@@ -2541,6 +3046,65 @@ const sanitizeIdentifier = (value: unknown, fallback: string): string =>
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
+const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
+  if (name === "內用收據" || (name.includes("內用") && name.includes("收據"))) {
+    return "內用貼紙";
+  }
+
+  if (name === "外送收據" || (name.includes("外送") && name.includes("收據"))) {
+    return "外送貼紙";
+  }
+
+  if (serviceMode === "dine-in" && name === "新印單規則") {
+    return "內用貼紙";
+  }
+
+  if (serviceMode === "delivery" && name === "新印單規則") {
+    return "外送貼紙";
+  }
+
+  return name;
+};
+
+const normalizePrintRuleLabelMode = (
+  labelMode: PrintLabelMode,
+  originalName: string,
+): PrintLabelMode => {
+  if (originalName === "內用收據" || originalName === "外送收據") {
+    return "label";
+  }
+
+  return labelMode;
+};
+
+const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterSettings => ({
+  stations: Array.isArray(settings.stations)
+    ? settings.stations.map((station) => ({ ...station }))
+    : [],
+  rules: Array.isArray(settings.rules)
+    ? settings.rules.map((rule) => {
+      const originalName = sanitizeText(rule.name, "印單規則");
+      const serviceMode = serviceModes.includes(rule.serviceMode) ? rule.serviceMode : "takeout";
+      const labelMode = labelModes.includes(rule.labelMode) ? rule.labelMode : "label";
+      const categories = Array.isArray(rule.categories)
+        ? rule.categories.map(sanitizeMenuCategory).filter(Boolean)
+        : [];
+      const itemIds = Array.isArray(rule.itemIds)
+        ? rule.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+        : [];
+
+      return {
+        ...rule,
+        name: normalizePrintRuleName(originalName, serviceMode),
+        serviceMode,
+        categories,
+        itemIds,
+        labelMode: normalizePrintRuleLabelMode(labelMode, originalName),
+      };
+    })
+    : [],
+});
+
 const validatePrinterSettings = (input: unknown): {
   value: PrinterSettings | null;
   error: string | null;
@@ -2604,18 +3168,21 @@ const validatePrinterSettings = (input: unknown): {
       return { value: null, error: "print rule copies must be 1 to 5" };
     }
     const categories = Array.isArray(entry.categories)
-      ? entry.categories.filter((category): category is MenuCategory =>
-        productCategories.includes(category as MenuCategory)
-      )
+      ? entry.categories.map(sanitizeMenuCategory).filter(Boolean)
       : [];
+    const itemIds = Array.isArray(entry.itemIds)
+      ? entry.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+      : [];
+    const name = sanitizeText(entry.name, `規則 ${index + 1}`);
     rules.push({
       id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),
-      name: sanitizeText(entry.name, `規則 ${index + 1}`),
+      name: normalizePrintRuleName(name, serviceMode),
       serviceMode,
       stationId,
       categories,
+      itemIds,
       copies,
-      labelMode,
+      labelMode: normalizePrintRuleLabelMode(labelMode, name),
       enabled: Boolean(entry.enabled),
     });
   }
@@ -2659,15 +3226,350 @@ const validateAccessControl = (input: unknown): {
   return { value: { roles }, error: null };
 };
 
+const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenGroupIds = new Set<string>();
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const group = entry as Partial<OnlineMenuOptionGroup>;
+    const id = sanitizeText(group.id, "").slice(0, 80);
+    const label = sanitizeText(group.label, "").slice(0, 80);
+    if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+      return [];
+    }
+
+    const seenChoiceIds = new Set<string>();
+    const choices = group.choices.flatMap((entryChoice) => {
+      if (!entryChoice || typeof entryChoice !== "object") {
+        return [];
+      }
+
+      const choice = entryChoice as Partial<OnlineMenuOptionChoice>;
+      const choiceId = sanitizeText(choice.id, "").slice(0, 80);
+      const choiceLabel = sanitizeText(choice.label, "").slice(0, 80);
+      if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+        return [];
+      }
+
+      seenChoiceIds.add(choiceId);
+      const normalizedChoice: OnlineMenuOptionChoice = {
+        id: choiceId,
+        label: choiceLabel,
+      };
+      if (Number.isFinite(choice.priceDelta)) {
+        normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0);
+      }
+      return [normalizedChoice];
+    });
+
+    if (choices.length === 0) {
+      return [];
+    }
+
+    const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)));
+    const required = Boolean(group.required);
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0;
+    const requirement = sanitizeText(group.requirement, required ? `必選 ${min} 個` : `選填最多 ${max} 個`).slice(0, 80);
+    seenGroupIds.add(id);
+
+    return [{
+      id,
+      label,
+      requirement,
+      required,
+      min,
+      max,
+      choices,
+    }];
+  });
+};
+
+const choicesFromOnlineOptionGroups = (groups: OnlineMenuOptionGroup[]): OnlineMenuOptionChoice[] => {
+  const seenChoiceIds = new Set<string>();
+  return groups.flatMap((group) =>
+    group.choices.flatMap((choice) => {
+      if (seenChoiceIds.has(choice.id)) {
+        return [];
+      }
+      seenChoiceIds.add(choice.id);
+      return [{ ...choice }];
+    })
+  );
+};
+
+const normalizeOnlineOptionChoices = (
+  input: unknown,
+  fallbackChoices: OnlineMenuOptionChoice[] = [],
+): OnlineMenuOptionChoice[] => {
+  const sourceChoices = Array.isArray(input) ? [...input, ...fallbackChoices] : fallbackChoices;
+  const seenChoiceIds = new Set<string>();
+  return sourceChoices.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const choice = entry as Partial<OnlineMenuOptionChoice>;
+    const choiceId = sanitizeText(choice.id, "").slice(0, 80);
+    const choiceLabel = sanitizeText(choice.label, "").slice(0, 80);
+    if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+      return [];
+    }
+
+    seenChoiceIds.add(choiceId);
+    const normalizedChoice: OnlineMenuOptionChoice = {
+      id: choiceId,
+      label: choiceLabel,
+    };
+    if (Number.isFinite(choice.priceDelta)) {
+      normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0);
+    }
+    return [normalizedChoice];
+  });
+};
+
+const normalizeOnlineMenuCategories = (input: unknown): OnlineMenuCategory[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenCategoryIds = new Set<string>();
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const category = entry as Partial<OnlineMenuCategory>;
+    const id = sanitizeText(category.id, "").slice(0, 80);
+    const label = sanitizeText(category.label, "").slice(0, 80);
+    if (!id || !label || seenCategoryIds.has(id)) {
+      return [];
+    }
+
+    seenCategoryIds.add(id);
+    return [{ id, label }];
+  });
+};
+
+const normalizeProductOptionAssignments = (
+  input: unknown,
+  groups: OnlineMenuOptionGroup[],
+): Record<string, string[]> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const validGroupIds = new Set(groups.map((group) => group.id));
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, string[]>>((assignments, [productId, groupIds]) => {
+    if (!Array.isArray(groupIds)) {
+      return assignments;
+    }
+
+    const normalizedIds = [
+      ...new Set(groupIds.filter((groupId): groupId is string =>
+        typeof groupId === "string" && validGroupIds.has(groupId)
+      )),
+    ];
+    if (normalizedIds.length > 0) {
+      assignments[productId.slice(0, 80)] = normalizedIds;
+    }
+    return assignments;
+  }, {});
+};
+
+const normalizeNoteSupplyStatuses = (input: unknown): Record<string, ProductSupplyStatus> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, ProductSupplyStatus>>(
+    (statuses, [noteId, status]) => {
+      if (status === "normal" || status === "online-stopped" || status === "stopped") {
+        statuses[noteId.slice(0, 160)] = status;
+      }
+      return statuses;
+    },
+    {},
+  );
+};
+
+const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultOnlineOrdering;
+  }
+
+  const settings = input as Partial<OnlineOrderingSettings>;
+  const averagePrepMinutes = Number(settings.averagePrepMinutes ?? defaultOnlineOrdering.averagePrepMinutes);
+  const unconfirmedReminderMinutes = Number(
+    settings.unconfirmedReminderMinutes ?? defaultOnlineOrdering.unconfirmedReminderMinutes,
+  );
+  const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
+  const notificationRepeatMode: OnlineNotificationRepeatMode =
+    settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
+      ? settings.notificationRepeatMode
+      : defaultOnlineOrdering.notificationRepeatMode;
+  const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
+  const availableOptionChoices = normalizeOnlineOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineOptionGroups(menuOptionGroups),
+  );
+
+  return {
+    enabled: settings.enabled !== false,
+    allowScheduledOrders: settings.allowScheduledOrders !== false,
+    averagePrepMinutes: Number.isInteger(averagePrepMinutes)
+      ? Math.min(Math.max(averagePrepMinutes, 0), 180)
+      : defaultOnlineOrdering.averagePrepMinutes,
+    unconfirmedReminderMinutes: Number.isInteger(unconfirmedReminderMinutes)
+      ? Math.min(Math.max(unconfirmedReminderMinutes, 0), 120)
+      : defaultOnlineOrdering.unconfirmedReminderMinutes,
+    acceptanceRequired: settings.acceptanceRequired !== false,
+    acceptWithoutPrinting: Boolean(settings.acceptWithoutPrinting),
+    soundEnabled: settings.soundEnabled !== false,
+    notificationRepeatMode,
+    notificationVolume: Number.isInteger(notificationVolume)
+      ? Math.min(Math.max(notificationVolume, 0), 100)
+      : defaultOnlineOrdering.notificationVolume,
+    pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
+    menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
+    availableOptionChoices,
+    menuOptionGroups,
+    productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
+  };
+};
+
+const clampAppearanceOffset = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numberValue), -200), 200);
+};
+
+const clampAppearanceOpacity = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(numberValue), 35), 100);
+};
+
+const normalizePosAppearanceForRuntime = (input: unknown): PosAppearanceSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultPosAppearance;
+  }
+
+  const settings = input as Partial<PosAppearanceSettings>;
+  return {
+    interfaceScale: clampAppearanceOffset(settings.interfaceScale, defaultPosAppearance.interfaceScale),
+    densityScale: clampAppearanceOffset(settings.densityScale, defaultPosAppearance.densityScale),
+    textSize: clampAppearanceOffset(settings.textSize, defaultPosAppearance.textSize),
+    darkMode: settings.darkMode === true,
+    toolboxOpacity: clampAppearanceOpacity(settings.toolboxOpacity, defaultPosAppearance.toolboxOpacity),
+  };
+};
+
+const validatePosAppearance = (input: unknown): {
+  value: PosAppearanceSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "pos_appearance must be an object" };
+  }
+
+  return {
+    value: normalizePosAppearanceForRuntime(input),
+    error: null,
+  };
+};
+
+const validateOnlineOrdering = (input: unknown): {
+  value: OnlineOrderingSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "online_ordering must be an object" };
+  }
+
+  const settings = input as Partial<OnlineOrderingSettings>;
+  const averagePrepMinutes = Number(settings.averagePrepMinutes);
+  const unconfirmedReminderMinutes = Number(settings.unconfirmedReminderMinutes);
+  const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
+  if (!Number.isInteger(averagePrepMinutes) || averagePrepMinutes < 0 || averagePrepMinutes > 180) {
+    return { value: null, error: "averagePrepMinutes must be between 0 and 180" };
+  }
+
+  if (
+    !Number.isInteger(unconfirmedReminderMinutes) ||
+    unconfirmedReminderMinutes < 0 ||
+    unconfirmedReminderMinutes > 120
+  ) {
+    return { value: null, error: "unconfirmedReminderMinutes must be between 0 and 120" };
+  }
+
+  if (!Number.isInteger(notificationVolume) || notificationVolume < 0 || notificationVolume > 100) {
+    return { value: null, error: "notificationVolume must be between 0 and 100" };
+  }
+
+  const pauseMessage = sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120);
+  const notificationRepeatMode: OnlineNotificationRepeatMode =
+    settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
+      ? settings.notificationRepeatMode
+      : defaultOnlineOrdering.notificationRepeatMode;
+  const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories);
+  const menuOptionGroups = normalizeOnlineOptionGroups(settings.menuOptionGroups);
+  const availableOptionChoices = normalizeOnlineOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineOptionGroups(menuOptionGroups),
+  );
+
+  return {
+    value: {
+      enabled: Boolean(settings.enabled),
+      allowScheduledOrders: Boolean(settings.allowScheduledOrders),
+      averagePrepMinutes,
+      unconfirmedReminderMinutes,
+      acceptanceRequired: settings.acceptanceRequired !== false,
+      acceptWithoutPrinting: Boolean(settings.acceptWithoutPrinting),
+      soundEnabled: Boolean(settings.soundEnabled),
+      notificationRepeatMode,
+      notificationVolume,
+      pauseMessage,
+      menuCategories,
+      availableOptionChoices,
+      menuOptionGroups,
+      productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+      noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
+    },
+    error: null,
+  };
+};
+
 const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
     return validatePrinterSettings(input);
+  }
+
+  if (key === "online_ordering") {
+    return validateOnlineOrdering(input);
+  }
+
+  if (key === "pos_appearance") {
+    return validatePosAppearance(input);
   }
 
   return validateAccessControl(input);

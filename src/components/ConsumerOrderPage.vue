@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Check,
   CheckCircle2,
   Clock3,
   CreditCard,
@@ -13,21 +14,40 @@ import {
   TicketCheck,
   Trash2,
 } from 'lucide-vue-next'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { categoryLabels, menuItems } from '../data/menu'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
-import { createOrder, fetchProducts, isPosApiConfigured } from '../lib/posApi'
-import type { CartLine, CustomerDraft, MenuCategory, MenuItem, PaymentMethod, PosOrder, ServiceMode } from '../types/pos'
+import {
+  createOrder,
+  defaultOnlineOrderingSettings,
+  fetchProducts,
+  fetchRuntimeSettings,
+  isPosApiConfigured,
+} from '../lib/posApi'
+import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
+import type {
+  CartLine,
+  CustomerDraft,
+  MenuCategory,
+  MenuItem,
+  OnlineMenuCategory,
+  OnlineMenuOptionGroup,
+  OnlineOrderingSettings,
+  PaymentMethod,
+  PosOrder,
+  ServiceMode,
+} from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
+type OptionSelectionMap = Record<string, string[]>
 
-const categoryOptions: Array<{ value: CategoryFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'coffee', label: categoryLabels.coffee },
-  { value: 'tea', label: categoryLabels.tea },
-  { value: 'food', label: categoryLabels.food },
-  { value: 'retail', label: categoryLabels.retail },
+const allCategoryOption: { value: 'all'; label: string } = { value: 'all', label: '全部' }
+const defaultCategoryOptions: Array<{ value: MenuCategory; label: string }> = [
+  { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
+  { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
+  { value: 'food', label: categoryLabels.food ?? '輕食' },
+  { value: 'retail', label: categoryLabels.retail ?? '零售' },
 ]
 
 const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
@@ -49,12 +69,19 @@ const serviceMode = ref<ServiceMode>('takeout')
 const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 const menuCatalog = ref<MenuItem[]>([])
+const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
 const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
 const isSubmitting = ref(false)
 const orderMessage = ref('讀取線上菜單中')
 const formError = ref('')
 const lastOrder = ref<PosOrder | null>(null)
+const optionPanelItem = ref<MenuItem | null>(null)
+const optionSelections = ref<OptionSelectionMap>({})
+const optionError = ref('')
+let onlineMenuSyncTimer: number | null = null
+let onlineRealtimeRefreshTimer: number | null = null
+let onlineRealtimeUnsubscribe: (() => void) | null = null
 const customer = reactive<CustomerDraft>({
   name: '',
   phone: '',
@@ -71,6 +98,49 @@ const onlineFallbackMenu = (): MenuItem[] =>
       onlineVisible: true,
     }))
 
+const runtimeCategoryDefinitions = computed<OnlineMenuCategory[]>(() => {
+  const definitions = new Map<MenuCategory, OnlineMenuCategory>()
+  for (const category of onlineOrdering.value.menuCategories) {
+    definitions.set(category.id, category)
+  }
+
+  return [...definitions.values()]
+})
+
+const categoryLabelFor = (category: MenuCategory): string =>
+  runtimeCategoryDefinitions.value.find((definition) => definition.id === category)?.label ??
+  defaultCategoryOptions.find((option) => option.value === category)?.label ??
+  categoryLabels[category] ??
+  category
+
+const categoryOptions = computed<Array<{ value: CategoryFilter; label: string }>>(() => {
+  const options = new Map<MenuCategory, { value: MenuCategory; label: string }>()
+
+  for (const definition of runtimeCategoryDefinitions.value) {
+    options.set(definition.id, {
+      value: definition.id,
+      label: definition.label,
+    })
+  }
+
+  for (const option of defaultCategoryOptions) {
+    if (!options.has(option.value) && menuCatalog.value.some((item) => item.category === option.value)) {
+      options.set(option.value, option)
+    }
+  }
+
+  for (const item of menuCatalog.value) {
+    if (!options.has(item.category)) {
+      options.set(item.category, {
+        value: item.category,
+        label: categoryLabelFor(item.category),
+      })
+    }
+  }
+
+  return [allCategoryOption, ...options.values()]
+})
+
 const itemMatchesFilter = (item: MenuItem): boolean => {
   const keyword = searchTerm.value.trim().toLowerCase()
   const matchesCategory = selectedCategory.value === 'all' || item.category === selectedCategory.value
@@ -84,7 +154,7 @@ const itemMatchesFilter = (item: MenuItem): boolean => {
 
 const filteredMenu = computed(() => menuCatalog.value.filter(itemMatchesFilter))
 const menuGroups = computed(() =>
-  categoryOptions
+  categoryOptions.value
     .filter((category): category is { value: MenuCategory; label: string } => category.value !== 'all')
     .map((category) => ({
       ...category,
@@ -96,7 +166,20 @@ const menuGroups = computed(() =>
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
+const canOrderOnline = computed(() => onlineOrdering.value.enabled)
+const onlineStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放接單' : '暫停接單'))
+const onlineStatusDetail = computed(() =>
+  onlineOrdering.value.enabled
+    ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+    : onlineOrdering.value.pauseMessage,
+)
+const requestedFulfillmentMinimum = computed(() => {
+  const nextTime = new Date(Date.now() + Math.max(onlineOrdering.value.averagePrepMinutes, 0) * 60_000)
+  const timezoneOffsetMs = nextTime.getTimezoneOffset() * 60 * 1000
+  return new Date(nextTime.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+})
 const canSubmit = computed(() =>
+  canOrderOnline.value &&
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
@@ -104,7 +187,149 @@ const canSubmit = computed(() =>
   !isSubmitting.value,
 )
 
+const optionGroupMap = computed(() =>
+  new Map(onlineOrdering.value.menuOptionGroups.map((group) => [group.id, group])),
+)
+
+const visibleChoicesForGroup = (group: OnlineMenuOptionGroup): OnlineMenuOptionGroup['choices'] =>
+  group.choices.filter((choice) => {
+    const status =
+      onlineOrdering.value.noteSupplyStatuses[choice.id] ??
+      onlineOrdering.value.noteSupplyStatuses[`${group.id}-${choice.id}`] ??
+      'normal'
+    return status === 'normal'
+  })
+
+const visibleOptionGroup = (group: OnlineMenuOptionGroup): OnlineMenuOptionGroup => ({
+  ...group,
+  choices: visibleChoicesForGroup(group),
+})
+
+const optionGroupsForItem = (item: MenuItem): OnlineMenuOptionGroup[] =>
+  (onlineOrdering.value.productOptionAssignments[item.id] ?? [])
+    .map((groupId) => optionGroupMap.value.get(groupId))
+    .filter((group): group is OnlineMenuOptionGroup => Boolean(group))
+    .map(visibleOptionGroup)
+    .filter((group) => group.choices.length > 0)
+
+const optionPanelGroups = computed(() => (optionPanelItem.value ? optionGroupsForItem(optionPanelItem.value) : []))
+
+const selectedOptionChoices = computed(() =>
+  optionPanelGroups.value.flatMap((group) => {
+    const selectedIds = new Set(optionSelections.value[group.id] ?? [])
+    return group.choices
+      .filter((choice) => selectedIds.has(choice.id))
+      .map((choice) => ({ group, choice }))
+  }),
+)
+
+const optionPriceAdjustment = computed(() =>
+  selectedOptionChoices.value.reduce((total, entry) => total + (entry.choice.priceDelta ?? 0), 0),
+)
+
+const optionPanelUnitPrice = computed(() =>
+  optionPanelItem.value ? Math.max(0, optionPanelItem.value.price + optionPriceAdjustment.value) : 0,
+)
+
+const selectedOptionLabels = computed(() =>
+  selectedOptionChoices.value.map((entry) =>
+    entry.choice.priceDelta && entry.choice.priceDelta > 0
+      ? `${entry.choice.label} +${formatCurrency(entry.choice.priceDelta)}`
+      : entry.choice.label,
+  ),
+)
+
+const resetOptionSelections = (groups: OnlineMenuOptionGroup[]): OptionSelectionMap =>
+  groups.reduce<OptionSelectionMap>((selections, group) => {
+    selections[group.id] = []
+    return selections
+  }, {})
+
+const openOptionPanel = (item: MenuItem): void => {
+  const groups = optionGroupsForItem(item)
+  optionPanelItem.value = item
+  optionSelections.value = resetOptionSelections(groups)
+  optionError.value = ''
+}
+
+const closeOptionPanel = (): void => {
+  optionPanelItem.value = null
+  optionSelections.value = {}
+  optionError.value = ''
+}
+
+const optionSelected = (groupId: string, choiceId: string): boolean =>
+  (optionSelections.value[groupId] ?? []).includes(choiceId)
+
+const toggleOptionChoice = (group: OnlineMenuOptionGroup, choiceId: string): void => {
+  const current = optionSelections.value[group.id] ?? []
+  const isSelected = current.includes(choiceId)
+  const next = isSelected
+    ? current.filter((id) => id !== choiceId)
+    : group.max === 1
+      ? [choiceId]
+      : [...current, choiceId].slice(0, group.max)
+
+  optionSelections.value = {
+    ...optionSelections.value,
+    [group.id]: next,
+  }
+  optionError.value = ''
+}
+
+const validateOptionSelections = (): boolean => {
+  for (const group of optionPanelGroups.value) {
+    const selectedCount = optionSelections.value[group.id]?.length ?? 0
+    if (group.required && selectedCount < group.min) {
+      optionError.value = `「${group.label}」尚未選擇完成`
+      return false
+    }
+
+    if (selectedCount > group.max) {
+      optionError.value = `「${group.label}」最多只能選 ${group.max} 個`
+      return false
+    }
+  }
+
+  optionError.value = ''
+  return true
+}
+
+const addConfiguredLine = (item: MenuItem, options: string[], unitPrice: number): void => {
+  const variantKey = [item.id, ...options].join('::')
+  const existing = cartLines.value.find((line) => line.itemId === variantKey)
+  if (existing) {
+    existing.quantity += 1
+    return
+  }
+
+  const nextLine: CartLine = {
+    itemId: variantKey,
+    productSku: item.sku,
+    productId: item.id,
+    category: item.category,
+    name: item.name,
+    unitPrice,
+    quantity: 1,
+    options,
+    prepStation: item.prepStation,
+    printLabel: item.printLabel,
+  }
+
+  cartLines.value.push(nextLine)
+}
+
 const addItem = (item: MenuItem): void => {
+  if (!canOrderOnline.value) {
+    formError.value = onlineOrdering.value.pauseMessage
+    return
+  }
+
+  if (optionGroupsForItem(item).length > 0) {
+    openOptionPanel(item)
+    return
+  }
+
   const existing = cartLines.value.find((line) => line.itemId === item.id)
   if (existing) {
     existing.quantity += 1
@@ -114,10 +339,13 @@ const addItem = (item: MenuItem): void => {
   const nextLine: CartLine = {
     itemId: item.id,
     productSku: item.sku,
+    category: item.category,
     name: item.name,
     unitPrice: item.price,
     quantity: 1,
     options: item.tags.slice(0, 1),
+    prepStation: item.prepStation,
+    printLabel: item.printLabel,
   }
 
   if (item.id !== item.sku) {
@@ -125,6 +353,15 @@ const addItem = (item: MenuItem): void => {
   }
 
   cartLines.value.push(nextLine)
+}
+
+const confirmOptionPanel = (): void => {
+  if (!optionPanelItem.value || !validateOptionSelections()) {
+    return
+  }
+
+  addConfiguredLine(optionPanelItem.value, selectedOptionLabels.value, optionPanelUnitPrice.value)
+  closeOptionPanel()
 }
 
 const increaseLine = (itemId: string): void => {
@@ -167,7 +404,7 @@ const isProductOrderable = (item: MenuItem): boolean =>
   !isProductTemporarilyStopped(item)
 
 const productDescription = (item: MenuItem): string => {
-  const description = item.tags.join('、') || categoryLabels[item.category]
+  const description = item.tags.join('、') || categoryLabelFor(item.category)
   if (
     item.inventoryCount !== null &&
     item.lowStockThreshold !== null &&
@@ -195,29 +432,53 @@ const toRequestedFulfillmentIso = (value: string): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-const loadOnlineMenu = async (): Promise<void> => {
-  isLoading.value = true
-  formError.value = ''
+const loadOnlineMenu = async (quiet = false): Promise<void> => {
+  if (!quiet) {
+    isLoading.value = true
+  }
+  if (!quiet) {
+    formError.value = ''
+  }
 
   try {
     if (!isPosApiConfigured) {
+      onlineOrdering.value = defaultOnlineOrderingSettings()
       menuCatalog.value = onlineFallbackMenu()
       orderMessage.value = '線上菜單預覽'
       return
     }
 
-    const products = await fetchProducts('online')
+    const [runtimeSettings, products] = await Promise.all([
+      fetchRuntimeSettings(),
+      fetchProducts('online'),
+    ])
+    onlineOrdering.value = runtimeSettings.onlineOrdering
     menuCatalog.value = products
-    orderMessage.value = products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放'
+    orderMessage.value = onlineOrdering.value.enabled
+      ? (products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放')
+      : onlineOrdering.value.pauseMessage
   } catch (error) {
+    onlineOrdering.value = defaultOnlineOrderingSettings()
     menuCatalog.value = onlineFallbackMenu()
     orderMessage.value = error instanceof Error ? `菜單同步失敗：${error.message}` : '菜單同步失敗'
   } finally {
-    isLoading.value = false
+    if (!quiet) {
+      isLoading.value = false
+    }
   }
 }
 
 const submitOnlineOrder = async (): Promise<void> => {
+  if (!canOrderOnline.value) {
+    formError.value = onlineOrdering.value.pauseMessage
+    return
+  }
+
+  if (!onlineOrdering.value.allowScheduledOrders && customer.requestedFulfillmentAt.trim()) {
+    formError.value = '目前未開放預約時間，請清除希望時間後再送出'
+    return
+  }
+
   if (!canSubmit.value) {
     formError.value = requiresDeliveryAddress.value
       ? '請填寫姓名、電話、外送地址並加入品項'
@@ -270,9 +531,51 @@ const submitOnlineOrder = async (): Promise<void> => {
   }
 }
 
+const refreshOnlineMenuQuietly = (): void => {
+  void loadOnlineMenu(true)
+}
+
+const scheduleOnlineRealtimeRefresh = (): void => {
+  if (onlineRealtimeRefreshTimer !== null) {
+    globalThis.clearTimeout(onlineRealtimeRefreshTimer)
+  }
+
+  onlineRealtimeRefreshTimer = globalThis.setTimeout(() => {
+    onlineRealtimeRefreshTimer = null
+    void loadOnlineMenu(true)
+  }, 350)
+}
+
 onMounted(() => {
   void loadOnlineMenu()
+  onlineMenuSyncTimer = globalThis.setInterval(refreshOnlineMenuQuietly, 15_000)
+  onlineRealtimeUnsubscribe = subscribeToPosRealtimeEvents({
+    topics: ['runtime_settings', 'products'],
+    onEvent: scheduleOnlineRealtimeRefresh,
+  })
+  globalThis.addEventListener('focus', refreshOnlineMenuQuietly)
 })
+
+onBeforeUnmount(() => {
+  onlineRealtimeUnsubscribe?.()
+  onlineRealtimeUnsubscribe = null
+  if (onlineRealtimeRefreshTimer !== null) {
+    globalThis.clearTimeout(onlineRealtimeRefreshTimer)
+  }
+  if (onlineMenuSyncTimer !== null) {
+    globalThis.clearInterval(onlineMenuSyncTimer)
+  }
+  globalThis.removeEventListener('focus', refreshOnlineMenuQuietly)
+})
+
+watch(
+  () => onlineOrdering.value.allowScheduledOrders,
+  (allowScheduledOrders) => {
+    if (!allowScheduledOrders) {
+      customer.requestedFulfillmentAt = ''
+    }
+  },
+)
 </script>
 
 <template>
@@ -287,8 +590,8 @@ onMounted(() => {
           <h2>Script Coffee</h2>
           <p class="consumer-status-line">
             <Clock3 :size="18" aria-hidden="true" />
-            <strong>準備中</strong>
-            <span>11:30 開始營業</span>
+            <strong>{{ onlineStatusLabel }}</strong>
+            <span>{{ onlineStatusDetail }}</span>
           </p>
           <p class="consumer-status-line">
             <ShoppingBag :size="18" aria-hidden="true" />
@@ -345,10 +648,17 @@ onMounted(() => {
       </div>
 
       <div v-if="displayMode === 'grid'" class="consumer-product-grid">
-        <button v-for="item in filteredMenu" :key="item.id" class="consumer-product-tile" type="button" @click="addItem(item)">
+        <button
+          v-for="item in filteredMenu"
+          :key="item.id"
+          class="consumer-product-tile"
+          type="button"
+          :disabled="!canOrderOnline"
+          @click="addItem(item)"
+        >
           <span class="product-tile-top">
             <span class="product-swatch" :style="{ backgroundColor: item.accent }" aria-hidden="true"></span>
-            <span class="product-category">{{ categoryLabels[item.category] }}</span>
+            <span class="product-category">{{ categoryLabelFor(item.category) }}</span>
           </span>
           <span class="product-name">{{ item.name }}</span>
           <span class="product-tags">{{ productDescription(item) }}</span>
@@ -368,6 +678,7 @@ onMounted(() => {
             :key="item.id"
             class="consumer-product-row"
             type="button"
+            :disabled="!canOrderOnline"
             @click="addItem(item)"
           >
             <span class="consumer-product-row-copy">
@@ -446,7 +757,12 @@ onMounted(() => {
         </label>
         <label>
           希望時間
-          <input v-model="customer.requestedFulfillmentAt" type="datetime-local" />
+          <input
+            v-model="customer.requestedFulfillmentAt"
+            type="datetime-local"
+            :disabled="!onlineOrdering.allowScheduledOrders"
+            :min="requestedFulfillmentMinimum"
+          />
         </label>
         <label v-if="requiresDeliveryAddress" class="wide-field">
           外送地址
@@ -477,7 +793,7 @@ onMounted(() => {
       <button class="primary-button consumer-submit-button" type="button" :disabled="!canSubmit" @click="submitOnlineOrder">
         <TicketCheck v-if="!isSubmitting" :size="20" aria-hidden="true" />
         <Clock3 v-else :size="20" aria-hidden="true" />
-        {{ isSubmitting ? '送出中' : '送出訂單' }}
+        {{ isSubmitting ? '送出中' : (canOrderOnline ? '送出訂單' : '暫停接單') }}
       </button>
 
       <article v-if="lastOrder" class="consumer-confirmation">
@@ -488,5 +804,55 @@ onMounted(() => {
         </div>
       </article>
     </aside>
+
+    <div v-if="optionPanelItem" class="consumer-option-backdrop" role="dialog" aria-modal="true">
+      <section class="consumer-option-sheet" aria-label="品項註記">
+        <header class="consumer-option-header">
+          <button type="button" class="icon-button" title="關閉" @click="closeOptionPanel">
+            <Minus :size="20" aria-hidden="true" />
+          </button>
+          <div>
+            <p class="eyebrow">Options</p>
+            <h2>{{ optionPanelItem.name }}</h2>
+          </div>
+          <strong>{{ formatCurrency(optionPanelUnitPrice) }}</strong>
+        </header>
+
+        <div class="consumer-option-body">
+          <section v-for="group in optionPanelGroups" :key="group.id" class="consumer-option-group">
+            <div class="consumer-option-group-heading">
+              <h3>{{ group.label }}</h3>
+              <span>{{ group.requirement }}</span>
+            </div>
+            <div class="consumer-option-grid">
+              <button
+                v-for="choice in group.choices"
+                :key="choice.id"
+                type="button"
+                class="consumer-option-choice"
+                :class="{ 'consumer-option-choice--active': optionSelected(group.id, choice.id) }"
+                @click="toggleOptionChoice(group, choice.id)"
+              >
+                <span>
+                  <strong>{{ choice.label }}</strong>
+                  <small v-if="choice.priceDelta && choice.priceDelta > 0">+{{ formatCurrency(choice.priceDelta) }}</small>
+                </span>
+                <Check v-if="optionSelected(group.id, choice.id)" :size="18" aria-hidden="true" />
+              </button>
+            </div>
+          </section>
+
+          <p v-if="optionError" class="consumer-form-error">{{ optionError }}</p>
+        </div>
+
+        <footer class="consumer-option-footer">
+          <button type="button" @click="closeOptionPanel">取消</button>
+          <button class="primary-button" type="button" @click="confirmOptionPanel">
+            <CheckCircle2 :size="20" aria-hidden="true" />
+            加入購物車
+          </button>
+        </footer>
+      </section>
+    </div>
   </section>
 </template>

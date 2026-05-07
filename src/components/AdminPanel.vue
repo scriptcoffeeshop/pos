@@ -40,6 +40,7 @@ import type {
   DailySalesReport,
   MenuCategory,
   MenuItem,
+  OnlineOrderingSettings,
   PrinterSettings,
   PosAuditEvent,
   PosMember,
@@ -68,8 +69,34 @@ interface WalletAdjustmentDraft {
   note: string
 }
 
-type AdminTab = 'products' | 'members' | 'reports' | 'payments' | 'printing' | 'access' | 'audit' | 'stations'
+type AdminTab =
+  | 'products'
+  | 'online'
+  | 'members'
+  | 'reports'
+  | 'payments'
+  | 'printing'
+  | 'access'
+  | 'operations'
+  | 'audit'
+  | 'stations'
 type PaymentEventStatusFilter = 'all' | 'applied' | 'duplicate' | 'unapplied'
+type OperationTimelineKind = 'audit' | 'register' | 'station'
+type OperationTimelineFilter = 'all' | OperationTimelineKind
+
+interface OperationTimelineEntry {
+  id: string
+  kind: OperationTimelineKind
+  title: string
+  subject: string
+  stationId: string
+  actor: string
+  summary: string
+  statusLabel: string
+  statusClass: string
+  createdAt: string
+  searchableText: string
+}
 
 const emit = defineEmits<{
   refreshPos: []
@@ -77,21 +104,23 @@ const emit = defineEmits<{
 
 const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
+  { value: 'online', label: '線上點餐' },
   { value: 'members', label: '會員錢包' },
   { value: 'reports', label: '營運報表' },
   { value: 'payments', label: '支付事件' },
   { value: 'printing', label: '出單規則' },
   { value: 'access', label: '權限' },
+  { value: 'operations', label: '營運紀錄' },
   { value: 'stations', label: '平板' },
   { value: 'audit', label: '稽核' },
 ]
 
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'all', label: '全部' },
-  { value: 'coffee', label: categoryLabels.coffee },
-  { value: 'tea', label: categoryLabels.tea },
-  { value: 'food', label: categoryLabels.food },
-  { value: 'retail', label: categoryLabels.retail },
+  { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
+  { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
+  { value: 'food', label: categoryLabels.food ?? '輕食' },
+  { value: 'retail', label: categoryLabels.retail ?? '零售' },
 ]
 
 const menuCategoryOptions = categoryOptions.filter((category): category is { value: MenuCategory; label: string } =>
@@ -155,6 +184,13 @@ const paymentEventStatusOptions: Array<{ value: PaymentEventStatusFilter; label:
   { value: 'unapplied', label: '未套用' },
 ]
 
+const operationTimelineFilterOptions: Array<{ value: OperationTimelineFilter; label: string }> = [
+  { value: 'all', label: '全部紀錄' },
+  { value: 'register', label: '班別' },
+  { value: 'station', label: '平板' },
+  { value: 'audit', label: '操作' },
+]
+
 const auditFieldLabels: Record<string, string> = {
   name: '名稱',
   category: '分類',
@@ -187,22 +223,6 @@ const isStationOnline = (iso: string): boolean => {
   return Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt < 90_000
 }
 
-const readStoredPin = (): string => {
-  try {
-    return sessionStorage.getItem('script-coffee-pos-admin-pin') ?? ''
-  } catch {
-    return ''
-  }
-}
-
-const writeStoredPin = (pin: string): void => {
-  try {
-    sessionStorage.setItem('script-coffee-pos-admin-pin', pin)
-  } catch {
-    return
-  }
-}
-
 const emptyPrinterSettings = (): PrinterSettings => ({
   stations: [],
   rules: [],
@@ -212,13 +232,54 @@ const emptyAccessControl = (): AccessControlSettings => ({
   roles: [],
 })
 
+const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
+  soundEnabled: true,
+  notificationRepeatMode: 'continuous',
+  notificationVolume: 80,
+  pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuCategories: [],
+  availableOptionChoices: [],
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
+})
+
 const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
   stations: settings.stations.map((station) => ({ ...station })),
-  rules: settings.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
+  rules: settings.rules.map((rule) => ({
+    ...rule,
+    categories: [...rule.categories],
+    itemIds: [...(rule.itemIds ?? [])],
+  })),
 })
 
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
+})
+
+const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
+  ...defaultOnlineOrderingSettings(),
+  ...settings,
+  menuCategories: settings.menuCategories.map((category) => ({ ...category })),
+  availableOptionChoices: (settings.availableOptionChoices ?? []).map((choice) => ({ ...choice })),
+  menuOptionGroups: settings.menuOptionGroups.map((group) => ({
+    ...group,
+    choices: group.choices.map((choice) => ({ ...choice })),
+  })),
+  productOptionAssignments: Object.entries(settings.productOptionAssignments).reduce<Record<string, string[]>>(
+    (assignments, [productId, groupIds]) => {
+      assignments[productId] = [...groupIds]
+      return assignments
+    },
+    {},
+  ),
+  noteSupplyStatuses: { ...settings.noteSupplyStatuses },
 })
 
 const toDateInput = (date = new Date()): string => {
@@ -226,7 +287,6 @@ const toDateInput = (date = new Date()): string => {
   return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 10)
 }
 
-const adminPin = ref(readStoredPin())
 const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
@@ -244,6 +304,7 @@ const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
+const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
@@ -252,12 +313,16 @@ const paymentEventLimit = ref(50)
 const paymentProviderFilter = ref('all')
 const paymentEventStatusFilter = ref<PaymentEventStatusFilter>('all')
 const auditActionFilter = ref('all')
+const operationSearchTerm = ref('')
+const operationKindFilter = ref<OperationTimelineFilter>('all')
+const operationStationFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isStationLoading = ref(false)
+const isOperationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
@@ -275,6 +340,8 @@ const lowStockProducts = computed(() =>
 )
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
+const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
+const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
 const auditEventCount = computed(() => auditEvents.value.length)
 const paymentEventCount = computed(() => paymentEvents.value.length)
 const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
@@ -342,6 +409,110 @@ const stationOptions = computed(() => {
     },
   ]
 })
+
+const printRuleProductOptions = (rule: PrintRuleSetting): ProductDraft[] => {
+  const selectedCategories = new Set(rule.categories)
+  const selectedItemIds = new Set(rule.itemIds ?? [])
+  const sourceProducts = [...productDrafts.value].sort((first, second) =>
+    first.category.localeCompare(second.category, 'zh-TW') ||
+    first.sortOrder - second.sortOrder ||
+    first.name.localeCompare(second.name, 'zh-TW'),
+  )
+
+  if (selectedCategories.size === 0) {
+    return sourceProducts
+  }
+
+  return sourceProducts.filter((product) =>
+    selectedCategories.has(product.category) || selectedItemIds.has(product.id),
+  )
+}
+
+const operationStationOptions = computed(() => {
+  const stations = new Map<string, string>()
+  for (const station of stationHeartbeats.value) {
+    stations.set(station.stationId, station.stationLabel || station.stationId)
+  }
+  for (const event of auditEvents.value) {
+    if (event.stationId) {
+      stations.set(event.stationId, stations.get(event.stationId) ?? event.stationId)
+    }
+  }
+
+  return Array.from(stations.entries())
+    .sort(([, first], [, second]) => first.localeCompare(second, 'zh-TW'))
+    .map(([value, label]) => ({ value, label }))
+})
+
+const operationTimelineEntries = computed<OperationTimelineEntry[]>(() => {
+  const auditEntries = auditEvents.value.map((event): OperationTimelineEntry => {
+    const kind: OperationTimelineKind = event.action.startsWith('register.') ? 'register' : 'audit'
+    const title = auditActionLabel(event.action)
+    const subject = auditSubject(event)
+    const stationId = event.stationId || '未標記平板'
+    const actor = event.actor || 'pos-api'
+    const summary = auditMetadataSummary(event)
+    const statusLabel = kind === 'register' ? '班別' : '操作'
+
+    return {
+      id: `audit-${event.id}`,
+      kind,
+      title,
+      subject,
+      stationId,
+      actor,
+      summary,
+      statusLabel,
+      statusClass: kind === 'register' ? 'status-pill--success' : 'status-pill--neutral',
+      createdAt: event.createdAt,
+      searchableText: [title, subject, stationId, actor, summary, event.action].join(' ').toLowerCase(),
+    }
+  })
+
+  const stationEntries = stationHeartbeats.value.map((station): OperationTimelineEntry => {
+    const stationLabel = station.stationLabel || station.stationId
+    const statusLabel = stationStatusLabel(station)
+    const summaryParts = [
+      station.platform || '未標記平台',
+      station.appVersion || '未標記版本',
+      station.userAgent ? station.userAgent.slice(0, 80) : '',
+    ].filter(Boolean)
+    const summary = summaryParts.join(' · ')
+
+    return {
+      id: `station-${station.stationId}`,
+      kind: 'station',
+      title: `平板${statusLabel}`,
+      subject: stationLabel,
+      stationId: station.stationId,
+      actor: 'station-heartbeat',
+      summary,
+      statusLabel,
+      statusClass: stationStatusClass(station),
+      createdAt: station.lastSeenAt,
+      searchableText: [stationLabel, station.stationId, statusLabel, summary].join(' ').toLowerCase(),
+    }
+  })
+
+  return [...auditEntries, ...stationEntries].sort((first, second) => {
+    const firstTime = new Date(first.createdAt).getTime()
+    const secondTime = new Date(second.createdAt).getTime()
+    return (Number.isFinite(secondTime) ? secondTime : 0) - (Number.isFinite(firstTime) ? firstTime : 0)
+  })
+})
+
+const filteredOperationTimelineEntries = computed(() => {
+  const keyword = operationSearchTerm.value.trim().toLowerCase()
+  return operationTimelineEntries.value.filter((entry) => {
+    const matchesKind = operationKindFilter.value === 'all' || entry.kind === operationKindFilter.value
+    const matchesStation = operationStationFilter.value === 'all' || entry.stationId === operationStationFilter.value
+    const matchesKeyword = !keyword || entry.searchableText.includes(keyword)
+
+    return matchesKind && matchesStation && matchesKeyword
+  })
+})
+
+const operationTimelineCount = computed(() => filteredOperationTimelineEntries.value.length)
 
 const filteredProducts = computed(() => {
   const keyword = searchTerm.value.trim().toLowerCase()
@@ -642,6 +813,31 @@ const exportAuditEventsCsv = (): void => {
   adminMessage.value = `已匯出 ${filteredAuditEvents.value.length} 筆稽核紀錄`
 }
 
+const exportOperationTimelineCsv = (): void => {
+  if (filteredOperationTimelineEntries.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的營運紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['created_at', 'type', 'title', 'subject', 'station_id', 'actor', 'status', 'summary'],
+    ...filteredOperationTimelineEntries.value.map((entry) => [
+      entry.createdAt,
+      entry.kind,
+      entry.title,
+      entry.subject,
+      entry.stationId,
+      entry.actor,
+      entry.statusLabel,
+      entry.summary,
+    ]),
+  ]
+
+  const kind = operationKindFilter.value === 'all' ? 'all' : operationKindFilter.value
+  downloadCsv(`script-coffee-operations-${kind}.csv`, rows)
+  adminMessage.value = `已匯出 ${filteredOperationTimelineEntries.value.length} 筆營運紀錄`
+}
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -787,30 +983,25 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
 }
 
 const loadAdminData = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isLoading.value = true
   adminMessage.value = '讀取後台資料中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
     const [products, memberRows, report, settings, events, paymentRows, stations] = await Promise.all([
-      fetchAdminProducts(adminPin.value.trim()),
-      fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value),
-      fetchAdminDailyReport(adminPin.value.trim(), reportDate.value),
-      fetchAdminSettings(adminPin.value.trim()),
-      fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value),
-      fetchAdminPaymentEvents(adminPin.value.trim(), paymentEventLimit.value, paymentProviderFilter.value),
-      fetchAdminStations(adminPin.value.trim()),
+      fetchAdminProducts(),
+      fetchAdminMembers(50, memberSearchTerm.value),
+      fetchAdminDailyReport(reportDate.value),
+      fetchAdminSettings(),
+      fetchAdminAuditEvents(auditLimit.value),
+      fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value),
+      fetchAdminStations(),
     ])
     productDrafts.value = products.map(toDraft)
     members.value = memberRows
     dailyReport.value = report
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
+    onlineOrdering.value = cloneOnlineOrdering(settings.onlineOrdering)
     auditEvents.value = events
     paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
@@ -823,21 +1014,11 @@ const loadAdminData = async (): Promise<void> => {
 }
 
 const loadPaymentEvents = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isPaymentEventLoading.value = true
   adminMessage.value = '讀取支付事件中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    paymentEvents.value = await fetchAdminPaymentEvents(
-      adminPin.value.trim(),
-      paymentEventLimit.value,
-      paymentProviderFilter.value,
-    )
+    paymentEvents.value = await fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value)
     adminMessage.value = `已載入 ${paymentEvents.value.length} 筆支付事件`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '支付事件讀取失敗'
@@ -847,17 +1028,11 @@ const loadPaymentEvents = async (): Promise<void> => {
 }
 
 const loadAuditEvents = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isAuditLoading.value = true
   adminMessage.value = '讀取稽核紀錄中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    auditEvents.value = await fetchAdminAuditEvents(adminPin.value.trim(), auditLimit.value)
+    auditEvents.value = await fetchAdminAuditEvents(auditLimit.value)
     adminMessage.value = `已載入 ${auditEvents.value.length} 筆稽核紀錄`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '稽核紀錄讀取失敗'
@@ -867,17 +1042,11 @@ const loadAuditEvents = async (): Promise<void> => {
 }
 
 const loadStationHeartbeats = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isStationLoading.value = true
   adminMessage.value = '讀取平板在線狀態中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    stationHeartbeats.value = await fetchAdminStations(adminPin.value.trim())
+    stationHeartbeats.value = await fetchAdminStations()
     adminMessage.value = `已載入 ${stationHeartbeats.value.length} 台平板狀態`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
@@ -886,18 +1055,31 @@ const loadStationHeartbeats = async (): Promise<void> => {
   }
 }
 
-const loadMembers = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
+const loadOperationTimeline = async (): Promise<void> => {
+  isOperationLoading.value = true
+  adminMessage.value = '讀取營運紀錄中'
 
+  try {
+    const [events, stations] = await Promise.all([
+      fetchAdminAuditEvents(auditLimit.value),
+      fetchAdminStations(),
+    ])
+    auditEvents.value = events
+    stationHeartbeats.value = stations
+    adminMessage.value = `已載入 ${filteredOperationTimelineEntries.value.length} 筆營運紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '營運紀錄讀取失敗'
+  } finally {
+    isOperationLoading.value = false
+  }
+}
+
+const loadMembers = async (): Promise<void> => {
   isMemberLoading.value = true
   adminMessage.value = '讀取會員錢包中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    members.value = await fetchAdminMembers(adminPin.value.trim(), 50, memberSearchTerm.value)
+    members.value = await fetchAdminMembers(50, memberSearchTerm.value)
     adminMessage.value = `已載入 ${members.value.length} 位會員`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '會員錢包讀取失敗'
@@ -907,17 +1089,11 @@ const loadMembers = async (): Promise<void> => {
 }
 
 const loadDailyReport = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   isReportLoading.value = true
   adminMessage.value = '讀取營運日報中'
 
   try {
-    writeStoredPin(adminPin.value.trim())
-    dailyReport.value = await fetchAdminDailyReport(adminPin.value.trim(), reportDate.value)
+    dailyReport.value = await fetchAdminDailyReport(reportDate.value)
     adminMessage.value = `已載入 ${dailyReport.value.date} 日報，營收 ${formatCurrency(dailyReport.value.collectedTotal)}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
@@ -927,16 +1103,11 @@ const loadDailyReport = async (): Promise<void> => {
 }
 
 const addMember = async (): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   savingMemberId.value = 'new'
   adminMessage.value = '建立會員中'
 
   try {
-    const member = await createAdminMember(adminPin.value.trim(), {
+    const member = await createAdminMember({
       lineUserId: newMember.value.lineUserId.trim(),
       displayName: newMember.value.displayName.trim(),
       openingBalance: Math.max(0, Math.trunc(Number(newMember.value.openingBalance) || 0)),
@@ -953,11 +1124,6 @@ const addMember = async (): Promise<void> => {
 }
 
 const saveWalletAdjustment = async (member: PosMember): Promise<void> => {
-  if (!adminPin.value.trim()) {
-    adminMessage.value = '請輸入管理 PIN'
-    return
-  }
-
   const draft = walletAdjustmentDraft(member.id)
   const amount = Math.trunc(Number(draft.amount) || 0)
   if (amount === 0) {
@@ -969,7 +1135,7 @@ const saveWalletAdjustment = async (member: PosMember): Promise<void> => {
   adminMessage.value = `調整 ${member.displayName} 錢包`
 
   try {
-    const savedMember = await adjustMemberWallet(adminPin.value.trim(), member.id, {
+    const savedMember = await adjustMemberWallet(member.id, {
       amount,
       note: draft.note.trim(),
     })
@@ -1009,7 +1175,7 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
   }
 
   try {
-    const savedProduct = await updateProduct(adminPin.value.trim(), product.id, payload)
+    const savedProduct = await updateProduct(product.id, payload)
     productDrafts.value = productDrafts.value.map((entry) => (entry.id === product.id ? toDraft(savedProduct) : entry))
     adminMessage.value = `${savedProduct.name} 已更新`
     emit('refreshPos')
@@ -1052,6 +1218,7 @@ const addPrintRule = (): void => {
     serviceMode: 'takeout',
     stationId: stationOptions.value[0]?.id ?? 'bar',
     categories: ['coffee', 'tea', 'food'],
+    itemIds: [],
     copies: 1,
     labelMode: 'label',
     enabled: true,
@@ -1071,16 +1238,22 @@ const toggleRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): voi
   rule.categories = [...rule.categories, category]
 }
 
+const toggleRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
+  const itemIds = rule.itemIds ?? []
+  if (itemIds.includes(itemId)) {
+    rule.itemIds = itemIds.filter((entry) => entry !== itemId)
+    return
+  }
+
+  rule.itemIds = [...itemIds, itemId]
+}
+
 const savePrinterSettings = async (): Promise<void> => {
   savingSettingKey.value = 'printer_settings'
   adminMessage.value = '儲存出單機設定'
 
   try {
-    const savedSettings = await updateAdminSetting<PrinterSettings>(
-      adminPin.value.trim(),
-      'printer_settings',
-      printerSettings.value,
-    )
+    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', printerSettings.value)
     printerSettings.value = clonePrinterSettings(savedSettings)
     adminMessage.value = '出單機設定已更新'
     emit('refreshPos')
@@ -1091,11 +1264,46 @@ const savePrinterSettings = async (): Promise<void> => {
   }
 }
 
+const saveOnlineOrdering = async (): Promise<void> => {
+  savingSettingKey.value = 'online_ordering'
+  adminMessage.value = '儲存線上點餐設定'
+
+  try {
+    const savedSettings = await updateAdminSetting<OnlineOrderingSettings>(
+      'online_ordering',
+      {
+        ...onlineOrdering.value,
+        averagePrepMinutes: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.averagePrepMinutes) || 0), 0), 180),
+        unconfirmedReminderMinutes: Math.min(
+          Math.max(Math.trunc(Number(onlineOrdering.value.unconfirmedReminderMinutes) || 0), 0),
+          120,
+        ),
+        notificationRepeatMode:
+          onlineOrdering.value.notificationRepeatMode === 'once' ? 'once' : 'continuous',
+        notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
+        pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
+        menuCategories: onlineOrdering.value.menuCategories,
+        availableOptionChoices: onlineOrdering.value.availableOptionChoices,
+        menuOptionGroups: onlineOrdering.value.menuOptionGroups,
+        productOptionAssignments: onlineOrdering.value.productOptionAssignments,
+        noteSupplyStatuses: onlineOrdering.value.noteSupplyStatuses,
+      },
+    )
+    onlineOrdering.value = cloneOnlineOrdering(savedSettings)
+    adminMessage.value = '線上點餐設定已更新'
+    emit('refreshPos')
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '線上點餐設定更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
 const addRole = (): void => {
   accessControl.value.roles.push({
     id: buildId('role'),
     name: '新角色',
-    pinRequired: true,
+    pinRequired: false,
     permissions: ['manageProducts'],
   })
 }
@@ -1125,11 +1333,7 @@ const saveAccessControl = async (): Promise<void> => {
   adminMessage.value = '儲存權限設定'
 
   try {
-    const savedAccessControl = await updateAdminSetting<AccessControlSettings>(
-      adminPin.value.trim(),
-      'access_control',
-      accessControl.value,
-    )
+    const savedAccessControl = await updateAdminSetting<AccessControlSettings>('access_control', accessControl.value)
     accessControl.value = cloneAccessControl(savedAccessControl)
     adminMessage.value = '權限設定已更新'
   } catch (error) {
@@ -1151,15 +1355,12 @@ const saveAccessControl = async (): Promise<void> => {
         </div>
         <span class="status-pill status-pill--success">
           <ShieldCheck :size="18" aria-hidden="true" />
-          PIN 保護
+          編輯模式
         </span>
       </div>
 
       <div class="admin-access-grid">
-        <label>
-          管理 PIN
-          <input v-model="adminPin" type="password" autocomplete="off" />
-        </label>
+        <p class="panel-note">已由工具箱連點 6 下解鎖。</p>
         <button class="primary-button" type="button" :disabled="isLoading" @click="loadAdminData">
           <RefreshCw :size="18" aria-hidden="true" />
           {{ isLoading ? '讀取中' : '載入後台' }}
@@ -1176,6 +1377,14 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>線上/掃碼</span>
         <strong>{{ onlineProducts }}</strong>
+      </article>
+      <article>
+        <span>線上點餐</span>
+        <strong>{{ onlineOrderingStatusLabel }}</strong>
+      </article>
+      <article>
+        <span>備餐時間</span>
+        <strong>{{ onlineOrderingPrepLabel }}</strong>
       </article>
       <article>
         <span>低庫存</span>
@@ -1212,6 +1421,10 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>在線平板</span>
         <strong>{{ onlineStationCount }}</strong>
+      </article>
+      <article>
+        <span>營運紀錄</span>
+        <strong>{{ operationTimelineCount }}</strong>
       </article>
       <article>
         <span>稽核紀錄</span>
@@ -1379,6 +1592,102 @@ const saveAccessControl = async (): Promise<void> => {
             <span>沒有符合條件的商品</span>
           </div>
         </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'online'" class="admin-tab-panel" aria-label="線上點餐設定">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Online</p>
+            <h2>線上點餐設定</h2>
+            <span class="panel-note">控制消費者頁接單狀態、預約與提醒節奏</span>
+          </div>
+          <button class="primary-button" type="button" :disabled="savingSettingKey === 'online_ordering'" @click="saveOnlineOrdering">
+            <Save :size="18" aria-hidden="true" />
+            {{ savingSettingKey === 'online_ordering' ? '儲存中' : '儲存線上設定' }}
+          </button>
+        </div>
+
+        <div class="admin-online-status-grid">
+          <article>
+            <span>接單狀態</span>
+            <strong>{{ onlineOrdering.enabled ? '開放接單' : '暫停接單' }}</strong>
+            <small>{{ onlineOrdering.enabled ? '消費者可送出新訂單' : '消費者頁會保留菜單但阻擋下單' }}</small>
+          </article>
+          <article>
+            <span>平均備餐</span>
+            <strong>{{ onlineOrdering.averagePrepMinutes }} 分</strong>
+            <small>顯示於消費者頁並作為預約最早時間參考</small>
+          </article>
+          <article>
+            <span>未確認提醒</span>
+            <strong>{{ onlineOrdering.unconfirmedReminderMinutes }} 分</strong>
+            <small>{{ onlineOrdering.soundEnabled ? '提示音已啟用' : '提示音未啟用' }}</small>
+          </article>
+          <article>
+            <span>接單流程</span>
+            <strong>{{ onlineOrdering.acceptanceRequired ? '平板確認' : '自動入列' }}</strong>
+            <small>{{ onlineOrdering.acceptWithoutPrinting ? '接單不自動出單' : '接單後依列印站規則' }}</small>
+          </article>
+        </div>
+
+        <section class="admin-subpanel">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Runtime</p>
+              <h3>接單與提醒</h3>
+            </div>
+          </div>
+
+          <div class="admin-online-toggle-grid">
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.enabled" type="checkbox" />
+              外帶外送開放接單
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.allowScheduledOrders" type="checkbox" />
+              允許顧客選希望時間
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.soundEnabled" type="checkbox" />
+              新單提示音
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.acceptanceRequired" type="checkbox" />
+              線上/掃碼單需平板接單
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.acceptWithoutPrinting" type="checkbox" />
+              接單時不自動出單
+            </label>
+          </div>
+
+          <div class="admin-online-settings-grid">
+            <label>
+              平均備餐分鐘
+              <input v-model.number="onlineOrdering.averagePrepMinutes" type="number" min="0" max="180" step="1" />
+            </label>
+            <label>
+              未確認提醒分鐘
+              <input v-model.number="onlineOrdering.unconfirmedReminderMinutes" type="number" min="0" max="120" step="1" />
+            </label>
+            <label>
+              提示聲播放
+              <select v-model="onlineOrdering.notificationRepeatMode">
+                <option value="continuous">連續提醒</option>
+                <option value="once">只播放一次</option>
+              </select>
+            </label>
+            <label>
+              提示音量
+              <input v-model.number="onlineOrdering.notificationVolume" type="range" min="0" max="100" step="5" />
+              <small>{{ onlineOrdering.notificationVolume }}%</small>
+            </label>
+            <label class="wide-field">
+              暫停接單提示
+              <input v-model="onlineOrdering.pauseMessage" type="text" maxlength="120" />
+            </label>
+          </div>
+        </section>
       </section>
 
       <section v-else-if="activeAdminTab === 'members'" class="admin-tab-panel" aria-label="會員錢包">
@@ -1838,8 +2147,122 @@ const saveAccessControl = async (): Promise<void> => {
                   {{ category.label }}
                 </label>
               </div>
+
+              <div class="admin-rule-scope">
+                <div>
+                  <strong>指定品項</strong>
+                  <span>可不選；若有勾選，會與上方分類一起納入這條規則。</span>
+                </div>
+                <div class="admin-rule-item-grid">
+                  <label
+                    v-for="product in printRuleProductOptions(rule)"
+                    :key="`${rule.id}-${product.id}`"
+                    class="toggle-row"
+                    :class="{ 'toggle-row--active': (rule.itemIds ?? []).includes(product.id) }"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="(rule.itemIds ?? []).includes(product.id)"
+                      @change="toggleRuleItem(rule, product.id)"
+                    />
+                    <span>{{ product.name }}</span>
+                    <small>{{ categoryLabels[product.category] ?? product.category }}</small>
+                  </label>
+                </div>
+              </div>
             </article>
           </section>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'operations'" class="admin-tab-panel" aria-label="營運紀錄">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Timeline</p>
+            <h2>營運紀錄</h2>
+            <span class="panel-note">整合平板心跳、開關班與關鍵操作紀錄</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions admin-operations-toolbar">
+            <label class="search-box">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="operationSearchTerm" type="search" placeholder="搜尋平板、訂單、會員或操作" />
+            </label>
+            <label class="admin-limit-field">
+              類型
+              <select v-model="operationKindFilter">
+                <option v-for="option in operationTimelineFilterOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              平板
+              <select v-model="operationStationFilter">
+                <option value="all">全部平板</option>
+                <option v-for="station in operationStationOptions" :key="station.value" :value="station.value">
+                  {{ station.label }}
+                </option>
+              </select>
+            </label>
+            <button class="primary-button" type="button" :disabled="isOperationLoading" @click="loadOperationTimeline">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isOperationLoading ? '讀取中' : '刷新紀錄' }}
+            </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="filteredOperationTimelineEntries.length === 0"
+              @click="exportOperationTimelineCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              匯出 CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-operation-summary" aria-label="營運紀錄摘要">
+          <article>
+            <span>目前顯示</span>
+            <strong>{{ filteredOperationTimelineEntries.length }}</strong>
+          </article>
+          <article>
+            <span>操作稽核</span>
+            <strong>{{ auditEvents.length }}</strong>
+          </article>
+          <article>
+            <span>平板心跳</span>
+            <strong>{{ stationHeartbeats.length }}</strong>
+          </article>
+          <article>
+            <span>在線平板</span>
+            <strong>{{ onlineStationCount }}</strong>
+          </article>
+        </div>
+
+        <div class="admin-operation-list">
+          <article v-for="entry in filteredOperationTimelineEntries" :key="entry.id" class="admin-operation-row">
+            <time :datetime="entry.createdAt">{{ formatAuditTime(entry.createdAt) }}</time>
+            <div class="admin-operation-body">
+              <header class="admin-row-header">
+                <div class="admin-audit-primary">
+                  <strong>{{ entry.title }}</strong>
+                  <span>{{ entry.subject }}</span>
+                </div>
+                <span class="status-pill" :class="entry.statusClass">{{ entry.statusLabel }}</span>
+              </header>
+
+              <div class="admin-audit-meta">
+                <span>{{ entry.stationId }}</span>
+                <span>{{ entry.actor }}</span>
+                <span>{{ entry.summary }}</span>
+              </div>
+            </div>
+          </article>
+
+          <div v-if="filteredOperationTimelineEntries.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無符合條件的營運紀錄</span>
+          </div>
         </div>
       </section>
 

@@ -9,12 +9,21 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   DailySalesReport,
+  CartLine,
+  OnlineMenuCategory,
+  OnlineMenuOptionChoice,
+  OnlineMenuOptionGroup,
+  OnlineNotificationRepeatMode,
+  OnlineOrderingSettings,
+  PosAppearanceSettings,
   PosMember,
   PosOrder,
   PosPaymentEvent,
   PosStationHeartbeat,
   RegisterSession,
   PrintJob,
+  PrintLabelMode,
+  PrintRuleSetting,
   PrintStatus,
   PrinterSettings,
   PrintStation,
@@ -78,6 +87,7 @@ interface ApiOrder {
   claimed_by?: string | null
   claimed_at?: string | null
   claim_expires_at?: string | null
+  draft_lines?: unknown
   order_items?: ApiOrderItem[]
   print_jobs?: ApiPrintJob[]
 }
@@ -217,6 +227,8 @@ interface AdminSettingsResponse {
 
 interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
+  onlineOrdering: OnlineOrderingSettings
+  posAppearance: PosAppearanceSettings
 }
 
 interface DailyReportResponse {
@@ -224,6 +236,7 @@ interface DailyReportResponse {
 }
 
 export interface ProductUpdateInput {
+  sku?: string
   name: string
   category: MenuCategory
   price: number
@@ -257,7 +270,7 @@ interface ProductResponse {
   product: ApiProduct
 }
 
-export type AdminSettingKey = 'printer_settings' | 'access_control'
+export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering' | 'pos_appearance'
 export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -267,6 +280,11 @@ const stationIdStorageKey = 'script-coffee-pos-station-id'
 const apiBaseUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/functions/v1/pos-api` : ''
 
 export const isPosApiConfigured = Boolean(apiBaseUrl && supabaseAnonKey)
+
+export const posApiConnection = (): { apiBaseUrl: string; supabaseAnonKey: string } | null =>
+  isPosApiConfigured && supabaseAnonKey
+    ? { apiBaseUrl, supabaseAnonKey }
+    : null
 
 export const currentStationId = (): string => {
   try {
@@ -318,6 +336,53 @@ const normalizeOptions = (options: unknown): string[] => {
     return []
   }
   return options.filter((option): option is string => typeof option === 'string')
+}
+
+const readDraftLineString = (line: Record<string, unknown>, camelKey: string, snakeKey: string): string =>
+  typeof line[camelKey] === 'string'
+    ? String(line[camelKey])
+    : typeof line[snakeKey] === 'string'
+      ? String(line[snakeKey])
+      : ''
+
+const readDraftLineNumber = (line: Record<string, unknown>, camelKey: string, snakeKey: string): number => {
+  const value = line[camelKey] ?? line[snakeKey]
+  return Number.isFinite(value) ? Math.trunc(Number(value)) : 0
+}
+
+const normalizeDraftLines = (lines: unknown): CartLine[] => {
+  if (!Array.isArray(lines)) {
+    return []
+  }
+
+  return lines.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const line = entry as Record<string, unknown>
+    const productSku = readDraftLineString(line, 'productSku', 'product_sku')
+    const name = readDraftLineString(line, 'name', 'name')
+    const unitPrice = readDraftLineNumber(line, 'unitPrice', 'unit_price')
+    const quantity = readDraftLineNumber(line, 'quantity', 'quantity')
+    if (!productSku || !name || unitPrice < 0 || quantity <= 0) {
+      return []
+    }
+
+    const productId = readDraftLineString(line, 'productId', 'product_id')
+    const cartLine: CartLine = {
+      itemId: productId || productSku,
+      productSku,
+      name,
+      unitPrice,
+      quantity,
+      options: normalizeOptions(line.options),
+    }
+    if (productId) {
+      cartLine.productId = productId
+    }
+    return [cartLine]
+  })
 }
 
 const normalizePrintStatus = (order: ApiOrder): PrintStatus => {
@@ -454,6 +519,34 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   soldOutUntil: product.sold_out_until ?? null,
 })
 
+const legacyPrintRuleName = (name: string, serviceMode: ServiceMode): string => {
+  if (name === '內用收據' || (name.includes('內用') && name.includes('收據'))) {
+    return '內用貼紙'
+  }
+
+  if (name === '外送收據' || (name.includes('外送') && name.includes('收據'))) {
+    return '外送貼紙'
+  }
+
+  if (serviceMode === 'dine-in' && name === '新印單規則') {
+    return '內用貼紙'
+  }
+
+  if (serviceMode === 'delivery' && name === '新印單規則') {
+    return '外送貼紙'
+  }
+
+  return name
+}
+
+const legacyPrintRuleLabelMode = (rule: PrintRuleSetting): PrintLabelMode => {
+  if (rule.name === '內用收據' || rule.name === '外送收據') {
+    return 'label'
+  }
+
+  return rule.labelMode
+}
+
 const isPrinterSettings = (value: unknown): value is PrinterSettings => {
   if (!value || typeof value !== 'object') {
     return false
@@ -461,6 +554,26 @@ const isPrinterSettings = (value: unknown): value is PrinterSettings => {
 
   const settings = value as PrinterSettings
   return Array.isArray(settings.stations) && Array.isArray(settings.rules)
+}
+
+const normalizePrinterSettings = (value: unknown): PrinterSettings => {
+  if (!isPrinterSettings(value)) {
+    return { stations: [], rules: [] }
+  }
+
+  return {
+    stations: value.stations.map((station) => ({ ...station })),
+    rules: value.rules.map((rule) => {
+      const labelMode = legacyPrintRuleLabelMode(rule)
+      return {
+        ...rule,
+        name: legacyPrintRuleName(rule.name, rule.serviceMode),
+        labelMode,
+        categories: Array.isArray(rule.categories) ? [...rule.categories] : [],
+        itemIds: Array.isArray(rule.itemIds) ? [...rule.itemIds] : [],
+      }
+    }),
+  }
 }
 
 const isAccessControlSettings = (value: unknown): value is AccessControlSettings => {
@@ -472,73 +585,359 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
   return Array.isArray(settings.roles)
 }
 
-const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
-  const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
-  const accessControl = rows.find((row) => row.key === 'access_control')?.value
+export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
+  enabled: true,
+  allowScheduledOrders: true,
+  averagePrepMinutes: 20,
+  unconfirmedReminderMinutes: 5,
+  acceptanceRequired: true,
+  acceptWithoutPrinting: false,
+  soundEnabled: true,
+  notificationRepeatMode: 'continuous',
+  notificationVolume: 80,
+  pauseMessage: '目前暫停線上點餐，請稍後再試',
+  menuCategories: [],
+  availableOptionChoices: [],
+  menuOptionGroups: [],
+  productOptionAssignments: {},
+  noteSupplyStatuses: {},
+})
+
+const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', 'continuous'])
+
+const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' ? value.trim().slice(0, 80) : fallback
+
+const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenCategoryIds = new Set<string>()
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const category = entry as Partial<OnlineMenuCategory>
+    const id = sanitizeOnlineText(category.id)
+    const label = sanitizeOnlineText(category.label)
+    if (!id || !label || seenCategoryIds.has(id)) {
+      return []
+    }
+
+    seenCategoryIds.add(id)
+    return [{ id, label }]
+  })
+}
+
+const normalizeOnlineMenuOptionGroups = (value: unknown): OnlineMenuOptionGroup[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenGroupIds = new Set<string>()
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const group = entry as Partial<OnlineMenuOptionGroup>
+    const id = sanitizeOnlineText(group.id)
+    const label = sanitizeOnlineText(group.label)
+    if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+      return []
+    }
+
+    const seenChoiceIds = new Set<string>()
+    const choices = group.choices.flatMap((choiceEntry) => {
+      if (!choiceEntry || typeof choiceEntry !== 'object') {
+        return []
+      }
+
+      const choice = choiceEntry as OnlineMenuOptionGroup['choices'][number]
+      const choiceId = sanitizeOnlineText(choice.id)
+      const choiceLabel = sanitizeOnlineText(choice.label)
+      if (!choiceId || !choiceLabel || seenChoiceIds.has(choiceId)) {
+        return []
+      }
+
+      seenChoiceIds.add(choiceId)
+      const normalizedChoice: OnlineMenuOptionGroup['choices'][number] = {
+        id: choiceId,
+        label: choiceLabel,
+      }
+      if (Number.isFinite(choice.priceDelta)) {
+        normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0)
+      }
+      return [normalizedChoice]
+    })
+
+    if (choices.length === 0) {
+      return []
+    }
+
+    const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)))
+    const required = Boolean(group.required)
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0
+    seenGroupIds.add(id)
+
+    return [{
+      id,
+      label,
+      requirement: sanitizeOnlineText(group.requirement, required ? `必選 ${min} 個` : `選填最多 ${max} 個`),
+      required,
+      min,
+      max,
+      choices,
+    }]
+  })
+}
+
+const choicesFromOnlineMenuOptionGroups = (groups: OnlineMenuOptionGroup[]): OnlineMenuOptionChoice[] => {
+  const seenChoiceIds = new Set<string>()
+  return groups.flatMap((group) =>
+    group.choices.flatMap((choice) => {
+      if (seenChoiceIds.has(choice.id)) {
+        return []
+      }
+      seenChoiceIds.add(choice.id)
+      return [{ ...choice }]
+    }),
+  )
+}
+
+const normalizeOnlineMenuOptionChoices = (
+  value: unknown,
+  fallbackChoices: OnlineMenuOptionChoice[] = [],
+): OnlineMenuOptionChoice[] => {
+  const sourceChoices = Array.isArray(value) ? [...value, ...fallbackChoices] : fallbackChoices
+  const seenChoiceIds = new Set<string>()
+  return sourceChoices.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const choice = entry as Partial<OnlineMenuOptionChoice>
+    const id = sanitizeOnlineText(choice.id)
+    const label = sanitizeOnlineText(choice.label)
+    if (!id || !label || seenChoiceIds.has(id)) {
+      return []
+    }
+
+    seenChoiceIds.add(id)
+    const normalizedChoice: OnlineMenuOptionChoice = { id, label }
+    if (Number.isFinite(choice.priceDelta)) {
+      normalizedChoice.priceDelta = Math.trunc(choice.priceDelta ?? 0)
+    }
+    return [normalizedChoice]
+  })
+}
+
+const normalizeProductOptionAssignments = (
+  value: unknown,
+  groups: OnlineMenuOptionGroup[],
+): Record<string, string[]> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const validGroupIds = new Set(groups.map((group) => group.id))
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string[]>>(
+    (assignments, [productId, groupIds]) => {
+      if (!Array.isArray(groupIds)) {
+        return assignments
+      }
+
+      const normalizedIds = [
+        ...new Set(
+          groupIds.filter((groupId): groupId is string =>
+            typeof groupId === 'string' && validGroupIds.has(groupId),
+          ),
+        ),
+      ]
+      if (normalizedIds.length > 0) {
+        assignments[productId] = normalizedIds
+      }
+      return assignments
+    },
+    {},
+  )
+}
+
+const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings => {
+  const defaults = defaultOnlineOrderingSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings>
+  const menuCategories = normalizeOnlineMenuCategories(settings.menuCategories)
+  const menuOptionGroups = normalizeOnlineMenuOptionGroups(settings.menuOptionGroups)
+  const availableOptionChoices = normalizeOnlineMenuOptionChoices(
+    settings.availableOptionChoices,
+    choicesFromOnlineMenuOptionGroups(menuOptionGroups),
+  )
+  const notificationRepeatMode = notificationRepeatModes.has(settings.notificationRepeatMode as OnlineNotificationRepeatMode)
+    ? (settings.notificationRepeatMode as OnlineNotificationRepeatMode)
+    : defaults.notificationRepeatMode
 
   return {
-    printerSettings: isPrinterSettings(printerSettings) ? printerSettings : { stations: [], rules: [] },
-    accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
+    enabled: typeof settings.enabled === 'boolean' ? settings.enabled : defaults.enabled,
+    allowScheduledOrders:
+      typeof settings.allowScheduledOrders === 'boolean' ? settings.allowScheduledOrders : defaults.allowScheduledOrders,
+    averagePrepMinutes: Number.isFinite(settings.averagePrepMinutes)
+      ? Math.min(Math.max(Math.trunc(settings.averagePrepMinutes ?? defaults.averagePrepMinutes), 0), 180)
+      : defaults.averagePrepMinutes,
+    unconfirmedReminderMinutes: Number.isFinite(settings.unconfirmedReminderMinutes)
+      ? Math.min(Math.max(Math.trunc(settings.unconfirmedReminderMinutes ?? defaults.unconfirmedReminderMinutes), 0), 120)
+      : defaults.unconfirmedReminderMinutes,
+    acceptanceRequired:
+      typeof settings.acceptanceRequired === 'boolean' ? settings.acceptanceRequired : defaults.acceptanceRequired,
+    acceptWithoutPrinting:
+      typeof settings.acceptWithoutPrinting === 'boolean'
+        ? settings.acceptWithoutPrinting
+        : defaults.acceptWithoutPrinting,
+    soundEnabled: typeof settings.soundEnabled === 'boolean' ? settings.soundEnabled : defaults.soundEnabled,
+    notificationRepeatMode,
+    notificationVolume: Number.isFinite(settings.notificationVolume)
+      ? Math.min(Math.max(Math.trunc(settings.notificationVolume ?? defaults.notificationVolume), 0), 100)
+      : defaults.notificationVolume,
+    pauseMessage:
+      typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
+        ? settings.pauseMessage.trim().slice(0, 120)
+        : defaults.pauseMessage,
+    menuCategories,
+    availableOptionChoices,
+    menuOptionGroups,
+    productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    noteSupplyStatuses:
+      settings.noteSupplyStatuses && typeof settings.noteSupplyStatuses === 'object' && !Array.isArray(settings.noteSupplyStatuses)
+        ? Object.entries(settings.noteSupplyStatuses).reduce<Record<string, 'normal' | 'online-stopped' | 'stopped'>>(
+          (statuses, [noteId, status]) => {
+            if (status === 'normal' || status === 'online-stopped' || status === 'stopped') {
+              statuses[noteId] = status
+            }
+            return statuses
+          },
+          {},
+        )
+        : defaults.noteSupplyStatuses,
   }
 }
 
-export const normalizeOrder = (order: ApiOrder): PosOrder => ({
-  id: order.order_number,
-  remoteId: order.id,
-  source: order.source,
-  mode: order.service_mode,
-  customerName: order.customer_name,
-  customerPhone: order.customer_phone,
-  deliveryAddress: order.delivery_address ?? '',
-  requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
-  note: order.note,
-  subtotal: order.subtotal,
-  paymentMethod: order.payment_method,
-  paymentStatus: order.payment_status,
-  status: order.status,
-  createdAt: order.created_at,
-  claimedBy: order.claimed_by ?? null,
-  claimedAt: order.claimed_at ?? null,
-  claimExpiresAt: order.claim_expires_at ?? null,
-  printStatus: normalizePrintStatus(order),
-  printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
-  lines: (order.order_items ?? []).map((line) => {
-    const cartLine = {
-      itemId: line.product_id ?? line.product_sku,
-      productSku: line.product_sku,
-      name: line.name,
-      unitPrice: line.unit_price,
-      quantity: line.quantity,
-      options: normalizeOptions(line.options),
-    }
-
-    return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
-  }),
+export const defaultPosAppearanceSettings = (): PosAppearanceSettings => ({
+  interfaceScale: 0,
+  densityScale: 0,
+  textSize: 0,
+  darkMode: false,
+  toolboxOpacity: 100,
 })
+
+const clampPosAppearanceOffset = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return Math.min(200, Math.max(-200, Math.round(numberValue)))
+}
+
+const clampToolboxOpacity = (value: unknown, fallback: number): number => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return fallback
+  }
+
+  return Math.min(100, Math.max(35, Math.round(numberValue)))
+}
+
+export const normalizePosAppearanceSettings = (value: unknown): PosAppearanceSettings => {
+  const defaults = defaultPosAppearanceSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<PosAppearanceSettings>
+  return {
+    interfaceScale: clampPosAppearanceOffset(settings.interfaceScale, defaults.interfaceScale),
+    densityScale: clampPosAppearanceOffset(settings.densityScale, defaults.densityScale),
+    textSize: clampPosAppearanceOffset(settings.textSize, defaults.textSize),
+    darkMode: settings.darkMode === true,
+    toolboxOpacity: clampToolboxOpacity(settings.toolboxOpacity, defaults.toolboxOpacity),
+  }
+}
+
+const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
+  const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
+  const accessControl = rows.find((row) => row.key === 'access_control')?.value
+  const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
+  const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
+
+  return {
+    printerSettings: normalizePrinterSettings(printerSettings),
+    accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
+    onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
+    posAppearance: normalizePosAppearanceSettings(posAppearance),
+  }
+}
+
+export const normalizeOrder = (order: ApiOrder): PosOrder => {
+  const orderItems = order.order_items ?? []
+  const draftLines = orderItems.length === 0 ? normalizeDraftLines(order.draft_lines) : []
+
+  return {
+    id: order.order_number,
+    remoteId: order.id,
+    isDraft: order.source === 'counter' && order.status === 'new' && orderItems.length === 0,
+    source: order.source,
+    mode: order.service_mode,
+    customerName: order.customer_name,
+    customerPhone: order.customer_phone,
+    deliveryAddress: order.delivery_address ?? '',
+    requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
+    note: order.note,
+    subtotal: order.subtotal,
+    paymentMethod: order.payment_method,
+    paymentStatus: order.payment_status,
+    status: order.status,
+    createdAt: order.created_at,
+    claimedBy: order.claimed_by ?? null,
+    claimedAt: order.claimed_at ?? null,
+    claimExpiresAt: order.claim_expires_at ?? null,
+    printStatus: normalizePrintStatus(order),
+    printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
+    lines: orderItems.length > 0
+      ? orderItems.map((line) => {
+        const cartLine = {
+          itemId: line.product_id ?? line.product_sku,
+          productSku: line.product_sku,
+          name: line.name,
+          unitPrice: line.unit_price,
+          quantity: line.quantity,
+          options: normalizeOptions(line.options),
+        }
+
+        return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
+      })
+      : draftLines,
+  }
+}
 
 export const fetchProducts = async (channel: ProductChannel = 'pos'): Promise<MenuItem[]> => {
   const data = await request<ProductsResponse>(`/products?channel=${channel}`)
   return data.products.map(normalizeProduct)
 }
 
-export const fetchAdminProducts = async (adminPin: string): Promise<MenuItem[]> => {
-  const data = await request<ProductsResponse>('/admin/products', {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+export const fetchAdminProducts = async (): Promise<MenuItem[]> => {
+  const data = await request<ProductsResponse>('/admin/products')
   return data.products.map(normalizeProduct)
 }
 
-export const updateProduct = async (
-  adminPin: string,
-  productId: string,
-  input: ProductUpdateInput,
-): Promise<MenuItem> => {
-  const data = await request<ProductResponse>(`/admin/products/${productId}`, {
-    method: 'PATCH',
+export const createProduct = async (input: ProductUpdateInput): Promise<MenuItem> => {
+  const data = await request<ProductResponse>('/admin/products', {
+    method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(input),
@@ -547,30 +946,47 @@ export const updateProduct = async (
   return normalizeProduct(data.product)
 }
 
-export const fetchAdminSettings = async (adminPin: string): Promise<PosAdminSettings> => {
-  const data = await request<AdminSettingsResponse>('/admin/settings', {
+export const updateProduct = async (
+  productId: string,
+  input: ProductUpdateInput,
+): Promise<MenuItem> => {
+  const data = await request<ProductResponse>(`/admin/products/${productId}`, {
+    method: 'PATCH',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify(input),
+  })
+
+  return normalizeProduct(data.product)
+}
+
+export const deleteProduct = async (productId: string): Promise<MenuItem> => {
+  const data = await request<ProductResponse>(`/admin/products/${productId}`, {
+    method: 'DELETE',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
     },
   })
+
+  return normalizeProduct(data.product)
+}
+
+export const fetchAdminSettings = async (): Promise<PosAdminSettings> => {
+  const data = await request<AdminSettingsResponse>('/admin/settings')
 
   return normalizeAdminSettings(data.settings)
 }
 
-export const fetchAdminAuditEvents = async (adminPin: string, limit = 50): Promise<PosAuditEvent[]> => {
+export const fetchAdminAuditEvents = async (limit = 50): Promise<PosAuditEvent[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
-  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`)
 
   return data.events.map(normalizeAuditEvent)
 }
 
 export const fetchAdminPaymentEvents = async (
-  adminPin: string,
   limit = 50,
   provider = '',
 ): Promise<PosPaymentEvent[]> => {
@@ -582,26 +998,18 @@ export const fetchAdminPaymentEvents = async (
     params.set('provider', normalizedProvider)
   }
 
-  const data = await request<PaymentEventsResponse>(`/admin/payment-events?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<PaymentEventsResponse>(`/admin/payment-events?${params.toString()}`)
 
   return data.events.map(normalizePaymentEvent)
 }
 
-export const fetchAdminStations = async (adminPin: string): Promise<PosStationHeartbeat[]> => {
-  const data = await request<StationHeartbeatsResponse>('/admin/stations', {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+export const fetchAdminStations = async (): Promise<PosStationHeartbeat[]> => {
+  const data = await request<StationHeartbeatsResponse>('/admin/stations')
 
   return data.stations.map(normalizeStationHeartbeat)
 }
 
-export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = ''): Promise<PosMember[]> => {
+export const fetchAdminMembers = async (limit = 50, keyword = ''): Promise<PosMember[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
   const params = new URLSearchParams({ limit: String(cappedLimit) })
@@ -609,38 +1017,28 @@ export const fetchAdminMembers = async (adminPin: string, limit = 50, keyword = 
     params.set('q', keyword.trim())
   }
 
-  const data = await request<MembersResponse>(`/admin/members?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<MembersResponse>(`/admin/members?${params.toString()}`)
 
   return data.members.map(normalizeMember)
 }
 
-export const fetchAdminDailyReport = async (adminPin: string, date: string): Promise<DailySalesReport> => {
+export const fetchAdminDailyReport = async (date: string): Promise<DailySalesReport> => {
   const params = new URLSearchParams()
   if (date.trim()) {
     params.set('date', date.trim())
   }
 
-  const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`, {
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
-  })
+  const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`)
 
   return data.report
 }
 
 export const createAdminMember = async (
-  adminPin: string,
   input: CreateMemberInput,
 ): Promise<PosMember> => {
   const data = await request<MemberResponse>('/admin/members', {
     method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify({
@@ -653,14 +1051,12 @@ export const createAdminMember = async (
 }
 
 export const adjustMemberWallet = async (
-  adminPin: string,
   memberId: string,
   input: WalletAdjustmentInput,
 ): Promise<PosMember> => {
   const data = await request<MemberResponse>(`/admin/members/${memberId}/wallet-adjustments`, {
     method: 'POST',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify({
@@ -688,14 +1084,12 @@ export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {
 }
 
 export const updateAdminSetting = async <SettingValue>(
-  adminPin: string,
   key: AdminSettingKey,
   value: SettingValue,
 ): Promise<SettingValue> => {
   const data = await request<{ setting: ApiSettingRow }>(`/admin/settings/${key}`, {
     method: 'PATCH',
     headers: {
-      'X-POS-ADMIN-PIN': adminPin,
       'X-POS-STATION-ID': currentStationId(),
     },
     body: JSON.stringify(value),
@@ -704,8 +1098,14 @@ export const updateAdminSetting = async <SettingValue>(
   return data.setting.value as SettingValue
 }
 
-export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =>
-  request<RuntimeSettingsResponse>('/settings/runtime')
+export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> => {
+  const data = await request<Partial<RuntimeSettingsResponse>>('/settings/runtime')
+  return {
+    printerSettings: normalizePrinterSettings(data.printerSettings),
+    onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
+    posAppearance: normalizePosAppearanceSettings(data.posAppearance),
+  }
+}
 
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {
   const data = await request<OrdersResponse>(`/orders?limit=${limit}`)
@@ -718,15 +1118,11 @@ export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | n
 }
 
 export const openRegisterSession = async (
-  adminPin: string,
   openingCash: number,
   note = '',
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/open', {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ openingCash, note, stationId: currentStationId() }),
   })
 
@@ -738,16 +1134,12 @@ export const openRegisterSession = async (
 }
 
 export const closeRegisterSession = async (
-  adminPin: string,
   closingCash: number,
   note = '',
   force = false,
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/close', {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force }),
   })
 
@@ -758,31 +1150,60 @@ export const closeRegisterSession = async (
   return normalizeRegisterSession(data.session)
 }
 
+const orderPayload = (order: PosOrder) => ({
+  orderNumber: order.id,
+  source: order.source,
+  serviceMode: order.mode,
+  customerName: order.customerName,
+  customerPhone: order.customerPhone,
+  deliveryAddress: order.deliveryAddress,
+  requestedFulfillmentAt: order.requestedFulfillmentAt,
+  note: order.note,
+  subtotal: order.subtotal,
+  paymentMethod: order.paymentMethod,
+  paymentStatus: order.paymentStatus,
+  stationId: currentStationId(),
+  lines: order.lines.map((line) => ({
+    productId: line.productId,
+    productSku: line.productSku,
+    name: line.name,
+    unitPrice: line.unitPrice,
+    quantity: line.quantity,
+    options: line.options,
+  })),
+})
+
 export const createOrder = async (order: PosOrder): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>('/orders', {
     method: 'POST',
-    body: JSON.stringify({
-      orderNumber: order.id,
-      source: order.source,
-      serviceMode: order.mode,
-      customerName: order.customerName,
-      customerPhone: order.customerPhone,
-      deliveryAddress: order.deliveryAddress,
-      requestedFulfillmentAt: order.requestedFulfillmentAt,
-      note: order.note,
-      subtotal: order.subtotal,
-      paymentMethod: order.paymentMethod,
-      paymentStatus: order.paymentStatus,
-      stationId: currentStationId(),
-      lines: order.lines.map((line) => ({
-        productId: line.productId,
-        productSku: line.productSku,
-        name: line.name,
-        unitPrice: line.unitPrice,
-        quantity: line.quantity,
-        options: line.options,
-      })),
-    }),
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const createCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>('/orders/drafts', {
+    method: 'POST',
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const updateCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/draft`, {
+    method: 'PATCH',
+    body: JSON.stringify(orderPayload(order)),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const finalizeCounterDraftOrder = async (order: PosOrder): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/finalize`, {
+    method: 'POST',
+    body: JSON.stringify(orderPayload(order)),
   })
 
   return normalizeOrder(data.order)
@@ -810,15 +1231,11 @@ export const updateOrderPaymentStatus = async (
 }
 
 export const voidOrder = async (
-  adminPin: string,
   order: PosOrder,
   note = '',
 ): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/void`, {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ stationId: currentStationId(), note }),
   })
 
@@ -826,15 +1243,11 @@ export const voidOrder = async (
 }
 
 export const refundOrder = async (
-  adminPin: string,
   order: PosOrder,
   note = '',
 ): Promise<PosOrder> => {
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/refund`, {
     method: 'POST',
-    headers: {
-      'X-POS-ADMIN-PIN': adminPin,
-    },
     body: JSON.stringify({ stationId: currentStationId(), note }),
   })
 
@@ -898,9 +1311,13 @@ export const updatePrintJobStatus = async (
 }
 
 export const deletePrintJob = async (printJobId: string): Promise<PrintJob> => {
+  const stationId = currentStationId()
   const data = await request<PrintJobResponse>(`/print-jobs/${printJobId}`, {
     method: 'DELETE',
-    body: JSON.stringify({ stationId: currentStationId() }),
+    headers: {
+      'X-POS-STATION-ID': stationId,
+    },
+    body: JSON.stringify({ stationId }),
   })
 
   return normalizePrintJob(data.printJob)

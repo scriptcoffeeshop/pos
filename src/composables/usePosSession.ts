@@ -4,9 +4,22 @@ import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
 import {
+  clearOnlineOrderNotifier,
+  markOnlineOrderNotifierSeen,
+  notifyBackgroundOnlineOrders,
+  setOnlineOrderNotifierAppActive,
+  snoozeOnlineOrderNotifier,
+  syncOnlineOrderNotifier,
+} from '../lib/onlineOrderNotifier'
+import {
+  createCounterDraftOrder,
   createOrder,
   createPrintJob,
   closeRegisterSession,
+  createProduct,
+  defaultPosAppearanceSettings,
+  defaultOnlineOrderingSettings,
+  deleteProduct,
   deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
@@ -17,10 +30,12 @@ import {
   claimOrder,
   currentStationId,
   currentStationLabel,
+  finalizeCounterDraftOrder,
   isPosApiConfigured,
   releaseOrderClaim,
   refundOrder,
   sendStationHeartbeat,
+  updateCounterDraftOrder,
   updateProduct,
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
@@ -28,6 +43,12 @@ import {
   voidOrder,
 } from '../lib/posApi'
 import type { ProductUpdateInput } from '../lib/posApi'
+import {
+  isPosRealtimeConfigured,
+  subscribeToPosRealtimeEvents,
+  type PosRealtimeEvent,
+  type PosRealtimeStatus,
+} from '../lib/posRealtime'
 import {
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
@@ -40,9 +61,12 @@ import type {
   MenuItem,
   OrderSource,
   OrderStatus,
+  OnlineOrderingSettings,
   PaymentMethod,
   PaymentStatus,
+  PosAppearanceSettings,
   PosOrder,
+  ProductSupplyStatus,
   PrintJob,
   PrinterSettings,
   PrintStation,
@@ -53,13 +77,26 @@ import type {
 
 type CategoryFilter = 'all' | MenuCategory
 type BackendMode = 'syncing' | 'connected' | 'fallback'
+type RuntimeSettings = Awaited<ReturnType<typeof fetchRuntimeSettings>>
+type WebAudioGlobal = typeof globalThis & { webkitAudioContext?: typeof AudioContext }
 
 const queueSyncIntervalMs = 20_000
 const stationHeartbeatIntervalMs = 30_000
+const onlineReminderClockIntervalMs = 30_000
+const onlineReminderShortSnoozeMs = 60_000
+const onlineReminderLongSnoozeMs = 24 * 60 * 60_000
+const realtimeRefreshDebounceMs = 350
+const realtimeBusyRetryMs = 1_200
+const realtimeReconnectBaseDelayMs = 2_000
+const realtimeReconnectMaxDelayMs = 30_000
 const maxCartLineQuantity = 999
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
+const localCounterOrdersStorageKey = 'script-coffee-pos-local-counter-orders'
+const localProductsStorageKey = 'script-coffee-pos-local-products'
+const acceptedOnlineOrderIdsStorageKey = 'script-coffee-pos-accepted-online-orders'
+const dismissedQueueOrderKeysStorageKey = 'script-coffee-pos-dismissed-queue-orders'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -74,13 +111,14 @@ interface BackendStatus {
 interface CounterDraftState {
   cartLines: CartLine[]
   customer: CustomerDraft
+  draftOrderId: string | null
+  draftStartedAt: string | null
   paymentMethod: PaymentMethod
   serviceMode: ServiceMode
 }
 
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const paymentMethods: PaymentMethod[] = ['cash', 'card', 'line-pay', 'jkopay', 'transfer']
-const menuCategories: MenuCategory[] = ['coffee', 'tea', 'food', 'retail']
 const orderSources: OrderSource[] = ['counter', 'qr', 'online']
 const orderStatuses: OrderStatus[] = ['new', 'preparing', 'ready', 'served', 'failed', 'voided']
 const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expired', 'failed', 'refunded']
@@ -100,8 +138,20 @@ const isServiceMode = (value: unknown): value is ServiceMode =>
 const isPaymentMethod = (value: unknown): value is PaymentMethod =>
   typeof value === 'string' && paymentMethods.includes(value as PaymentMethod)
 
+const sanitizeDraftOrderId = (value: unknown): string | null =>
+  typeof value === 'string' && /^POS-\d{8}-\d{3}$/.test(value) ? value : null
+
+const sanitizeDraftStartedAt = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? value : null
+}
+
 const isMenuCategory = (value: unknown): value is MenuCategory =>
-  typeof value === 'string' && menuCategories.includes(value as MenuCategory)
+  typeof value === 'string' && value.trim().length > 0
 
 const isOrderSource = (value: unknown): value is OrderSource =>
   typeof value === 'string' && orderSources.includes(value as OrderSource)
@@ -192,6 +242,8 @@ const readCounterDraft = (): CounterDraftState | null => {
         ? parsed.cartLines.map(sanitizeCounterDraftLine).filter((line): line is CartLine => Boolean(line))
         : [],
       customer: sanitizeCustomerDraft(parsed.customer),
+      draftOrderId: sanitizeDraftOrderId(parsed.draftOrderId),
+      draftStartedAt: sanitizeDraftStartedAt(parsed.draftStartedAt),
       paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
       serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
     }
@@ -209,6 +261,7 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.requestedFulfillmentAt.trim().length > 0 ||
       draft.customer.note.trim().length > 0 ||
       draft.customer.name.trim() !== '現場客' ||
+      Boolean(draft.draftOrderId) ||
       draft.paymentMethod !== 'cash' ||
       draft.serviceMode !== 'takeout'
 
@@ -254,7 +307,7 @@ const writeRecentItemIds = (itemIds: string[]): void => {
 
 const nullableString = (value: unknown): string | null => (typeof value === 'string' ? value : null)
 
-const sanitizePendingLocalOrder = (value: unknown): PosOrder | null => {
+const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | null => {
   if (!value || typeof value !== 'object') {
     return null
   }
@@ -267,7 +320,7 @@ const sanitizePendingLocalOrder = (value: unknown): PosOrder | null => {
   if (
     typeof order.id !== 'string' ||
     order.id.trim().length === 0 ||
-    lines.length === 0 ||
+    (requireLines && lines.length === 0) ||
     typeof order.subtotal !== 'number' ||
     typeof order.customerName !== 'string' ||
     typeof order.customerPhone !== 'string' ||
@@ -301,6 +354,10 @@ const sanitizePendingLocalOrder = (value: unknown): PosOrder | null => {
   }
 }
 
+const sanitizePendingLocalOrder = (value: unknown): PosOrder | null => sanitizeStoredOrder(value, true)
+
+const sanitizeLocalCounterOrder = (value: unknown): PosOrder | null => sanitizeStoredOrder(value, false)
+
 const readPendingLocalOrders = (): PosOrder[] => {
   try {
     const rawOrders = globalThis.localStorage?.getItem(pendingLocalOrdersStorageKey)
@@ -311,6 +368,22 @@ const readPendingLocalOrders = (): PosOrder[] => {
     const parsed = JSON.parse(rawOrders)
     return Array.isArray(parsed)
       ? parsed.map(sanitizePendingLocalOrder).filter((order): order is PosOrder => Boolean(order)).slice(0, 50)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const readLocalCounterOrders = (): PosOrder[] => {
+  try {
+    const rawOrders = globalThis.localStorage?.getItem(localCounterOrdersStorageKey)
+    if (!rawOrders) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawOrders)
+    return Array.isArray(parsed)
+      ? parsed.map(sanitizeLocalCounterOrder).filter((order): order is PosOrder => Boolean(order)).slice(0, 50)
       : []
   } catch {
     return []
@@ -330,9 +403,88 @@ const writePendingLocalOrders = (orders: PosOrder[]): void => {
   }
 }
 
+const writeLocalCounterOrders = (orders: PosOrder[]): void => {
+  try {
+    const visibleOrders = orders.filter((order) => !['served', 'voided', 'failed'].includes(order.status)).slice(0, 50)
+    if (visibleOrders.length === 0) {
+      globalThis.localStorage?.removeItem(localCounterOrdersStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(localCounterOrdersStorageKey, JSON.stringify(visibleOrders))
+  } catch {
+    return
+  }
+}
+
+const readAcceptedOnlineOrderIds = (): string[] => {
+  try {
+    const rawIds = globalThis.localStorage?.getItem(acceptedOnlineOrderIdsStorageKey)
+    if (!rawIds) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawIds)
+    return Array.isArray(parsed)
+      ? parsed.filter((orderId): orderId is string => typeof orderId === 'string').slice(0, 100)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeAcceptedOnlineOrderIds = (orderIds: string[]): void => {
+  try {
+    globalThis.localStorage?.setItem(
+      acceptedOnlineOrderIdsStorageKey,
+      JSON.stringify([...new Set(orderIds)].slice(-100)),
+    )
+  } catch {
+    return
+  }
+}
+
+const queueDismissalKeyFor = (order: PosOrder): string =>
+  `${order.remoteId ?? order.id}|${order.createdAt}`
+
+const readDismissedQueueOrderKeys = (): string[] => {
+  try {
+    const rawKeys = globalThis.localStorage?.getItem(dismissedQueueOrderKeysStorageKey)
+    if (!rawKeys) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawKeys)
+    return Array.isArray(parsed)
+      ? parsed.filter((key): key is string => typeof key === 'string').slice(-200)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeDismissedQueueOrderKeys = (keys: string[]): void => {
+  try {
+    const nextKeys = [...new Set(keys)].slice(-200)
+    if (nextKeys.length === 0) {
+      globalThis.localStorage?.removeItem(dismissedQueueOrderKeysStorageKey)
+      return
+    }
+
+    globalThis.localStorage?.setItem(dismissedQueueOrderKeysStorageKey, JSON.stringify(nextKeys))
+  } catch {
+    return
+  }
+}
+
 const mergeLocalPendingOrders = (pendingOrders: PosOrder[], baseOrders: PosOrder[]): PosOrder[] => {
   const baseIds = new Set(baseOrders.map((order) => order.id))
   return [...pendingOrders.filter((order) => !baseIds.has(order.id)), ...baseOrders]
+}
+
+const mergeLocalCounterOrders = (localOrders: PosOrder[], baseOrders: PosOrder[]): PosOrder[] => {
+  const localIds = new Set(localOrders.map((order) => order.id))
+  return [...localOrders, ...baseOrders.filter((order) => !localIds.has(order.id))]
 }
 
 const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
@@ -354,6 +506,20 @@ const toRequestedFulfillmentIso = (value: string): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
+const toDatetimeLocalInputValue = (value: string | null): string => {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  const timestamp = date.getTime()
+  if (!Number.isFinite(timestamp)) {
+    return ''
+  }
+
+  return new Date(timestamp - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
 const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => ({
   stations: [
     {
@@ -373,28 +539,31 @@ const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => 
       serviceMode: 'takeout',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
       labelMode: 'label',
       enabled: true,
     },
     {
       id: 'counter-dine-in-receipt',
-      name: '內用收據',
+      name: '內用貼紙',
       serviceMode: 'dine-in',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
-      labelMode: 'receipt',
+      labelMode: 'label',
       enabled: true,
     },
     {
       id: 'counter-delivery-receipt',
-      name: '外送收據',
+      name: '外送貼紙',
       serviceMode: 'delivery',
       stationId: station.id ?? 'counter',
       categories: ['coffee', 'tea', 'food', 'retail'],
+      itemIds: [],
       copies: 1,
-      labelMode: 'both',
+      labelMode: 'label',
       enabled: true,
     },
   ],
@@ -409,9 +578,10 @@ const getErrorMessage = (error: unknown): string => {
 
 const isInventoryError = (message: string): boolean => /inventory|Product not found|quantity/i.test(message)
 
-const nextSequenceFromOrders = (orders: PosOrder[]): number => {
+const nextSequenceFromOrders = (orders: PosOrder[], dateKey = formatDateKey(new Date())): number => {
+  const orderIdPattern = new RegExp(`^POS-${dateKey}-(\\d{3})$`)
   const maxSequence = orders.reduce((currentMax, order) => {
-    const match = order.id.match(/-(\d{3,})$/)
+    const match = order.id.match(orderIdPattern)
     const sequence = match ? Number(match[1]) : 0
     return Number.isFinite(sequence) ? Math.max(currentMax, sequence) : currentMax
   }, 0)
@@ -419,26 +589,137 @@ const nextSequenceFromOrders = (orders: PosOrder[]): number => {
   return maxSequence + 1
 }
 
+const sequenceFromOrderId = (orderId: string | null): number => {
+  const match = orderId?.match(/^POS-\d{8}-(\d{3})$/)
+  const sequence = match ? Number(match[1]) : 0
+
+  return Number.isFinite(sequence) ? sequence : 0
+}
+
 const sortProducts = (products: MenuItem[]): MenuItem[] =>
   [...products].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
 
-const productToUpdateInput = (product: MenuItem, isAvailable = product.available): ProductUpdateInput => ({
+interface ProductUpdateOverrides {
+  isAvailable?: boolean
+  posVisible?: boolean
+  onlineVisible?: boolean
+  qrVisible?: boolean
+}
+
+const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrides = {}): ProductUpdateInput => ({
   name: product.name,
   category: product.category,
   price: product.price,
   tags: [...product.tags],
   accent: product.accent,
-  isAvailable,
+  isAvailable: overrides.isAvailable ?? product.available,
   sortOrder: product.sortOrder,
-  posVisible: product.posVisible,
-  onlineVisible: product.onlineVisible,
-  qrVisible: product.qrVisible,
+  posVisible: overrides.posVisible ?? product.posVisible,
+  onlineVisible: overrides.onlineVisible ?? product.onlineVisible,
+  qrVisible: overrides.qrVisible ?? product.qrVisible,
   prepStation: product.prepStation,
   printLabel: product.printLabel,
   inventoryCount: product.inventoryCount,
   lowStockThreshold: product.lowStockThreshold,
   soldOutUntil: product.soldOutUntil,
 })
+
+const productSkuFromName = (name: string): string => {
+  const sku = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 64)
+
+  return sku || `product-${Date.now().toString(36)}`
+}
+
+const createLocalProductId = (): string =>
+  `local-${globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36)}`
+
+const buildLocalProduct = (input: ProductUpdateInput): MenuItem => ({
+  id: createLocalProductId(),
+  sku: input.sku?.trim() || productSkuFromName(input.name),
+  name: input.name.trim(),
+  category: input.category.trim(),
+  price: input.price,
+  tags: [...input.tags],
+  accent: input.accent,
+  available: input.isAvailable,
+  sortOrder: input.sortOrder,
+  posVisible: input.posVisible,
+  onlineVisible: input.onlineVisible,
+  qrVisible: input.qrVisible,
+  prepStation: input.prepStation,
+  printLabel: input.printLabel,
+  inventoryCount: input.inventoryCount,
+  lowStockThreshold: input.lowStockThreshold,
+  soldOutUntil: input.soldOutUntil,
+})
+
+const isLocalProduct = (product: MenuItem): boolean => product.id.startsWith('local-')
+
+const sanitizeLocalProduct = (value: unknown): MenuItem | null => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const product = value as Partial<MenuItem>
+  if (
+    typeof product.id !== 'string' ||
+    typeof product.sku !== 'string' ||
+    typeof product.name !== 'string' ||
+    typeof product.category !== 'string' ||
+    typeof product.price !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    category: product.category,
+    price: Math.max(0, Math.trunc(product.price)),
+    tags: Array.isArray(product.tags) ? product.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+    accent: typeof product.accent === 'string' ? product.accent : '#0b6b63',
+    available: typeof product.available === 'boolean' ? product.available : true,
+    sortOrder: typeof product.sortOrder === 'number' ? Math.trunc(product.sortOrder) : 0,
+    posVisible: typeof product.posVisible === 'boolean' ? product.posVisible : true,
+    onlineVisible: typeof product.onlineVisible === 'boolean' ? product.onlineVisible : true,
+    qrVisible: typeof product.qrVisible === 'boolean' ? product.qrVisible : true,
+    prepStation: typeof product.prepStation === 'string' ? product.prepStation : 'counter',
+    printLabel: typeof product.printLabel === 'boolean' ? product.printLabel : true,
+    inventoryCount: typeof product.inventoryCount === 'number' ? Math.trunc(product.inventoryCount) : null,
+    lowStockThreshold: typeof product.lowStockThreshold === 'number' ? Math.trunc(product.lowStockThreshold) : null,
+    soldOutUntil: typeof product.soldOutUntil === 'string' ? product.soldOutUntil : null,
+  }
+}
+
+const readLocalProducts = (): MenuItem[] => {
+  try {
+    const rawProducts = globalThis.localStorage?.getItem(localProductsStorageKey)
+    if (!rawProducts) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawProducts)
+    return Array.isArray(parsed)
+      ? parsed.map(sanitizeLocalProduct).filter((product): product is MenuItem => Boolean(product))
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeLocalProducts = (products: MenuItem[]): void => {
+  try {
+    globalThis.localStorage?.setItem(localProductsStorageKey, JSON.stringify(products.filter(isLocalProduct)))
+  } catch {
+    return
+  }
+}
 
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
   if (!product.soldOutUntil) {
@@ -449,11 +730,40 @@ const isProductTemporarilyStopped = (product: MenuItem): boolean => {
   return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
 }
 
+const productSupplyOverrides = (status: ProductSupplyStatus): ProductUpdateOverrides => {
+  if (status === 'online-stopped') {
+    return {
+      isAvailable: true,
+      posVisible: true,
+      onlineVisible: false,
+      qrVisible: false,
+    }
+  }
+
+  if (status === 'stopped') {
+    return {
+      isAvailable: false,
+      posVisible: true,
+      onlineVisible: false,
+      qrVisible: false,
+    }
+  }
+
+  return {
+    isAvailable: true,
+    posVisible: true,
+    onlineVisible: true,
+    qrVisible: true,
+  }
+}
+
 const isProductOrderable = (product: MenuItem): boolean =>
   product.available &&
   product.posVisible &&
   product.inventoryCount !== 0 &&
   !isProductTemporarilyStopped(product)
+
+const isProductVisibleInPos = (product: MenuItem): boolean => product.posVisible
 
 const summarizePrintStatuses = (statuses: PrintStatus[]): PrintStatus => {
   if (statuses.length === 0) {
@@ -498,18 +808,29 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const autoLoad = options.autoLoad ?? true
   const savedCounterDraft = readCounterDraft()
   const savedPendingLocalOrders = readPendingLocalOrders()
+  const savedLocalCounterOrders = readLocalCounterOrders()
   const selectedCategory = ref<CategoryFilter>('all')
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
   const paymentMethod = ref<PaymentMethod>(savedCounterDraft?.paymentMethod ?? 'cash')
-  const menuCatalog = ref<MenuItem[]>([...menuItems])
-  const productStatusCatalog = ref<MenuItem[]>([...menuItems])
+  const savedLocalProducts = readLocalProducts()
+  const menuCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
+  const productStatusCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
   const cartLines = ref<CartLine[]>(savedCounterDraft?.cartLines ?? [])
   const recentItemIds = ref<string[]>(readRecentItemIds())
   const pendingLocalOrders = ref<PosOrder[]>(savedPendingLocalOrders)
-  const orderQueue = ref<PosOrder[]>(mergeLocalPendingOrders(savedPendingLocalOrders, initialOrders))
+  const localCounterOrders = ref<PosOrder[]>(savedLocalCounterOrders)
+  const orderQueue = ref<PosOrder[]>(
+    mergeLocalCounterOrders(savedLocalCounterOrders, mergeLocalPendingOrders(savedPendingLocalOrders, initialOrders)),
+  )
   const lastPrintPreview = ref('尚未送出列印資料')
-  const nextSequence = ref(nextSequenceFromOrders(orderQueue.value))
+  const counterDraftOrderId = ref<string | null>(savedCounterDraft?.draftOrderId ?? null)
+  const counterDraftStartedAt = ref<string | null>(
+    counterDraftOrderId.value ? savedCounterDraft?.draftStartedAt ?? null : null,
+  )
+  const nextSequence = ref(
+    Math.max(nextSequenceFromOrders(orderQueue.value), sequenceFromOrderId(counterDraftOrderId.value) + 1),
+  )
   const isSubmitting = ref(false)
   const printingOrderId = ref<string | null>(null)
   const deletingPrintJobId = ref<string | null>(null)
@@ -519,7 +840,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const refundingOrderId = ref<string | null>(null)
   const isLoadingProductStatus = ref(false)
   const togglingProductId = ref<string | null>(null)
-  const productStatusMessage = ref('輸入 PIN 後可載入完整商品清單，並在平板上暫停或恢復供應')
+  const productStatusMessage = ref('後台編輯模式可載入完整商品清單，並在平板上暫停或恢復供應')
   const registerSession = ref<RegisterSession | null>(null)
   const registerMessage = ref('尚未載入開班資料')
   const stationHeartbeatMessage = ref('尚未回報平板在線狀態')
@@ -541,23 +862,29 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintAt: null,
   })
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
+  const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+  const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
+  const onlineReminderClock = ref(Date.now())
+  const acknowledgedOnlineReminderIds = ref<string[]>([])
+  const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
+  const dismissedQueueOrderKeys = ref<string[]>(readDismissedQueueOrderKeys())
+  const onlineReminderAudioMessage = ref('')
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
   let queueSyncTimer: number | null = null
   let stationHeartbeatTimer: number | null = null
-
-  watch(
-    [cartLines, serviceMode, paymentMethod, customer],
-    () => {
-      writeCounterDraft({
-        cartLines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
-        customer: { ...customer },
-        paymentMethod: paymentMethod.value,
-        serviceMode: serviceMode.value,
-      })
-    },
-    { deep: true, immediate: true },
-  )
+  let onlineReminderClockTimer: number | null = null
+  let counterDraftSyncTimer: number | null = null
+  let realtimeUnsubscribe: (() => void) | null = null
+  let realtimeReconnectTimer: number | null = null
+  let realtimeQueueRefreshTimer: number | null = null
+  let realtimeRuntimeRefreshTimer: number | null = null
+  let realtimeRegisterRefreshTimer: number | null = null
+  let realtimeProductRefreshTimer: number | null = null
+  let realtimeReconnectAttempt = 0
+  let realtimeSubscriptionToken = 0
+  let realtimeClosedByClient = false
+  let lastPlayedOnlineReminderSignature = ''
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -575,11 +902,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         name: printStation.name,
       }
     }),
-    rules: printerSettings.value.rules.map((rule) => ({ ...rule, categories: [...rule.categories] })),
+    rules: printerSettings.value.rules.map((rule) => ({
+      ...rule,
+      categories: [...rule.categories],
+      itemIds: [...(rule.itemIds ?? [])],
+    })),
   })
 
-  const applyRuntimePrinterSettings = async (): Promise<void> => {
-    const runtimeSettings = await fetchRuntimeSettings()
+  const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
+    onlineOrderingSettings.value = runtimeSettings.onlineOrdering
+    posAppearanceSettings.value = runtimeSettings.posAppearance
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
       : buildDefaultPrinterSettings(printStation)
@@ -597,6 +929,212 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printStation.online = primaryStation.enabled
   }
 
+  const onlineReminderMinutes = computed(() =>
+    Math.max(0, onlineOrderingSettings.value.unconfirmedReminderMinutes),
+  )
+
+  const onlineOrderAccepted = (order: PosOrder): boolean =>
+    acceptedOnlineOrderIds.value.includes(order.id) || Boolean(order.claimedBy)
+
+  const onlineOrderRequiresAcceptance = (order: PosOrder): boolean =>
+    onlineOrderingSettings.value.acceptanceRequired &&
+    (order.source === 'online' || order.source === 'qr') &&
+    order.status === 'new' &&
+    ['pending', 'authorized', 'paid'].includes(order.paymentStatus) &&
+    !onlineOrderAccepted(order)
+
+  const unconfirmedOnlineOrders = computed(() =>
+    orderQueue.value.filter((order) =>
+      (order.source === 'online' || order.source === 'qr') &&
+      order.status === 'new' &&
+      ['pending', 'authorized', 'paid'].includes(order.paymentStatus),
+    ),
+  )
+
+  const overdueUnconfirmedOnlineOrders = computed(() => {
+    const thresholdMs = onlineReminderMinutes.value * 60_000
+    const now = onlineReminderClock.value
+
+    return unconfirmedOnlineOrders.value.filter((order) => {
+      const createdAt = new Date(order.createdAt).getTime()
+      if (!Number.isFinite(createdAt)) {
+        return false
+      }
+
+      return now - createdAt >= thresholdMs
+    })
+  })
+
+  const activeOnlineReminderOrders = computed(() => {
+    const acknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
+    const candidateOrders = onlineOrderingSettings.value.acceptanceRequired
+      ? unconfirmedOnlineOrders.value.filter(onlineOrderRequiresAcceptance)
+      : overdueUnconfirmedOnlineOrders.value
+    return candidateOrders.filter((order) => !acknowledgedIds.has(order.id))
+  })
+
+  const onlineReminderSignature = computed(() => {
+    const orderSignature = activeOnlineReminderOrders.value.map((order) => order.id).sort().join('|')
+    if (!orderSignature || onlineOrderingSettings.value.notificationRepeatMode !== 'continuous') {
+      return orderSignature
+    }
+
+    return `${orderSignature}:${Math.floor(onlineReminderClock.value / 60_000)}`
+  })
+
+  const onlineOrderReminder = computed(() => ({
+    soundEnabled: onlineOrderingSettings.value.soundEnabled,
+    reminderMinutes: onlineReminderMinutes.value,
+    unconfirmedCount: unconfirmedOnlineOrders.value.length,
+    overdueCount: overdueUnconfirmedOnlineOrders.value.length,
+    activeOverdueCount: activeOnlineReminderOrders.value.length,
+    audioMessage: onlineReminderAudioMessage.value,
+  }))
+
+  const isDocumentActive = (): boolean =>
+    !globalThis.document?.visibilityState || globalThis.document.visibilityState === 'visible'
+
+  const syncOnlineReminderNotifier = (): void => {
+    syncOnlineOrderNotifier({
+      settings: onlineOrderingSettings.value,
+      activeOrders: activeOnlineReminderOrders.value,
+      acceptedOrderIds: acceptedOnlineOrderIds.value,
+      appActive: isDocumentActive(),
+    })
+  }
+
+  const playOnlineOrderTone = async (): Promise<void> => {
+    const AudioContextCtor = globalThis.AudioContext ?? (globalThis as WebAudioGlobal).webkitAudioContext
+    if (!AudioContextCtor) {
+      onlineReminderAudioMessage.value = '此裝置不支援提示音'
+      return
+    }
+
+    try {
+      const audioContext = new AudioContextCtor()
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume()
+      }
+
+      const now = audioContext.currentTime
+      const gain = audioContext.createGain()
+      const volume = Math.min(Math.max(onlineOrderingSettings.value.notificationVolume, 0), 100) / 100
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.18 * volume), now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42)
+      gain.connect(audioContext.destination)
+
+      for (const [index, frequency] of [880, 1175].entries()) {
+        const oscillator = audioContext.createOscillator()
+        const startAt = now + index * 0.18
+        oscillator.type = 'sine'
+        oscillator.frequency.setValueAtTime(frequency, startAt)
+        oscillator.connect(gain)
+        oscillator.start(startAt)
+        oscillator.stop(startAt + 0.12)
+      }
+
+      globalThis.setTimeout(() => {
+        void audioContext.close()
+      }, 560)
+      onlineReminderAudioMessage.value = ''
+    } catch {
+      onlineReminderAudioMessage.value = '提示音被瀏覽器阻擋，點一下頁面後會恢復'
+    }
+  }
+
+  const maybePlayOnlineOrderReminder = (): void => {
+    const signature = onlineReminderSignature.value
+    if (!signature) {
+      lastPlayedOnlineReminderSignature = ''
+      return
+    }
+
+    if (!onlineOrderingSettings.value.soundEnabled || signature === lastPlayedOnlineReminderSignature) {
+      return
+    }
+
+    if (!isDocumentActive()) {
+      const notified = notifyBackgroundOnlineOrders({
+        signature,
+        orders: activeOnlineReminderOrders.value,
+        settings: onlineOrderingSettings.value,
+      })
+      if (notified) {
+        lastPlayedOnlineReminderSignature = signature
+      }
+      return
+    }
+
+    lastPlayedOnlineReminderSignature = signature
+    void playOnlineOrderTone()
+  }
+
+  const acknowledgeOnlineOrderReminders = (): void => {
+    const snoozedIds = activeOnlineReminderOrders.value.map((order) => order.id)
+    const nextAcknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
+    for (const orderId of snoozedIds) {
+      nextAcknowledgedIds.add(orderId)
+    }
+
+    acknowledgedOnlineReminderIds.value = [...nextAcknowledgedIds]
+    const snoozeMs = onlineOrderingSettings.value.acceptanceRequired
+      ? onlineReminderShortSnoozeMs
+      : onlineReminderLongSnoozeMs
+    snoozeOnlineOrderNotifier(snoozedIds, Date.now() + snoozeMs)
+
+    if (onlineOrderingSettings.value.acceptanceRequired && snoozedIds.length > 0) {
+      globalThis.setTimeout(() => {
+        acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
+          !snoozedIds.includes(orderId),
+        )
+        onlineReminderClock.value = Date.now()
+      }, 60_000)
+    }
+  }
+
+  watch(
+    unconfirmedOnlineOrders,
+    (orders) => {
+      const activeIds = new Set(orders.map((order) => order.id))
+      acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
+        activeIds.has(orderId),
+      )
+    },
+  )
+
+  watch(
+    [onlineReminderSignature, () => onlineOrderingSettings.value.soundEnabled],
+    () => {
+      maybePlayOnlineOrderReminder()
+    },
+  )
+
+  watch(
+    [
+      activeOnlineReminderOrders,
+      acceptedOnlineOrderIds,
+      () => onlineOrderingSettings.value.acceptanceRequired,
+      () => onlineOrderingSettings.value.soundEnabled,
+      () => onlineOrderingSettings.value.notificationRepeatMode,
+      () => onlineOrderingSettings.value.notificationVolume,
+      () => onlineOrderingSettings.value.unconfirmedReminderMinutes,
+    ],
+    () => {
+      syncOnlineReminderNotifier()
+    },
+  )
+
+  watch(orderQueue, (orders) => {
+    const activeOrderIds = new Set(orders.filter((order) => !['served', 'voided', 'failed'].includes(order.status)).map((order) => order.id))
+    const nextAcceptedIds = acceptedOnlineOrderIds.value.filter((orderId) => activeOrderIds.has(orderId))
+    if (nextAcceptedIds.length !== acceptedOnlineOrderIds.value.length) {
+      acceptedOnlineOrderIds.value = nextAcceptedIds
+      writeAcceptedOnlineOrderIds(nextAcceptedIds)
+      markOnlineOrderNotifierSeen(nextAcceptedIds)
+    }
+  })
+
   const filteredMenu = computed(() => {
     const keyword = searchTerm.value.trim().toLowerCase()
     return menuCatalog.value.filter((item) => {
@@ -605,7 +1143,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         keyword.length === 0 ||
         item.name.toLowerCase().includes(keyword) ||
         item.tags.some((tag) => tag.toLowerCase().includes(keyword))
-      return isProductOrderable(item) && matchesCategory && matchesKeyword
+      return isProductVisibleInPos(item) && matchesCategory && matchesKeyword
     })
   })
 
@@ -636,13 +1174,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
-  const pendingOrders = computed(() => orderQueue.value.filter((order) => order.status !== 'served' && order.status !== 'voided'))
+  const pendingOrders = computed(() =>
+    orderQueue.value.filter((order) =>
+      order.status !== 'served' &&
+      order.status !== 'voided' &&
+      order.status !== 'failed' &&
+      !onlineOrderRequiresAcceptance(order),
+    ),
+  )
 
   const setBackendStatus = (mode: BackendMode, label: string, detail: string): void => {
     backendStatus.mode = mode
     backendStatus.label = label
     backendStatus.detail = detail
   }
+
+  const orderSyncOperationBusy = (): boolean =>
+    isSubmitting.value ||
+    Boolean(printingOrderId.value) ||
+    Boolean(claimingOrderId.value) ||
+    Boolean(updatingPaymentOrderId.value) ||
+    Boolean(voidingOrderId.value) ||
+    Boolean(refundingOrderId.value)
 
   const applyRegisterSession = (session: RegisterSession | null): void => {
     registerSession.value = session
@@ -665,28 +1218,118 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.note = nextDraft.note
   }
 
+  const syncNextSequenceFromQueue = (): void => {
+    nextSequence.value = Math.max(
+      nextSequenceFromOrders(orderQueue.value),
+      sequenceFromOrderId(counterDraftOrderId.value) + 1,
+    )
+  }
+
+  const clearCounterDraftIdentity = (): void => {
+    counterDraftOrderId.value = null
+    counterDraftStartedAt.value = null
+    syncNextSequenceFromQueue()
+  }
+
+  const startCounterDraft = async (mode: ServiceMode = 'takeout'): Promise<void> => {
+    const startedAt = new Date()
+    const sequence = Math.max(nextSequence.value, nextSequenceFromOrders(orderQueue.value, formatDateKey(startedAt)))
+    const orderId = buildOrderId(startedAt, sequence)
+    const startedAtIso = startedAt.toISOString()
+    const order: PosOrder = {
+      id: orderId,
+      source: 'counter',
+      mode,
+      customerName: '現場客',
+      customerPhone: '',
+      deliveryAddress: '',
+      requestedFulfillmentAt: null,
+      note: '',
+      lines: [],
+      subtotal: 0,
+      paymentMethod: 'cash',
+      paymentStatus: 'pending',
+      status: 'new',
+      createdAt: startedAtIso,
+      isDraft: true,
+      claimedBy: stationClaimId,
+      claimedAt: startedAtIso,
+      claimExpiresAt: claimExpiresIn(),
+      printStatus: 'skipped',
+      printJobs: [],
+    }
+
+    clearCart()
+    resetCustomerDraft()
+    paymentMethod.value = 'cash'
+    serviceMode.value = mode
+    counterDraftOrderId.value = orderId
+    counterDraftStartedAt.value = startedAtIso
+    nextSequence.value = sequence + 1
+    rememberLocalCounterOrder(order)
+
+    if (!isPosApiConfigured) {
+      setBackendStatus('fallback', '本機草稿', `${order.id} 已保留在本機，連線 POS API 後才能跨平板追溯`)
+      return
+    }
+
+    try {
+      const persistedDraft = await createCounterDraftOrder(order)
+      const nextOrder: PosOrder = {
+        ...persistedDraft,
+        lines: order.lines,
+        isDraft: true,
+      }
+      replaceOrder(order.id, nextOrder)
+      removeLocalCounterOrder(order.id)
+      setBackendStatus('connected', '草稿已同步', `${order.id} 已建立在資料庫`)
+    } catch (error) {
+      setBackendStatus('fallback', '草稿同步失敗', `${order.id} 先保留在本機：${getErrorMessage(error)}`)
+    }
+  }
+
+  const noteTokensFromText = (value: string): string[] =>
+    value
+      .split(/[、，,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+
+  const customerHasNote = (note: string): boolean => {
+    const nextNote = note.trim()
+    if (!nextNote) {
+      return false
+    }
+
+    return noteTokensFromText(customer.note).includes(nextNote)
+  }
+
   const appendCustomerNote = (note: string): void => {
     const nextNote = note.trim()
     if (!nextNote) {
       return
     }
 
-    const currentNote = customer.note.trim()
-    if (!currentNote) {
-      customer.note = nextNote
+    if (customerHasNote(nextNote)) {
       return
     }
 
-    const existingNotes = currentNote
-      .split(/[、，,]/)
-      .map((entry) => entry.trim())
-      .filter(Boolean)
+    const existingNotes = noteTokensFromText(customer.note)
+    customer.note = [...existingNotes, nextNote].join('、')
+  }
 
-    if (existingNotes.includes(nextNote)) {
+  const toggleCustomerNote = (note: string): void => {
+    const nextNote = note.trim()
+    if (!nextNote) {
       return
     }
 
-    customer.note = `${currentNote}、${nextNote}`
+    const existingNotes = noteTokensFromText(customer.note)
+    if (!existingNotes.includes(nextNote)) {
+      customer.note = [...existingNotes, nextNote].join('、')
+      return
+    }
+
+    customer.note = existingNotes.filter((entry) => entry !== nextNote).join('、')
   }
 
   const mergePrintJobs = (order: PosOrder, printJobs: PrintJob[]): PrintJob[] => {
@@ -711,6 +1354,37 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       pendingLocalOrders.value = pendingLocalOrders.value.map((order) => (order.id === orderId ? nextOrder : order))
       writePendingLocalOrders(pendingLocalOrders.value)
     }
+
+    if (localCounterOrders.value.some((order) => order.id === orderId)) {
+      localCounterOrders.value = localCounterOrders.value.map((order) => (order.id === orderId ? nextOrder : order))
+      writeLocalCounterOrders(localCounterOrders.value)
+    }
+  }
+
+  const removeLocalCounterOrder = (orderId: string): void => {
+    localCounterOrders.value = localCounterOrders.value.filter((order) => order.id !== orderId)
+    writeLocalCounterOrders(localCounterOrders.value)
+  }
+
+  const rememberLocalCounterOrder = (order: PosOrder): void => {
+    if (order.remoteId) {
+      removeLocalCounterOrder(order.id)
+      return
+    }
+
+    localCounterOrders.value = [
+      order,
+      ...localCounterOrders.value.filter((entry) => entry.id !== order.id),
+    ].slice(0, 50)
+    writeLocalCounterOrders(localCounterOrders.value)
+    orderQueue.value = [order, ...orderQueue.value.filter((entry) => entry.id !== order.id)]
+  }
+
+  const clearCounterOrderFromLocalStores = (orderId: string): void => {
+    pendingLocalOrders.value = pendingLocalOrders.value.filter((order) => order.id !== orderId)
+    localCounterOrders.value = localCounterOrders.value.filter((order) => order.id !== orderId)
+    writePendingLocalOrders(pendingLocalOrders.value)
+    writeLocalCounterOrders(localCounterOrders.value)
   }
 
   const rememberPendingLocalOrder = (order: PosOrder): void => {
@@ -718,6 +1392,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
+    removeLocalCounterOrder(order.id)
     pendingLocalOrders.value = [
       order,
       ...pendingLocalOrders.value.filter((entry) => entry.id !== order.id),
@@ -726,16 +1401,118 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderQueue.value = mergeLocalPendingOrders(pendingLocalOrders.value, orderQueue.value)
   }
 
+  const syncCounterDraftToBackend = async (order: PosOrder): Promise<void> => {
+    if (!isPosApiConfigured || !order.remoteId || !order.isDraft || order.status !== 'new') {
+      return
+    }
+
+    try {
+      const savedDraft = await updateCounterDraftOrder(order)
+      replaceOrder(order.id, {
+        ...savedDraft,
+        lines: order.lines.map((line) => ({ ...line, options: [...line.options] })),
+        isDraft: true,
+      })
+      removeLocalCounterOrder(order.id)
+    } catch (error) {
+      setBackendStatus('fallback', '草稿同步失敗', `${order.id} 暫存在本機：${getErrorMessage(error)}`)
+    }
+  }
+
+  const scheduleCounterDraftSync = (order: PosOrder): void => {
+    if (!isPosApiConfigured || !order.remoteId || !order.isDraft) {
+      return
+    }
+
+    if (counterDraftSyncTimer !== null) {
+      globalThis.clearTimeout(counterDraftSyncTimer)
+    }
+    counterDraftSyncTimer = globalThis.setTimeout(() => {
+      counterDraftSyncTimer = null
+      void syncCounterDraftToBackend(order)
+    }, 700)
+  }
+
+  const syncActiveCounterOrderSnapshot = (): void => {
+    const orderId = counterDraftOrderId.value
+    if (!orderId) {
+      return
+    }
+
+    const currentOrder = orderQueue.value.find((order) => order.id === orderId)
+    if (!currentOrder || ['served', 'voided', 'failed'].includes(currentOrder.status)) {
+      return
+    }
+
+    const now = new Date().toISOString()
+    const nextPaymentStatus = ['pending', 'authorized'].includes(currentOrder.paymentStatus)
+      ? paymentStatusFor(paymentMethod.value)
+      : currentOrder.paymentStatus
+    const nextOrder: PosOrder = {
+      ...currentOrder,
+      mode: serviceMode.value,
+      customerName: customer.name.trim() || '現場客',
+      customerPhone: customer.phone.trim(),
+      deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
+      requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      note: customer.note.trim(),
+      lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
+      subtotal: cartTotal.value,
+      paymentMethod: paymentMethod.value,
+      paymentStatus: nextPaymentStatus,
+      claimedBy: currentOrder.claimedBy ?? stationClaimId,
+      claimedAt: currentOrder.claimedAt ?? now,
+      claimExpiresAt: currentOrder.claimExpiresAt ?? claimExpiresIn(),
+    }
+
+    replaceOrder(orderId, nextOrder)
+    if (!nextOrder.remoteId) {
+      rememberLocalCounterOrder(nextOrder)
+      return
+    }
+
+    if (nextOrder.isDraft) {
+      scheduleCounterDraftSync(nextOrder)
+    }
+  }
+
+  watch(
+    [cartLines, serviceMode, paymentMethod, customer, counterDraftOrderId, counterDraftStartedAt],
+    () => {
+      writeCounterDraft({
+        cartLines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
+        customer: { ...customer },
+        draftOrderId: counterDraftOrderId.value,
+        draftStartedAt: counterDraftOrderId.value ? counterDraftStartedAt.value : null,
+        paymentMethod: paymentMethod.value,
+        serviceMode: serviceMode.value,
+      })
+      syncActiveCounterOrderSnapshot()
+    },
+    { deep: true, immediate: true },
+  )
+
   const applyRemoteOrders = (remoteOrders: PosOrder[]): void => {
-    const remoteOrderIds = new Set(remoteOrders.map((order) => order.id))
+    const visibleRemoteOrders = remoteOrders.filter((order) =>
+      !dismissedQueueOrderKeys.value.includes(queueDismissalKeyFor(order)),
+    )
+    const remoteOrderIds = new Set(visibleRemoteOrders.map((order) => order.id))
     const nextPendingOrders = pendingLocalOrders.value.filter((order) => !remoteOrderIds.has(order.id))
+    const nextLocalCounterOrders = localCounterOrders.value.filter((order) =>
+      !remoteOrderIds.has(order.id) && !['served', 'voided', 'failed'].includes(order.status),
+    )
 
     if (nextPendingOrders.length !== pendingLocalOrders.value.length) {
       pendingLocalOrders.value = nextPendingOrders
       writePendingLocalOrders(pendingLocalOrders.value)
     }
 
-    orderQueue.value = mergeLocalPendingOrders(pendingLocalOrders.value, remoteOrders)
+    if (nextLocalCounterOrders.length !== localCounterOrders.value.length) {
+      localCounterOrders.value = nextLocalCounterOrders
+      writeLocalCounterOrders(localCounterOrders.value)
+    }
+
+    orderQueue.value = mergeLocalCounterOrders(localCounterOrders.value, mergeLocalPendingOrders(pendingLocalOrders.value, visibleRemoteOrders))
   }
 
   const syncPendingLocalOrders = async (): Promise<number> => {
@@ -776,11 +1553,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const syncedLocalOrderDetail = (count: number): string => (count > 0 ? `，已補同步 ${count} 張本機訂單` : '')
 
+  const counterOrderSkipsClaimTimeout = (order: PosOrder): boolean => order.source === 'counter'
+
+  const orderClaimExpired = (order: PosOrder, now = Date.now()): boolean =>
+    counterOrderSkipsClaimTimeout(order) ? false : isClaimExpired(order, now)
+
   const orderClaimedByCurrentStation = (order: PosOrder): boolean =>
-    Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !isClaimExpired(order)
+    Boolean(order.claimedBy) && order.claimedBy === stationClaimId && !orderClaimExpired(order)
 
   const orderClaimedByOtherStation = (order: PosOrder): boolean =>
-    Boolean(order.claimedBy) && order.claimedBy !== stationClaimId && !isClaimExpired(order)
+    !counterOrderSkipsClaimTimeout(order) &&
+    Boolean(order.claimedBy) &&
+    order.claimedBy !== stationClaimId &&
+    !orderClaimExpired(order)
 
   const orderPendingSync = (order: PosOrder): boolean =>
     pendingLocalOrders.value.some((entry) => entry.id === order.id)
@@ -790,15 +1575,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return ''
     }
 
-    if (isClaimExpired(order)) {
-      return `鎖定逾時：${order.claimedBy}`
+    if (counterOrderSkipsClaimTimeout(order)) {
+      return ''
+    }
+
+    if (orderClaimExpired(order)) {
+      return '鎖定逾時'
     }
 
     if (order.claimedBy === stationClaimId) {
-      return `本機處理中 · ${stationClaimLabel}`
+      return '本機處理中'
     }
 
-    return `${order.claimedBy} 處理中`
+    return '其他平板處理中'
   }
 
   const claimOrderForStation = async (orderId: string, force = false): Promise<boolean> => {
@@ -841,6 +1630,80 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const markOnlineOrderAccepted = (orderId: string): void => {
+    acceptedOnlineOrderIds.value = [...new Set([...acceptedOnlineOrderIds.value, orderId])].slice(-100)
+    acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((entry) => entry !== orderId)
+    markOnlineOrderNotifierSeen([orderId])
+    writeAcceptedOnlineOrderIds(acceptedOnlineOrderIds.value)
+  }
+
+  const acceptOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return false
+    }
+
+    if (!onlineOrderRequiresAcceptance(order)) {
+      markOnlineOrderAccepted(order.id)
+      return true
+    }
+
+    const claimed = await claimOrderForStation(order.id, Boolean(order.claimedBy && orderClaimExpired(order)))
+    if (!claimed) {
+      return false
+    }
+
+    markOnlineOrderAccepted(order.id)
+    setBackendStatus('connected', '線上訂單已接單', `${order.id} 已排入桌況頁`)
+    return true
+  }
+
+  const rejectOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order || (order.source !== 'online' && order.source !== 'qr')) {
+      return false
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return false
+    }
+
+    voidingOrderId.value = orderId
+
+    try {
+      const rejectedOrder =
+        isPosApiConfigured && order.remoteId
+          ? order.paymentStatus === 'pending'
+            ? await voidOrder(order, '拒絕接單')
+            : await persistOrderStatus(order, 'voided')
+          : {
+              ...order,
+              status: 'voided' as OrderStatus,
+              paymentStatus: 'failed' as PaymentStatus,
+              note: [order.note, '拒絕接單'].filter(Boolean).join(' / '),
+              claimedBy: null,
+              claimedAt: null,
+              claimExpiresAt: null,
+            }
+
+      replaceOrder(orderId, {
+        ...rejectedOrder,
+        lines: rejectedOrder.lines.length > 0 ? rejectedOrder.lines : order.lines,
+        printStatus: rejectedOrder.printStatus === 'skipped' ? order.printStatus : rejectedOrder.printStatus,
+      })
+      markOnlineOrderAccepted(order.id)
+      setBackendStatus('connected', '已拒絕接單', `${order.id} 已從待接單移除`)
+      void loadRegisterSession()
+      return true
+    } catch (error) {
+      setBackendStatus('fallback', '拒絕接單失敗', `${order.id} 拒絕失敗：${getErrorMessage(error)}`)
+      return false
+    } finally {
+      voidingOrderId.value = null
+    }
+  }
+
   const releaseOrderClaimForStation = async (orderId: string): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order || !orderClaimedByCurrentStation(order)) {
@@ -871,16 +1734,25 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const applySavedProduct = (product: MenuItem): void => {
+    if (isLocalProduct(product)) {
+      const savedProducts = readLocalProducts()
+      writeLocalProducts(
+        savedProducts.some((entry) => entry.id === product.id)
+          ? savedProducts.map((entry) => (entry.id === product.id ? product : entry))
+          : [...savedProducts, product],
+      )
+    }
+
     productStatusCatalog.value = sortProducts(
       productStatusCatalog.value.some((entry) => entry.id === product.id)
         ? productStatusCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
         : [...productStatusCatalog.value, product],
     )
 
-    const shouldShowInPos = isProductOrderable(product)
+    const shouldShowInPos = isProductVisibleInPos(product)
     if (!shouldShowInPos) {
       menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== product.id)
-      cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id)
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== product.id && line.productId !== product.id)
       return
     }
 
@@ -888,6 +1760,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       menuCatalog.value.some((entry) => entry.id === product.id)
         ? menuCatalog.value.map((entry) => (entry.id === product.id ? product : entry))
         : [...menuCatalog.value, product],
+    )
+  }
+
+  const removeSavedProduct = (productId: string): void => {
+    writeLocalProducts(readLocalProducts().filter((product) => product.id !== productId))
+    productStatusCatalog.value = productStatusCatalog.value.filter((entry) => entry.id !== productId)
+    menuCatalog.value = menuCatalog.value.filter((entry) => entry.id !== productId)
+    cartLines.value = cartLines.value.filter((line) => line.itemId !== productId && line.productId !== productId)
+  }
+
+  const restoreSupplyProductSnapshot = (products: MenuItem[]): void => {
+    const restoredProducts = sortProducts(products.map((product) => ({ ...product, tags: [...product.tags] })))
+    productStatusCatalog.value = restoredProducts
+    menuCatalog.value = sortProducts(restoredProducts.filter(isProductVisibleInPos))
+    writeLocalProducts(restoredProducts.filter(isLocalProduct))
+    cartLines.value = cartLines.value.filter((line) =>
+      restoredProducts.some((product) => product.id === line.itemId || product.id === line.productId),
     )
   }
 
@@ -928,17 +1817,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const syncedLocalCount = await syncPendingLocalOrders()
-      const [remoteProducts, remoteOrders, currentRegisterSession] = await Promise.all([
+      const [remoteProducts, remoteOrders, currentRegisterSession, runtimeSettings] = await Promise.all([
         fetchProducts(),
         fetchOrders(),
         fetchCurrentRegisterSession(),
+        fetchRuntimeSettings(),
       ])
-      await applyRuntimePrinterSettings()
+      applyRuntimeSettings(runtimeSettings)
+      writeLocalProducts([])
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      syncNextSequenceFromQueue()
       setBackendStatus(
         'connected',
         'API 已同步',
@@ -956,10 +1847,159 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const remoteProducts = await fetchProducts()
+      writeLocalProducts([])
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
     } catch {
       return
+    }
+  }
+
+  const refreshRuntimeSettings = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      return
+    }
+
+    try {
+      applyRuntimeSettings(await fetchRuntimeSettings())
+    } catch {
+      return
+    }
+  }
+
+  const scheduleRealtimeQueueRefresh = (delay = realtimeRefreshDebounceMs): void => {
+    if (realtimeQueueRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeQueueRefreshTimer)
+    }
+
+    realtimeQueueRefreshTimer = globalThis.setTimeout(() => {
+      realtimeQueueRefreshTimer = null
+      if (orderSyncOperationBusy()) {
+        scheduleRealtimeQueueRefresh(realtimeBusyRetryMs)
+        return
+      }
+
+      void refreshQueueState(true)
+    }, delay)
+  }
+
+  const scheduleRealtimeRuntimeRefresh = (): void => {
+    if (realtimeRuntimeRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRuntimeRefreshTimer)
+    }
+
+    realtimeRuntimeRefreshTimer = globalThis.setTimeout(() => {
+      realtimeRuntimeRefreshTimer = null
+      void refreshRuntimeSettings()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const scheduleRealtimeRegisterRefresh = (): void => {
+    if (realtimeRegisterRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRegisterRefreshTimer)
+    }
+
+    realtimeRegisterRefreshTimer = globalThis.setTimeout(() => {
+      realtimeRegisterRefreshTimer = null
+      void loadRegisterSession()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const scheduleRealtimeProductRefresh = (): void => {
+    if (realtimeProductRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeProductRefreshTimer)
+    }
+
+    realtimeProductRefreshTimer = globalThis.setTimeout(() => {
+      realtimeProductRefreshTimer = null
+      void refreshProductCatalog()
+    }, realtimeRefreshDebounceMs)
+  }
+
+  const handleRealtimeEvent = (event: PosRealtimeEvent): void => {
+    if (event.topic === 'orders') {
+      scheduleRealtimeQueueRefresh()
+      onlineReminderClock.value = Date.now()
+      return
+    }
+
+    if (event.topic === 'runtime_settings') {
+      scheduleRealtimeRuntimeRefresh()
+      return
+    }
+
+    if (event.topic === 'register_sessions') {
+      scheduleRealtimeRegisterRefresh()
+      return
+    }
+
+    if (event.topic === 'products') {
+      scheduleRealtimeProductRefresh()
+    }
+  }
+
+  const disconnectRealtime = (): void => {
+    realtimeClosedByClient = true
+    realtimeSubscriptionToken += 1
+    realtimeUnsubscribe?.()
+    realtimeUnsubscribe = null
+  }
+
+  const connectRealtime = (): void => {
+    if (!isPosApiConfigured || !isPosRealtimeConfigured) {
+      return
+    }
+
+    disconnectRealtime()
+    realtimeClosedByClient = false
+    const subscriptionToken = realtimeSubscriptionToken + 1
+    realtimeSubscriptionToken = subscriptionToken
+    realtimeUnsubscribe = subscribeToPosRealtimeEvents({
+      topics: ['orders', 'runtime_settings', 'register_sessions', 'products'],
+      onEvent: handleRealtimeEvent,
+      onStatus: (status) => {
+        if (subscriptionToken === realtimeSubscriptionToken) {
+          handleRealtimeStatus(status)
+        }
+      },
+    })
+  }
+
+  const scheduleRealtimeReconnect = (error?: string): void => {
+    if (realtimeClosedByClient || realtimeReconnectTimer !== null) {
+      return
+    }
+
+    const delay = Math.min(
+      realtimeReconnectMaxDelayMs,
+      realtimeReconnectBaseDelayMs * 2 ** realtimeReconnectAttempt,
+    )
+    realtimeReconnectAttempt = Math.min(realtimeReconnectAttempt + 1, 5)
+    realtimeReconnectTimer = globalThis.setTimeout(() => {
+      realtimeReconnectTimer = null
+      connectRealtime()
+      void refreshQueueState(true)
+      void refreshRuntimeSettings()
+      void loadRegisterSession()
+    }, delay)
+
+    if (error) {
+      backendStatus.detail = `Realtime 斷線，保留 ${queueSyncIntervalMs / 1000} 秒輪詢：${error}`
+    }
+  }
+
+  function handleRealtimeStatus(status: PosRealtimeStatus): void {
+    if (status.status === 'SUBSCRIBED') {
+      realtimeReconnectAttempt = 0
+      if (realtimeReconnectTimer !== null) {
+        globalThis.clearTimeout(realtimeReconnectTimer)
+        realtimeReconnectTimer = null
+      }
+      return
+    }
+
+    if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status.status)) {
+      scheduleRealtimeReconnect(status.error ?? status.status)
     }
   }
 
@@ -971,14 +2011,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (
-      isSubmitting.value ||
-      printingOrderId.value ||
-      claimingOrderId.value ||
-      updatingPaymentOrderId.value ||
-      voidingOrderId.value ||
-      refundingOrderId.value
-    ) {
+    if (orderSyncOperationBusy()) {
       return
     }
 
@@ -988,13 +2021,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const syncedLocalCount = await syncPendingLocalOrders()
-      const [remoteOrders, currentRegisterSession] = await Promise.all([
+      const [remoteOrders, currentRegisterSession, runtimeSettings] = await Promise.all([
         fetchOrders(),
         fetchCurrentRegisterSession(),
+        fetchRuntimeSettings().catch(() => null),
       ])
+      if (runtimeSettings) {
+        applyRuntimeSettings(runtimeSettings)
+      }
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
-      nextSequence.value = nextSequenceFromOrders(orderQueue.value)
+      syncNextSequenceFromQueue()
       setBackendStatus(
         'connected',
         quiet ? '自動同步完成' : 'API 已同步',
@@ -1005,20 +2042,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const createCartLine = (item: MenuItem, quantity: number): CartLine => {
+  const createCartLine = (
+    item: MenuItem,
+    quantity: number,
+    options: string[] = item.tags.slice(0, 1),
+    unitPrice = item.price,
+    itemId = item.id,
+  ): CartLine => {
     const nextLine: CartLine = {
-      itemId: item.id,
+      itemId,
       productSku: item.sku,
       category: item.category,
       name: item.name,
-      unitPrice: item.price,
+      unitPrice,
       quantity,
-      options: item.tags.slice(0, 1),
+      options,
       prepStation: item.prepStation,
       printLabel: item.printLabel,
     }
 
-    if (item.id !== item.sku) {
+    if (item.id !== item.sku || itemId !== item.id) {
       nextLine.productId = item.id
     }
 
@@ -1069,6 +2112,48 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const addItem = (item: MenuItem): void => {
     setItemQuantity(item, (cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0) + 1)
+  }
+
+  const addConfiguredItem = (item: MenuItem, options: string[], priceAdjustment = 0): void => {
+    const normalizedOptions = options.filter((option) => option.trim().length > 0)
+    const variantKey = [item.id, ...normalizedOptions].join('::')
+    const unitPrice = Math.max(0, item.price + priceAdjustment)
+    const existing = cartLines.value.find((line) => line.itemId === variantKey)
+
+    rememberRecentItem(item.id)
+
+    if (existing) {
+      existing.quantity = normalizeCartQuantity(existing.quantity + 1)
+      return
+    }
+
+    cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey))
+  }
+
+  const updateConfiguredLine = (lineItemId: string, item: MenuItem, options: string[], priceAdjustment = 0): void => {
+    const currentLine = cartLines.value.find((line) => line.itemId === lineItemId)
+    if (!currentLine) {
+      return
+    }
+
+    const normalizedOptions = options.filter((option) => option.trim().length > 0)
+    const variantKey = [item.id, ...normalizedOptions].join('::')
+    const unitPrice = Math.max(0, item.price + priceAdjustment)
+    const existing = cartLines.value.find((line) => line.itemId === variantKey && line.itemId !== lineItemId)
+
+    rememberRecentItem(item.id)
+
+    if (existing) {
+      existing.quantity = normalizeCartQuantity(existing.quantity + currentLine.quantity)
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== lineItemId)
+      return
+    }
+
+    cartLines.value = cartLines.value.map((line) =>
+      line.itemId === lineItemId
+        ? createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey)
+        : line,
+    )
   }
 
   const increaseLine = (itemId: string): void => {
@@ -1167,12 +2252,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const voidOrderForStation = async (adminPin: string, orderId: string, note = ''): Promise<void> => {
-    if (!adminPin) {
-      setBackendStatus('fallback', '需要管理 PIN', '請先在前台操作區輸入管理 PIN')
-      return
-    }
-
+  const voidOrderForStation = async (orderId: string, note = ''): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return
@@ -1202,7 +2282,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     voidingOrderId.value = orderId
 
     try {
-      const voidedOrder = await voidOrder(adminPin, claimedOrder, note)
+      const voidedOrder = await voidOrder(claimedOrder, note)
       replaceOrder(orderId, {
         ...voidedOrder,
         lines: voidedOrder.lines.length > 0 ? voidedOrder.lines : claimedOrder.lines,
@@ -1217,12 +2297,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const refundOrderForStation = async (adminPin: string, orderId: string, note = ''): Promise<void> => {
-    if (!adminPin) {
-      setBackendStatus('fallback', '需要管理 PIN', '請先在前台操作區輸入管理 PIN')
-      return
-    }
-
+  const refundOrderForStation = async (orderId: string, note = ''): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return
@@ -1252,7 +2327,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     refundingOrderId.value = orderId
 
     try {
-      const refundedOrder = await refundOrder(adminPin, claimedOrder, note)
+      const refundedOrder = await refundOrder(claimedOrder, note)
       replaceOrder(orderId, {
         ...refundedOrder,
         lines: refundedOrder.lines.length > 0 ? refundedOrder.lines : claimedOrder.lines,
@@ -1399,17 +2474,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const loadProductStatusCatalog = async (adminPin: string): Promise<void> => {
-    if (!adminPin) {
-      productStatusMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
+  const loadProductStatusCatalog = async (): Promise<void> => {
     isLoadingProductStatus.value = true
     productStatusMessage.value = '載入完整商品狀態中'
 
     try {
-      const products = await fetchAdminProducts(adminPin)
+      const products = await fetchAdminProducts()
+      writeLocalProducts([])
       productStatusCatalog.value = sortProducts(products.filter((product) => product.posVisible))
       productStatusMessage.value = `已載入 ${productStatusCatalog.value.length} 個 POS 商品，可直接暫停或恢復供應`
     } catch (error) {
@@ -1420,15 +2491,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const updateProductAvailability = async (
-    adminPin: string,
     productId: string,
     isAvailable: boolean,
   ): Promise<void> => {
-    if (!adminPin) {
-      productStatusMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const product = productStatusCatalog.value.find((entry) => entry.id === productId)
       ?? menuCatalog.value.find((entry) => entry.id === productId)
     if (!product) {
@@ -1442,7 +2507,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     productStatusMessage.value = `${product.name} ${isAvailable ? '恢復供應中' : '暫停供應中'}`
 
     try {
-      const savedProduct = await updateProduct(adminPin, productId, productToUpdateInput(product, isAvailable))
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, { isAvailable }))
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已${savedProduct.available ? '恢復供應' : '暫停供應'}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -1450,6 +2515,173 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       applySavedProduct(product)
       productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
       setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+    } finally {
+      togglingProductId.value = null
+    }
+  }
+
+  const updateProductSupplyStatus = async (
+    productId: string,
+    status: ProductSupplyStatus,
+  ): Promise<boolean> => {
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return false
+    }
+
+    const statusLabel = status === 'normal' ? '正常供應' : status === 'online-stopped' ? '線上停售' : '全部停售'
+    togglingProductId.value = productId
+    productStatusMessage.value = `${product.name} 更新為${statusLabel}中`
+
+    if (!isPosApiConfigured) {
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 已暫存本機；需連線 POS API 才會寫入資料庫`
+      setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
+      return false
+    }
+
+    try {
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, productSupplyOverrides(status)))
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 已更新為${statusLabel}`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
+      return false
+    } finally {
+      togglingProductId.value = null
+    }
+  }
+
+  const reorderProductsForStation = async (orderedProductIds: string[]): Promise<boolean> => {
+    const productMap = new Map(
+      [...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product]),
+    )
+    const orderedProducts = orderedProductIds
+      .map((productId) => productMap.get(productId))
+      .filter((product): product is MenuItem => Boolean(product))
+
+    if (orderedProducts.length < 2) {
+      return true
+    }
+
+    const category = orderedProducts[0]?.category
+    if (!category || orderedProducts.some((product) => product.category !== category)) {
+      productStatusMessage.value = '只能在同一分類內調整商品順序'
+      return false
+    }
+
+    const previousProducts = orderedProducts.map((product) => ({ ...product, tags: [...product.tags] }))
+    const reorderedProducts = orderedProducts.map((product, index) => ({
+      ...product,
+      sortOrder: (index + 1) * 10,
+    }))
+    const changedProducts = reorderedProducts.filter((product, index) =>
+      product.sortOrder !== previousProducts[index]?.sortOrder,
+    )
+
+    if (changedProducts.length === 0) {
+      return true
+    }
+
+    for (const product of reorderedProducts) {
+      applySavedProduct(product)
+    }
+    productStatusMessage.value = `${category} 商品順序更新中`
+
+    if (!isPosApiConfigured) {
+      productStatusMessage.value = '商品順序已暫存在本機；需連線 POS API 才會寫入資料庫'
+      setBackendStatus('fallback', '商品排序未同步', productStatusMessage.value)
+      return false
+    }
+
+    try {
+      const savedProducts = await Promise.all(
+        changedProducts.map((product) =>
+          isLocalProduct(product) ? Promise.resolve(product) : updateProduct(product.id, productToUpdateInput(product)),
+        ),
+      )
+      for (const product of savedProducts) {
+        applySavedProduct(product)
+      }
+      productStatusMessage.value = '商品順序已寫入資料庫'
+      setBackendStatus('connected', '商品排序已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      for (const product of previousProducts) {
+        applySavedProduct(product)
+      }
+      productStatusMessage.value = `商品順序更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '商品排序失敗', productStatusMessage.value)
+      return false
+    }
+  }
+
+  const createProductForStation = async (
+    input: ProductUpdateInput,
+  ): Promise<MenuItem | null> => {
+    const fallbackProduct = buildLocalProduct(input)
+    productStatusMessage.value = `${fallbackProduct.name} 建立中`
+
+    if (!isPosApiConfigured) {
+      productStatusMessage.value = `${fallbackProduct.name} 未新增：需連線 POS API 才會寫入資料庫`
+      setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
+      return null
+    }
+
+    try {
+      const savedProduct = await createProduct(input)
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 已新增`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return savedProduct
+    } catch (error) {
+      productStatusMessage.value = `商品新增失敗，未寫入資料庫：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '商品新增失敗', productStatusMessage.value)
+      return null
+    }
+  }
+
+  const deleteProductForStation = async (productId: string): Promise<boolean> => {
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return false
+    }
+
+    togglingProductId.value = productId
+    productStatusMessage.value = `${product.name} 刪除中`
+
+    if (product.id.startsWith('local-')) {
+      removeSavedProduct(productId)
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 已從本機清單刪除`
+      setBackendStatus('fallback', '本機商品已刪除', '此品項原本尚未寫入資料庫')
+      return true
+    }
+
+    if (!isPosApiConfigured) {
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 未刪除：需連線 POS API 才會更新資料庫`
+      setBackendStatus('fallback', '商品未同步', productStatusMessage.value)
+      return false
+    }
+
+    try {
+      await deleteProduct(productId)
+      removeSavedProduct(productId)
+      productStatusMessage.value = `${product.name} 已刪除`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      productStatusMessage.value = `商品刪除失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '本機模式', productStatusMessage.value)
+      return false
     } finally {
       togglingProductId.value = null
     }
@@ -1480,15 +2712,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const openRegisterSessionForStation = async (
-    adminPin: string,
     openingCashValue: number,
     note: string,
   ): Promise<void> => {
-    if (!adminPin) {
-      registerMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const openingCash = readRegisterCashAmount(openingCashValue)
     if (openingCash === null) {
       registerMessage.value = '開班現金需為 0 以上整數'
@@ -1504,7 +2730,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '開班中'
 
     try {
-      const session = await openRegisterSession(adminPin, openingCash, note)
+      const session = await openRegisterSession(openingCash, note)
       applyRegisterSession(session)
       registerMessage.value = `已開班，預期現金 ${session.expectedCash}`
       setBackendStatus('connected', '班別已開啟', `${stationClaimLabel} 已開班`)
@@ -1517,16 +2743,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const closeRegisterSessionForStation = async (
-    adminPin: string,
     closingCashValue: number,
     note: string,
     force = false,
   ): Promise<void> => {
-    if (!adminPin) {
-      registerMessage.value = '請先輸入管理 PIN'
-      return
-    }
-
     const closingCash = readRegisterCashAmount(closingCashValue)
     if (closingCash === null) {
       registerMessage.value = '關班現金需為 0 以上整數'
@@ -1542,7 +2762,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '關班結算中'
 
     try {
-      const session = await closeRegisterSession(adminPin, closingCash, note, force)
+      const session = await closeRegisterSession(closingCash, note, force)
       applyRegisterSession(session)
       const variance = closingCash - session.expectedCash
       registerMessage.value = `已關班，現金差額 ${variance}`
@@ -1555,7 +2775,49 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const submitCounterOrder = async (): Promise<PosOrder | null> => {
+  const buildCounterOrderFromDraft = (now: Date): PosOrder => {
+    const existingOrder = counterDraftOrderId.value
+      ? orderQueue.value.find((order) => order.id === counterDraftOrderId.value)
+      : null
+    const draftOrderId = counterDraftOrderId.value
+    const orderId = existingOrder?.id ?? draftOrderId ?? buildOrderId(now, nextSequence.value)
+    const createdAt = existingOrder?.createdAt ?? counterDraftStartedAt.value ?? now.toISOString()
+    const paymentStatus = existingOrder && !['pending', 'authorized'].includes(existingOrder.paymentStatus)
+      ? existingOrder.paymentStatus
+      : paymentStatusFor(paymentMethod.value)
+
+    return {
+      ...(existingOrder ?? {}),
+      id: orderId,
+      source: 'counter',
+      mode: serviceMode.value,
+      customerName: customer.name.trim() || '現場客',
+      customerPhone: customer.phone.trim(),
+      deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
+      requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      note: customer.note.trim(),
+      lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
+      subtotal: cartTotal.value,
+      paymentMethod: paymentMethod.value,
+      paymentStatus,
+      status: existingOrder?.status ?? 'new',
+      isDraft: existingOrder?.isDraft ?? true,
+      createdAt,
+      claimedBy: existingOrder?.claimedBy ?? stationClaimId,
+      claimedAt: existingOrder?.claimedAt ?? now.toISOString(),
+      claimExpiresAt: existingOrder?.claimExpiresAt ?? claimExpiresIn(),
+      printStatus: existingOrder?.printStatus ?? 'skipped',
+      printJobs: existingOrder?.printJobs ?? [],
+    }
+  }
+
+  const finishCounterDraft = (): void => {
+    clearCart()
+    resetCustomerDraft()
+    clearCounterDraftIdentity()
+  }
+
+  const saveCounterOrder = async (finish = true): Promise<PosOrder | null> => {
     if (cartLines.value.length === 0 || isSubmitting.value) {
       return null
     }
@@ -1567,38 +2829,24 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     isSubmitting.value = true
     const now = new Date()
-    const order: PosOrder = {
-      id: buildOrderId(now, nextSequence.value),
-      source: 'counter',
-      mode: serviceMode.value,
-      customerName: customer.name.trim() || '現場客',
-      customerPhone: customer.phone.trim(),
-      deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
-      requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
-      note: customer.note.trim(),
-      lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
-      subtotal: cartTotal.value,
-      paymentMethod: paymentMethod.value,
-      paymentStatus: paymentStatusFor(paymentMethod.value),
-      status: 'new',
-      createdAt: now.toISOString(),
-      claimedBy: stationClaimId,
-      claimedAt: now.toISOString(),
-      claimExpiresAt: claimExpiresIn(),
-      printStatus: 'skipped',
-      printJobs: [],
-    }
+    const draftOrderId = counterDraftOrderId.value
+    const draftSequence = sequenceFromOrderId(draftOrderId)
+    const existingOrder = draftOrderId ? orderQueue.value.find((entry) => entry.id === draftOrderId) : null
+    const order = buildCounterOrderFromDraft(now)
     const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
     order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
 
-    nextSequence.value += 1
-    orderQueue.value.unshift(order)
-    lastPrintPreview.value = printPlan.preview
-    if (printPlan.jobs.length > 0) {
-      printStation.lastPrintAt = now.toISOString()
+    if (draftOrderId || existingOrder) {
+      nextSequence.value = Math.max(nextSequence.value, draftSequence + 1)
+    } else {
+      nextSequence.value += 1
     }
-    clearCart()
-    resetCustomerDraft()
+    if (existingOrder) {
+      replaceOrder(existingOrder.id, order)
+    } else {
+      orderQueue.value.unshift(order)
+    }
+    lastPrintPreview.value = printPlan.preview
 
     if (!isPosApiConfigured) {
       rememberPendingLocalOrder(order)
@@ -1606,25 +2854,44 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         appendPrintPreviewStatus('STATUS 本機模式已產生列印 payload，尚未建立雲端 print_jobs')
       }
       setBackendStatus('fallback', '本機待同步', `${order.id} 已保留在平板，待 POS API 恢復後補同步`)
+      if (finish) {
+        finishCounterDraft()
+      }
+      isSubmitting.value = false
+      return order
+    }
+
+    if (order.remoteId && !order.isDraft) {
+      replaceOrder(order.id, order)
+      setBackendStatus('connected', '訂單已更新', `${order.id} 已更新購物車內容`)
+      if (finish) {
+        finishCounterDraft()
+      }
       isSubmitting.value = false
       return order
     }
 
     try {
-      const persistedOrder = await createOrder(order)
+      if (counterDraftSyncTimer !== null) {
+        globalThis.clearTimeout(counterDraftSyncTimer)
+        counterDraftSyncTimer = null
+      }
+
+      const persistedOrder = order.remoteId && order.isDraft
+        ? await finalizeCounterDraftOrder(order)
+        : await createOrder(order)
       let nextOrder: PosOrder = {
         ...order,
         createdAt: persistedOrder.createdAt,
         lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
+        isDraft: false,
       }
 
       if (persistedOrder.remoteId) {
         nextOrder.remoteId = persistedOrder.remoteId
       }
 
-      let backendDetail = printPlan.jobs.length > 0
-        ? `${order.id} 已建立，待處理 ${printPlan.jobs.length} 筆列印任務`
-        : `${order.id} 已建立，${printPlan.skippedReason ?? '未建立列印任務'}`
+      let backendDetail = `${order.id} 已建立，${printPlan.jobs.length > 0 ? '可立即出單' : printPlan.skippedReason ?? '未建立列印任務'}`
       let claimSucceeded = true
 
       try {
@@ -1642,58 +2909,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       replaceOrder(order.id, nextOrder)
       pendingLocalOrders.value = pendingLocalOrders.value.filter((entry) => entry.id !== order.id)
       writePendingLocalOrders(pendingLocalOrders.value)
+      removeLocalCounterOrder(order.id)
 
-      if (printPlan.jobs.length > 0 && claimSucceeded) {
-        const printStatuses: PrintStatus[] = []
-        const createdPrintJobs: PrintJob[] = []
-
-        try {
-          for (const job of printPlan.jobs) {
-            const printJob = await createPrintJob(nextOrder, job.payload, job.station)
-            let jobStatus: PrintStatus = printJob.status
-            createdPrintJobs.push(printJob)
-
-            if (isNativeLanPrinterAvailable()) {
-              const printResult = await tryNativeLanPrint(job.payload, job.station)
-              const updatedPrintJob = await updatePrintJobStatus(
-                printJob.id,
-                printResult.ok ? 'printed' : 'failed',
-                printResult.ok ? undefined : printResult.error,
-              )
-              jobStatus = updatedPrintJob.status
-              createdPrintJobs.push(updatedPrintJob)
-            }
-
-            printStatuses.push(jobStatus)
-          }
-
-          nextOrder.printStatus = summarizePrintStatuses(printStatuses)
-          nextOrder.printJobs = mergePrintJobs(nextOrder, createdPrintJobs)
-          if (!isNativeLanPrinterAvailable()) {
-            appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已建立 ${printPlan.jobs.length} 筆 print_jobs`)
-          }
-          backendDetail = nextOrder.printStatus === 'printed'
-            ? `${order.id} 已建立並完成 ${printPlan.jobs.length} 筆列印`
-            : `${order.id} 已建立，列印狀態：${nextOrder.printStatus}`
-          replaceOrder(order.id, nextOrder)
-        } catch (error) {
-          nextOrder.printStatus = 'failed'
-          nextOrder.printJobs = mergePrintJobs(nextOrder, createdPrintJobs)
-          replaceOrder(order.id, nextOrder)
-          backendDetail = `${order.id} 已建立，列印工作建立失敗：${getErrorMessage(error)}`
-        }
+      if (!claimSucceeded) {
+        backendDetail = `${backendDetail}，但尚未取得平板鎖定`
       }
 
       setBackendStatus('connected', 'API 已同步', `${backendDetail}${pendingLocalOrderDetail()}`)
       void loadRegisterSession()
       void refreshProductCatalog()
+      if (finish) {
+        finishCounterDraft()
+      }
       return nextOrder
     } catch (error) {
       const errorMessage = getErrorMessage(error)
       if (isInventoryError(errorMessage)) {
-        orderQueue.value = orderQueue.value.filter((entry) => entry.id !== order.id)
-        cartLines.value = order.lines.map((line) => ({ ...line, options: [...line.options] }))
-        nextSequence.value = Math.max(1, nextSequence.value - 1)
+        if (!existingOrder) {
+          orderQueue.value = orderQueue.value.filter((entry) => entry.id !== order.id)
+          if (!draftOrderId) {
+            nextSequence.value = Math.max(1, nextSequence.value - 1)
+          }
+        }
         setBackendStatus('fallback', '庫存不足', `訂單未建立：${errorMessage}`)
         void refreshProductCatalog()
         return null
@@ -1701,9 +2938,122 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       rememberPendingLocalOrder(order)
       setBackendStatus('fallback', '本機模式', `訂單保留在本機，雲端同步失敗：${errorMessage}`)
+      if (finish) {
+        finishCounterDraft()
+      }
       return order
     } finally {
       isSubmitting.value = false
+    }
+  }
+
+  const submitCounterOrder = async (): Promise<PosOrder | null> => {
+    const order = await saveCounterOrder()
+    if (!order) {
+      return null
+    }
+
+    await printOrder(order.id)
+    return orderQueue.value.find((entry) => entry.id === order.id) ?? order
+  }
+
+  const loadCounterOrderForEditing = async (orderId: string): Promise<boolean> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (
+      !order ||
+      order.source !== 'counter' ||
+      !['pending', 'authorized'].includes(order.paymentStatus) ||
+      ['served', 'voided', 'failed'].includes(order.status)
+    ) {
+      return false
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return false
+    }
+
+    const claimed = await claimOrderForStation(order.id)
+    if (!claimed) {
+      return false
+    }
+
+    const editableOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    serviceMode.value = editableOrder.mode
+    paymentMethod.value = editableOrder.paymentMethod
+    customer.name = editableOrder.customerName || '現場客'
+    customer.phone = editableOrder.customerPhone
+    customer.deliveryAddress = editableOrder.deliveryAddress
+    customer.requestedFulfillmentAt = toDatetimeLocalInputValue(editableOrder.requestedFulfillmentAt)
+    customer.note = editableOrder.note
+    cartLines.value = editableOrder.lines.map((line) => ({ ...line, options: [...line.options] }))
+    counterDraftOrderId.value = editableOrder.id
+    counterDraftStartedAt.value = editableOrder.createdAt
+
+    if (!editableOrder.remoteId) {
+      rememberLocalCounterOrder(editableOrder)
+    }
+
+    setBackendStatus('connected', '訂單編輯中', `${editableOrder.id} 已載入購物車`)
+    return true
+  }
+
+  const rememberDismissedQueueOrder = (order: PosOrder): void => {
+    const key = queueDismissalKeyFor(order)
+    if (dismissedQueueOrderKeys.value.includes(key)) {
+      return
+    }
+
+    dismissedQueueOrderKeys.value = [...dismissedQueueOrderKeys.value, key].slice(-200)
+    writeDismissedQueueOrderKeys(dismissedQueueOrderKeys.value)
+  }
+
+  const removeOrderFromQueue = (orderId: string): void => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (order) {
+      rememberDismissedQueueOrder(order)
+    }
+
+    orderQueue.value = orderQueue.value.filter((order) => order.id !== orderId)
+    clearCounterOrderFromLocalStores(orderId)
+
+    if (counterDraftOrderId.value === orderId) {
+      clearCart()
+      resetCustomerDraft()
+      clearCounterDraftIdentity()
+    }
+  }
+
+  const deleteOrderFromQueue = async (orderId: string): Promise<void> => {
+    if (voidingOrderId.value) {
+      return
+    }
+
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+
+    voidingOrderId.value = orderId
+
+    try {
+      if (isPosApiConfigured && order.remoteId) {
+        await persistOrderStatus(order, 'voided')
+      }
+
+      removeOrderFromQueue(orderId)
+      setBackendStatus('connected', '訂單已刪除', `${order.id} 已從桌況頁移除`)
+      void loadRegisterSession()
+    } catch (error) {
+      removeOrderFromQueue(orderId)
+      setBackendStatus('fallback', '本機刪除訂單', `${order.id} 已先從本機移除：${getErrorMessage(error)}`)
+    } finally {
+      voidingOrderId.value = null
     }
   }
 
@@ -1733,7 +3083,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const handleVisibilitySync = (): void => {
-    if (globalThis.document?.visibilityState === 'visible') {
+    const visible = isDocumentActive()
+    setOnlineOrderNotifierAppActive(visible)
+    syncOnlineReminderNotifier()
+
+    if (visible) {
+      onlineReminderClock.value = Date.now()
+      maybePlayOnlineOrderReminder()
       void refreshQueueState(true)
       void syncStationHeartbeat()
     }
@@ -1743,17 +3099,24 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (autoLoad) {
       void refreshBackendData()
       void syncStationHeartbeat()
+      connectRealtime()
+      syncOnlineReminderNotifier()
       queueSyncTimer = globalThis.setInterval(() => {
         void refreshQueueState(true)
       }, queueSyncIntervalMs)
       stationHeartbeatTimer = globalThis.setInterval(() => {
         void syncStationHeartbeat()
       }, stationHeartbeatIntervalMs)
+      onlineReminderClockTimer = globalThis.setInterval(() => {
+        onlineReminderClock.value = Date.now()
+      }, onlineReminderClockIntervalMs)
       globalThis.document?.addEventListener('visibilitychange', handleVisibilitySync)
     }
   })
 
   onBeforeUnmount(() => {
+    disconnectRealtime()
+
     if (queueSyncTimer !== null) {
       globalThis.clearInterval(queueSyncTimer)
     }
@@ -1762,7 +3125,36 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       globalThis.clearInterval(stationHeartbeatTimer)
     }
 
+    if (onlineReminderClockTimer !== null) {
+      globalThis.clearInterval(onlineReminderClockTimer)
+    }
+
+    if (counterDraftSyncTimer !== null) {
+      globalThis.clearTimeout(counterDraftSyncTimer)
+    }
+
+    if (realtimeReconnectTimer !== null) {
+      globalThis.clearTimeout(realtimeReconnectTimer)
+    }
+
+    if (realtimeQueueRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeQueueRefreshTimer)
+    }
+
+    if (realtimeRuntimeRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRuntimeRefreshTimer)
+    }
+
+    if (realtimeRegisterRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeRegisterRefreshTimer)
+    }
+
+    if (realtimeProductRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeProductRefreshTimer)
+    }
+
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
+    clearOnlineOrderNotifier()
   })
 
   const refreshPosData = async (): Promise<void> => {
@@ -1771,15 +3163,24 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   return {
     appendCustomerNote,
+    acknowledgeOnlineOrderReminders,
+    acceptOnlineOrderForStation,
+    activeOnlineReminderOrders,
     backendStatus,
     cartLines,
     cartQuantity,
     cartTotal,
     clearCart,
     closeRegisterSessionForStation,
+    counterDraftOrderId,
+    counterDraftStartedAt,
     customer,
+    customerHasNote,
     deletingPrintJobId,
+    createProductForStation,
     decreaseLine,
+    deleteOrderFromQueue,
+    deleteProductForStation,
     deletePrintJobForOrder,
     filteredMenu,
     increaseLine,
@@ -1787,40 +3188,56 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     isLoadingProductStatus,
     isRegisterBusy,
     lastPrintPreview,
+    menuCatalog,
     claimLabelFor,
     claimOrderForStation,
     claimingOrderId,
     loadProductStatusCatalog,
+    loadCounterOrderForEditing,
     loadRegisterSession,
     orderQueue,
     orderPendingSync,
-    orderClaimExpired: isClaimExpired,
+    orderClaimExpired,
     orderClaimedByCurrentStation,
     orderClaimedByOtherStation,
+    onlineOrderRequiresAcceptance,
+    onlineOrderReminder,
+    onlineOrderingSettings,
     paymentMethod,
     pendingOrders,
+    posAppearanceSettings,
     printOrder,
     printingOrderId,
     printStation,
+    printerSettings,
     productStatusCatalog,
     productStatusMessage,
     quickAddItems,
     registerMessage,
     registerSession,
+    rejectOnlineOrderForStation,
     refundingOrderId,
     refundOrderForStation,
     releaseOrderClaimForStation,
+    reorderProductsForStation,
+    restoreSupplyProductSnapshot,
     searchTerm,
     selectedCategory,
     serviceMode,
+    saveCounterOrder,
     setItemQuantity,
     setLineQuantity,
+    startCounterDraft,
     stationClaimId,
     stationClaimLabel,
     stationHeartbeatMessage,
     togglingProductId,
+    toggleCustomerNote,
+    unconfirmedOnlineOrders,
     updatingPaymentOrderId,
+    addConfiguredItem,
     addItem,
+    updateConfiguredLine,
     openRegisterSessionForStation,
     refreshBackendData: refreshPosData,
     refreshQueueState,
@@ -1829,6 +3246,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updateOrderStatus,
     updatePaymentStatus,
     updateProductAvailability,
+    updateProductSupplyStatus,
     voidingOrderId,
     voidOrderForStation,
   }
