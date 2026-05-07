@@ -4806,7 +4806,7 @@ button.cart-line-summary:focus-visible {
 .printer-rule-product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(156px, 1fr));
-  max-height: 164px;
+  max-height: 226px;
   overflow: auto;
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
@@ -4842,6 +4842,8 @@ button.cart-line-summary:focus-visible {
 .printer-rule-product-chip {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+  grid-auto-rows: min-content;
+  min-height: 54px;
   min-width: 0;
   border-radius: 8px;
 }
