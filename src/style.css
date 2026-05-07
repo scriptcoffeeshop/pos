@@ -2018,8 +2018,13 @@ h3 {
 }
 
 .workspace--printing .workstation-panel-stack {
-  grid-template-columns: minmax(380px, 0.86fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(560px, 1fr) minmax(520px, 1fr);
   align-items: start;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  padding-bottom: 88px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .workspace--closeout .workstation-panel-stack {
@@ -4461,8 +4466,8 @@ button.cart-line-summary:focus-visible {
 
 .printer-settings-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   min-width: 0;
 }
 
@@ -4470,11 +4475,17 @@ button.cart-line-summary:focus-visible {
 .printer-rule-overview {
   display: grid;
   gap: 10px;
+  align-content: start;
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-muted);
+}
+
+.printer-rule-overview {
+  overflow: hidden;
+  background: var(--surface);
 }
 
 .printer-config-heading {
@@ -4489,6 +4500,7 @@ button.cart-line-summary:focus-visible {
   color: var(--ink);
   font-size: 0.96rem;
   font-weight: 950;
+  white-space: nowrap;
 }
 
 .printer-config-heading span {
@@ -4498,26 +4510,37 @@ button.cart-line-summary:focus-visible {
   white-space: nowrap;
 }
 
+.printer-rule-heading-actions > span {
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
 .printer-rule-heading-actions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .printer-rule-save-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: 44px;
   gap: 6px;
-  padding: 7px 10px;
+  padding: 8px 14px;
   border: 1px solid var(--primary);
   border-radius: 8px;
   background: var(--primary);
   color: #fff;
   font-weight: 950;
   white-space: nowrap;
+  touch-action: manipulation;
 }
 
 .printer-rule-save-button:disabled {
@@ -4538,12 +4561,16 @@ button.cart-line-summary:focus-visible {
   min-width: 0;
 }
 
+.printer-station-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .printer-station-card,
 .printer-rule-card {
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
@@ -4567,6 +4594,10 @@ button.cart-line-summary:focus-visible {
   display: grid;
   min-width: 0;
   gap: 2px;
+}
+
+.printer-rule-main {
+  gap: 8px;
 }
 
 .printer-station-card-main strong,
@@ -4610,7 +4641,7 @@ button.cart-line-summary:focus-visible {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 8px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) - 2px);
   background: var(--surface);
@@ -4638,8 +4669,10 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-rule-card {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
+  grid-template-columns: minmax(200px, 0.32fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
 }
 
 .printer-rule-card--disabled {
@@ -4648,9 +4681,9 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-title-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  align-items: end;
+  align-items: stretch;
 }
 
 .printer-rule-name-field,
@@ -4679,6 +4712,7 @@ button.cart-line-summary:focus-visible {
 .printer-rule-enable-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 42px;
   gap: 7px;
   padding: 8px 10px;
@@ -4700,19 +4734,24 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-control-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 86px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
 
+.printer-rule-control-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
 .printer-rule-scope {
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(112px, 0.28fr) minmax(0, 1fr);
+  gap: 8px;
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-muted);
 }
 
 .printer-rule-scope-heading,
@@ -4722,6 +4761,10 @@ button.cart-line-summary:focus-visible {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+}
+
+.printer-rule-scope-heading {
+  grid-column: 1 / -1;
 }
 
 .printer-rule-scope-heading strong,
@@ -4743,20 +4786,26 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-picker-section {
   display: grid;
+  align-content: start;
   gap: 7px;
   min-width: 0;
 }
 
 .printer-rule-chip-grid,
 .printer-rule-product-grid {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
 
+.printer-rule-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
+}
+
 .printer-rule-product-grid {
-  max-height: 150px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  max-height: 118px;
   overflow: auto;
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
@@ -4766,22 +4815,23 @@ button.cart-line-summary:focus-visible {
 .printer-rule-product-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 38px;
+  min-height: 40px;
   gap: 6px;
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--surface-muted);
+  background: var(--surface);
   color: var(--ink-soft);
   font-size: 0.74rem;
   font-weight: 950;
+  touch-action: manipulation;
 }
 
 .printer-rule-product-chip {
   display: grid;
   grid-template-columns: auto minmax(78px, 1fr);
   align-items: center;
-  min-width: 144px;
+  min-width: 0;
   border-radius: 8px;
 }
 
@@ -4993,8 +5043,8 @@ button.cart-line-summary:focus-visible {
 }
 
 .print-preview {
-  min-height: 164px;
-  max-height: 236px;
+  min-height: 132px;
+  max-height: 188px;
   overflow: auto;
   padding: 12px;
   border: 1px solid #27333b;
@@ -7851,7 +7901,6 @@ button.cart-line-summary:focus-visible {
     grid-template-columns: 32px minmax(0, 1fr) 44px minmax(220px, 0.34fr);
   }
 
-  .printer-settings-grid,
   .printer-control-strip {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -7860,8 +7909,8 @@ button.cart-line-summary:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .printer-rule-meta {
-    justify-content: flex-start;
+  .printer-rule-scope {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .closeout-section {
