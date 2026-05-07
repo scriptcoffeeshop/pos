@@ -5967,7 +5967,7 @@ onBeforeUnmount(() => {
                                     :checked="rule.categories.includes(category.id)"
                                     @change="togglePrinterRuleCategory(rule, category.id)"
                                   />
-                                  {{ category.label }}
+                                  <span>{{ category.label }}</span>
                                 </label>
                               </div>
                             </div>

@@ -2018,7 +2018,7 @@ h3 {
 }
 
 .workspace--printing .workstation-panel-stack {
-  grid-template-columns: minmax(560px, 1fr) minmax(520px, 1fr);
+  grid-template-columns: minmax(760px, 1.65fr) minmax(420px, 0.75fr);
   align-items: start;
   min-height: 0;
   max-height: 100%;
@@ -4562,7 +4562,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-station-list {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
 
 .printer-station-card,
@@ -4669,7 +4669,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-rule-card {
-  grid-template-columns: minmax(200px, 0.32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 0.3fr) minmax(0, 1fr);
   align-items: start;
   gap: 10px;
   padding: 12px;
@@ -4745,7 +4745,7 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-scope {
   display: grid;
-  grid-template-columns: minmax(112px, 0.28fr) minmax(0, 1fr);
+  grid-template-columns: minmax(150px, 0.24fr) minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
   padding: 10px;
@@ -4772,6 +4772,7 @@ button.cart-line-summary:focus-visible {
   color: var(--ink);
   font-size: 0.82rem;
   font-weight: 950;
+  white-space: nowrap;
 }
 
 .printer-rule-scope-heading span,
@@ -4799,13 +4800,13 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-chip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .printer-rule-product-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  max-height: 118px;
+  grid-template-columns: repeat(auto-fit, minmax(156px, 1fr));
+  max-height: 164px;
   overflow: auto;
   padding-right: 2px;
   -webkit-overflow-scrolling: touch;
@@ -4813,23 +4814,33 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-chip,
 .printer-rule-product-chip {
-  display: inline-flex;
+  display: grid;
   align-items: center;
-  min-height: 40px;
+  min-height: 42px;
   gap: 6px;
-  padding: 7px 9px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
   color: var(--ink-soft);
   font-size: 0.74rem;
   font-weight: 950;
+  overflow: hidden;
   touch-action: manipulation;
 }
 
+.printer-rule-chip {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.printer-rule-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .printer-rule-product-chip {
-  display: grid;
-  grid-template-columns: auto minmax(78px, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   min-width: 0;
   border-radius: 8px;
