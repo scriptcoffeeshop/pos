@@ -743,11 +743,17 @@ const productSupplyOverrides = (status: ProductSupplyStatus): ProductUpdateOverr
   if (status === 'stopped') {
     return {
       isAvailable: false,
+      posVisible: true,
+      onlineVisible: false,
+      qrVisible: false,
     }
   }
 
   return {
     isAvailable: true,
+    posVisible: true,
+    onlineVisible: true,
+    qrVisible: true,
   }
 }
 

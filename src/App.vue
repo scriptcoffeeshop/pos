@@ -2179,13 +2179,20 @@ const eventSupplyStatus = (event: Event): ProductSupplyStatus => {
 const eventChecked = (event: Event): boolean =>
   event.target instanceof HTMLInputElement ? event.target.checked : false
 
-const productCurrentSupplyStatus = (product: MenuItem): ProductSupplyStatus => {
+const productSupplyStatusFromProduct = (product: MenuItem): ProductSupplyStatus => {
   if (!product.available || product.inventoryCount === 0 || isProductTemporarilyStopped(product)) {
     return 'stopped'
   }
 
-  return productSupplyStatuses.value[product.id] ?? 'normal'
+  if (!product.onlineVisible && !product.qrVisible) {
+    return 'online-stopped'
+  }
+
+  return 'normal'
 }
+
+const productCurrentSupplyStatus = (product: MenuItem): ProductSupplyStatus =>
+  productSupplyStatusFromProduct(product)
 
 const noteCurrentSupplyStatus = (note: SupplyNoteItem): ProductSupplyStatus => {
   const directStatus = noteSupplyStatuses.value[note.id]

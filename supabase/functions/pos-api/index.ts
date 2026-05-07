@@ -611,12 +611,17 @@ api.get("/products", async (c) => {
     qr: "qr_visible",
   }[channel];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("products")
     .select(productSelect)
-    .eq("is_available", true)
     .eq(channelColumn, true)
     .order("sort_order", { ascending: true });
+
+  if (channel !== "pos") {
+    query = query.eq("is_available", true);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     const existingSession = await loadOpenRegisterSession();

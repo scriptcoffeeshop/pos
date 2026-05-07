@@ -2,8 +2,8 @@ import type { MenuItem } from '../types/pos'
 
 const defaultChannelState = {
   posVisible: true,
-  onlineVisible: false,
-  qrVisible: false,
+  onlineVisible: true,
+  qrVisible: true,
   prepStation: 'bar',
   printLabel: true,
   inventoryCount: null,

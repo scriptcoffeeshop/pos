@@ -45,7 +45,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 
 - `src/lib/posApi.ts` 仍是唯一正式資料入口，負責呼叫 `pos-api` 並把 snake_case 回應轉成 Vue view model。
 - `src/lib/posRealtime.ts` 只建立瀏覽器端 Supabase Realtime client，訂閱 `pos_realtime_events` 的 `INSERT`。事件只作為 invalidation signal，不承載完整訂單、商品或設定資料。
-- `usePosSession()` 訂閱 `orders`、`runtime_settings`、`register_sessions` 與 `products` topic；收到事件會 debounce 後重新呼叫 `/orders`、`/settings/runtime`、`/register/current` 或 `/products`。若正在建單、出單、claim、收款、作廢或退款，訂單同步會延後重試，避免背景更新踩到操作中的狀態。
+- `usePosSession()` 訂閱 `orders`、`runtime_settings`、`register_sessions` 與 `products` topic；收到事件會 debounce 後重新呼叫 `/orders`、`/settings/runtime`、`/register/current` 或 `/products`。POS 商品列表以 `pos_visible` 為同步邊界，因此 `is_available=false` 的停售品項仍會回到前端反灰顯示並可從供應狀態恢復；線上/QR 商品查詢仍由 API 過濾不可售品項。若正在建單、出單、claim、收款、作廢或退款，訂單同步會延後重試，避免背景更新踩到操作中的狀態。
 - Realtime 狀態為 `CHANNEL_ERROR`、`TIMED_OUT` 或 `CLOSED` 時，前端會以 2 秒到 30 秒退避重連並立即補同步一次；原本的 20 秒 POS polling、15 秒線上點餐 polling、前景補同步與 30 秒 station heartbeat 都保留。
 
 ## 初始資料流

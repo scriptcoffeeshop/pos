@@ -104,7 +104,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/lib/posRealtime.ts` 只訂閱 `pos_realtime_events`，不直接讀 `orders`、`pos_settings`、`register_sessions` 或 `products` 等受保護來源表；事件用來通知前端重拉 `pos-api`，避免把完整訂單或設定資料放進 public realtime stream。
-- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間、商品註記選項與加價，並阻擋暫停時送單。
+- `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。`/products?channel=pos` 會回傳所有 `pos_visible` 商品，包含 `is_available=false` 的停售品項，前端以反灰不可點保留恢復入口；`online`/`qr` 通路仍只回傳可售商品。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間、商品註記選項與加價，並阻擋暫停時送單。
 - POS 工作台會訂閱 `orders`、runtime settings、`register_sessions` 與 `products` 的 Realtime invalidation event，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。Realtime 斷線時會以 2 秒到 30 秒退避重連，且每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current` 仍保留為 fallback。Android APK 進入背景或螢幕熄滅後，`OnlineOrderNotifier` native plugin 會以同一組 `online_ordering` 提醒設定短輪詢 `/settings/runtime` 與 `/orders?limit=30`，顯示系統通知並播放原生提示音；POS 內的稍後提醒、接單與已讀狀態會同步給 native plugin。Web 背景只在 Browser Notification API 已授權時顯示 fallback notification。平板回到前景時也會補同步一次。消費者線上點餐頁會訂閱 runtime/products event，並保留每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
@@ -116,7 +116,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外部金流回呼走 `POST /payments/webhook/:provider`，需 `X-POS-PAYMENT-WEBHOOK-SECRET`。後端以 `record_pos_payment_event()` 寫入 `payment_events` 並做冪等狀態轉換；重複 event 不會二次入帳，金額不符不會改單，退款回呼會寫入負數 `transaction_ledger`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，前端會要求先進入後台編輯模式。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。
-- 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。平板端新增/刪除商品或改商品供應狀態時，未成功寫入 API 不會視為完成，只保留舊本機資料作為離線 fallback。
+- 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。平板端新增/刪除商品或改商品供應狀態時，未成功寫入 API 不會視為完成，只保留舊本機資料作為離線 fallback。供應狀態的「線上停售」會寫入 `online_visible=false`、`qr_visible=false` 且保留 POS 可見，「全部停售」會寫入 `is_available=false` 且保留 POS 可見，改回正常供應會同步恢復 POS/線上/掃碼可見性。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
 - 後台出單機、權限與線上點餐 runtime 修改走 `GET /admin/settings` 與 `PATCH /admin/settings/:key`，目前支援 `printer_settings`、`access_control`、`online_ordering`；`printer_settings.rules` 會保存分類 `categories` 與指定品項 `itemIds`。
