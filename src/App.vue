@@ -2233,6 +2233,7 @@ const printRuleMenuItems = computed<MenuItem[]>(() =>
     return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, 'zh-Hant')
   }),
 )
+const activePrinterRuleCategoryIds = ref<Record<string, MenuCategory>>({})
 const printerStationName = (stationId: string): string =>
   printerStationRows.value.find((station) => station.id === stationId)?.name ?? printStation.name
 const printerConnectionLabel = (station: PrintStationSetting): string => `${station.host}:${station.port}`
@@ -2259,31 +2260,103 @@ const printerRuleScopeLabel = (rule: PrintRuleSetting): string => {
 }
 const printerRuleModeLabel = (rule: PrintRuleSetting): string =>
   `${serviceModeLabels[rule.serviceMode]} · ${printLabelModeLabels[rule.labelMode]}`
-const printerRuleProductOptions = (rule: PrintRuleSetting): MenuItem[] => {
-  const categorySet = new Set(rule.categories)
-  const selectedItemIds = new Set(rule.itemIds ?? [])
-  if (categorySet.size === 0) {
-    return printRuleMenuItems.value
+const printerRuleProductIdsForCategory = (category: MenuCategory): string[] =>
+  printRuleMenuItems.value.filter((item) => item.category === category).map((item) => item.id)
+const activePrinterRuleCategoryId = (rule: PrintRuleSetting): MenuCategory | '' => {
+  const activeCategory = activePrinterRuleCategoryIds.value[rule.id]
+  if (activeCategory && menuCategoryOptions.value.some((category) => category.id === activeCategory)) {
+    return activeCategory
   }
 
-  return printRuleMenuItems.value.filter((item) => categorySet.has(item.category) || selectedItemIds.has(item.id))
+  const firstRuleCategory = rule.categories.find((category) =>
+    menuCategoryOptions.value.some((option) => option.id === category),
+  )
+  return firstRuleCategory ?? menuCategoryOptions.value[0]?.id ?? ''
+}
+const selectPrinterRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
+  activePrinterRuleCategoryIds.value = {
+    ...activePrinterRuleCategoryIds.value,
+    [rule.id]: category,
+  }
+}
+const printerRuleProductOptions = (rule: PrintRuleSetting): MenuItem[] => {
+  const activeCategory = activePrinterRuleCategoryId(rule)
+  return activeCategory
+    ? printRuleMenuItems.value.filter((item) => item.category === activeCategory)
+    : printRuleMenuItems.value
+}
+const printerRuleCategoryFullySelected = (rule: PrintRuleSetting, category: MenuCategory): boolean => {
+  const categoryProductIds = printerRuleProductIdsForCategory(category)
+  if (categoryProductIds.length === 0) {
+    return rule.categories.includes(category)
+  }
+
+  const selectedItemIds = new Set(rule.itemIds ?? [])
+  return rule.categories.includes(category) || categoryProductIds.every((itemId) => selectedItemIds.has(itemId))
+}
+const printerRuleItemSelected = (rule: PrintRuleSetting, item: MenuItem): boolean =>
+  rule.categories.includes(item.category) || (rule.itemIds ?? []).includes(item.id)
+const normalizePrinterRuleFullCategories = (rule: PrintRuleSetting): void => {
+  const itemIds = new Set(rule.itemIds ?? [])
+  const categories = new Set(rule.categories)
+  for (const category of menuCategoryOptions.value.map((option) => option.id)) {
+    const categoryProductIds = printerRuleProductIdsForCategory(category)
+    if (categoryProductIds.length === 0 || !categoryProductIds.every((itemId) => itemIds.has(itemId))) {
+      continue
+    }
+
+    categories.add(category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+  }
+
+  rule.categories = [...categories]
+  rule.itemIds = [...itemIds]
 }
 const togglePrinterRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
-  if (rule.categories.includes(category)) {
+  selectPrinterRuleCategory(rule, category)
+  const categoryProductIds = printerRuleProductIdsForCategory(category)
+  const itemIds = new Set(rule.itemIds ?? [])
+  if (printerRuleCategoryFullySelected(rule, category)) {
     rule.categories = rule.categories.filter((entry) => entry !== category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+    rule.itemIds = [...itemIds]
     return
   }
 
   rule.categories = [...rule.categories, category]
+  for (const itemId of categoryProductIds) {
+    itemIds.delete(itemId)
+  }
+  rule.itemIds = [...itemIds]
 }
 const togglePrinterRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
-  const itemIds = rule.itemIds ?? []
-  if (itemIds.includes(itemId)) {
-    rule.itemIds = itemIds.filter((entry) => entry !== itemId)
+  const item = printRuleMenuItems.value.find((entry) => entry.id === itemId)
+  if (!item) {
     return
   }
 
-  rule.itemIds = [...itemIds, itemId]
+  const itemIds = new Set(rule.itemIds ?? [])
+  if (printerRuleItemSelected(rule, item)) {
+    if (rule.categories.includes(item.category)) {
+      rule.categories = rule.categories.filter((entry) => entry !== item.category)
+      for (const categoryItemId of printerRuleProductIdsForCategory(item.category)) {
+        if (categoryItemId !== item.id) {
+          itemIds.add(categoryItemId)
+        }
+      }
+    }
+    itemIds.delete(item.id)
+    rule.itemIds = [...itemIds]
+    return
+  }
+
+  itemIds.add(item.id)
+  rule.itemIds = [...itemIds]
+  normalizePrinterRuleFullCategories(rule)
 }
 const clonePrinterSettingsForSave = (): PrinterSettings => ({
   stations: printerSettings.value.stations.map((station) => ({ ...station })),
@@ -7434,36 +7507,46 @@ onBeforeUnmount(() => {
                                 <span>{{ printerRuleCategoriesLabel(rule) }}</span>
                               </div>
                               <div class="printer-rule-chip-grid" aria-label="印單規則分類">
-                                <label
+                                <div
                                   v-for="category in menuCategoryOptions"
                                   :key="category.id"
                                   class="printer-rule-chip"
-                                  :class="{ 'printer-rule-chip--active': rule.categories.includes(category.id) }"
+                                  :class="{
+                                    'printer-rule-chip--active': printerRuleCategoryFullySelected(rule, category.id),
+                                    'printer-rule-chip--focused': activePrinterRuleCategoryId(rule) === category.id,
+                                  }"
                                 >
                                   <input
                                     type="checkbox"
-                                    :checked="rule.categories.includes(category.id)"
+                                    :checked="printerRuleCategoryFullySelected(rule, category.id)"
+                                    @click.stop
                                     @change="togglePrinterRuleCategory(rule, category.id)"
                                   />
-                                  <span>{{ category.label }}</span>
-                                </label>
+                                  <button
+                                    class="printer-rule-chip-button"
+                                    type="button"
+                                    @click="selectPrinterRuleCategory(rule, category.id)"
+                                  >
+                                    {{ category.label }}
+                                  </button>
+                                </div>
                               </div>
                             </div>
                             <div class="printer-rule-picker-section">
                               <div class="printer-rule-picker-title">
                                 <strong>指定品項</strong>
-                                <span>{{ printerRuleItemsLabel(rule) }}</span>
+                                <span>{{ categoryLabelFor(activePrinterRuleCategoryId(rule)) }} · {{ printerRuleItemsLabel(rule) }}</span>
                               </div>
                               <div class="printer-rule-product-grid" aria-label="印單規則指定品項">
                                 <label
                                   v-for="item in printerRuleProductOptions(rule)"
                                   :key="item.id"
                                   class="printer-rule-product-chip"
-                                  :class="{ 'printer-rule-chip--active': (rule.itemIds ?? []).includes(item.id) }"
+                                  :class="{ 'printer-rule-chip--active': printerRuleItemSelected(rule, item) }"
                                 >
                                   <input
                                     type="checkbox"
-                                    :checked="(rule.itemIds ?? []).includes(item.id)"
+                                    :checked="printerRuleItemSelected(rule, item)"
                                     @change="togglePrinterRuleItem(rule, item.id)"
                                   />
                                   <span>{{ item.name }}</span>
