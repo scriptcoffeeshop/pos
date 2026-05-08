@@ -966,6 +966,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
   const onlineReminderClock = ref(Date.now())
   const onlineReminderStates = ref<Record<string, OnlineOrderReminderState>>({})
+  const onlineReminderStateHydrated = ref(!isPosApiConfigured)
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
   const dismissedQueueOrderKeys = ref<string[]>(readDismissedQueueOrderKeys())
   const onlineReminderAudioMessage = ref('')
@@ -1094,6 +1095,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
 
   const activeOnlineReminderOrders = computed(() => {
+    if (!onlineReminderStateHydrated.value) {
+      return []
+    }
+
     const candidateOrders = onlineOrderingSettings.value.acceptanceRequired
       ? unconfirmedOnlineOrders.value.filter(onlineOrderRequiresAcceptance)
       : overdueUnconfirmedOnlineOrders.value
@@ -1149,18 +1154,21 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const refreshOnlineReminderStatesForOrders = async (orders: PosOrder[] = orderQueue.value): Promise<void> => {
     if (!isPosApiConfigured) {
+      onlineReminderStateHydrated.value = true
       return
     }
 
     const orderIds = onlineReminderStateScopeForOrders(orders)
     if (orderIds.length === 0) {
       onlineReminderStates.value = {}
+      onlineReminderStateHydrated.value = true
       return
     }
 
     try {
       const states = await fetchOnlineOrderReminderStates(orderIds)
       applyOnlineReminderStates(states, orderIds)
+      onlineReminderStateHydrated.value = true
       onlineReminderClock.value = Date.now()
     } catch (error) {
       setBackendStatus('fallback', '提醒狀態同步失敗', `線上新單提醒狀態無法同步：${getErrorMessage(error)}`)
@@ -3510,14 +3518,34 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const handleVisibilitySync = (): void => {
     const visible = isDocumentActive()
+    if (visible && isPosApiConfigured) {
+      onlineReminderStateHydrated.value = false
+    }
     setOnlineOrderNotifierAppActive(visible)
     syncOnlineReminderNotifier()
 
     if (visible) {
-      onlineReminderClock.value = Date.now()
-      maybePlayOnlineOrderReminder()
-      void refreshQueueState(true)
+      void refreshForegroundReminderState()
       void syncStationHeartbeat()
+    }
+  }
+
+  const refreshForegroundReminderState = async (): Promise<void> => {
+    onlineReminderClock.value = Date.now()
+
+    try {
+      await refreshQueueState(true)
+      if (isPosApiConfigured && !onlineReminderStateHydrated.value) {
+        await refreshOnlineReminderStatesForOrders()
+      }
+    } finally {
+      if (isDocumentActive()) {
+        onlineReminderClock.value = Date.now()
+        syncOnlineReminderNotifier()
+        if (!isPosApiConfigured || onlineReminderStateHydrated.value) {
+          maybePlayOnlineOrderReminder()
+        }
+      }
     }
   }
 
