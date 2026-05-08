@@ -485,22 +485,59 @@ const stationOptions = computed(() => {
   ]
 })
 
-const printRuleProductOptions = (rule: PrintRuleSetting): ProductDraft[] => {
-  const selectedCategories = new Set(rule.categories)
-  const selectedItemIds = new Set(rule.itemIds ?? [])
-  const sourceProducts = [...productDrafts.value].sort((first, second) =>
+const activePrintRuleCategoryIds = ref<Record<string, MenuCategory>>({})
+const sortedPrintRuleProducts = computed<ProductDraft[]>(() =>
+  [...productDrafts.value].sort((first, second) =>
     first.category.localeCompare(second.category, 'zh-TW') ||
     first.sortOrder - second.sortOrder ||
     first.name.localeCompare(second.name, 'zh-TW'),
-  )
-
-  if (selectedCategories.size === 0) {
-    return sourceProducts
+  ),
+)
+const printRuleProductIdsForCategory = (category: MenuCategory): string[] =>
+  sortedPrintRuleProducts.value.filter((product) => product.category === category).map((product) => product.id)
+const activePrintRuleCategoryId = (rule: PrintRuleSetting): MenuCategory =>
+  activePrintRuleCategoryIds.value[rule.id] ??
+  rule.categories.find((category) => menuCategoryOptions.some((option) => option.value === category)) ??
+  menuCategoryOptions[0]?.value ??
+  'coffee'
+const selectPrintRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
+  activePrintRuleCategoryIds.value = {
+    ...activePrintRuleCategoryIds.value,
+    [rule.id]: category,
+  }
+}
+const printRuleProductOptions = (rule: PrintRuleSetting): ProductDraft[] => {
+  const activeCategory = activePrintRuleCategoryId(rule)
+  return sortedPrintRuleProducts.value.filter((product) => product.category === activeCategory)
+}
+const printRuleCategoryFullySelected = (rule: PrintRuleSetting, category: MenuCategory): boolean => {
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  if (categoryProductIds.length === 0) {
+    return rule.categories.includes(category)
   }
 
-  return sourceProducts.filter((product) =>
-    selectedCategories.has(product.category) || selectedItemIds.has(product.id),
-  )
+  const selectedItemIds = new Set(rule.itemIds ?? [])
+  return rule.categories.includes(category) || categoryProductIds.every((itemId) => selectedItemIds.has(itemId))
+}
+const printRuleItemSelected = (rule: PrintRuleSetting, product: ProductDraft): boolean =>
+  rule.categories.includes(product.category) || (rule.itemIds ?? []).includes(product.id)
+const normalizePrintRuleFullCategories = (rule: PrintRuleSetting): void => {
+  const itemIds = new Set(rule.itemIds ?? [])
+  const categories = new Set(rule.categories)
+  for (const category of menuCategoryOptions.map((option) => option.value)) {
+    const categoryProductIds = printRuleProductIdsForCategory(category)
+    if (categoryProductIds.length === 0 || !categoryProductIds.every((itemId) => itemIds.has(itemId))) {
+      continue
+    }
+
+    categories.add(category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+  }
+
+  rule.categories = [...categories]
+  rule.itemIds = [...itemIds]
 }
 
 const operationStationOptions = computed(() => {
@@ -1321,22 +1358,49 @@ const removePrintRule = (ruleId: string): void => {
 }
 
 const toggleRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
-  if (rule.categories.includes(category)) {
+  selectPrintRuleCategory(rule, category)
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  const itemIds = new Set(rule.itemIds ?? [])
+  if (printRuleCategoryFullySelected(rule, category)) {
     rule.categories = rule.categories.filter((entry) => entry !== category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+    rule.itemIds = [...itemIds]
     return
   }
 
   rule.categories = [...rule.categories, category]
+  for (const itemId of categoryProductIds) {
+    itemIds.delete(itemId)
+  }
+  rule.itemIds = [...itemIds]
 }
 
 const toggleRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
-  const itemIds = rule.itemIds ?? []
-  if (itemIds.includes(itemId)) {
-    rule.itemIds = itemIds.filter((entry) => entry !== itemId)
+  const product = sortedPrintRuleProducts.value.find((entry) => entry.id === itemId)
+  if (!product) {
     return
   }
 
-  rule.itemIds = [...itemIds, itemId]
+  const itemIds = new Set(rule.itemIds ?? [])
+  if (printRuleItemSelected(rule, product)) {
+    if (rule.categories.includes(product.category)) {
+      rule.categories = rule.categories.filter((entry) => entry !== product.category)
+      for (const categoryItemId of printRuleProductIdsForCategory(product.category)) {
+        if (categoryItemId !== product.id) {
+          itemIds.add(categoryItemId)
+        }
+      }
+    }
+    itemIds.delete(product.id)
+    rule.itemIds = [...itemIds]
+    return
+  }
+
+  itemIds.add(product.id)
+  rule.itemIds = [...itemIds]
+  normalizePrintRuleFullCategories(rule)
 }
 
 const savePrinterSettings = async (): Promise<void> => {
@@ -2623,35 +2687,46 @@ const saveAccessControl = async (): Promise<void> => {
                   <input v-model="rule.enabled" type="checkbox" />
                   啟用
                 </label>
-                <label
+                <div
                   v-for="category in menuCategoryOptions"
                   :key="category.value"
-                  class="toggle-row"
+                  class="toggle-row admin-rule-category-row"
+                  :class="{
+                    'toggle-row--active': printRuleCategoryFullySelected(rule, category.value),
+                    'toggle-row--focused': activePrintRuleCategoryId(rule) === category.value,
+                  }"
                 >
                   <input
                     type="checkbox"
-                    :checked="rule.categories.includes(category.value)"
+                    :checked="printRuleCategoryFullySelected(rule, category.value)"
+                    @click.stop
                     @change="toggleRuleCategory(rule, category.value)"
                   />
-                  {{ category.label }}
-                </label>
+                  <button
+                    class="admin-rule-category-button"
+                    type="button"
+                    @click="selectPrintRuleCategory(rule, category.value)"
+                  >
+                    {{ category.label }}
+                  </button>
+                </div>
               </div>
 
               <div class="admin-rule-scope">
                 <div>
                   <strong>指定品項</strong>
-                  <span>可不選；若有勾選，會與上方分類一起納入這條規則。</span>
+                  <span>{{ categoryLabels[activePrintRuleCategoryId(rule)] ?? activePrintRuleCategoryId(rule) }} 品項可單獨調整。</span>
                 </div>
                 <div class="admin-rule-item-grid">
                   <label
                     v-for="product in printRuleProductOptions(rule)"
                     :key="`${rule.id}-${product.id}`"
                     class="toggle-row"
-                    :class="{ 'toggle-row--active': (rule.itemIds ?? []).includes(product.id) }"
+                    :class="{ 'toggle-row--active': printRuleItemSelected(rule, product) }"
                   >
                     <input
                       type="checkbox"
-                      :checked="(rule.itemIds ?? []).includes(product.id)"
+                      :checked="printRuleItemSelected(rule, product)"
                       @change="toggleRuleItem(rule, product.id)"
                     />
                     <span>{{ product.name }}</span>

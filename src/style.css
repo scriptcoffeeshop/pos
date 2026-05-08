@@ -5612,6 +5612,27 @@ button.cart-line-summary:focus-visible {
   white-space: nowrap;
 }
 
+.printer-rule-chip-button,
+.admin-rule-category-button {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 950;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printer-rule-chip--focused,
+.admin-toggle-grid .toggle-row--focused {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
 .printer-rule-product-chip {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -8151,6 +8172,12 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-muted);
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.admin-toggle-grid .admin-rule-category-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
 }
 
 .admin-toggle-grid .toggle-row--active,
