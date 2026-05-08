@@ -2,6 +2,7 @@ import type {
   AccessControlSettings,
   MenuCategory,
   MenuItem,
+  FloorLevelSetting,
   FloorDisplayPreferences,
   FloorPlanSettings,
   FloorTableSetting,
@@ -274,6 +275,7 @@ export interface WalletAdjustmentInput {
 export interface FloorAssignmentInput {
   tableLabel: string
   partySize: number
+  floorLabel?: string
 }
 
 interface ProductResponse {
@@ -879,10 +881,14 @@ export const normalizePosAppearanceSettings = (value: unknown): PosAppearanceSet
 }
 
 export const defaultFloorPlanSettings = (): FloorPlanSettings => ({
+  floors: [
+    { id: '1F', label: '1F' },
+  ],
+  activeFloorId: '1F',
   tables: [
-    { id: 'A2', label: 'A2', capacity: 2, x: 34, y: 28, width: 13 },
-    { id: 'A3', label: 'A3', capacity: 2, x: 58, y: 28, width: 13 },
-    { id: 'A1', label: 'A1', capacity: 4, x: 36, y: 58, width: 20 },
+    { id: 'A2', floorId: '1F', label: 'A2', capacity: 2, x: 34, y: 28, width: 13 },
+    { id: 'A3', floorId: '1F', label: 'A3', capacity: 2, x: 58, y: 28, width: 13 },
+    { id: 'A1', floorId: '1F', label: 'A1', capacity: 4, x: 36, y: 58, width: 20 },
   ],
   display: {
     showPeople: true,
@@ -896,13 +902,61 @@ export const defaultFloorPlanSettings = (): FloorPlanSettings => ({
   waitline: [],
 })
 
-const normalizeFloorTableSettings = (value: unknown): FloorTableSetting[] => {
+const normalizeFloorLevelId = (value: unknown, fallback = '1F'): string => {
+  const normalized = typeof value === 'string'
+    ? value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16)
+    : ''
+  return normalized || fallback
+}
+
+const normalizeFloorLevelSettings = (value: unknown): FloorLevelSetting[] => {
+  const defaults = defaultFloorPlanSettings().floors
+  if (!Array.isArray(value)) {
+    return defaults
+  }
+
+  const seenFloorIds = new Set<string>()
+  const floors = value.flatMap((entry): FloorLevelSetting[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const floor = entry as Partial<FloorLevelSetting>
+    const label = typeof floor.label === 'string' && floor.label.trim()
+      ? floor.label.trim().slice(0, 16)
+      : typeof floor.id === 'string'
+        ? floor.id.trim().slice(0, 16)
+        : ''
+    const id = normalizeFloorLevelId(floor.id ?? label, label ? label.toUpperCase() : '1F')
+    if (!id || seenFloorIds.has(id)) {
+      return []
+    }
+
+    seenFloorIds.add(id)
+    return [{ id, label: label || id }]
+  }).slice(0, 12)
+
+  return floors.length > 0 ? floors : defaults
+}
+
+const normalizeActiveFloorId = (value: unknown, floors: FloorLevelSetting[]): string => {
+  const fallback = floors[0]?.id ?? '1F'
+  const candidate = normalizeFloorLevelId(value, fallback)
+  return floors.some((floor) => floor.id === candidate) ? candidate : fallback
+}
+
+const normalizeFloorTableSettings = (
+  value: unknown,
+  floors: FloorLevelSetting[],
+  fallbackFloorId: string,
+): FloorTableSetting[] => {
   const defaults = defaultFloorPlanSettings().tables
   if (!Array.isArray(value)) {
     return defaults
   }
 
   const seenTableIds = new Set<string>()
+  const floorIds = new Set(floors.map((floor) => floor.id))
   const tables = value.flatMap((entry): FloorTableSetting[] => {
     if (!entry || typeof entry !== 'object') {
       return []
@@ -911,6 +965,7 @@ const normalizeFloorTableSettings = (value: unknown): FloorTableSetting[] => {
     const table = entry as Partial<FloorTableSetting>
     const id = typeof table.id === 'string' ? table.id.trim().toUpperCase().slice(0, 12) : ''
     const label = typeof table.label === 'string' ? table.label.trim().toUpperCase().slice(0, 12) : id
+    const floorId = normalizeFloorLevelId(table.floorId, fallbackFloorId)
     const capacity = Number(table.capacity)
     const x = Number(table.x)
     const y = Number(table.y)
@@ -922,6 +977,7 @@ const normalizeFloorTableSettings = (value: unknown): FloorTableSetting[] => {
     seenTableIds.add(id)
     return [{
       id,
+      floorId: floorIds.has(floorId) ? floorId : fallbackFloorId,
       label: label || id,
       capacity: Math.min(20, Math.max(1, Math.trunc(capacity))),
       x: Number.isFinite(x) ? Math.min(92, Math.max(4, x)) : 40,
@@ -1006,8 +1062,12 @@ export const normalizeFloorPlanSettings = (value: unknown): FloorPlanSettings =>
   }
 
   const settings = value as Partial<FloorPlanSettings>
-  const tables = normalizeFloorTableSettings(settings.tables)
+  const floors = normalizeFloorLevelSettings(settings.floors)
+  const activeFloorId = normalizeActiveFloorId(settings.activeFloorId, floors)
+  const tables = normalizeFloorTableSettings(settings.tables, floors, activeFloorId)
   return {
+    floors,
+    activeFloorId,
     tables,
     display: normalizeFloorDisplayPreferences(settings.display),
     partySizes: normalizeFloorPartySizes(settings.partySizes, tables),

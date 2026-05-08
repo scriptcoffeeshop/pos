@@ -211,8 +211,14 @@ export interface PosAppearanceSettings {
   toolboxOpacity: number
 }
 
+export interface FloorLevelSetting {
+  id: string
+  label: string
+}
+
 export interface FloorTableSetting {
   id: string
+  floorId: string
   label: string
   capacity: number
   x: number
@@ -240,6 +246,8 @@ export interface WaitlineEntry {
 }
 
 export interface FloorPlanSettings {
+  floors: FloorLevelSetting[]
+  activeFloorId: string
   tables: FloorTableSetting[]
   display: FloorDisplayPreferences
   partySizes: Record<string, number>

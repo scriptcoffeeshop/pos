@@ -50,6 +50,7 @@ import { defaultFloorPlanSettings, isPosApiConfigured, normalizeFloorPlanSetting
 import type {
   CartLine,
   FloorDisplayPreferences,
+  FloorLevelSetting,
   FloorPlanSettings,
   FloorTableSetting,
   MenuCategory,
@@ -186,6 +187,16 @@ interface ToolboxDragState {
   moved: boolean
 }
 
+interface FloorTableDragState {
+  pointerId: number
+  tableId: string
+  startX: number
+  startY: number
+  originalX: number
+  originalY: number
+  dragging: boolean
+}
+
 interface ProductSortDragState {
   pointerId: number
   itemId: string
@@ -261,6 +272,8 @@ interface SupplyStateSnapshot {
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
 const floorTablesStorageKey = 'script-coffee-pos-floor-tables'
+const floorLevelsStorageKey = 'script-coffee-pos-floor-levels'
+const activeFloorStorageKey = 'script-coffee-pos-active-floor'
 const floorDisplayStorageKey = 'script-coffee-pos-floor-display'
 const floorPartyStorageKey = 'script-coffee-pos-floor-parties'
 const waitlineStorageKey = 'script-coffee-pos-waitline'
@@ -420,8 +433,28 @@ const normalizeFloorDisplayPreferences = (value: unknown): FloorDisplayPreferenc
 const readFloorDisplayPreferences = (): FloorDisplayPreferences =>
   normalizeFloorDisplayPreferences(readStorageValue<unknown>(floorDisplayStorageKey, defaultFloorDisplayPreferences))
 
+const normalizeFloorLevels = (value: unknown): FloorLevelSetting[] =>
+  normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, floors: value }).floors
+
+const readFloorLevels = (): FloorLevelSetting[] =>
+  normalizeFloorLevels(readStorageValue<unknown>(floorLevelsStorageKey, defaultFloorPlanSettingsValue.floors))
+
+const readActiveFloorId = (floors: FloorLevelSetting[]): string => {
+  const savedFloorId = readStorageValue<unknown>(activeFloorStorageKey, defaultFloorPlanSettingsValue.activeFloorId)
+  const normalized = normalizeFloorPlanSettings({
+    ...defaultFloorPlanSettingsValue,
+    floors,
+    activeFloorId: savedFloorId,
+  })
+  return normalized.activeFloorId
+}
+
 const normalizeFloorTables = (value: unknown): DiningTableDefinition[] =>
-  normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, tables: value }).tables
+  normalizeFloorPlanSettings({
+    ...defaultFloorPlanSettingsValue,
+    floors: readFloorLevels(),
+    tables: value,
+  }).tables
 
 const readFloorTables = (): DiningTableDefinition[] =>
   normalizeFloorTables(readStorageValue<unknown>(floorTablesStorageKey, defaultDiningTables))
@@ -2505,6 +2538,8 @@ const activeView = ref<AppView>(initialView === 'admin' && !backendEditModeEnabl
 const activeWorkspaceTab = ref<WorkspaceTab>('floor')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
+const floorLevels = ref<FloorLevelSetting[]>(readFloorLevels())
+const activeFloorId = ref(readActiveFloorId(floorLevels.value))
 const floorTables = ref<DiningTableDefinition[]>(readFloorTables())
 const floorDisplayPreferences = ref<FloorDisplayPreferences>(readFloorDisplayPreferences())
 const floorPartySizes = ref<Record<string, number>>(normalizeFloorPartySizes(readStorageValue<unknown>(floorPartyStorageKey, {}), floorTables.value))
@@ -2519,6 +2554,7 @@ const waitlineDraft = ref({
 const activeFloorServiceView = ref<FloorServiceView>('dine-in')
 const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
+const floorMapRef = ref<HTMLElement | null>(null)
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
 const isApplyingRemoteFloorPlanSettings = ref(false)
@@ -2662,6 +2698,8 @@ const persistPosAppearancePreferences = (preferences: PosUiPreferences): void =>
 
 const floorPlanPayload = (): FloorPlanSettings =>
   normalizeFloorPlanSettings({
+    floors: floorLevels.value,
+    activeFloorId: activeFloorId.value,
     tables: floorTables.value,
     display: floorDisplayPreferences.value,
     partySizes: floorPartySizes.value,
@@ -2669,6 +2707,8 @@ const floorPlanPayload = (): FloorPlanSettings =>
   })
 
 const writeFloorPlanCache = (settings: FloorPlanSettings): void => {
+  writeStorageValue(floorLevelsStorageKey, settings.floors)
+  writeStorageValue(activeFloorStorageKey, settings.activeFloorId)
   writeStorageValue(floorTablesStorageKey, settings.tables)
   writeStorageValue(floorDisplayStorageKey, settings.display)
   writeStorageValue(floorPartyStorageKey, settings.partySizes)
@@ -2685,13 +2725,20 @@ const clearFloorPlanPersistTimer = (): void => {
 const applyFloorPlanSettings = (settings: FloorPlanSettings): void => {
   const normalizedSettings = normalizeFloorPlanSettings(settings)
   isApplyingRemoteFloorPlanSettings.value = true
+  floorLevels.value = normalizedSettings.floors
+  activeFloorId.value = normalizedSettings.activeFloorId
   floorTables.value = normalizedSettings.tables
   floorDisplayPreferences.value = normalizedSettings.display
   floorPartySizes.value = normalizedSettings.partySizes
   waitlineEntries.value = normalizedSettings.waitline
   writeFloorPlanCache(normalizedSettings)
-  if (selectedFloorTableId.value && !normalizedSettings.tables.some((table) => table.id === selectedFloorTableId.value)) {
-    selectedFloorTableId.value = normalizedSettings.tables[0]?.id ?? null
+  const activeFloorTableIds = new Set(
+    normalizedSettings.tables
+      .filter((table) => table.floorId === normalizedSettings.activeFloorId)
+      .map((table) => table.id),
+  )
+  if (selectedFloorTableId.value && !activeFloorTableIds.has(selectedFloorTableId.value)) {
+    selectedFloorTableId.value = normalizedSettings.tables.find((table) => table.floorId === normalizedSettings.activeFloorId)?.id ?? null
   }
   floorPlanSyncMessage.value = '桌位設定已由資料庫同步'
   globalThis.setTimeout(() => {
@@ -2810,6 +2857,7 @@ let backendEditTapTimer: number | null = null
 let toolboxBackendEditLongPressTimer: number | null = null
 let appearancePersistTimer: number | null = null
 let floorPlanPersistTimer: number | null = null
+const floorTableDragState = ref<FloorTableDragState | null>(null)
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
 const ticketStartedLabel = computed(() =>
@@ -2915,7 +2963,7 @@ const registerStatusLabel = computed(() => {
   return `已關班 · ${formatOrderTime(registerSession.value.closedAt ?? registerSession.value.openedAt)}`
 })
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
-  floor: `${activeDineInOrders.value.length} 桌內用 · 候位 ${waitlineEntries.value.length}`,
+  floor: `${activeDineInOrders.value.length} 桌內用 · ${floorLevels.value.length} 樓層`,
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
   details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
   payment: paymentLabels[paymentMethod.value],
@@ -2923,14 +2971,42 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   printing: printStation.online ? '列印在線' : '列印離線',
   closeout: closeoutPreflightBlockingCount.value > 0 ? `${closeoutPreflightBlockingCount.value} 項待處理` : registerStatusLabel.value,
 }))
+const activeFloor = computed(() =>
+  floorLevels.value.find((floor) => floor.id === activeFloorId.value) ?? floorLevels.value[0] ?? defaultFloorPlanSettingsValue.floors[0],
+)
+const activeFloorLabel = computed(() => activeFloor.value?.label ?? '1F')
+const activeFloorTables = computed(() => floorTables.value.filter((table) => table.floorId === activeFloorId.value))
+const floorLabelForTable = (table: DiningTableDefinition): string =>
+  floorLevels.value.find((floor) => floor.id === table.floorId)?.label ?? activeFloorLabel.value
+const floorNoteToken = (floorLabel: string): string => `樓層 ${floorLabel}`
 const tableNoteToken = (tableLabel: string): string => `桌位 ${tableLabel}`
 const tableIdFromOrder = (order: PosOrder): string | null => {
-  const tableLabels = new Set(floorTables.value.map((table) => table.label))
-  const noteMatch = order.note.match(/桌位\s*([A-Z]\d+)/i)
-  const nameMatch = order.customerName.match(/^([A-Z]\d+)\b/i)
-  const label = (noteMatch?.[1] ?? nameMatch?.[1] ?? '').toUpperCase()
+  const floorMatch = order.note.match(/樓層\s*([^、，,]+)/i)
+  const tableMatch = order.note.match(/桌位\s*([^、，,]+)/i)
+  const nameMatch = order.customerName.match(/(?:^|\s)([A-Z]\d+)\b/i)
+  const tableLabel = (tableMatch?.[1] ?? nameMatch?.[1] ?? '').trim().toUpperCase()
+  if (!tableLabel) {
+    return null
+  }
 
-  return tableLabels.has(label) ? label : null
+  const floorLabel = floorMatch?.[1]?.trim()
+  if (floorLabel) {
+    const floor = floorLevels.value.find((entry) =>
+      entry.id.toUpperCase() === floorLabel.toUpperCase() ||
+      entry.label.toUpperCase() === floorLabel.toUpperCase(),
+    )
+    const table = floorTables.value.find((entry) => entry.floorId === floor?.id && entry.label.toUpperCase() === tableLabel)
+    if (table) {
+      return table.id
+    }
+  }
+
+  const matchingTables = floorTables.value.filter((table) => table.label.toUpperCase() === tableLabel)
+  if (matchingTables.length === 1) {
+    return matchingTables[0]?.id ?? null
+  }
+
+  return matchingTables.find((table) => table.floorId === activeFloorId.value)?.id ?? matchingTables[0]?.id ?? null
 }
 const activeDineInOrders = computed(() =>
   orderQueue.value.filter((order) => order.mode === 'dine-in' && orderIsOpenForFulfillment(order)),
@@ -2959,7 +3035,7 @@ const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null)
   return Math.min(table.capacity, Math.max(1, Math.trunc(Number(storedSize) || 1)))
 }
 const floorTableStates = computed<FloorTableState[]>(() =>
-  floorTables.value.map((table) => {
+  activeFloorTables.value.map((table) => {
     const order = dineInOrderForTable(table.id)
     const isLocked = Boolean(order && orderClaimedByOtherStation(order))
     const status: FloorTableState['status'] = !order
@@ -2989,6 +3065,7 @@ const selectedFloorTable = computed(() =>
 const emptyFloorTableStates = computed(() =>
   floorTableStates.value.filter((state) => state.status === 'empty'),
 )
+const activeFloorOrderCount = computed(() => floorTableStates.value.filter((state) => state.order).length)
 const waitlinePeopleCount = computed(() =>
   waitlineEntries.value.reduce((total, entry) => total + entry.partySize, 0),
 )
@@ -3773,17 +3850,239 @@ const updateFloorPartySize = (table: DiningTableDefinition, delta: number): void
   }
 }
 
-const updateFloorTableCapacity = (table: DiningTableDefinition, delta: number): void => {
-  const nextCapacity = Math.min(20, Math.max(1, table.capacity + delta))
+const floorHasActiveOrders = (floorId: string): boolean =>
+  floorTables.value.some((table) => table.floorId === floorId && Boolean(dineInOrderForTable(table.id)))
+
+const updateFloorTable = (tableId: string, patch: Partial<DiningTableDefinition>): void => {
   floorTables.value = floorTables.value.map((currentTable) =>
-    currentTable.id === table.id ? { ...currentTable, capacity: nextCapacity } : currentTable,
+    currentTable.id === tableId ? { ...currentTable, ...patch } : currentTable,
   )
   floorPartySizes.value = normalizeFloorPartySizes(floorPartySizes.value, floorTables.value)
 }
 
+const updateFloorTableCapacity = (table: DiningTableDefinition, delta: number): void => {
+  updateFloorTable(table.id, { capacity: Math.min(20, Math.max(1, table.capacity + delta)) })
+}
+
+const updateFloorTableLabel = (table: DiningTableDefinition, label: string): void => {
+  if (dineInOrderForTable(table.id)) {
+    floorPlanSyncMessage.value = '此桌仍有進行中訂單，請先清桌再改桌號'
+    return
+  }
+
+  const normalizedLabel = label.trim().toUpperCase().slice(0, 12)
+  updateFloorTable(table.id, { label: normalizedLabel || table.label })
+}
+
+const updateFloorTableNumber = (
+  table: DiningTableDefinition,
+  key: 'x' | 'y' | 'width',
+  value: string | number,
+): void => {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return
+  }
+
+  const bounds = key === 'width' ? { min: 10, max: 36 } : { min: 4, max: 92 }
+  updateFloorTable(table.id, { [key]: Math.min(bounds.max, Math.max(bounds.min, Math.round(numberValue))) })
+}
+
+const nextFloorLabel = (): string => {
+  for (let index = 1; index <= 12; index += 1) {
+    const label = `${index}F`
+    if (!floorLevels.value.some((floor) => floor.label.toUpperCase() === label)) {
+      return label
+    }
+  }
+
+  return `樓層 ${floorLevels.value.length + 1}`
+}
+
+const floorIdFromLabel = (label: string): string =>
+  label.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16) || `F${Date.now().toString(36).toUpperCase()}`
+
+const addFloorLevel = (): void => {
+  const label = nextFloorLabel()
+  let floorId = floorIdFromLabel(label)
+  let suffix = 2
+  while (floorLevels.value.some((floor) => floor.id === floorId)) {
+    floorId = `${floorIdFromLabel(label)}-${suffix}`
+    suffix += 1
+  }
+
+  floorLevels.value = [...floorLevels.value, { id: floorId, label }]
+  activeFloorId.value = floorId
+  selectedFloorTableId.value = null
+}
+
+const setActiveFloor = (floorId: string): void => {
+  if (!floorLevels.value.some((floor) => floor.id === floorId)) {
+    return
+  }
+
+  activeFloorId.value = floorId
+  selectedFloorTableId.value = floorTables.value.find((table) => table.floorId === floorId)?.id ?? null
+}
+
+const updateFloorLevelLabel = (floor: FloorLevelSetting, label: string): void => {
+  const normalizedLabel = label.trim().slice(0, 16)
+  if (!normalizedLabel) {
+    return
+  }
+
+  floorLevels.value = floorLevels.value.map((currentFloor) =>
+    currentFloor.id === floor.id ? { ...currentFloor, label: normalizedLabel } : currentFloor,
+  )
+}
+
+const removeFloorLevel = (floor: FloorLevelSetting): void => {
+  if (floorLevels.value.length <= 1) {
+    floorPlanSyncMessage.value = '至少需要保留 1 個樓層'
+    return
+  }
+
+  if (floorHasActiveOrders(floor.id)) {
+    floorPlanSyncMessage.value = `${floor.label} 還有進行中訂單，不能刪除`
+    return
+  }
+
+  const removedTableIds = new Set(floorTables.value.filter((table) => table.floorId === floor.id).map((table) => table.id))
+  floorLevels.value = floorLevels.value.filter((currentFloor) => currentFloor.id !== floor.id)
+  floorTables.value = floorTables.value.filter((table) => table.floorId !== floor.id)
+  floorPartySizes.value = Object.entries(floorPartySizes.value).reduce<Record<string, number>>((sizes, [tableId, size]) => {
+    if (!removedTableIds.has(tableId)) {
+      sizes[tableId] = size
+    }
+    return sizes
+  }, {})
+  if (activeFloorId.value === floor.id) {
+    activeFloorId.value = floorLevels.value[0]?.id ?? '1F'
+  }
+  selectedFloorTableId.value = floorTables.value.find((table) => table.floorId === activeFloorId.value)?.id ?? null
+}
+
+const nextTableLabelForFloor = (): string => {
+  const labels = new Set(activeFloorTables.value.map((table) => table.label.toUpperCase()))
+  for (let index = 1; index <= 99; index += 1) {
+    const label = `A${index}`
+    if (!labels.has(label)) {
+      return label
+    }
+  }
+
+  return `T${Date.now().toString(36).toUpperCase().slice(-4)}`
+}
+
+const uniqueTableId = (floorId: string, label: string): string => {
+  const base = `${floorId}-${label}`.toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 12) || `T${Date.now()}`
+  let tableId = base
+  let suffix = 2
+  while (floorTables.value.some((table) => table.id === tableId)) {
+    tableId = `${base.slice(0, 10)}${suffix}`
+    suffix += 1
+  }
+  return tableId
+}
+
+const addFloorTable = (): void => {
+  const floorId = activeFloorId.value || floorLevels.value[0]?.id || '1F'
+  const label = nextTableLabelForFloor()
+  const table: DiningTableDefinition = {
+    id: uniqueTableId(floorId, label),
+    floorId,
+    label,
+    capacity: 2,
+    x: 44,
+    y: 42,
+    width: 14,
+  }
+  floorTables.value = [...floorTables.value, table]
+  selectedFloorTableId.value = table.id
+}
+
+const removeFloorTable = (table: DiningTableDefinition): void => {
+  if (dineInOrderForTable(table.id)) {
+    floorPlanSyncMessage.value = `${table.label} 還有進行中訂單，不能刪除`
+    return
+  }
+
+  floorTables.value = floorTables.value.filter((currentTable) => currentTable.id !== table.id)
+  floorPartySizes.value = Object.entries(floorPartySizes.value).reduce<Record<string, number>>((sizes, [tableId, size]) => {
+    if (tableId !== table.id) {
+      sizes[tableId] = size
+    }
+    return sizes
+  }, {})
+  if (selectedFloorTableId.value === table.id) {
+    selectedFloorTableId.value = activeFloorTables.value.find((currentTable) => currentTable.id !== table.id)?.id ?? null
+  }
+}
+
 const resetFloorTablesToDefault = (): void => {
+  floorLevels.value = defaultFloorPlanSettingsValue.floors.map((floor) => ({ ...floor }))
+  activeFloorId.value = defaultFloorPlanSettingsValue.activeFloorId
   floorTables.value = defaultDiningTables.map((table) => ({ ...table }))
   floorPartySizes.value = normalizeFloorPartySizes(floorPartySizes.value, floorTables.value)
+  selectedFloorTableId.value = floorTables.value.find((table) => table.floorId === activeFloorId.value)?.id ?? null
+}
+
+const handleFloorTablePointerDown = (event: PointerEvent, state: FloorTableState): void => {
+  selectFloorTable(state)
+  if (!backendEditModeEnabled.value || !floorMapRef.value) {
+    return
+  }
+
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement)) {
+    return
+  }
+
+  floorTableDragState.value = {
+    pointerId: event.pointerId,
+    tableId: state.table.id,
+    startX: event.clientX,
+    startY: event.clientY,
+    originalX: state.table.x,
+    originalY: state.table.y,
+    dragging: false,
+  }
+  target.setPointerCapture(event.pointerId)
+}
+
+const handleFloorTablePointerMove = (event: PointerEvent): void => {
+  const drag = floorTableDragState.value
+  const map = floorMapRef.value
+  if (!drag || drag.pointerId !== event.pointerId || !map) {
+    return
+  }
+
+  const rect = map.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
+    return
+  }
+
+  const deltaX = ((event.clientX - drag.startX) / rect.width) * 100
+  const deltaY = ((event.clientY - drag.startY) / rect.height) * 100
+  const moved = Math.abs(event.clientX - drag.startX) > 4 || Math.abs(event.clientY - drag.startY) > 4
+  floorTableDragState.value = { ...drag, dragging: drag.dragging || moved }
+  if (!moved) {
+    return
+  }
+
+  const table = floorTables.value.find((entry) => entry.id === drag.tableId)
+  const maxX = Math.max(4, 96 - (table?.width ?? 14))
+  updateFloorTable(drag.tableId, {
+    x: Math.min(maxX, Math.max(4, Math.round(drag.originalX + deltaX))),
+    y: Math.min(92, Math.max(4, Math.round(drag.originalY + deltaY))),
+  })
+}
+
+const handleFloorTablePointerUp = (event: PointerEvent): void => {
+  const drag = floorTableDragState.value
+  if (drag?.pointerId === event.pointerId) {
+    floorTableDragState.value = null
+  }
 }
 
 const startDineInTableOrder = async (
@@ -3796,8 +4095,9 @@ const startDineInTableOrder = async (
     ...floorPartySizes.value,
     [table.id]: partySize,
   }
-  customer.name = `${table.label} 內用客`
+  customer.name = `${floorLabelForTable(table)} ${table.label} 內用客`
   customer.note = [
+    floorNoteToken(floorLabelForTable(table)),
     tableNoteToken(table.label),
     `${partySize} 人`,
     options.waitlineEntry?.name ? `候位 ${options.waitlineEntry.name}` : '',
@@ -3818,7 +4118,7 @@ const transferFloorTableOrder = async (
   }
 
   const partySize = Math.min(targetTable.capacity, Math.max(1, state.partySize || floorPartySizes.value[state.table.id] || 1))
-  await updateOrderFloorAssignmentForStation(state.order.id, targetTable.label, partySize)
+  await updateOrderFloorAssignmentForStation(state.order.id, targetTable.label, partySize, floorLabelForTable(targetTable))
   floorPartySizes.value = {
     ...floorPartySizes.value,
     [state.table.id]: 0,
@@ -3833,11 +4133,27 @@ const selectFloorTable = (state: FloorTableState): void => {
 
 const openFloorTableOrder = async (state: FloorTableState): Promise<void> => {
   selectFloorTable(state)
-  if (!state.order || !orderCanBeEdited(state.order)) {
+  if (!state.order) {
     return
   }
 
-  await editOrderFromQueue(state.order)
+  if (orderCanBeEdited(state.order)) {
+    await editOrderFromQueue(state.order)
+    if (activeWorkspaceTab.value === 'order') {
+      return
+    }
+  }
+
+  queueFilter.value = 'all'
+  queuePaymentFilter.value = 'all'
+  queueDateFilter.value = 'all'
+  queueServiceFilter.value = 'dine-in'
+  queueSourceFilter.value = 'all'
+  queueFulfillmentFilter.value = 'all'
+  queueSearchTerm.value = state.order.id
+  expandedOrderId.value = state.order.id
+  queueActionMessage.value = `${state.table.label} 訂單已在訂單中心展開`
+  setWorkspaceTab('queue')
 }
 
 const returnFromOrderWorkspace = (): void => {
@@ -5063,7 +5379,18 @@ watch(floorPlanSettings, (settings) => {
   applyFloorPlanSettings(settings)
 }, { deep: true })
 
-watch([floorTables, floorDisplayPreferences, floorPartySizes, waitlineEntries], () => {
+watch(activeFloorId, (floorId) => {
+  if (!floorLevels.value.some((floor) => floor.id === floorId)) {
+    activeFloorId.value = floorLevels.value[0]?.id ?? '1F'
+    return
+  }
+
+  if (!activeFloorTables.value.some((table) => table.id === selectedFloorTableId.value)) {
+    selectedFloorTableId.value = activeFloorTables.value[0]?.id ?? null
+  }
+})
+
+watch([floorLevels, activeFloorId, floorTables, floorDisplayPreferences, floorPartySizes, waitlineEntries], () => {
   persistFloorPlanSettings()
 }, { deep: true })
 
@@ -5264,7 +5591,8 @@ onBeforeUnmount(() => {
                 </template>
               </div>
               <div v-if="activeWorkspaceTab === 'floor'" class="queue-command-actions floor-command-actions">
-                <span>{{ activeDineInOrders.length }} 桌內用</span>
+                <span>{{ activeFloorLabel }} · {{ activeFloorOrderCount }} 桌內用</span>
+                <span>{{ floorLevels.length }} 樓層 · {{ activeFloorTables.length }} 桌</span>
                 <span>候位 {{ waitlineEntries.length }} 組 · {{ waitlinePeopleCount }} 人</span>
                 <button class="primary-button queue-new-order-button" type="button" @click="addWaitlineEntry">
                   <UsersRound :size="22" aria-hidden="true" />
@@ -5811,15 +6139,37 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
+                  <div class="floor-level-switch" aria-label="樓層切換">
+                    <button
+                      v-for="floor in floorLevels"
+                      :key="floor.id"
+                      type="button"
+                      :class="{ 'floor-level-button--active': activeFloorId === floor.id }"
+                      @click="setActiveFloor(floor.id)"
+                    >
+                      <strong>{{ floor.label }}</strong>
+                      <span>{{ floorTables.filter((table) => table.floorId === floor.id).length }} 桌</span>
+                    </button>
+                    <button
+                      v-if="backendEditModeEnabled"
+                      type="button"
+                      class="floor-level-button floor-level-button--add"
+                      @click="addFloorLevel"
+                    >
+                      <Plus :size="16" aria-hidden="true" />
+                      新樓層
+                    </button>
+                  </div>
+
                   <div class="floor-layout">
                     <section class="floor-map-panel" aria-labelledby="floor-title">
                       <header class="floor-panel-heading">
                         <div>
                           <p class="eyebrow">Dine In</p>
-                          <h2 id="floor-title">桌位地圖</h2>
+                          <h2 id="floor-title">{{ activeFloorLabel }} 桌位地圖</h2>
                           <span>
-                            {{ activeDineInOrders.length }} 桌進行中 ·
-                            候位 {{ waitlineEntries.length }} 組
+                            {{ activeFloorOrderCount }} 桌進行中 ·
+                            {{ activeFloorTables.length }} 桌 · 候位 {{ waitlineEntries.length }} 組
                           </span>
                         </div>
                         <button class="secondary-button" type="button" @click="addWaitlineEntry">
@@ -5828,17 +6178,25 @@ onBeforeUnmount(() => {
                         </button>
                       </header>
 
-                      <div class="floor-map" aria-label="內用桌位">
+                      <div ref="floorMapRef" class="floor-map" aria-label="內用桌位">
                         <button
                           v-for="state in floorTableStates"
                           :key="state.table.id"
                           class="floor-table-card"
                           :class="[
                             `floor-table-card--${state.status}`,
-                            { 'floor-table-card--selected': selectedFloorTable?.table.id === state.table.id },
+                            {
+                              'floor-table-card--selected': selectedFloorTable?.table.id === state.table.id,
+                              'floor-table-card--editable': backendEditModeEnabled,
+                              'floor-table-card--dragging': floorTableDragState?.tableId === state.table.id,
+                            },
                           ]"
                           type="button"
                           :style="{ left: `${state.table.x}%`, top: `${state.table.y}%`, width: `${state.table.width}%` }"
+                          @pointerdown="handleFloorTablePointerDown($event, state)"
+                          @pointermove="handleFloorTablePointerMove"
+                          @pointerup="handleFloorTablePointerUp"
+                          @pointercancel="handleFloorTablePointerUp"
                           @click="selectFloorTable(state)"
                         >
                           <span class="floor-table-card-top">
@@ -5857,6 +6215,10 @@ onBeforeUnmount(() => {
                             <small v-if="floorDisplayPreferences.showTableStay">{{ state.stayLabel }}</small>
                           </span>
                         </button>
+                        <div v-if="floorTableStates.length === 0" class="empty-state floor-empty-state floor-map-empty-state">
+                          <LayoutDashboard :size="24" aria-hidden="true" />
+                          <span>此樓層尚未建立桌位</span>
+                        </div>
                       </div>
                     </section>
 
@@ -6026,19 +6388,83 @@ onBeforeUnmount(() => {
                         <small class="floor-sync-message">{{ floorPlanSyncMessage }}</small>
                       </section>
 
-                      <section class="floor-control-block floor-table-settings-block">
+                      <section v-if="backendEditModeEnabled" class="floor-control-block floor-table-settings-block">
                         <div class="floor-control-heading">
                           <div>
-                            <span>桌位設定</span>
-                            <strong>{{ floorTables.length }} 桌</strong>
+                            <span>後台桌位地圖管理</span>
+                            <strong>{{ activeFloorLabel }} · {{ activeFloorTables.length }} 桌</strong>
                           </div>
-                          <button class="text-button" type="button" @click="resetFloorTablesToDefault">還原</button>
+                          <div class="floor-admin-heading-actions">
+                            <button class="text-button" type="button" @click="addFloorTable">新增桌位</button>
+                            <button class="text-button" type="button" @click="resetFloorTablesToDefault">還原</button>
+                          </div>
+                        </div>
+                        <div class="floor-admin-floor-list" aria-label="樓層管理">
+                          <article v-for="floor in floorLevels" :key="`floor-setting-${floor.id}`" class="floor-admin-floor-row">
+                            <button type="button" :class="{ 'floor-admin-floor-row--active': activeFloorId === floor.id }" @click="setActiveFloor(floor.id)">
+                              {{ floor.label }}
+                            </button>
+                            <input
+                              type="text"
+                              :value="floor.label"
+                              aria-label="樓層名稱"
+                              @change="updateFloorLevelLabel(floor, ($event.target as HTMLInputElement).value)"
+                            />
+                            <button type="button" title="刪除樓層" @click="removeFloorLevel(floor)">
+                              <Trash2 :size="14" aria-hidden="true" />
+                            </button>
+                          </article>
+                          <button type="button" class="secondary-button floor-admin-add-button" @click="addFloorLevel">
+                            <Plus :size="16" aria-hidden="true" />
+                            新增樓層
+                          </button>
                         </div>
                         <div class="floor-table-settings-list">
-                          <article v-for="table in floorTables" :key="`setting-${table.id}`" class="floor-table-setting-row">
-                            <div>
-                              <strong>{{ table.label }}</strong>
-                              <span>{{ table.x }}%, {{ table.y }}%</span>
+                          <article v-for="table in activeFloorTables" :key="`setting-${table.id}`" class="floor-table-setting-row">
+                            <div class="floor-table-setting-main">
+                              <GripVertical :size="16" aria-hidden="true" />
+                              <div>
+                                <input
+                                  type="text"
+                                  :value="table.label"
+                                  aria-label="桌號"
+                                  :disabled="Boolean(dineInOrderForTable(table.id))"
+                                  @change="updateFloorTableLabel(table, ($event.target as HTMLInputElement).value)"
+                                />
+                                <span>{{ table.x }}%, {{ table.y }}% · 寬 {{ table.width }}%</span>
+                              </div>
+                            </div>
+                            <div class="floor-table-position-grid" aria-label="桌位位置與大小">
+                              <label>
+                                X
+                                <input
+                                  type="number"
+                                  min="4"
+                                  max="92"
+                                  :value="table.x"
+                                  @change="updateFloorTableNumber(table, 'x', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
+                              <label>
+                                Y
+                                <input
+                                  type="number"
+                                  min="4"
+                                  max="92"
+                                  :value="table.y"
+                                  @change="updateFloorTableNumber(table, 'y', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
+                              <label>
+                                寬
+                                <input
+                                  type="number"
+                                  min="10"
+                                  max="36"
+                                  :value="table.width"
+                                  @change="updateFloorTableNumber(table, 'width', ($event.target as HTMLInputElement).value)"
+                                />
+                              </label>
                             </div>
                             <div class="floor-table-capacity-stepper" aria-label="桌位容納人數">
                               <button type="button" @click="updateFloorTableCapacity(table, -1)">
@@ -6049,8 +6475,24 @@ onBeforeUnmount(() => {
                                 <Plus :size="14" aria-hidden="true" />
                               </button>
                             </div>
+                            <button class="text-button floor-table-delete-button" type="button" @click="removeFloorTable(table)">
+                              刪除
+                            </button>
                           </article>
+                          <div v-if="activeFloorTables.length === 0" class="empty-state floor-empty-state">
+                            <LayoutDashboard :size="22" aria-hidden="true" />
+                            <span>此樓層尚未建立桌位</span>
+                          </div>
                         </div>
+                      </section>
+                      <section v-else class="floor-control-block floor-table-settings-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>桌位設定</span>
+                            <strong>後台編輯模式</strong>
+                          </div>
+                        </div>
+                        <small class="floor-sync-message">連點工具箱 6 下後，可新增樓層、改桌號、拖曳桌位、調整大小與刪除桌位。</small>
                       </section>
 
                       <section class="floor-control-block floor-notification-block">

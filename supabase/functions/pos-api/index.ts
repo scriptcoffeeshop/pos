@@ -52,6 +52,7 @@ interface UpdatePaymentInput {
 
 interface UpdateFloorAssignmentInput {
   tableLabel?: string;
+  floorLabel?: string;
   partySize?: number;
   stationId?: string;
 }
@@ -271,8 +272,14 @@ interface PosAppearanceSettings {
   toolboxOpacity: number;
 }
 
+interface FloorLevelSetting {
+  id: string;
+  label: string;
+}
+
 interface FloorTableSetting {
   id: string;
+  floorId: string;
   label: string;
   capacity: number;
   x: number;
@@ -300,6 +307,8 @@ interface WaitlineEntry {
 }
 
 interface FloorPlanSettings {
+  floors: FloorLevelSetting[];
+  activeFloorId: string;
   tables: FloorTableSetting[];
   display: FloorDisplayPreferences;
   partySizes: Record<string, number>;
@@ -468,10 +477,14 @@ const defaultPosAppearance: PosAppearanceSettings = {
 };
 
 const defaultFloorPlan: FloorPlanSettings = {
+  floors: [
+    { id: "1F", label: "1F" },
+  ],
+  activeFloorId: "1F",
   tables: [
-    { id: "A2", label: "A2", capacity: 2, x: 34, y: 28, width: 13 },
-    { id: "A3", label: "A3", capacity: 2, x: 58, y: 28, width: 13 },
-    { id: "A1", label: "A1", capacity: 4, x: 36, y: 58, width: 20 },
+    { id: "A2", floorId: "1F", label: "A2", capacity: 2, x: 34, y: 28, width: 13 },
+    { id: "A3", floorId: "1F", label: "A3", capacity: 2, x: 58, y: 28, width: 13 },
+    { id: "A1", floorId: "1F", label: "A1", capacity: 4, x: 36, y: 58, width: 20 },
   ],
   display: {
     showPeople: true,
@@ -1942,6 +1955,7 @@ api.patch("/orders/:id/floor", async (c) => {
   const input = await c.req.json<UpdateFloorAssignmentInput>();
   const stationId = sanitizeStationId(input.stationId);
   const tableLabel = sanitizeText(input.tableLabel, "").toUpperCase().slice(0, 12);
+  const floorLabel = sanitizeText(input.floorLabel, "").slice(0, 16);
   const partySize = Math.min(Math.max(Math.trunc(Number(input.partySize) || 1), 1), 20);
 
   if (!stationId) {
@@ -1971,14 +1985,24 @@ api.patch("/orders/:id/floor", async (c) => {
   const preservedNotes = sanitizeText(current.data.note, "")
     .split(/[、，,]/)
     .map((note) => note.trim())
-    .filter((note) => note && !/^桌位\s*[A-Z]\d+/i.test(note) && !/^\d+\s*人$/.test(note));
-  const note = [`桌位 ${tableLabel}`, `${partySize} 人`, ...preservedNotes].join("、").slice(0, 500);
+    .filter((note) =>
+      note &&
+      !/^樓層\s*\S+/i.test(note) &&
+      !/^桌位\s*\S+/i.test(note) &&
+      !/^\d+\s*人$/.test(note)
+    );
+  const note = [
+    floorLabel ? `樓層 ${floorLabel}` : "",
+    `桌位 ${tableLabel}`,
+    `${partySize} 人`,
+    ...preservedNotes,
+  ].filter(Boolean).join("、").slice(0, 500);
 
   const { data, error } = await supabase
     .from("orders")
     .update({
       service_mode: "dine-in" as ServiceMode,
-      customer_name: `${tableLabel} 內用客`,
+      customer_name: `${floorLabel ? `${floorLabel} ` : ""}${tableLabel} 內用客`,
       note,
       ...buildClaimPayload(stationId, now),
     })
@@ -1996,6 +2020,7 @@ api.patch("/orders/:id/floor", async (c) => {
     stationId,
     metadata: {
       orderNumber: data.order_number,
+      floorLabel,
       tableLabel,
       partySize,
     },
@@ -3608,12 +3633,56 @@ const normalizePosAppearanceForRuntime = (input: unknown): PosAppearanceSettings
   };
 };
 
-const normalizeFloorTables = (input: unknown): FloorTableSetting[] => {
+const normalizeFloorLevelId = (input: unknown, fallback = "1F"): string => {
+  const value = sanitizeText(input, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "")
+    .slice(0, 16);
+  return value || fallback;
+};
+
+const normalizeFloorLevels = (input: unknown): FloorLevelSetting[] => {
+  if (!Array.isArray(input)) {
+    return defaultFloorPlan.floors;
+  }
+
+  const seenFloorIds = new Set<string>();
+  const floors = input.flatMap((entry): FloorLevelSetting[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const floor = entry as Partial<FloorLevelSetting>;
+    const label = sanitizeText(floor.label, sanitizeText(floor.id, "")).slice(0, 16);
+    const id = normalizeFloorLevelId(floor.id ?? label, label ? label.toUpperCase() : "1F");
+    if (!id || seenFloorIds.has(id)) {
+      return [];
+    }
+
+    seenFloorIds.add(id);
+    return [{ id, label: label || id }];
+  }).slice(0, 12);
+
+  return floors.length > 0 ? floors : defaultFloorPlan.floors;
+};
+
+const normalizeActiveFloorId = (input: unknown, floors: FloorLevelSetting[]): string => {
+  const fallback = floors[0]?.id ?? "1F";
+  const floorId = normalizeFloorLevelId(input, fallback);
+  return floors.some((floor) => floor.id === floorId) ? floorId : fallback;
+};
+
+const normalizeFloorTables = (
+  input: unknown,
+  floors: FloorLevelSetting[],
+  fallbackFloorId: string,
+): FloorTableSetting[] => {
   if (!Array.isArray(input)) {
     return defaultFloorPlan.tables;
   }
 
   const seenTableIds = new Set<string>();
+  const floorIds = new Set(floors.map((floor) => floor.id));
   const tables = input.flatMap((entry): FloorTableSetting[] => {
     if (!entry || typeof entry !== "object") {
       return [];
@@ -3622,6 +3691,7 @@ const normalizeFloorTables = (input: unknown): FloorTableSetting[] => {
     const table = entry as Partial<FloorTableSetting>;
     const id = sanitizeText(table.id, "").toUpperCase().slice(0, 12);
     const label = sanitizeText(table.label, id).toUpperCase().slice(0, 12);
+    const floorId = normalizeFloorLevelId(table.floorId, fallbackFloorId);
     const capacity = Number(table.capacity);
     const x = Number(table.x);
     const y = Number(table.y);
@@ -3633,6 +3703,7 @@ const normalizeFloorTables = (input: unknown): FloorTableSetting[] => {
     seenTableIds.add(id);
     return [{
       id,
+      floorId: floorIds.has(floorId) ? floorId : fallbackFloorId,
       label: label || id,
       capacity: Math.min(Math.max(Math.trunc(capacity), 1), 20),
       x: Number.isFinite(x) ? Math.min(Math.max(x, 4), 92) : 40,
@@ -3713,8 +3784,12 @@ const normalizeFloorPlanForRuntime = (input: unknown): FloorPlanSettings => {
   }
 
   const settings = input as Partial<FloorPlanSettings>;
-  const tables = normalizeFloorTables(settings.tables);
+  const floors = normalizeFloorLevels(settings.floors);
+  const activeFloorId = normalizeActiveFloorId(settings.activeFloorId, floors);
+  const tables = normalizeFloorTables(settings.tables, floors, activeFloorId);
   return {
+    floors,
+    activeFloorId,
     tables,
     display: normalizeFloorDisplay(settings.display),
     partySizes: normalizeFloorPartySizes(settings.partySizes, tables),

@@ -2257,22 +2257,29 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const orderWithFloorAssignment = (order: PosOrder, tableLabel: string, partySize: number): PosOrder => {
+  const orderWithFloorAssignment = (
+    order: PosOrder,
+    tableLabel: string,
+    partySize: number,
+    floorLabel = '',
+  ): PosOrder => {
     const normalizedTableLabel = tableLabel.trim().toUpperCase()
+    const normalizedFloorLabel = floorLabel.trim()
     const normalizedPartySize = Math.min(20, Math.max(1, Math.trunc(partySize)))
     const preservedNotes = noteTokensFromText(order.note).filter((token) =>
-      !/^桌位\s*[A-Z]\d+/i.test(token) && !/^\d+\s*人$/.test(token),
+      !/^樓層\s*\S+/i.test(token) && !/^桌位\s*\S+/i.test(token) && !/^\d+\s*人$/.test(token),
     )
 
     return {
       ...order,
       mode: 'dine-in',
-      customerName: `${normalizedTableLabel} 內用客`,
+      customerName: `${normalizedFloorLabel ? `${normalizedFloorLabel} ` : ''}${normalizedTableLabel} 內用客`,
       note: [
+        normalizedFloorLabel ? `樓層 ${normalizedFloorLabel}` : '',
         `桌位 ${normalizedTableLabel}`,
         `${normalizedPartySize} 人`,
         ...preservedNotes,
-      ].join('、'),
+      ].filter(Boolean).join('、'),
     }
   }
 
@@ -2280,6 +2287,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderId: string,
     tableLabel: string,
     partySize: number,
+    floorLabel = '',
   ): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
@@ -2298,7 +2306,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
     const previousOrder = { ...claimedOrder, lines: [...claimedOrder.lines], printJobs: [...claimedOrder.printJobs] }
-    const optimisticOrder = orderWithFloorAssignment(claimedOrder, tableLabel, partySize)
+    const optimisticOrder = orderWithFloorAssignment(claimedOrder, tableLabel, partySize, floorLabel)
     replaceOrder(orderId, optimisticOrder)
 
     if (!isPosApiConfigured || !optimisticOrder.remoteId) {
@@ -2310,6 +2318,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       const persistedOrder = await persistOrderFloorAssignment(optimisticOrder, {
         tableLabel,
         partySize,
+        floorLabel,
       })
       replaceOrder(orderId, {
         ...persistedOrder,
