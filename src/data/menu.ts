@@ -2,13 +2,15 @@ import type { MenuItem } from '../types/pos'
 
 const defaultChannelState = {
   posVisible: true,
-  onlineVisible: false,
-  qrVisible: false,
+  onlineVisible: true,
+  qrVisible: true,
   prepStation: 'bar',
   printLabel: true,
   inventoryCount: null,
   lowStockThreshold: null,
   soldOutUntil: null,
+  supplyPeriods: [],
+  futureOrderAvailable: true,
 }
 
 export const menuItems: MenuItem[] = [
@@ -110,7 +112,7 @@ export const menuItems: MenuItem[] = [
   },
 ]
 
-export const categoryLabels: Record<MenuItem['category'], string> = {
+export const categoryLabels: Record<string, string> = {
   coffee: '咖啡',
   tea: '茶飲',
   food: '輕食',

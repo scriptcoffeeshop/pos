@@ -45,6 +45,8 @@ rtk npm run supabase:db:push
 rtk npm run supabase:functions:deploy
 ```
 
+只有 Realtime event table / trigger / publication 變更時，執行 `rtk npm run supabase:db:push` 即可；沒有 Edge Function diff 時不需要重部署 `pos-api`。`20260506110000_add_pos_realtime_events.sql` 會建立 `pos_realtime_events`，把 `orders`、runtime settings、`register_sessions` 與 `products` 的低敏感異動寫成 Realtime invalidation event。
+
 `main` 分支的 GitHub Actions 會在 verify 通過後自動執行 Supabase migration 與 `pos-api` Edge Function deploy。
 
 ## Android APK
@@ -57,7 +59,7 @@ rtk npm run supabase:functions:deploy
 rtk npm run apk:debug
 ```
 
-`apk:debug` 會先同步 Capacitor，並自動偵測 JDK / Android SDK；若 macOS arm64 JDK 在 Gradle 啟動時崩潰，會下載暫存 x86_64 Temurin 21 後重試。平板安裝預設使用 fresh reinstall：
+`apk:debug` 會先同步 Capacitor，並自動偵測 Android SDK；在 macOS arm64 上預設使用暫存 x86_64 Temurin 21 透過 Rosetta 建置，並把 JVM fatal error file 導到 `~/.cache/script-coffee-pos/`，避免 `hs_err_pid*.log` 掉進專案資料夾。平板安裝預設使用 fresh reinstall：
 
 ```bash
 rtk npm run apk:install:fresh

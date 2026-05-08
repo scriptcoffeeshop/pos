@@ -29,6 +29,7 @@
     "@capacitor/android": "^8.3.1",
     "@capacitor/cli": "^8.3.1",
     "@capacitor/core": "^8.3.1",
+    "@supabase/supabase-js": "^2.105.3",
     "lucide-vue-next": "^1.0.0",
     "vue": "^3.5.32"
   },

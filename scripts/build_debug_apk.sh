@@ -13,6 +13,24 @@ java_works() {
 }
 
 resolve_java_home() {
+  if [ "${POS_APK_USE_NATIVE_JDK:-0}" != "1" ] &&
+    [ "$(uname -s)" = "Darwin" ] &&
+    [ "$(uname -m)" = "arm64" ] &&
+    arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+    if ! java_works "$FALLBACK_JDK_DIR/Contents/Home"; then
+      mkdir -p "$CACHE_DIR"
+      rm -rf "$FALLBACK_JDK_DIR" "$CACHE_DIR/temurin-21-x64.tar.gz"
+      curl -L --fail --retry 2 -o "$CACHE_DIR/temurin-21-x64.tar.gz" "$FALLBACK_JDK_URL"
+      mkdir -p "$FALLBACK_JDK_DIR"
+      tar -xzf "$CACHE_DIR/temurin-21-x64.tar.gz" -C "$FALLBACK_JDK_DIR" --strip-components=1
+    fi
+
+    if java_works "$FALLBACK_JDK_DIR/Contents/Home"; then
+      printf '%s\n' "$FALLBACK_JDK_DIR/Contents/Home"
+      return 0
+    fi
+  fi
+
   if [ -n "${JAVA_HOME:-}" ] && java_works "$JAVA_HOME"; then
     printf '%s\n' "$JAVA_HOME"
     return 0
@@ -76,10 +94,16 @@ npm run cap:sync
 
 RESOLVED_JAVA_HOME="$(resolve_java_home)"
 RESOLVED_ANDROID_HOME="$(resolve_android_home)"
+mkdir -p "$CACHE_DIR"
+GRADLE_JAVA_TOOL_OPTIONS="-XX:ErrorFile=$CACHE_DIR/hs_err_pid%p.log"
+if [ -n "${JAVA_TOOL_OPTIONS:-}" ]; then
+  GRADLE_JAVA_TOOL_OPTIONS="$GRADLE_JAVA_TOOL_OPTIONS $JAVA_TOOL_OPTIONS"
+fi
 
 cd "$ROOT_DIR/android"
 env \
   JAVA_HOME="$RESOLVED_JAVA_HOME" \
+  JAVA_TOOL_OPTIONS="$GRADLE_JAVA_TOOL_OPTIONS" \
   PATH="$RESOLVED_JAVA_HOME/bin:$PATH" \
   ANDROID_HOME="$RESOLVED_ANDROID_HOME" \
   ANDROID_SDK_ROOT="$RESOLVED_ANDROID_HOME" \

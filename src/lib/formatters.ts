@@ -20,5 +20,13 @@ export const formatDateKey = (date: Date): string => {
 
 export const formatRelativeMinutes = (iso: string): string => {
   const minutes = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
+  if (minutes >= 1440) {
+    return `${Math.floor(minutes / 1440)} 天前`
+  }
+
+  if (minutes >= 60) {
+    return `${Math.floor(minutes / 60)} 小時前`
+  }
+
   return `${minutes} 分鐘前`
 }

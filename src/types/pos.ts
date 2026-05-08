@@ -1,4 +1,4 @@
-export type MenuCategory = 'coffee' | 'tea' | 'food' | 'retail'
+export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
 export type OrderSource = 'counter' | 'qr' | 'online'
@@ -6,6 +6,17 @@ export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 export type RegisterSessionStatus = 'open' | 'closed'
+export type ProductSupplyStatus = 'normal' | 'online-stopped' | 'stopped'
+export type ReservationStatus = 'booked' | 'seated' | 'cancelled' | 'no_show'
+export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-drawer' | 'ipad-qr-print'
+
+export interface SupplyPeriodRule {
+  id: string
+  label: string
+  days: number[]
+  start: string
+  end: string
+}
 
 export interface MenuItem {
   id: string
@@ -25,6 +36,8 @@ export interface MenuItem {
   inventoryCount: number | null
   lowStockThreshold: number | null
   soldOutUntil: string | null
+  supplyPeriods: SupplyPeriodRule[]
+  futureOrderAvailable: boolean
 }
 
 export interface CartLine {
@@ -41,8 +54,12 @@ export interface CartLine {
 }
 
 export interface CustomerDraft {
+  memberId: string | null
   name: string
   phone: string
+  customerType: string
+  pointsBalance: number
+  availableCoupons: MemberCoupon[]
   deliveryAddress: string
   requestedFulfillmentAt: string
   note: string
@@ -51,15 +68,25 @@ export interface CustomerDraft {
 export interface PosOrder {
   id: string
   remoteId?: string
+  isDraft?: boolean
   source: OrderSource
   mode: ServiceMode
   customerName: string
   customerPhone: string
   deliveryAddress: string
   requestedFulfillmentAt: string | null
+  memberId: string | null
   note: string
   lines: CartLine[]
   subtotal: number
+  orderLabels: string[]
+  serviceFeeRate: number
+  serviceFeeAmount: number
+  extraFeeAmount: number
+  discountAmount: number
+  pointsRedeemed: number
+  couponCode: string
+  memberPointsEarned: number
   paymentMethod: PaymentMethod
   paymentStatus: PaymentStatus
   status: OrderStatus
@@ -128,6 +155,7 @@ export interface PrintRuleSetting {
   serviceMode: ServiceMode
   stationId: string
   categories: MenuCategory[]
+  itemIds: string[]
   copies: number
   labelMode: PrintLabelMode
   enabled: boolean
@@ -159,9 +187,149 @@ export interface AccessControlSettings {
   roles: RoleSetting[]
 }
 
+export interface OnlineMenuOptionChoice {
+  id: string
+  label: string
+  priceDelta?: number
+}
+
+export interface OnlineMenuOptionGroup {
+  id: string
+  label: string
+  requirement: string
+  required: boolean
+  min: number
+  max: number
+  choices: OnlineMenuOptionChoice[]
+}
+
+export interface OnlineMenuCategory {
+  id: MenuCategory
+  label: string
+}
+
+export type OnlineNotificationRepeatMode = 'once' | 'continuous'
+
+export interface OnlineOrderingSettings {
+  enabled: boolean
+  allowScheduledOrders: boolean
+  averagePrepMinutes: number
+  unconfirmedReminderMinutes: number
+  acceptanceRequired: boolean
+  acceptWithoutPrinting: boolean
+  soundEnabled: boolean
+  notificationRepeatMode: OnlineNotificationRepeatMode
+  notificationVolume: number
+  pauseMessage: string
+  menuCategories: OnlineMenuCategory[]
+  availableOptionChoices: OnlineMenuOptionChoice[]
+  menuOptionGroups: OnlineMenuOptionGroup[]
+  productOptionAssignments: Record<string, string[]>
+  noteSupplyStatuses: Record<string, ProductSupplyStatus>
+}
+
+export interface PosAppearanceSettings {
+  interfaceScale: number
+  densityScale: number
+  textSize: number
+  darkMode: boolean
+  toolboxOpacity: number
+}
+
+export interface FloorLevelSetting {
+  id: string
+  label: string
+}
+
+export interface FloorTableSetting {
+  id: string
+  floorId: string
+  label: string
+  capacity: number
+  x: number
+  y: number
+  width: number
+}
+
+export interface FloorDisplayPreferences {
+  showPeople: boolean
+  showUnsubmittedWait: boolean
+  showTableStay: boolean
+  showWaitlinePeople: boolean
+  showWaitlineTime: boolean
+  showOrderLabels: boolean
+}
+
+export interface WaitlineEntry {
+  id: string
+  name: string
+  phone: string
+  customerType: string
+  partySize: number
+  createdAt: string
+  note: string
+}
+
+export interface FloorPlanSettings {
+  floors: FloorLevelSetting[]
+  activeFloorId: string
+  tables: FloorTableSetting[]
+  display: FloorDisplayPreferences
+  partySizes: Record<string, number>
+  waitline: WaitlineEntry[]
+}
+
+export interface OrderLabelSetting {
+  id: string
+  label: string
+  color: string
+}
+
+export interface RecommendationRule {
+  id: string
+  trigger: string
+  title: string
+  productIds: string[]
+  enabled: boolean
+}
+
+export interface TranslationSetting {
+  locale: string
+  label: string
+  enabled: boolean
+}
+
+export interface HardwareDeviceSetting {
+  id: string
+  kind: HardwareDeviceKind
+  name: string
+  enabled: boolean
+  targetStationId: string
+}
+
+export interface SupplyRulesSettings {
+  preOpenCheckEnabled: boolean
+  allowFutureOrdersAcrossDay: boolean
+  defaultPeriods: SupplyPeriodRule[]
+}
+
+export interface CustomerEngagementSettings {
+  orderLabels: OrderLabelSetting[]
+  customerTypes: string[]
+  defaultServiceFeeRate: number
+  recommendations: RecommendationRule[]
+  translations: TranslationSetting[]
+  hardwareDevices: HardwareDeviceSetting[]
+  supplyRules: SupplyRulesSettings
+}
+
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
+  onlineOrdering: OnlineOrderingSettings
+  posAppearance: PosAppearanceSettings
+  floorPlan: FloorPlanSettings
+  engagementSettings: CustomerEngagementSettings
 }
 
 export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'
@@ -181,10 +349,41 @@ export interface PosMember {
   id: string
   lineUserId: string | null
   displayName: string
+  phone: string
+  customerType: string
+  pointsBalance: number
   walletBalance: number
   createdAt: string
   updatedAt: string
   ledger: TransactionLedgerEntry[]
+  coupons: MemberCoupon[]
+}
+
+export interface MemberCoupon {
+  id: string
+  memberId: string | null
+  code: string
+  title: string
+  discountAmount: number
+  discountPercent: number
+  status: 'active' | 'redeemed' | 'expired'
+  expiresAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PosReservation {
+  id: string
+  customerName: string
+  customerPhone: string
+  partySize: number
+  reservedAt: string
+  status: ReservationStatus
+  importantLabel: string
+  preOrder: CartLine[]
+  note: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ReportBreakdownRow {

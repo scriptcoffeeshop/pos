@@ -65,11 +65,14 @@ const fulfillmentLinesForOrder = (order: PosOrder): string[] => {
 }
 
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
-  if (rule.categories.length === 0 || !line.category) {
+  const ruleCategories = rule.categories ?? []
+  const ruleItemIds = rule.itemIds ?? []
+
+  if (ruleItemIds.includes(line.itemId) || (line.productId && ruleItemIds.includes(line.productId))) {
     return true
   }
 
-  return rule.categories.includes(line.category)
+  return Boolean(line.category && ruleCategories.includes(line.category))
 }
 
 const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {
