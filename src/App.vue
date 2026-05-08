@@ -4038,6 +4038,7 @@ const handleFloorTablePointerDown = (event: PointerEvent, state: FloorTableState
     return
   }
 
+  event.preventDefault()
   floorTableDragState.value = {
     pointerId: event.pointerId,
     tableId: state.table.id,
@@ -4048,6 +4049,13 @@ const handleFloorTablePointerDown = (event: PointerEvent, state: FloorTableState
     dragging: false,
   }
   target.setPointerCapture(event.pointerId)
+}
+
+const handleFloorTableSettingDragStart = (event: PointerEvent, table: DiningTableDefinition): void => {
+  const state = floorTableStates.value.find((entry) => entry.table.id === table.id)
+  if (state) {
+    handleFloorTablePointerDown(event, state)
+  }
 }
 
 const handleFloorTablePointerMove = (event: PointerEvent): void => {
@@ -4065,6 +4073,7 @@ const handleFloorTablePointerMove = (event: PointerEvent): void => {
   const deltaX = ((event.clientX - drag.startX) / rect.width) * 100
   const deltaY = ((event.clientY - drag.startY) / rect.height) * 100
   const moved = Math.abs(event.clientX - drag.startX) > 4 || Math.abs(event.clientY - drag.startY) > 4
+  event.preventDefault()
   floorTableDragState.value = { ...drag, dragging: drag.dragging || moved }
   if (!moved) {
     return
@@ -6422,7 +6431,18 @@ onBeforeUnmount(() => {
                         <div class="floor-table-settings-list">
                           <article v-for="table in activeFloorTables" :key="`setting-${table.id}`" class="floor-table-setting-row">
                             <div class="floor-table-setting-main">
-                              <GripVertical :size="16" aria-hidden="true" />
+                              <button
+                                class="floor-table-drag-handle"
+                                type="button"
+                                :aria-label="`拖曳調整 ${table.label} 位置`"
+                                title="拖曳調整桌位位置"
+                                @pointerdown.stop="handleFloorTableSettingDragStart($event, table)"
+                                @pointermove.stop="handleFloorTablePointerMove"
+                                @pointerup.stop="handleFloorTablePointerUp"
+                                @pointercancel.stop="handleFloorTablePointerUp"
+                              >
+                                <GripVertical :size="16" aria-hidden="true" />
+                              </button>
                               <div>
                                 <input
                                   type="text"
