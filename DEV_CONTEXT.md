@@ -1,6 +1,6 @@
 # 開發交接紀錄
 
-更新日期：2026-05-08
+更新日期：2026-05-09
 
 ## 目前狀態
 
@@ -12,6 +12,7 @@
 - 前端資料流：`src/lib/posApi.ts` 是唯一正式 POS API client，負責把 Supabase Edge Function snake_case 回應轉成 Vue view model；`src/lib/posRealtime.ts` 只訂閱低敏感 `pos_realtime_events` invalidation stream；`usePosSession()` 收到 Realtime event 後仍回到 `pos-api` 重新拉取訂單、runtime、班別或商品資料，並保留既有 polling 與本機 fallback。
 - 門市 SOP 助手：`src/data/posKnowledge.ts` 保存本機 SOP 條目與分類，`src/App.vue` 只處理搜尋、篩選、選取與跳轉；未來真實 SOP 匯入應優先擴充資料檔。
 - 後台入口：`src/components/AdminPanel.vue` 管理商品菜單、線上點餐 runtime 設定、庫存數量、低庫存門檻、暫停供應至、POS/線上/掃碼可見性、備餐站、會員錢包與 CSV 匯出、營運日報與 CSV 匯出、金流回呼事件篩選/匯出、出單機規則、角色權限、營運紀錄時間線、平板在線與操作稽核匯出；前端需先連點工具箱 6 下進入後台編輯模式，後端管理端點不再要求舊驗證 header。
+- iCHEF 補齊：2026-05-09 依 1-8 缺口補上 CRM、標籤、服務費/其他費用、優惠券/點數折抵、訂位週/月管理資料、線上推薦/AI/多語設定、硬體外設設定與更細的商品供應規則。前台付款頁可查會員、套顧客類型/點數/券、選訂單標籤、調整服務費/其他費用/折抵與推薦加購；後台新增「iCHEF 補齊」頁，集中管理標籤、券、訂位、推薦、供應時段、跨日預約可售、線上營業前供應檢查、藍牙掃碼器、行動支付掃碼、錢櫃與指定 iPad 列印 QR code。資料會走 `pos-api` 與 Supabase，localStorage 只保留草稿/fallback。
 - 品牌素材：`public/assets/script-coffee-logo.png` 來自本機 `SC/logo.png`。
 - GitHub repo：`scriptcoffeeshop/pos`，目前為 public。
 - Git remote：`git@github-scriptcoffeeshop:scriptcoffeeshop/pos.git`。
@@ -33,6 +34,7 @@
 - 關帳異常欄位：`register_sessions.open_order_count`、`failed_payment_count`、`failed_print_count`、`voided_order_count` 由 `20260429140500_add_register_closeout_exception_counts.sql` 新增；開班中的 `/register/current` 會動態重算，關班時會保存快照。有未交付、付款異常或列印失敗時，`/register/close` 需送 `force=true` 才能關班。
 - 操作稽核：`pos_audit_events` 由 `20260429142000_add_pos_audit_events.sql` 新增；`pos-api` 會記錄建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班事件。商品異動會寫入庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，後台 `/admin/audit-events` 可用來追帳與排錯。
 - 會員錢包：`20260429154000_add_member_wallet_functions.sql` 新增 `create_pos_member()` 與 `adjust_pos_member_wallet()`；後台 `GET/POST /admin/members` 可建立/查詢會員，`POST /admin/members/:id/wallet-adjustments` 會在單一 DB transaction 內更新 `members.wallet_balance` 並寫入 `transaction_ledger`。
+- CRM / 訂位 / 優惠券：`20260509010000_add_ichef_parity_controls.sql` 會替 `members` 補電話、顧客類型與點數，替 `orders` 補訂單標籤、服務費、其他費用、優惠折抵、點數折抵、券碼與獲得點數，替 `products` 補供應時段與跨日預約可售；新增 `member_coupons`、`reservations` 與 `engagement_settings` runtime setting。`pos-api` 新增 `/members/search`、`/admin/coupons`、`/admin/reservations`，並讓 `/settings/runtime` 回傳 `engagementSettings`。
 - 金流 webhook：`20260429172000_add_payment_webhook_events.sql` 新增 `payment_events` 與 `record_pos_payment_event()`；`POST /payments/webhook/:provider` 需 `POS_PAYMENT_WEBHOOK_SECRET`，以 provider + event id 做冪等，金額不符只記錄不改單，已付款訂單不會被失敗/逾期回呼降級，退款回呼會寫負數交易流水。後台 `GET /admin/payment-events` 可讀最近回呼、重送與未套用事件，並支援 provider/狀態篩選與 CSV 匯出，方便正式串 LINE Pay / 街口前排錯。
 - RPC 權限：`20260429183000_lock_down_pos_security_definer_rpc.sql` 撤掉 `create_pos_order()`、`refund_pos_order()`、`create_pos_member()`、`adjust_pos_member_wallet()` 與 `record_pos_payment_event()` 對 `public/anon/authenticated` 的 `EXECUTE`，只保留 `service_role`，讓外部請求固定經過 `pos-api` 的 webhook secret 與輸入驗證。
 - 金流事件 RLS：`20260429183500_lock_down_payment_events_rls.sql` 補上 `payment_events` 的 no-direct-client policy，避免 anon/authenticated 直接讀寫 webhook 原始事件；後台查詢仍固定走 `pos-api` service role。

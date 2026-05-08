@@ -12,8 +12,19 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
+type ReservationStatus = "booked" | "seated" | "cancelled" | "no_show";
+type MemberCouponStatus = "active" | "redeemed" | "expired";
+type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "ipad-qr-print";
+
+interface SupplyWindowRule {
+  id: string;
+  label: string;
+  days: number[];
+  start: string;
+  end: string;
+}
 
 interface OrderLineInput {
   productId?: string;
@@ -32,8 +43,17 @@ interface CreateOrderInput {
   customerPhone?: string;
   deliveryAddress?: string;
   requestedFulfillmentAt?: string | null;
+  memberId?: string | null;
   note?: string;
   subtotal: number;
+  orderLabels?: string[];
+  serviceFeeRate?: number;
+  serviceFeeAmount?: number;
+  extraFeeAmount?: number;
+  discountAmount?: number;
+  pointsRedeemed?: number;
+  couponCode?: string;
+  memberPointsEarned?: number;
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
   stationId?: string;
@@ -70,6 +90,9 @@ interface RefundOrderInput {
 interface CreateMemberInput {
   lineUserId?: string;
   displayName?: string;
+  phone?: string;
+  customerType?: string;
+  pointsBalance?: number;
   openingBalance?: number;
   note?: string;
   stationId?: string;
@@ -182,6 +205,9 @@ interface ProductUpdateInput {
   inventoryCount?: number | null;
   lowStockThreshold?: number | null;
   soldOutUntil?: string | null;
+  supplyPeriods?: SupplyWindowRule[];
+  supplyWindows?: SupplyWindowRule[];
+  futureOrderAvailable?: boolean;
 }
 
 interface PrintStationSetting {
@@ -315,6 +341,73 @@ interface FloorPlanSettings {
   waitline: WaitlineEntry[];
 }
 
+interface OrderLabelSetting {
+  id: string;
+  label: string;
+  color: string;
+}
+
+interface RecommendationRule {
+  id: string;
+  trigger: string;
+  title: string;
+  productIds: string[];
+  enabled: boolean;
+}
+
+interface TranslationSetting {
+  locale: string;
+  label: string;
+  enabled: boolean;
+}
+
+interface HardwareDeviceSetting {
+  id: string;
+  kind: HardwareDeviceKind;
+  name: string;
+  enabled: boolean;
+  targetStationId: string;
+}
+
+interface SupplyRulesSettings {
+  preOpenCheckEnabled: boolean;
+  allowFutureOrdersAcrossDay: boolean;
+  defaultPeriods: SupplyWindowRule[];
+  defaultWindows?: SupplyWindowRule[];
+}
+
+interface CustomerEngagementSettings {
+  orderLabels: OrderLabelSetting[];
+  customerTypes: string[];
+  defaultServiceFeeRate: number;
+  recommendations: RecommendationRule[];
+  translations: TranslationSetting[];
+  hardwareDevices: HardwareDeviceSetting[];
+  supplyRules: SupplyRulesSettings;
+}
+
+interface CreateCouponInput {
+  memberId?: string | null;
+  code?: string;
+  title?: string;
+  discountAmount?: number;
+  discountPercent?: number;
+  expiresAt?: string | null;
+  stationId?: string;
+}
+
+interface ReservationInput {
+  customerName?: string;
+  customerPhone?: string;
+  partySize?: number;
+  reservedAt?: string;
+  status?: ReservationStatus;
+  importantLabel?: string;
+  preOrder?: unknown;
+  note?: string;
+  stationId?: string;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -337,11 +430,15 @@ const orderSelect =
   "*, order_items(*), print_jobs(id, status, printed_at, created_at, attempts, last_error)";
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
-  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until";
+  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until, supply_windows, future_order_available";
 const memberSelect =
-  "id, line_user_id, line_display_name, wallet_balance, created_at, updated_at";
+  "id, line_user_id, line_display_name, phone, customer_type, points_balance, wallet_balance, created_at, updated_at";
 const transactionLedgerSelect =
   "id, member_id, order_id, entry_type, amount, balance_after, note, created_at";
+const memberCouponSelect =
+  "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, created_at, updated_at";
+const reservationSelect =
+  "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, pre_order, note, created_at, updated_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
@@ -498,6 +595,37 @@ const defaultFloorPlan: FloorPlanSettings = {
   waitline: [],
 };
 
+const defaultEngagementSettings: CustomerEngagementSettings = {
+  orderLabels: [
+    { id: "rush", label: "急單", color: "#b45309" },
+    { id: "allergy", label: "過敏", color: "#b91c1c" },
+    { id: "vip", label: "VIP", color: "#0f766e" },
+  ],
+  customerTypes: ["一般顧客", "常客", "VIP", "員工"],
+  defaultServiceFeeRate: 0,
+  recommendations: [
+    { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
+    { id: "food-pairing", trigger: "morning", title: "早餐搭配", productIds: [], enabled: true },
+  ],
+  translations: [
+    { locale: "en", label: "English", enabled: true },
+    { locale: "ja", label: "日本語", enabled: false },
+  ],
+  hardwareDevices: [
+    { id: "scanner", kind: "bluetooth-scanner", name: "藍牙掃碼器", enabled: false, targetStationId: "" },
+    { id: "payment-qr", kind: "payment-qr", name: "行動支付掃碼", enabled: false, targetStationId: "" },
+    { id: "cash-drawer", kind: "cash-drawer", name: "錢櫃", enabled: false, targetStationId: "" },
+    { id: "ipad-qr-print", kind: "ipad-qr-print", name: "指定 iPad 列印 QR code", enabled: false, targetStationId: "" },
+  ],
+  supplyRules: {
+    preOpenCheckEnabled: true,
+    allowFutureOrdersAcrossDay: true,
+    defaultPeriods: [
+      { id: "all-day", label: "全天", days: [1, 2, 3, 4, 5, 6, 0], start: "08:00", end: "22:00" },
+    ],
+  },
+};
+
 const loadOrder = (orderId: string) =>
   supabase
     .from("orders")
@@ -546,8 +674,52 @@ const loadMemberWithLedger = async (memberId: string) => {
     return { data: null, error: ledgerError };
   }
 
-  return { data: { ...member, ledger: ledger ?? [] }, error: null };
+  const { data: coupons, error: couponError } = await supabase
+    .from("member_coupons")
+    .select(memberCouponSelect)
+    .eq("member_id", memberId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (couponError) {
+    return { data: null, error: couponError };
+  }
+
+  return { data: { ...member, ledger: ledger ?? [], coupons: coupons ?? [] }, error: null };
 };
+
+const normalizeOrderLabels = (labels: unknown): string[] => {
+  if (!Array.isArray(labels)) {
+    return [];
+  }
+
+  return [...new Set(labels.map((label) => sanitizeText(label, "").slice(0, 40)).filter(Boolean))].slice(0, 12);
+};
+
+const clampNonNegativeInteger = (value: unknown, fallback = 0): number => {
+  const numberValue = Number(value ?? fallback);
+  return Number.isFinite(numberValue) ? Math.max(0, Math.trunc(numberValue)) : fallback;
+};
+
+const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, unknown> => ({
+  member_id: normalizeUuid(input.memberId) ?? null,
+  order_labels: normalizeOrderLabels(input.orderLabels),
+  service_fee_rate: Math.min(clampNonNegativeInteger(input.serviceFeeRate), 30),
+  service_fee_amount: clampNonNegativeInteger(input.serviceFeeAmount),
+  extra_fee_amount: clampNonNegativeInteger(input.extraFeeAmount),
+  discount_amount: clampNonNegativeInteger(input.discountAmount),
+  points_redeemed: clampNonNegativeInteger(input.pointsRedeemed),
+  coupon_code: sanitizeText(input.couponCode, "").slice(0, 80),
+  member_points_earned: clampNonNegativeInteger(input.memberPointsEarned),
+});
+
+const applyOrderEnhancements = async (orderId: string, input: CreateOrderInput) =>
+  supabase
+    .from("orders")
+    .update(buildOrderEnhancementPayload(input))
+    .eq("id", orderId)
+    .select(orderSelect)
+    .single();
 
 const expireStalePendingOnlineOrders = async (): Promise<void> => {
   const now = new Date();
@@ -728,12 +900,17 @@ api.get("/settings/runtime", async (c) => {
     "floor_plan",
     defaultFloorPlan,
   );
+  const engagementSettings = await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  );
 
   return c.json({
     printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
     onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
     posAppearance: normalizePosAppearanceForRuntime(posAppearance),
     floorPlan: normalizeFloorPlanForRuntime(floorPlan),
+    engagementSettings: normalizeEngagementSettingsForRuntime(engagementSettings),
   });
 });
 
@@ -1133,7 +1310,7 @@ api.get("/admin/members", async (c) => {
 
   if (keyword) {
     const pattern = `%${keyword.replace(/[%_]/g, "\\$&")}%`;
-    query = query.or(`line_display_name.ilike.${pattern},line_user_id.ilike.${pattern}`);
+    query = query.or(`line_display_name.ilike.${pattern},line_user_id.ilike.${pattern},phone.ilike.${pattern},customer_type.ilike.${pattern}`);
   }
 
   const { data: members, error } = await query;
@@ -1144,6 +1321,7 @@ api.get("/admin/members", async (c) => {
 
   const memberIds = (members ?? []).map((member) => member.id);
   let ledgerByMember = new Map<string, unknown[]>();
+  let couponsByMember = new Map<string, unknown[]>();
   if (memberIds.length > 0) {
     const { data: ledger, error: ledgerError } = await supabase
       .from("transaction_ledger")
@@ -1165,14 +1343,272 @@ api.get("/admin/members", async (c) => {
       }
       return map;
     }, new Map<string, unknown[]>());
+
+    const { data: coupons, error: couponError } = await supabase
+      .from("member_coupons")
+      .select(memberCouponSelect)
+      .in("member_id", memberIds)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(memberIds.length * 10, 500));
+
+    if (couponError) {
+      return c.json({ error: couponError.message }, 500);
+    }
+
+    couponsByMember = (coupons ?? []).reduce((map, coupon) => {
+      const memberId = coupon.member_id as string;
+      const current = map.get(memberId) ?? [];
+      if (current.length < 10) {
+        current.push(coupon);
+        map.set(memberId, current);
+      }
+      return map;
+    }, new Map<string, unknown[]>());
   }
 
   return c.json({
     members: (members ?? []).map((member) => ({
       ...member,
       ledger: ledgerByMember.get(member.id) ?? [],
+      coupons: couponsByMember.get(member.id) ?? [],
     })),
   });
+});
+
+api.get("/members/search", async (c) => {
+  const rawLimit = Number(c.req.query("limit") ?? 8);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 20)
+    : 8;
+  const keyword = sanitizeText(c.req.query("q"), "").slice(0, 80);
+
+  let query = supabase
+    .from("members")
+    .select(memberSelect)
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (keyword) {
+    const pattern = `%${keyword.replace(/[%_]/g, "\\$&")}%`;
+    query = query.or(`line_display_name.ilike.${pattern},line_user_id.ilike.${pattern},phone.ilike.${pattern},customer_type.ilike.${pattern}`);
+  }
+
+  const { data: members, error } = await query;
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const memberIds = (members ?? []).map((member) => member.id);
+  let couponsByMember = new Map<string, unknown[]>();
+  let ledgerByMember = new Map<string, unknown[]>();
+  if (memberIds.length > 0) {
+    const { data: coupons, error: couponError } = await supabase
+      .from("member_coupons")
+      .select(memberCouponSelect)
+      .in("member_id", memberIds)
+      .eq("status", "active")
+      .order("expires_at", { ascending: true, nullsFirst: false })
+      .limit(Math.min(memberIds.length * 10, 200));
+
+    if (couponError) {
+      return c.json({ error: couponError.message }, 500);
+    }
+
+    couponsByMember = (coupons ?? []).reduce((map, coupon) => {
+      const memberId = coupon.member_id as string;
+      const current = map.get(memberId) ?? [];
+      current.push(coupon);
+      map.set(memberId, current);
+      return map;
+    }, new Map<string, unknown[]>());
+
+    const { data: ledger, error: ledgerError } = await supabase
+      .from("transaction_ledger")
+      .select(transactionLedgerSelect)
+      .in("member_id", memberIds)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(memberIds.length * 5, 100));
+
+    if (ledgerError) {
+      return c.json({ error: ledgerError.message }, 500);
+    }
+
+    ledgerByMember = (ledger ?? []).reduce((map, entry) => {
+      const memberId = entry.member_id as string;
+      const current = map.get(memberId) ?? [];
+      if (current.length < 5) {
+        current.push(entry);
+        map.set(memberId, current);
+      }
+      return map;
+    }, new Map<string, unknown[]>());
+  }
+
+  return c.json({
+    members: (members ?? []).map((member) => ({
+      ...member,
+      ledger: ledgerByMember.get(member.id) ?? [],
+      coupons: couponsByMember.get(member.id) ?? [],
+    })),
+  });
+});
+
+api.get("/admin/coupons", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 80);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200)
+    : 80;
+  const { data, error } = await supabase
+    .from("member_coupons")
+    .select(memberCouponSelect)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ coupons: data });
+});
+
+api.post("/admin/coupons", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<CreateCouponInput>().catch((): CreateCouponInput => ({}));
+  const { payload, error: validationError } = validateCouponInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("member_coupons")
+    .insert(payload)
+    .select(memberCouponSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "member.coupon.create",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      memberId: payload.member_id,
+      code: payload.code,
+      title: payload.title,
+      discountAmount: payload.discount_amount,
+      discountPercent: payload.discount_percent,
+    },
+  });
+
+  return c.json({ coupon: data }, 201);
+});
+
+api.get("/admin/reservations", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const now = new Date();
+  const from = normalizeRequestedFulfillmentAt(c.req.query("from")) ??
+    new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
+  const to = normalizeRequestedFulfillmentAt(c.req.query("to")) ??
+    new Date(now.getTime() + 45 * 24 * 60 * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(reservationSelect)
+    .gte("reserved_at", from)
+    .lte("reserved_at", to)
+    .order("reserved_at", { ascending: true })
+    .limit(300);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ reservations: data });
+});
+
+api.post("/admin/reservations", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ReservationInput>().catch((): ReservationInput => ({}));
+  const { payload, error: validationError } = validateReservationInput(input, true);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .insert(payload)
+    .select(reservationSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "reservation.create",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      reservationId: data.id,
+      customerName: data.customer_name,
+      partySize: data.party_size,
+      reservedAt: data.reserved_at,
+    },
+  });
+
+  return c.json({ reservation: data }, 201);
+});
+
+api.patch("/admin/reservations/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ReservationInput>().catch((): ReservationInput => ({}));
+  const { payload, error: validationError } = validateReservationInput(input, false);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .update(payload)
+    .eq("id", c.req.param("id"))
+    .select(reservationSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "reservation.update",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      reservationId: data.id,
+      status: data.status,
+      reservedAt: data.reserved_at,
+    },
+  });
+
+  return c.json({ reservation: data });
 });
 
 api.get("/admin/reports/daily", async (c) => {
@@ -1226,6 +1662,19 @@ api.post("/admin/members", async (c) => {
     return c.json({ error: error?.message ?? "Member could not be created" }, status);
   }
 
+  const { error: profileError } = await supabase
+    .from("members")
+    .update({
+      phone: payload.phone,
+      customer_type: payload.customerType,
+      points_balance: payload.pointsBalance,
+    })
+    .eq("id", memberId);
+
+  if (profileError) {
+    return c.json({ error: profileError.message }, 500);
+  }
+
   const { data: member, error: memberError } = await loadMemberWithLedger(memberId);
   if (memberError || !member) {
     return c.json({ error: memberError?.message ?? "Member not found after create" }, 500);
@@ -1238,6 +1687,9 @@ api.post("/admin/members", async (c) => {
       memberId,
       displayName: payload.displayName,
       lineUserId: payload.lineUserId,
+      phone: payload.phone,
+      customerType: payload.customerType,
+      pointsBalance: payload.pointsBalance,
       openingBalance: payload.openingBalance,
     },
   });
@@ -1304,7 +1756,7 @@ api.get("/admin/settings", async (c) => {
   const { data, error } = await supabase
     .from("pos_settings")
     .select("key, value")
-    .in("key", ["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan"]);
+    .in("key", ["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan", "engagement_settings"]);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -1401,7 +1853,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan", "engagement_settings"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -1501,7 +1953,7 @@ api.post("/orders", async (c) => {
     return c.json({ error: orderError.message }, status);
   }
 
-  const { data: savedOrder, error: savedOrderError } = await loadOrder(String(orderId));
+  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(orderId), input);
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
@@ -1557,6 +2009,7 @@ api.post("/orders/drafts", async (c) => {
     payment_status: input.paymentStatus ?? "pending",
     status: "new" as OrderStatus,
     draft_lines: draftLines,
+    ...buildOrderEnhancementPayload(input),
     ...(stationId ? buildClaimPayload(stationId, now) : {}),
   };
 
@@ -1644,6 +2097,7 @@ api.patch("/orders/:id/draft", async (c) => {
       payment_method: input.paymentMethod ?? current.data.payment_method,
       payment_status: input.paymentStatus ?? current.data.payment_status,
       draft_lines: draftLines,
+      ...buildOrderEnhancementPayload(input),
       ...(stationId ? buildClaimPayload(stationId, now) : {}),
     })
     .eq("id", current.data.id)
@@ -1716,7 +2170,7 @@ api.post("/orders/:id/finalize", async (c) => {
     return c.json({ error: finalizeError.message }, status);
   }
 
-  const { data: savedOrder, error: savedOrderError } = await loadOrder(String(finalizedOrderId));
+  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(finalizedOrderId), input);
   if (savedOrderError) {
     return c.json({ error: savedOrderError.message }, 500);
   }
@@ -2774,6 +3228,33 @@ const appendVoidNote = (currentNote: unknown, voidNote: unknown): string => {
   return [baseNote, suffix].filter(Boolean).join(" / ").slice(0, 500);
 };
 
+const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
+  if (input.memberId !== undefined && input.memberId !== null && !normalizeUuid(input.memberId)) {
+    return "memberId must be a UUID";
+  }
+
+  const integerFields: Array<[keyof CreateOrderInput, string, number]> = [
+    ["serviceFeeRate", "serviceFeeRate", 30],
+    ["serviceFeeAmount", "serviceFeeAmount", Number.MAX_SAFE_INTEGER],
+    ["extraFeeAmount", "extraFeeAmount", Number.MAX_SAFE_INTEGER],
+    ["discountAmount", "discountAmount", Number.MAX_SAFE_INTEGER],
+    ["pointsRedeemed", "pointsRedeemed", Number.MAX_SAFE_INTEGER],
+    ["memberPointsEarned", "memberPointsEarned", Number.MAX_SAFE_INTEGER],
+  ];
+  for (const [key, field, max] of integerFields) {
+    const value = input[key];
+    if (value !== undefined && (!Number.isInteger(value) || Number(value) < 0 || Number(value) > max)) {
+      return `${field} must be a non-negative integer`;
+    }
+  }
+
+  if (input.orderLabels !== undefined && !Array.isArray(input.orderLabels)) {
+    return "orderLabels must be an array";
+  }
+
+  return null;
+};
+
 const validateOrderInput = (input: CreateOrderInput): string | null => {
   if (!input.orderNumber?.trim()) {
     return "orderNumber is required";
@@ -2789,6 +3270,11 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
 
   if (!Number.isInteger(input.subtotal) || input.subtotal < 0) {
     return "subtotal must be a non-negative integer";
+  }
+
+  const enhancementError = validateOrderEnhancements(input);
+  if (enhancementError) {
+    return enhancementError;
   }
 
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
@@ -2825,6 +3311,11 @@ const validateCounterDraftInput = (input: CreateOrderInput): string | null => {
 
   if (!Number.isInteger(input.subtotal) || input.subtotal < 0) {
     return "subtotal must be a non-negative integer";
+  }
+
+  const enhancementError = validateOrderEnhancements(input);
+  if (enhancementError) {
+    return enhancementError;
   }
 
   return null;
@@ -3116,6 +3607,9 @@ const validateProductUpdateInput = (
     payload.sold_out_until = soldOutUntil.toISOString();
   }
 
+  payload.supply_windows = normalizeSupplyWindows(input.supplyPeriods ?? input.supplyWindows);
+  payload.future_order_available = input.futureOrderAvailable === true;
+
   return { payload, error: null };
 };
 
@@ -3125,6 +3619,9 @@ const validateCreateMemberInput = (
   payload: {
     lineUserId: string | null;
     displayName: string;
+    phone: string;
+    customerType: string;
+    pointsBalance: number;
     openingBalance: number;
     note: string;
   };
@@ -3133,6 +3630,9 @@ const validateCreateMemberInput = (
   const payload = {
     lineUserId: null as string | null,
     displayName: "",
+    phone: "",
+    customerType: "一般顧客",
+    pointsBalance: 0,
     openingBalance: 0,
     note: "",
   };
@@ -3146,6 +3646,22 @@ const validateCreateMemberInput = (
     return { payload, error: "displayName is required" };
   }
   payload.displayName = input.displayName.trim().slice(0, 120);
+
+  if (input.phone !== undefined && input.phone !== null && typeof input.phone !== "string") {
+    return { payload, error: "phone must be a string" };
+  }
+  payload.phone = input.phone?.trim().slice(0, 40) ?? "";
+
+  if (input.customerType !== undefined && input.customerType !== null && typeof input.customerType !== "string") {
+    return { payload, error: "customerType must be a string" };
+  }
+  payload.customerType = input.customerType?.trim().slice(0, 40) || "一般顧客";
+
+  const pointsBalance = input.pointsBalance ?? 0;
+  if (!Number.isInteger(pointsBalance) || pointsBalance < 0) {
+    return { payload, error: "pointsBalance must be a non-negative integer" };
+  }
+  payload.pointsBalance = pointsBalance;
 
   const openingBalance = input.openingBalance ?? 0;
   if (!Number.isInteger(openingBalance) || openingBalance < 0) {
@@ -3196,11 +3712,161 @@ const validateWalletAdjustmentInput = (
   return { payload, error: null };
 };
 
+const validateCouponInput = (
+  input: CreateCouponInput,
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const payload: Record<string, unknown> = {};
+  const memberId = normalizeUuid(input.memberId);
+  payload.member_id = memberId;
+
+  const code = sanitizeText(input.code, "").toUpperCase().replace(/\s+/g, "").slice(0, 40);
+  if (!code) {
+    return { payload, error: "code is required" };
+  }
+  payload.code = code;
+
+  const title = sanitizeText(input.title, "").slice(0, 120);
+  if (!title) {
+    return { payload, error: "title is required" };
+  }
+  payload.title = title;
+
+  const discountAmount = Number(input.discountAmount ?? 0);
+  if (!Number.isInteger(discountAmount) || discountAmount < 0) {
+    return { payload, error: "discountAmount must be a non-negative integer" };
+  }
+  payload.discount_amount = discountAmount;
+
+  const discountPercent = Number(input.discountPercent ?? 0);
+  if (!Number.isInteger(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+    return { payload, error: "discountPercent must be between 0 and 100" };
+  }
+  payload.discount_percent = discountPercent;
+
+  if (discountAmount === 0 && discountPercent === 0) {
+    return { payload, error: "coupon requires an amount or percent discount" };
+  }
+
+  if (input.expiresAt) {
+    const expiresAt = new Date(input.expiresAt);
+    if (Number.isNaN(expiresAt.getTime())) {
+      return { payload, error: "expiresAt must be an ISO datetime" };
+    }
+    payload.expires_at = expiresAt.toISOString();
+  } else {
+    payload.expires_at = null;
+  }
+
+  payload.status = "active";
+  return { payload, error: null };
+};
+
+const normalizeReservationPreOrder = (value: unknown): OrderLineInput[] => normalizeDraftOrderLines(value);
+
+const validateReservationInput = (
+  input: ReservationInput,
+  requireReservedAt: boolean,
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const payload: Record<string, unknown> = {};
+
+  if (input.customerName !== undefined) {
+    payload.customer_name = sanitizeText(input.customerName, "訂位客").slice(0, 120);
+  } else if (requireReservedAt) {
+    payload.customer_name = "訂位客";
+  }
+
+  if (input.customerPhone !== undefined) {
+    payload.customer_phone = sanitizeText(input.customerPhone, "").slice(0, 40);
+  } else if (requireReservedAt) {
+    payload.customer_phone = "";
+  }
+
+  if (input.partySize !== undefined || requireReservedAt) {
+    const partySize = Number(input.partySize ?? 2);
+    if (!Number.isInteger(partySize) || partySize <= 0 || partySize > 50) {
+      return { payload, error: "partySize must be between 1 and 50" };
+    }
+    payload.party_size = partySize;
+  }
+
+  if (input.reservedAt !== undefined || requireReservedAt) {
+    const reservedAt = normalizeRequestedFulfillmentAt(input.reservedAt);
+    if (!reservedAt) {
+      return { payload, error: "reservedAt must be a valid ISO datetime" };
+    }
+    payload.reserved_at = reservedAt;
+  }
+
+  if (input.status !== undefined) {
+    if (!["booked", "seated", "cancelled", "no_show"].includes(input.status)) {
+      return { payload, error: "status is invalid" };
+    }
+    payload.status = input.status;
+  } else if (requireReservedAt) {
+    payload.status = "booked";
+  }
+
+  if (input.importantLabel !== undefined) {
+    payload.important_label = sanitizeText(input.importantLabel, "").slice(0, 80);
+  } else if (requireReservedAt) {
+    payload.important_label = "";
+  }
+
+  if (input.preOrder !== undefined || requireReservedAt) {
+    payload.pre_order = normalizeReservationPreOrder(input.preOrder ?? []);
+  }
+
+  if (input.note !== undefined) {
+    payload.note = sanitizeText(input.note, "").slice(0, 500);
+  } else if (requireReservedAt) {
+    payload.note = "";
+  }
+
+  return { payload, error: null };
+};
+
 const sanitizeIdentifier = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
+
+const sanitizeColor = (value: unknown, fallback = "#0f766e"): string =>
+  typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
+
+const normalizeSupplyWindows = (input: unknown): SupplyWindowRule[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenWindowIds = new Set<string>();
+  return input.flatMap((entry, index): SupplyWindowRule[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const window = entry as Partial<SupplyWindowRule>;
+    const id = sanitizeText(window.id, `window-${index + 1}`).slice(0, 80);
+    const label = sanitizeText(window.label, id).slice(0, 80);
+    const start = typeof window.start === "string" && /^\d{2}:\d{2}$/.test(window.start) ? window.start : "00:00";
+    const end = typeof window.end === "string" && /^\d{2}:\d{2}$/.test(window.end) ? window.end : "23:59";
+    const days = Array.isArray(window.days)
+      ? [...new Set(window.days.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+      : [1, 2, 3, 4, 5, 6, 0];
+    if (!id || !label || seenWindowIds.has(id) || days.length === 0) {
+      return [];
+    }
+
+    seenWindowIds.add(id);
+    return [{ id, label, days, start, end }];
+  }).slice(0, 20);
+};
 
 const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
   if (name === "內用收據" || (name.includes("內用") && name.includes("收據"))) {
@@ -3887,11 +4553,111 @@ const validateOnlineOrdering = (input: unknown): {
   };
 };
 
+const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngagementSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultEngagementSettings;
+  }
+
+  const settings = input as Partial<CustomerEngagementSettings>;
+  const orderLabels = Array.isArray(settings.orderLabels)
+    ? settings.orderLabels.flatMap((entry, index): OrderLabelSetting[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const label = entry as Partial<OrderLabelSetting>;
+      const id = sanitizeText(label.id, `label-${index + 1}`).slice(0, 80);
+      const labelText = sanitizeText(label.label, "").slice(0, 80);
+      return id && labelText ? [{ id, label: labelText, color: sanitizeColor(label.color) }] : [];
+    }).slice(0, 16)
+    : defaultEngagementSettings.orderLabels;
+  const customerTypes = Array.isArray(settings.customerTypes)
+    ? [...new Set(settings.customerTypes.map((type) => sanitizeText(type, "").slice(0, 40)).filter(Boolean))].slice(0, 16)
+    : defaultEngagementSettings.customerTypes;
+  const recommendations = Array.isArray(settings.recommendations)
+    ? settings.recommendations.flatMap((entry, index): RecommendationRule[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const rule = entry as Partial<RecommendationRule>;
+      const id = sanitizeText(rule.id, `recommend-${index + 1}`).slice(0, 80);
+      const title = sanitizeText(rule.title, "推薦").slice(0, 80);
+      const trigger = sanitizeText(rule.trigger, "any").slice(0, 80);
+      const productIds = Array.isArray(rule.productIds)
+        ? rule.productIds.filter((productId): productId is string => typeof productId === "string").slice(0, 20)
+        : [];
+      return id && title ? [{ id, title, trigger, productIds, enabled: rule.enabled !== false }] : [];
+    }).slice(0, 20)
+    : defaultEngagementSettings.recommendations;
+  const translations = Array.isArray(settings.translations)
+    ? settings.translations.flatMap((entry, index): TranslationSetting[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const translation = entry as Partial<TranslationSetting>;
+      const locale = sanitizeText(translation.locale, `lang-${index + 1}`).slice(0, 20);
+      const label = sanitizeText(translation.label, locale).slice(0, 80);
+      return locale && label ? [{ locale, label, enabled: translation.enabled === true }] : [];
+    }).slice(0, 12)
+    : defaultEngagementSettings.translations;
+  const knownHardwareKinds: HardwareDeviceKind[] = ["bluetooth-scanner", "payment-qr", "cash-drawer", "ipad-qr-print"];
+  const hardwareDevices = Array.isArray(settings.hardwareDevices)
+    ? settings.hardwareDevices.flatMap((entry, index): HardwareDeviceSetting[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const device = entry as Partial<HardwareDeviceSetting>;
+      const kind = knownHardwareKinds.includes(device.kind as HardwareDeviceKind)
+        ? device.kind as HardwareDeviceKind
+        : "bluetooth-scanner";
+      const id = sanitizeText(device.id, `device-${index + 1}`).slice(0, 80);
+      const name = sanitizeText(device.name, "外設").slice(0, 80);
+      return id && name
+        ? [{
+          id,
+          kind,
+          name,
+          enabled: device.enabled === true,
+          targetStationId: sanitizeText(device.targetStationId, "").slice(0, 80),
+        }]
+        : [];
+    }).slice(0, 20)
+    : defaultEngagementSettings.hardwareDevices;
+  const rawSupplyRules = settings.supplyRules && typeof settings.supplyRules === "object"
+    ? settings.supplyRules
+    : defaultEngagementSettings.supplyRules;
+  const defaultPeriods = normalizeSupplyWindows(rawSupplyRules.defaultPeriods ?? rawSupplyRules.defaultWindows);
+
+  return {
+    orderLabels: orderLabels.length > 0 ? orderLabels : defaultEngagementSettings.orderLabels,
+    customerTypes: customerTypes.length > 0 ? customerTypes : defaultEngagementSettings.customerTypes,
+    defaultServiceFeeRate: Math.min(Math.max(Math.trunc(Number(settings.defaultServiceFeeRate) || 0), 0), 30),
+    recommendations,
+    translations,
+    hardwareDevices,
+    supplyRules: {
+      preOpenCheckEnabled: rawSupplyRules.preOpenCheckEnabled !== false,
+      allowFutureOrdersAcrossDay: rawSupplyRules.allowFutureOrdersAcrossDay !== false,
+      defaultPeriods: defaultPeriods.length > 0 ? defaultPeriods : defaultEngagementSettings.supplyRules.defaultPeriods,
+    },
+  };
+};
+
+const validateEngagementSettings = (input: unknown): {
+  value: CustomerEngagementSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "engagement_settings must be an object" };
+  }
+
+  return { value: normalizeEngagementSettingsForRuntime(input), error: null };
+};
+
 const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | FloorPlanSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | FloorPlanSettings | CustomerEngagementSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
@@ -3908,6 +4674,10 @@ const validateAdminSetting = (
 
   if (key === "floor_plan") {
     return validateFloorPlan(input);
+  }
+
+  if (key === "engagement_settings") {
+    return validateEngagementSettings(input);
   }
 
   return validateAccessControl(input);

@@ -2,6 +2,7 @@ import type {
   AccessControlSettings,
   MenuCategory,
   MenuItem,
+  MemberCoupon,
   FloorLevelSetting,
   FloorDisplayPreferences,
   FloorPlanSettings,
@@ -14,6 +15,7 @@ import type {
   PosAuditEvent,
   DailySalesReport,
   CartLine,
+  CustomerEngagementSettings,
   OnlineMenuCategory,
   OnlineMenuOptionChoice,
   OnlineMenuOptionGroup,
@@ -23,8 +25,11 @@ import type {
   PosMember,
   PosOrder,
   PosPaymentEvent,
+  PosReservation,
   PosStationHeartbeat,
   RegisterSession,
+  ReservationStatus,
+  SupplyPeriodRule,
   WaitlineEntry,
   PrintJob,
   PrintLabelMode,
@@ -53,6 +58,8 @@ interface ApiProduct {
   inventory_count?: number | null
   low_stock_threshold?: number | null
   sold_out_until?: string | null
+  supply_windows?: unknown
+  future_order_available?: boolean
 }
 
 interface ApiOrderItem {
@@ -83,8 +90,17 @@ interface ApiOrder {
   customer_phone: string
   delivery_address?: string | null
   requested_fulfillment_at?: string | null
+  member_id?: string | null
   note: string
   subtotal: number
+  order_labels?: string[] | null
+  service_fee_rate?: number | null
+  service_fee_amount?: number | null
+  extra_fee_amount?: number | null
+  discount_amount?: number | null
+  points_redeemed?: number | null
+  coupon_code?: string | null
+  member_points_earned?: number | null
   payment_method: PaymentMethod
   payment_status: PaymentStatus
   status: OrderStatus
@@ -181,10 +197,41 @@ interface ApiMember {
   id: string
   line_user_id: string | null
   line_display_name: string
+  phone?: string | null
+  customer_type?: string | null
+  points_balance?: number | null
   wallet_balance: number
   created_at: string
   updated_at: string
   ledger?: ApiTransactionLedgerEntry[]
+  coupons?: ApiMemberCoupon[]
+}
+
+interface ApiMemberCoupon {
+  id: string
+  member_id: string | null
+  code: string
+  title: string
+  discount_amount: number
+  discount_percent: number
+  status: 'active' | 'redeemed' | 'expired'
+  expires_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface ApiReservation {
+  id: string
+  customer_name: string
+  customer_phone: string
+  party_size: number
+  reserved_at: string
+  status: ReservationStatus
+  important_label: string
+  pre_order: unknown
+  note: string
+  created_at: string
+  updated_at: string
 }
 
 interface AuditEventsResponse {
@@ -201,6 +248,22 @@ interface MembersResponse {
 
 interface MemberResponse {
   member: ApiMember
+}
+
+interface CouponsResponse {
+  coupons: ApiMemberCoupon[]
+}
+
+interface CouponResponse {
+  coupon: ApiMemberCoupon
+}
+
+interface ReservationsResponse {
+  reservations: ApiReservation[]
+}
+
+interface ReservationResponse {
+  reservation: ApiReservation
 }
 
 interface ApiStationHeartbeat {
@@ -235,6 +298,7 @@ interface RuntimeSettingsResponse {
   onlineOrdering: OnlineOrderingSettings
   posAppearance: PosAppearanceSettings
   floorPlan: FloorPlanSettings
+  engagementSettings: CustomerEngagementSettings
 }
 
 interface DailyReportResponse {
@@ -258,11 +322,16 @@ export interface ProductUpdateInput {
   inventoryCount: number | null
   lowStockThreshold: number | null
   soldOutUntil: string | null
+  supplyPeriods: SupplyPeriodRule[]
+  futureOrderAvailable: boolean
 }
 
 export interface CreateMemberInput {
   lineUserId: string
   displayName: string
+  phone: string
+  customerType: string
+  pointsBalance: number
   openingBalance: number
   note: string
 }
@@ -278,11 +347,37 @@ export interface FloorAssignmentInput {
   floorLabel?: string
 }
 
+export interface CreateCouponInput {
+  memberId: string | null
+  code: string
+  title: string
+  discountAmount: number
+  discountPercent: number
+  expiresAt: string | null
+}
+
+export interface ReservationInput {
+  customerName: string
+  customerPhone: string
+  partySize: number
+  reservedAt: string
+  status: ReservationStatus
+  importantLabel: string
+  preOrder: CartLine[]
+  note: string
+}
+
 interface ProductResponse {
   product: ApiProduct
 }
 
-export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering' | 'pos_appearance' | 'floor_plan'
+export type AdminSettingKey =
+  | 'printer_settings'
+  | 'access_control'
+  | 'online_ordering'
+  | 'pos_appearance'
+  | 'floor_plan'
+  | 'engagement_settings'
 export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -491,14 +586,45 @@ const normalizeLedgerEntry = (entry: ApiTransactionLedgerEntry) => ({
   createdAt: entry.created_at,
 })
 
+const normalizeCoupon = (coupon: ApiMemberCoupon) => ({
+  id: coupon.id,
+  memberId: coupon.member_id,
+  code: coupon.code,
+  title: coupon.title,
+  discountAmount: coupon.discount_amount,
+  discountPercent: coupon.discount_percent,
+  status: coupon.status,
+  expiresAt: coupon.expires_at,
+  createdAt: coupon.created_at,
+  updatedAt: coupon.updated_at,
+})
+
 const normalizeMember = (member: ApiMember): PosMember => ({
   id: member.id,
   lineUserId: member.line_user_id,
   displayName: member.line_display_name,
+  phone: member.phone ?? '',
+  customerType: member.customer_type ?? '一般顧客',
+  pointsBalance: member.points_balance ?? 0,
   walletBalance: member.wallet_balance,
   createdAt: member.created_at,
   updatedAt: member.updated_at,
   ledger: (member.ledger ?? []).map(normalizeLedgerEntry),
+  coupons: (member.coupons ?? []).map(normalizeCoupon),
+})
+
+const normalizeReservation = (reservation: ApiReservation): PosReservation => ({
+  id: reservation.id,
+  customerName: reservation.customer_name,
+  customerPhone: reservation.customer_phone,
+  partySize: reservation.party_size,
+  reservedAt: reservation.reserved_at,
+  status: reservation.status,
+  importantLabel: reservation.important_label,
+  preOrder: normalizeDraftLines(reservation.pre_order),
+  note: reservation.note,
+  createdAt: reservation.created_at,
+  updatedAt: reservation.updated_at,
 })
 
 const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHeartbeat => ({
@@ -529,6 +655,8 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   inventoryCount: product.inventory_count ?? null,
   lowStockThreshold: product.low_stock_threshold ?? null,
   soldOutUntil: product.sold_out_until ?? null,
+  supplyPeriods: normalizeSupplyWindows(product.supply_windows),
+  futureOrderAvailable: product.future_order_available === true,
 })
 
 const legacyPrintRuleName = (name: string, serviceMode: ServiceMode): string => {
@@ -619,6 +747,42 @@ const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', '
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
+
+const sanitizeColor = (value: unknown, fallback = '#0f766e'): string =>
+  typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
+
+const normalizeNumber = (value: unknown, fallback = 0): number => {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? Math.trunc(numberValue) : fallback
+}
+
+const normalizeSupplyWindows = (value: unknown): SupplyPeriodRule[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenWindowIds = new Set<string>()
+  return value.flatMap((entry): SupplyPeriodRule[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const period = entry as Partial<SupplyPeriodRule>
+    const id = sanitizeOnlineText(period.id, `window-${seenWindowIds.size + 1}`)
+    const label = sanitizeOnlineText(period.label, id)
+    const start = typeof period.start === 'string' && /^\d{2}:\d{2}$/.test(period.start) ? period.start : '00:00'
+    const end = typeof period.end === 'string' && /^\d{2}:\d{2}$/.test(period.end) ? period.end : '23:59'
+    const days = Array.isArray(period.days)
+      ? [...new Set(period.days.map((day) => normalizeNumber(day, -1)).filter((day) => day >= 0 && day <= 6))]
+      : [1, 2, 3, 4, 5, 6, 0]
+    if (!id || seenWindowIds.has(id) || days.length === 0) {
+      return []
+    }
+
+    seenWindowIds.add(id)
+    return [{ id, label, days, start, end }]
+  }).slice(0, 20)
+}
 
 const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
   if (!Array.isArray(value)) {
@@ -1075,12 +1239,123 @@ export const normalizeFloorPlanSettings = (value: unknown): FloorPlanSettings =>
   }
 }
 
+export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
+  orderLabels: [
+    { id: 'rush', label: '急單', color: '#b45309' },
+    { id: 'allergy', label: '過敏', color: '#b91c1c' },
+    { id: 'vip', label: 'VIP', color: '#0f766e' },
+  ],
+  customerTypes: ['一般顧客', '常客', 'VIP', '員工'],
+  defaultServiceFeeRate: 0,
+  recommendations: [
+    { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
+    { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
+  ],
+  translations: [
+    { locale: 'en', label: 'English', enabled: true },
+    { locale: 'ja', label: '日本語', enabled: false },
+  ],
+  hardwareDevices: [
+    { id: 'scanner', kind: 'bluetooth-scanner', name: '藍牙掃碼器', enabled: false, targetStationId: '' },
+    { id: 'payment-qr', kind: 'payment-qr', name: '行動支付掃碼', enabled: false, targetStationId: '' },
+    { id: 'cash-drawer', kind: 'cash-drawer', name: '錢櫃', enabled: false, targetStationId: '' },
+    { id: 'ipad-qr-print', kind: 'ipad-qr-print', name: '指定 iPad 列印 QR code', enabled: false, targetStationId: '' },
+  ],
+  supplyRules: {
+    preOpenCheckEnabled: true,
+    allowFutureOrdersAcrossDay: true,
+    defaultPeriods: [
+      { id: 'all-day', label: '全天', days: [1, 2, 3, 4, 5, 6, 0], start: '08:00', end: '22:00' },
+    ],
+  },
+})
+
+export const normalizeEngagementSettings = (value: unknown): CustomerEngagementSettings => {
+  const defaults = defaultEngagementSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<CustomerEngagementSettings>
+  const orderLabels = Array.isArray(settings.orderLabels)
+    ? settings.orderLabels.flatMap((entry, index) => {
+      const label = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['orderLabels'][number] : null
+      const id = sanitizeOnlineText(label?.id, `label-${index + 1}`)
+      const text = sanitizeOnlineText(label?.label, '')
+      return id && text ? [{ id, label: text, color: sanitizeColor(label?.color) }] : []
+    }).slice(0, 16)
+    : defaults.orderLabels
+  const customerTypes = Array.isArray(settings.customerTypes)
+    ? [...new Set(settings.customerTypes.map((type) => sanitizeOnlineText(type)).filter(Boolean))].slice(0, 16)
+    : defaults.customerTypes
+  const recommendations = Array.isArray(settings.recommendations)
+    ? settings.recommendations.flatMap((entry, index) => {
+      const rule = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['recommendations'][number] : null
+      const id = sanitizeOnlineText(rule?.id, `recommend-${index + 1}`)
+      const trigger = sanitizeOnlineText(rule?.trigger, 'any')
+      const title = sanitizeOnlineText(rule?.title, '推薦')
+      const productIds = Array.isArray(rule?.productIds)
+        ? rule.productIds.filter((productId): productId is string => typeof productId === 'string').slice(0, 20)
+        : []
+      return id && title ? [{ id, trigger, title, productIds, enabled: rule?.enabled !== false }] : []
+    }).slice(0, 20)
+    : defaults.recommendations
+  const translations = Array.isArray(settings.translations)
+    ? settings.translations.flatMap((entry, index) => {
+      const translation = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['translations'][number] : null
+      const locale = sanitizeOnlineText(translation?.locale, `lang-${index + 1}`)
+      const label = sanitizeOnlineText(translation?.label, locale)
+      return locale && label ? [{ locale, label, enabled: translation?.enabled === true }] : []
+    }).slice(0, 12)
+    : defaults.translations
+  const hardwareKinds = new Set<CustomerEngagementSettings['hardwareDevices'][number]['kind']>([
+    'bluetooth-scanner',
+    'payment-qr',
+    'cash-drawer',
+    'ipad-qr-print',
+  ])
+  const hardwareDevices = Array.isArray(settings.hardwareDevices)
+    ? settings.hardwareDevices.flatMap((entry, index) => {
+      const device = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['hardwareDevices'][number] : null
+      const fallbackKind = defaults.hardwareDevices[0]?.kind ?? 'bluetooth-scanner'
+      const rawKind = device?.kind
+      const kind = rawKind && hardwareKinds.has(rawKind) ? rawKind : fallbackKind
+      const id = sanitizeOnlineText(device?.id, `device-${index + 1}`)
+      const name = sanitizeOnlineText(device?.name, '外設')
+      const targetStationId = sanitizeOnlineText(device?.targetStationId, '')
+      return id && name ? [{ id, kind, name, targetStationId, enabled: device?.enabled === true }] : []
+    }).slice(0, 20)
+    : defaults.hardwareDevices
+  const rawSupplyRules = settings.supplyRules && typeof settings.supplyRules === 'object'
+    ? settings.supplyRules
+    : defaults.supplyRules
+  const rawSupplyPeriods = (rawSupplyRules as { defaultPeriods?: unknown; defaultWindows?: unknown }).defaultPeriods ??
+    (rawSupplyRules as { defaultWindows?: unknown }).defaultWindows
+
+  return {
+    orderLabels: orderLabels.length > 0 ? orderLabels : defaults.orderLabels,
+    customerTypes: customerTypes.length > 0 ? customerTypes : defaults.customerTypes,
+    defaultServiceFeeRate: Math.min(Math.max(normalizeNumber(settings.defaultServiceFeeRate, 0), 0), 30),
+    recommendations,
+    translations,
+    hardwareDevices,
+    supplyRules: {
+      preOpenCheckEnabled: rawSupplyRules.preOpenCheckEnabled !== false,
+      allowFutureOrdersAcrossDay: rawSupplyRules.allowFutureOrdersAcrossDay !== false,
+      defaultPeriods: normalizeSupplyWindows(rawSupplyPeriods).length > 0
+        ? normalizeSupplyWindows(rawSupplyPeriods)
+        : defaults.supplyRules.defaultPeriods,
+    },
+  }
+}
+
 const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
   const accessControl = rows.find((row) => row.key === 'access_control')?.value
   const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
   const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
   const floorPlan = rows.find((row) => row.key === 'floor_plan')?.value
+  const engagementSettings = rows.find((row) => row.key === 'engagement_settings')?.value
 
   return {
     printerSettings: normalizePrinterSettings(printerSettings),
@@ -1088,6 +1363,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(posAppearance),
     floorPlan: normalizeFloorPlanSettings(floorPlan),
+    engagementSettings: normalizeEngagementSettings(engagementSettings),
   }
 }
 
@@ -1105,8 +1381,17 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     customerPhone: order.customer_phone,
     deliveryAddress: order.delivery_address ?? '',
     requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
+    memberId: order.member_id ?? null,
     note: order.note,
     subtotal: order.subtotal,
+    orderLabels: Array.isArray(order.order_labels) ? order.order_labels.filter((label): label is string => typeof label === 'string') : [],
+    serviceFeeRate: order.service_fee_rate ?? 0,
+    serviceFeeAmount: order.service_fee_amount ?? 0,
+    extraFeeAmount: order.extra_fee_amount ?? 0,
+    discountAmount: order.discount_amount ?? 0,
+    pointsRedeemed: order.points_redeemed ?? 0,
+    couponCode: order.coupon_code ?? '',
+    memberPointsEarned: order.member_points_earned ?? 0,
     paymentMethod: order.payment_method,
     paymentStatus: order.payment_status,
     status: order.status,
@@ -1231,6 +1516,85 @@ export const fetchAdminMembers = async (limit = 50, keyword = ''): Promise<PosMe
   return data.members.map(normalizeMember)
 }
 
+export const searchPosMembers = async (keyword: string, limit = 8): Promise<PosMember[]> => {
+  const params = new URLSearchParams({
+    limit: String(Math.min(Math.max(Math.trunc(limit), 1), 20)),
+  })
+  if (keyword.trim()) {
+    params.set('q', keyword.trim())
+  }
+
+  const data = await request<MembersResponse>(`/members/search?${params.toString()}`)
+  return data.members.map(normalizeMember)
+}
+
+export const fetchAdminCoupons = async (limit = 80): Promise<MemberCoupon[]> => {
+  const cappedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200)
+  const data = await request<CouponsResponse>(`/admin/coupons?limit=${cappedLimit}`)
+  return data.coupons.map(normalizeCoupon)
+}
+
+export const createAdminCoupon = async (input: CreateCouponInput): Promise<MemberCoupon> => {
+  const data = await request<CouponResponse>('/admin/coupons', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeCoupon(data.coupon)
+}
+
+export const fetchAdminReservations = async (rangeStart = '', rangeEnd = ''): Promise<PosReservation[]> => {
+  const params = new URLSearchParams()
+  if (rangeStart.trim()) {
+    params.set('from', rangeStart.trim())
+  }
+  if (rangeEnd.trim()) {
+    params.set('to', rangeEnd.trim())
+  }
+
+  const data = await request<ReservationsResponse>(`/admin/reservations?${params.toString()}`)
+  return data.reservations.map(normalizeReservation)
+}
+
+export const createAdminReservation = async (input: ReservationInput): Promise<PosReservation> => {
+  const data = await request<ReservationResponse>('/admin/reservations', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeReservation(data.reservation)
+}
+
+export const updateAdminReservation = async (
+  reservationId: string,
+  input: Partial<ReservationInput>,
+): Promise<PosReservation> => {
+  const data = await request<ReservationResponse>(`/admin/reservations/${reservationId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeReservation(data.reservation)
+}
+
 export const fetchAdminDailyReport = async (date: string): Promise<DailySalesReport> => {
   const params = new URLSearchParams()
   if (date.trim()) {
@@ -1314,6 +1678,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
     onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(data.posAppearance),
     floorPlan: normalizeFloorPlanSettings(data.floorPlan),
+    engagementSettings: normalizeEngagementSettings(data.engagementSettings),
   }
 }
 
@@ -1368,8 +1733,17 @@ const orderPayload = (order: PosOrder) => ({
   customerPhone: order.customerPhone,
   deliveryAddress: order.deliveryAddress,
   requestedFulfillmentAt: order.requestedFulfillmentAt,
+  memberId: order.memberId,
   note: order.note,
   subtotal: order.subtotal,
+  orderLabels: order.orderLabels,
+  serviceFeeRate: order.serviceFeeRate,
+  serviceFeeAmount: order.serviceFeeAmount,
+  extraFeeAmount: order.extraFeeAmount,
+  discountAmount: order.discountAmount,
+  pointsRedeemed: order.pointsRedeemed,
+  couponCode: order.couponCode,
+  memberPointsEarned: order.memberPointsEarned,
   paymentMethod: order.paymentMethod,
   paymentStatus: order.paymentStatus,
   stationId: currentStationId(),

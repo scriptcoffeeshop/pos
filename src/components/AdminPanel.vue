@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   BarChart3,
+  CalendarDays,
   Download,
   Eye,
   EyeOff,
@@ -23,21 +24,29 @@ import { formatCurrency } from '../lib/formatters'
 import {
   adjustMemberWallet,
   createAdminMember,
+  createAdminCoupon,
+  createAdminReservation,
+  defaultEngagementSettings,
   fetchAdminAuditEvents,
+  fetchAdminCoupons,
   fetchAdminDailyReport,
   fetchAdminMembers,
   fetchAdminPaymentEvents,
   fetchAdminProducts,
+  fetchAdminReservations,
   fetchAdminSettings,
   fetchAdminStations,
   type ProductUpdateInput,
   updateAdminSetting,
+  updateAdminReservation,
   updateProduct,
 } from '../lib/posApi'
 import type {
   AccessControlSettings,
   AdminPermission,
+  CustomerEngagementSettings,
   DailySalesReport,
+  MemberCoupon,
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
@@ -45,11 +54,13 @@ import type {
   PosAuditEvent,
   PosMember,
   PosPaymentEvent,
+  PosReservation,
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
   RoleSetting,
   ServiceMode,
+  ReservationStatus,
 } from '../types/pos'
 
 interface ProductDraft extends MenuItem {
@@ -60,7 +71,28 @@ interface ProductDraft extends MenuItem {
 interface MemberDraft {
   lineUserId: string
   displayName: string
+  phone: string
+  customerType: string
+  pointsBalance: number
   openingBalance: number
+  note: string
+}
+
+interface CouponDraft {
+  memberId: string
+  code: string
+  title: string
+  discountAmount: number
+  discountPercent: number
+  expiresAt: string
+}
+
+interface ReservationDraft {
+  customerName: string
+  customerPhone: string
+  partySize: number
+  reservedAt: string
+  importantLabel: string
   note: string
 }
 
@@ -73,6 +105,7 @@ type AdminTab =
   | 'products'
   | 'online'
   | 'members'
+  | 'ichef'
   | 'reports'
   | 'payments'
   | 'printing'
@@ -106,6 +139,7 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'online', label: '線上點餐' },
   { value: 'members', label: '會員錢包' },
+  { value: 'ichef', label: 'iCHEF 補齊' },
   { value: 'reports', label: '營運報表' },
   { value: 'payments', label: '支付事件' },
   { value: 'printing', label: '出單規則' },
@@ -282,6 +316,20 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
   noteSupplyStatuses: { ...settings.noteSupplyStatuses },
 })
 
+const cloneEngagementSettings = (settings: CustomerEngagementSettings): CustomerEngagementSettings => ({
+  ...defaultEngagementSettings(),
+  ...settings,
+  orderLabels: settings.orderLabels.map((label) => ({ ...label })),
+  customerTypes: [...settings.customerTypes],
+  recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
+  translations: settings.translations.map((translation) => ({ ...translation })),
+  hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
+  supplyRules: {
+    ...settings.supplyRules,
+    defaultPeriods: settings.supplyRules.defaultPeriods.map((period) => ({ ...period, days: [...period.days] })),
+  },
+})
+
 const toDateInput = (date = new Date()): string => {
   const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
   return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 10)
@@ -292,11 +340,32 @@ const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
 const productDrafts = ref<ProductDraft[]>([])
 const members = ref<PosMember[]>([])
+const coupons = ref<MemberCoupon[]>([])
+const reservations = ref<PosReservation[]>([])
 const memberSearchTerm = ref('')
 const newMember = ref<MemberDraft>({
   lineUserId: '',
   displayName: '',
+  phone: '',
+  customerType: '一般顧客',
+  pointsBalance: 0,
   openingBalance: 0,
+  note: '',
+})
+const newCoupon = ref<CouponDraft>({
+  memberId: '',
+  code: '',
+  title: '',
+  discountAmount: 0,
+  discountPercent: 0,
+  expiresAt: '',
+})
+const newReservation = ref<ReservationDraft>({
+  customerName: '',
+  customerPhone: '',
+  partySize: 2,
+  reservedAt: '',
+  importantLabel: '',
   note: '',
 })
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
@@ -305,6 +374,7 @@ const dailyReport = ref<DailySalesReport | null>(null)
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
@@ -322,6 +392,7 @@ const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isStationLoading = ref(false)
+const isIchefLoading = ref(false)
 const isOperationLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
@@ -346,6 +417,10 @@ const auditEventCount = computed(() => auditEvents.value.length)
 const paymentEventCount = computed(() => paymentEvents.value.length)
 const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
 const memberCount = computed(() => members.value.length)
+const couponCount = computed(() => coupons.value.length)
+const activeReservationCount = computed(() =>
+  reservations.value.filter((reservation) => reservation.status === 'booked').length,
+)
 const walletBalanceTotal = computed(() => members.value.reduce((total, member) => total + member.walletBalance, 0))
 const reportPeakHour = computed(() => {
   const report = dailyReport.value
@@ -536,6 +611,8 @@ const filteredMembers = computed(() => {
 
   return members.value.filter((member) =>
     member.displayName.toLowerCase().includes(keyword) ||
+    member.phone.toLowerCase().includes(keyword) ||
+    member.customerType.toLowerCase().includes(keyword) ||
     (member.lineUserId ?? '').toLowerCase().includes(keyword),
   )
 })
@@ -543,6 +620,7 @@ const filteredMembers = computed(() => {
 const toDraft = (product: MenuItem): ProductDraft => ({
   ...product,
   tags: [...product.tags],
+  supplyPeriods: product.supplyPeriods.map((period) => ({ ...period, days: [...period.days] })),
   tagsText: product.tags.join('，'),
   soldOutUntilInput: toDatetimeLocalInput(product.soldOutUntil),
 })
@@ -591,6 +669,9 @@ const resetNewMember = (): void => {
   newMember.value = {
     lineUserId: '',
     displayName: '',
+    phone: '',
+    customerType: '一般顧客',
+    pointsBalance: 0,
     openingBalance: 0,
     note: '',
   }
@@ -987,7 +1068,7 @@ const loadAdminData = async (): Promise<void> => {
   adminMessage.value = '讀取後台資料中'
 
   try {
-    const [products, memberRows, report, settings, events, paymentRows, stations] = await Promise.all([
+    const [products, memberRows, report, settings, events, paymentRows, stations, couponRows, reservationRows] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
       fetchAdminDailyReport(reportDate.value),
@@ -995,6 +1076,8 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminAuditEvents(auditLimit.value),
       fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value),
       fetchAdminStations(),
+      fetchAdminCoupons(),
+      fetchAdminReservations(),
     ])
     productDrafts.value = products.map(toDraft)
     members.value = memberRows
@@ -1002,10 +1085,13 @@ const loadAdminData = async (): Promise<void> => {
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     onlineOrdering.value = cloneOnlineOrdering(settings.onlineOrdering)
+    engagementSettings.value = cloneEngagementSettings(settings.engagementSettings)
     auditEvents.value = events
     paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    coupons.value = couponRows
+    reservations.value = reservationRows
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1110,6 +1196,9 @@ const addMember = async (): Promise<void> => {
     const member = await createAdminMember({
       lineUserId: newMember.value.lineUserId.trim(),
       displayName: newMember.value.displayName.trim(),
+      phone: newMember.value.phone.trim(),
+      customerType: newMember.value.customerType.trim() || '一般顧客',
+      pointsBalance: Math.max(0, Math.trunc(Number(newMember.value.pointsBalance) || 0)),
       openingBalance: Math.max(0, Math.trunc(Number(newMember.value.openingBalance) || 0)),
       note: newMember.value.note.trim(),
     })
@@ -1172,6 +1261,8 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
     inventoryCount: numberOrNull(product.inventoryCount),
     lowStockThreshold: numberOrNull(product.lowStockThreshold),
     soldOutUntil: fromDatetimeLocalInput(product.soldOutUntilInput),
+    supplyPeriods: product.supplyPeriods.map((period) => ({ ...period, days: [...period.days] })),
+    futureOrderAvailable: product.futureOrderAvailable,
   }
 
   try {
@@ -1299,6 +1390,149 @@ const saveOnlineOrdering = async (): Promise<void> => {
   }
 }
 
+const addOrderLabel = (): void => {
+  engagementSettings.value.orderLabels.push({
+    id: buildId('label'),
+    label: '新標籤',
+    color: '#0f766e',
+  })
+}
+
+const removeOrderLabel = (labelId: string): void => {
+  engagementSettings.value.orderLabels = engagementSettings.value.orderLabels.filter((label) => label.id !== labelId)
+}
+
+const addRecommendationRule = (): void => {
+  engagementSettings.value.recommendations.push({
+    id: buildId('recommend'),
+    title: '新推薦',
+    trigger: 'any',
+    productIds: [],
+    enabled: true,
+  })
+}
+
+const addSupplyWindow = (): void => {
+  engagementSettings.value.supplyRules.defaultPeriods.push({
+    id: buildId('window'),
+    label: '新時段',
+    days: [1, 2, 3, 4, 5],
+    start: '09:00',
+    end: '18:00',
+  })
+}
+
+const removeSupplyWindow = (windowId: string): void => {
+  engagementSettings.value.supplyRules.defaultPeriods =
+    engagementSettings.value.supplyRules.defaultPeriods.filter((period) => period.id !== windowId)
+}
+
+const updateEngagementCustomerTypes = (event: Event): void => {
+  const value = (event.target as HTMLInputElement | null)?.value ?? ''
+  engagementSettings.value.customerTypes = value
+    .split(/[，,]/)
+    .map((type) => type.trim())
+    .filter(Boolean)
+}
+
+const saveEngagementSettings = async (): Promise<void> => {
+  savingSettingKey.value = 'engagement_settings'
+  adminMessage.value = '儲存 iCHEF 補齊設定'
+
+  try {
+    const savedSettings = await updateAdminSetting<CustomerEngagementSettings>(
+      'engagement_settings',
+      engagementSettings.value,
+    )
+    engagementSettings.value = cloneEngagementSettings(savedSettings)
+    adminMessage.value = 'iCHEF 補齊設定已更新'
+    emit('refreshPos')
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : 'iCHEF 補齊設定更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const addCoupon = async (): Promise<void> => {
+  savingSettingKey.value = 'coupon'
+  adminMessage.value = '建立優惠券中'
+
+  try {
+    const coupon = await createAdminCoupon({
+      memberId: newCoupon.value.memberId || null,
+      code: newCoupon.value.code,
+      title: newCoupon.value.title,
+      discountAmount: Math.max(0, Math.trunc(Number(newCoupon.value.discountAmount) || 0)),
+      discountPercent: Math.max(0, Math.trunc(Number(newCoupon.value.discountPercent) || 0)),
+      expiresAt: fromDatetimeLocalInput(newCoupon.value.expiresAt),
+    })
+    coupons.value = [coupon, ...coupons.value]
+    newCoupon.value = {
+      memberId: '',
+      code: '',
+      title: '',
+      discountAmount: 0,
+      discountPercent: 0,
+      expiresAt: '',
+    }
+    adminMessage.value = `${coupon.title} 已建立`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '優惠券建立失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const addReservation = async (): Promise<void> => {
+  isIchefLoading.value = true
+  adminMessage.value = '建立訂位中'
+
+  try {
+    const reservation = await createAdminReservation({
+      customerName: newReservation.value.customerName.trim() || '訂位客',
+      customerPhone: newReservation.value.customerPhone.trim(),
+      partySize: Math.max(1, Math.trunc(Number(newReservation.value.partySize) || 2)),
+      reservedAt: fromDatetimeLocalInput(newReservation.value.reservedAt) ?? '',
+      status: 'booked',
+      importantLabel: newReservation.value.importantLabel.trim(),
+      preOrder: [],
+      note: newReservation.value.note.trim(),
+    })
+    reservations.value = [reservation, ...reservations.value].sort((first, second) =>
+      new Date(first.reservedAt).getTime() - new Date(second.reservedAt).getTime(),
+    )
+    newReservation.value = {
+      customerName: '',
+      customerPhone: '',
+      partySize: 2,
+      reservedAt: '',
+      importantLabel: '',
+      note: '',
+    }
+    adminMessage.value = `${reservation.customerName} 訂位已建立`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '訂位建立失敗'
+  } finally {
+    isIchefLoading.value = false
+  }
+}
+
+const setReservationStatus = async (reservation: PosReservation, status: ReservationStatus): Promise<void> => {
+  isIchefLoading.value = true
+  adminMessage.value = '更新訂位狀態'
+
+  try {
+    const saved = await updateAdminReservation(reservation.id, { status })
+    reservations.value = reservations.value.map((entry) => (entry.id === saved.id ? saved : entry))
+    adminMessage.value = `${saved.customerName} 已更新為 ${status}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '訂位更新失敗'
+  } finally {
+    isIchefLoading.value = false
+  }
+}
+
 const addRole = (): void => {
   accessControl.value.roles.push({
     id: buildId('role'),
@@ -1393,6 +1627,14 @@ const saveAccessControl = async (): Promise<void> => {
       <article>
         <span>會員</span>
         <strong>{{ memberCount }}</strong>
+      </article>
+      <article>
+        <span>優惠券</span>
+        <strong>{{ couponCount }}</strong>
+      </article>
+      <article>
+        <span>有效訂位</span>
+        <strong>{{ activeReservationCount }}</strong>
       </article>
       <article>
         <span>錢包餘額</span>
@@ -1737,6 +1979,18 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="newMember.lineUserId" type="text" placeholder="可留空，之後綁定" />
             </label>
             <label>
+              電話
+              <input v-model="newMember.phone" type="tel" placeholder="顧客電話" />
+            </label>
+            <label>
+              顧客類型
+              <input v-model="newMember.customerType" type="text" placeholder="一般顧客 / VIP" />
+            </label>
+            <label>
+              開通點數
+              <input v-model.number="newMember.pointsBalance" type="number" min="0" step="1" />
+            </label>
+            <label>
               開通餘額
               <input v-model.number="newMember.openingBalance" type="number" min="0" step="1" />
             </label>
@@ -1758,7 +2012,7 @@ const saveAccessControl = async (): Promise<void> => {
                 <Wallet :size="22" aria-hidden="true" />
                 <div>
                   <strong>{{ member.displayName }}</strong>
-                  <span>{{ member.lineUserId || '手動會員' }}</span>
+                  <span>{{ member.phone || member.lineUserId || '手動會員' }} · {{ member.customerType }} · {{ member.pointsBalance }} 點</span>
                 </div>
               </div>
               <strong class="admin-wallet-balance">{{ formatCurrency(member.walletBalance) }}</strong>
@@ -1796,6 +2050,9 @@ const saveAccessControl = async (): Promise<void> => {
                 {{ entry.balanceAfter === null ? '未知' : formatCurrency(entry.balanceAfter) }}
               </span>
               <span v-if="member.ledger.length === 0">尚無交易流水</span>
+              <span v-for="coupon in member.coupons" :key="coupon.id">
+                {{ coupon.title }} · {{ coupon.code }} · {{ coupon.status }}
+              </span>
             </div>
           </article>
 
@@ -1803,6 +2060,238 @@ const saveAccessControl = async (): Promise<void> => {
             <Search :size="24" aria-hidden="true" />
             <span>尚無符合條件的會員</span>
           </div>
+        </div>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'ichef'" class="admin-tab-panel" aria-label="iCHEF 補齊功能">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">iCHEF Parity</p>
+            <h2>CRM、標籤、訂位、推薦、外設</h2>
+            <span class="panel-note">集中管理 iCHEF 缺口：訂單標籤、優惠券、點數、訂位、AI/推薦與硬體外設</span>
+          </div>
+          <button class="primary-button" type="button" :disabled="savingSettingKey === 'engagement_settings'" @click="saveEngagementSettings">
+            <Save :size="18" aria-hidden="true" />
+            {{ savingSettingKey === 'engagement_settings' ? '儲存中' : '儲存補齊設定' }}
+          </button>
+        </div>
+
+        <div class="admin-section-grid">
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Labels</p>
+                <h3>訂單標籤</h3>
+              </div>
+              <button class="icon-button" type="button" title="新增標籤" @click="addOrderLabel">
+                <Plus :size="18" aria-hidden="true" />
+              </button>
+            </div>
+
+            <article v-for="label in engagementSettings.orderLabels" :key="label.id" class="admin-rule-row">
+              <div class="admin-rule-grid">
+                <label>
+                  標籤
+                  <input v-model="label.label" type="text" />
+                </label>
+                <label>
+                  代碼
+                  <input v-model="label.id" type="text" />
+                </label>
+                <label>
+                  色彩
+                  <span class="color-input-row">
+                    <input v-model="label.color" type="color" />
+                    <input v-model="label.color" type="text" />
+                  </span>
+                </label>
+                <button class="icon-button" type="button" title="刪除標籤" @click="removeOrderLabel(label.id)">
+                  <Trash2 :size="16" aria-hidden="true" />
+                </button>
+              </div>
+            </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Coupons</p>
+                <h3>優惠券 / 點數折抵</h3>
+              </div>
+              <Wallet :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                綁定會員
+                <select v-model="newCoupon.memberId">
+                  <option value="">不綁定</option>
+                  <option v-for="member in members" :key="member.id" :value="member.id">
+                    {{ member.displayName }} · {{ member.phone || member.lineUserId || '手動' }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                券碼
+                <input v-model="newCoupon.code" type="text" placeholder="VIP50" />
+              </label>
+              <label>
+                名稱
+                <input v-model="newCoupon.title" type="text" placeholder="VIP 折抵" />
+              </label>
+              <label>
+                固定折抵
+                <input v-model.number="newCoupon.discountAmount" type="number" min="0" step="1" />
+              </label>
+              <label>
+                百分比
+                <input v-model.number="newCoupon.discountPercent" type="number" min="0" max="100" step="1" />
+              </label>
+              <label>
+                到期
+                <input v-model="newCoupon.expiresAt" type="datetime-local" />
+              </label>
+              <button class="primary-button" type="button" :disabled="savingSettingKey === 'coupon'" @click="addCoupon">
+                <Save :size="18" aria-hidden="true" />
+                建立優惠券
+              </button>
+            </div>
+
+            <div class="admin-audit-meta admin-coupon-list">
+              <span v-for="coupon in coupons.slice(0, 8)" :key="coupon.id">
+                {{ coupon.title }} · {{ coupon.code }} · {{ coupon.discountAmount > 0 ? formatCurrency(coupon.discountAmount) : `${coupon.discountPercent}%` }} · {{ coupon.status }}
+              </span>
+              <span v-if="coupons.length === 0">尚無優惠券</span>
+            </div>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Reservations</p>
+                <h3>訂位週/月管理</h3>
+              </div>
+              <CalendarDays :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                姓名
+                <input v-model="newReservation.customerName" type="text" />
+              </label>
+              <label>
+                電話
+                <input v-model="newReservation.customerPhone" type="tel" />
+              </label>
+              <label>
+                人數
+                <input v-model.number="newReservation.partySize" type="number" min="1" max="50" />
+              </label>
+              <label>
+                時間
+                <input v-model="newReservation.reservedAt" type="datetime-local" />
+              </label>
+              <label>
+                節慶/重點
+                <input v-model="newReservation.importantLabel" type="text" placeholder="母親節 / 包場" />
+              </label>
+              <label class="wide-field">
+                備註 / 預先點餐
+                <input v-model="newReservation.note" type="text" placeholder="可記錄預點餐內容" />
+              </label>
+              <button class="primary-button" type="button" :disabled="isIchefLoading" @click="addReservation">
+                <Save :size="18" aria-hidden="true" />
+                建立訂位
+              </button>
+            </div>
+
+            <article v-for="reservation in reservations.slice(0, 8)" :key="reservation.id" class="admin-report-row">
+              <span>{{ formatAuditTime(reservation.reservedAt) }} · {{ reservation.customerName }}</span>
+              <strong>{{ reservation.partySize }} 人</strong>
+              <small>{{ reservation.importantLabel || reservation.status }}</small>
+              <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'seated')">入座</button>
+              <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'cancelled')">取消</button>
+            </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">AI / Hardware / Supply</p>
+                <h3>推薦、翻譯、外設、停售規則</h3>
+              </div>
+              <SlidersHorizontal :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.supplyRules.preOpenCheckEnabled" type="checkbox" />
+                線上營業前檢查無供應商品
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.supplyRules.allowFutureOrdersAcrossDay" type="checkbox" />
+                跨日預約可售
+              </label>
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                預設服務費 %
+                <input v-model.number="engagementSettings.defaultServiceFeeRate" type="number" min="0" max="30" />
+              </label>
+              <label>
+                顧客類型
+                <input
+                  :value="engagementSettings.customerTypes.join('，')"
+                  type="text"
+                  @input="updateEngagementCustomerTypes"
+                />
+              </label>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>供應時段</strong>
+                <button class="icon-button" type="button" title="新增時段" @click="addSupplyWindow">
+                  <Plus :size="18" aria-hidden="true" />
+                </button>
+              </div>
+              <article v-for="period in engagementSettings.supplyRules.defaultPeriods" :key="period.id" class="admin-rule-grid">
+                <input v-model="period.label" type="text" />
+                <input v-model="period.start" type="time" />
+                <input v-model="period.end" type="time" />
+                <button class="icon-button" type="button" title="刪除時段" @click="removeSupplyWindow(period.id)">
+                  <Trash2 :size="16" aria-hidden="true" />
+                </button>
+              </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>推薦規則</strong>
+                <button class="icon-button" type="button" title="新增推薦" @click="addRecommendationRule">
+                  <Plus :size="18" aria-hidden="true" />
+                </button>
+              </div>
+              <article v-for="rule in engagementSettings.recommendations" :key="rule.id" class="admin-rule-grid">
+                <input v-model="rule.title" type="text" />
+                <input v-model="rule.trigger" type="text" placeholder="any / coffee / morning" />
+                <label class="toggle-row">
+                  <input v-model="rule.enabled" type="checkbox" />
+                  啟用
+                </label>
+              </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <strong>外設</strong>
+              <label v-for="device in engagementSettings.hardwareDevices" :key="device.id" class="toggle-row">
+                <input v-model="device.enabled" type="checkbox" />
+                {{ device.name }}
+                <input v-model="device.targetStationId" type="text" placeholder="指定平板 / station id" />
+              </label>
+            </div>
+          </section>
         </div>
       </section>
 

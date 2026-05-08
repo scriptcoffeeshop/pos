@@ -17,6 +17,7 @@ import {
   createPrintJob,
   closeRegisterSession,
   createProduct,
+  defaultEngagementSettings,
   defaultPosAppearanceSettings,
   defaultOnlineOrderingSettings,
   deleteProduct,
@@ -76,6 +77,7 @@ import type {
   PrintStatus,
   RegisterSession,
   ServiceMode,
+  CustomerEngagementSettings,
 } from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
@@ -118,6 +120,12 @@ interface CounterDraftState {
   draftStartedAt: string | null
   paymentMethod: PaymentMethod
   serviceMode: ServiceMode
+  orderLabels: string[]
+  serviceFeeRate: number
+  extraFeeAmount: number
+  discountAmount: number
+  pointsRedeemed: number
+  couponCode: string
 }
 
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
@@ -128,8 +136,12 @@ const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expi
 const printStatuses: PrintStatus[] = ['queued', 'printed', 'skipped', 'failed']
 
 const defaultCustomerDraft = (): CustomerDraft => ({
+  memberId: null,
   name: '現場客',
   phone: '',
+  customerType: '一般顧客',
+  pointsBalance: 0,
+  availableCoupons: [],
   deliveryAddress: '',
   requestedFulfillmentAt: '',
   note: '',
@@ -222,8 +234,16 @@ const sanitizeCustomerDraft = (value: unknown): CustomerDraft => {
 
   const draft = value as Partial<CustomerDraft>
   return {
+    memberId: typeof draft.memberId === 'string' ? draft.memberId : null,
     name: typeof draft.name === 'string' && draft.name.trim() ? draft.name : fallback.name,
     phone: typeof draft.phone === 'string' ? draft.phone : fallback.phone,
+    customerType: typeof draft.customerType === 'string' && draft.customerType.trim()
+      ? draft.customerType
+      : fallback.customerType,
+    pointsBalance: Number.isFinite(draft.pointsBalance)
+      ? Math.max(0, Math.trunc(Number(draft.pointsBalance)))
+      : fallback.pointsBalance,
+    availableCoupons: Array.isArray(draft.availableCoupons) ? draft.availableCoupons : [],
     deliveryAddress: typeof draft.deliveryAddress === 'string' ? draft.deliveryAddress : fallback.deliveryAddress,
     requestedFulfillmentAt: typeof draft.requestedFulfillmentAt === 'string'
       ? draft.requestedFulfillmentAt
@@ -249,6 +269,22 @@ const readCounterDraft = (): CounterDraftState | null => {
       draftStartedAt: sanitizeDraftStartedAt(parsed.draftStartedAt),
       paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
       serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
+      orderLabels: Array.isArray(parsed.orderLabels)
+        ? parsed.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, 12)
+        : [],
+      serviceFeeRate: Number.isFinite(parsed.serviceFeeRate)
+        ? Math.min(Math.max(Math.trunc(Number(parsed.serviceFeeRate)), 0), 30)
+        : 0,
+      extraFeeAmount: Number.isFinite(parsed.extraFeeAmount)
+        ? Math.max(0, Math.trunc(Number(parsed.extraFeeAmount)))
+        : 0,
+      discountAmount: Number.isFinite(parsed.discountAmount)
+        ? Math.max(0, Math.trunc(Number(parsed.discountAmount)))
+        : 0,
+      pointsRedeemed: Number.isFinite(parsed.pointsRedeemed)
+        ? Math.max(0, Math.trunc(Number(parsed.pointsRedeemed)))
+        : 0,
+      couponCode: typeof parsed.couponCode === 'string' ? parsed.couponCode : '',
     }
   } catch {
     return null
@@ -264,9 +300,16 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.requestedFulfillmentAt.trim().length > 0 ||
       draft.customer.note.trim().length > 0 ||
       draft.customer.name.trim() !== '現場客' ||
+      Boolean(draft.customer.memberId) ||
       Boolean(draft.draftOrderId) ||
       draft.paymentMethod !== 'cash' ||
-      draft.serviceMode !== 'takeout'
+      draft.serviceMode !== 'takeout' ||
+      draft.orderLabels.length > 0 ||
+      draft.serviceFeeRate > 0 ||
+      draft.extraFeeAmount > 0 ||
+      draft.discountAmount > 0 ||
+      draft.pointsRedeemed > 0 ||
+      draft.couponCode.trim().length > 0
 
     if (!hasDraft) {
       globalThis.localStorage?.removeItem(counterDraftStorageKey)
@@ -342,9 +385,20 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     customerPhone: order.customerPhone,
     deliveryAddress: order.deliveryAddress,
     requestedFulfillmentAt: nullableString(order.requestedFulfillmentAt),
+    memberId: nullableString(order.memberId),
     note: order.note,
     lines,
     subtotal: Math.max(0, Math.trunc(order.subtotal)),
+    orderLabels: Array.isArray(order.orderLabels)
+      ? order.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, 12)
+      : [],
+    serviceFeeRate: Math.min(Math.max(Math.trunc(Number(order.serviceFeeRate) || 0), 0), 30),
+    serviceFeeAmount: Math.max(0, Math.trunc(Number(order.serviceFeeAmount) || 0)),
+    extraFeeAmount: Math.max(0, Math.trunc(Number(order.extraFeeAmount) || 0)),
+    discountAmount: Math.max(0, Math.trunc(Number(order.discountAmount) || 0)),
+    pointsRedeemed: Math.max(0, Math.trunc(Number(order.pointsRedeemed) || 0)),
+    couponCode: typeof order.couponCode === 'string' ? order.couponCode : '',
+    memberPointsEarned: Math.max(0, Math.trunc(Number(order.memberPointsEarned) || 0)),
     paymentMethod: isPaymentMethod(order.paymentMethod) ? order.paymentMethod : 'cash',
     paymentStatus: isPaymentStatus(order.paymentStatus) ? order.paymentStatus : 'pending',
     status: isOrderStatus(order.status) ? order.status : 'new',
@@ -625,6 +679,8 @@ const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrid
   inventoryCount: product.inventoryCount,
   lowStockThreshold: product.lowStockThreshold,
   soldOutUntil: product.soldOutUntil,
+  supplyPeriods: product.supplyPeriods.map((period) => ({ ...period, days: [...period.days] })),
+  futureOrderAvailable: product.futureOrderAvailable,
 })
 
 const productSkuFromName = (name: string): string => {
@@ -659,6 +715,8 @@ const buildLocalProduct = (input: ProductUpdateInput): MenuItem => ({
   inventoryCount: input.inventoryCount,
   lowStockThreshold: input.lowStockThreshold,
   soldOutUntil: input.soldOutUntil,
+  supplyPeriods: input.supplyPeriods.map((period) => ({ ...period, days: [...period.days] })),
+  futureOrderAvailable: input.futureOrderAvailable,
 })
 
 const isLocalProduct = (product: MenuItem): boolean => product.id.startsWith('local-')
@@ -697,6 +755,8 @@ const sanitizeLocalProduct = (value: unknown): MenuItem | null => {
     inventoryCount: typeof product.inventoryCount === 'number' ? Math.trunc(product.inventoryCount) : null,
     lowStockThreshold: typeof product.lowStockThreshold === 'number' ? Math.trunc(product.lowStockThreshold) : null,
     soldOutUntil: typeof product.soldOutUntil === 'string' ? product.soldOutUntil : null,
+    supplyPeriods: Array.isArray(product.supplyPeriods) ? product.supplyPeriods : [],
+    futureOrderAvailable: product.futureOrderAvailable === true,
   }
 }
 
@@ -733,6 +793,30 @@ const isProductTemporarilyStopped = (product: MenuItem): boolean => {
   return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
 }
 
+const isCurrentTimeInSupplyWindow = (product: MenuItem, now = new Date()): boolean => {
+  if (product.supplyPeriods.length === 0) {
+    return true
+  }
+
+  const day = now.getDay()
+  const currentMinutes = now.getHours() * 60 + now.getMinutes()
+  return product.supplyPeriods.some((period) => {
+    if (!period.days.includes(day)) {
+      return false
+    }
+
+    const [startHour = 0, startMinute = 0] = period.start.split(':').map(Number)
+    const [endHour = 23, endMinute = 59] = period.end.split(':').map(Number)
+    const startMinutes = startHour * 60 + startMinute
+    const endMinutes = endHour * 60 + endMinute
+    if (endMinutes < startMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes
+    }
+
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes
+  })
+}
+
 const productSupplyOverrides = (status: ProductSupplyStatus): ProductUpdateOverrides => {
   if (status === 'online-stopped') {
     return {
@@ -764,7 +848,8 @@ const isProductOrderable = (product: MenuItem): boolean =>
   product.available &&
   product.posVisible &&
   product.inventoryCount !== 0 &&
-  !isProductTemporarilyStopped(product)
+  !isProductTemporarilyStopped(product) &&
+  isCurrentTimeInSupplyWindow(product)
 
 const isProductVisibleInPos = (product: MenuItem): boolean => product.posVisible
 
@@ -816,6 +901,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
   const paymentMethod = ref<PaymentMethod>(savedCounterDraft?.paymentMethod ?? 'cash')
+  const orderLabels = ref<string[]>(savedCounterDraft?.orderLabels ?? [])
+  const serviceFeeRate = ref(savedCounterDraft?.serviceFeeRate ?? 0)
+  const extraFeeAmount = ref(savedCounterDraft?.extraFeeAmount ?? 0)
+  const discountAmount = ref(savedCounterDraft?.discountAmount ?? 0)
+  const pointsRedeemed = ref(savedCounterDraft?.pointsRedeemed ?? 0)
+  const couponCode = ref(savedCounterDraft?.couponCode ?? '')
   const savedLocalProducts = readLocalProducts()
   const menuCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
   const productStatusCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
@@ -868,6 +959,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
   const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
   const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
+  const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
   const onlineReminderClock = ref(Date.now())
   const acknowledgedOnlineReminderIds = ref<string[]>([])
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
@@ -917,6 +1009,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
     posAppearanceSettings.value = runtimeSettings.posAppearance
     floorPlanSettings.value = runtimeSettings.floorPlan
+    engagementSettings.value = runtimeSettings.engagementSettings
+    if (!savedCounterDraft && runtimeSettings.engagementSettings.defaultServiceFeeRate > 0) {
+      serviceFeeRate.value = runtimeSettings.engagementSettings.defaultServiceFeeRate
+    }
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
       : buildDefaultPrinterSettings(printStation)
@@ -1174,8 +1270,21 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       .slice(0, 6)
   })
 
-  const cartTotal = computed(() =>
+  const cartItemSubtotal = computed(() =>
     cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0),
+  )
+  const serviceFeeAmount = computed(() =>
+    Math.max(0, Math.round(cartItemSubtotal.value * Math.min(Math.max(serviceFeeRate.value, 0), 30) / 100)),
+  )
+  const cartTotal = computed(() =>
+    Math.max(
+      0,
+      cartItemSubtotal.value +
+        serviceFeeAmount.value +
+        Math.max(0, Math.trunc(extraFeeAmount.value || 0)) -
+        Math.max(0, Math.trunc(discountAmount.value || 0)) -
+        Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+    ),
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
@@ -1209,6 +1318,33 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       : '尚未開班'
   }
 
+  const applyCustomerMember = (member: { id: string; displayName: string; phone: string; customerType: string; pointsBalance: number; coupons?: CustomerDraft['availableCoupons'] }): void => {
+    customer.memberId = member.id
+    customer.name = member.displayName
+    customer.phone = member.phone
+    customer.customerType = member.customerType
+    customer.pointsBalance = member.pointsBalance
+    customer.availableCoupons = member.coupons ?? []
+  }
+
+  const clearCustomerMember = (): void => {
+    customer.memberId = null
+    customer.customerType = '一般顧客'
+    customer.pointsBalance = 0
+    customer.availableCoupons = []
+    pointsRedeemed.value = 0
+    couponCode.value = ''
+  }
+
+  const toggleOrderLabel = (labelId: string): void => {
+    if (orderLabels.value.includes(labelId)) {
+      orderLabels.value = orderLabels.value.filter((label) => label !== labelId)
+      return
+    }
+
+    orderLabels.value = [...orderLabels.value, labelId].slice(0, 12)
+  }
+
   const rememberRecentItem = (itemId: string): void => {
     recentItemIds.value = [itemId, ...recentItemIds.value.filter((entry) => entry !== itemId)].slice(0, 6)
     writeRecentItemIds(recentItemIds.value)
@@ -1216,11 +1352,24 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const resetCustomerDraft = (): void => {
     const nextDraft = defaultCustomerDraft()
+    customer.memberId = nextDraft.memberId
     customer.name = nextDraft.name
     customer.phone = nextDraft.phone
+    customer.customerType = nextDraft.customerType
+    customer.pointsBalance = nextDraft.pointsBalance
+    customer.availableCoupons = nextDraft.availableCoupons
     customer.deliveryAddress = nextDraft.deliveryAddress
     customer.requestedFulfillmentAt = nextDraft.requestedFulfillmentAt
     customer.note = nextDraft.note
+  }
+
+  const resetOrderAdjustments = (): void => {
+    orderLabels.value = []
+    serviceFeeRate.value = engagementSettings.value.defaultServiceFeeRate
+    extraFeeAmount.value = 0
+    discountAmount.value = 0
+    pointsRedeemed.value = 0
+    couponCode.value = ''
   }
 
   const syncNextSequenceFromQueue = (): void => {
@@ -1249,9 +1398,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: '',
       deliveryAddress: '',
       requestedFulfillmentAt: null,
+      memberId: null,
       note: '',
       lines: [],
       subtotal: 0,
+      orderLabels: [],
+      serviceFeeRate: 0,
+      serviceFeeAmount: 0,
+      extraFeeAmount: 0,
+      discountAmount: 0,
+      pointsRedeemed: 0,
+      couponCode: '',
+      memberPointsEarned: 0,
       paymentMethod: 'cash',
       paymentStatus: 'pending',
       status: 'new',
@@ -1266,6 +1424,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     clearCart()
     resetCustomerDraft()
+    resetOrderAdjustments()
     paymentMethod.value = 'cash'
     serviceMode.value = mode
     counterDraftOrderId.value = orderId
@@ -1460,9 +1619,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: customer.phone.trim(),
       deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
       subtotal: cartTotal.value,
+      orderLabels: [...orderLabels.value],
+      serviceFeeRate: Math.min(Math.max(Math.trunc(serviceFeeRate.value || 0), 0), 30),
+      serviceFeeAmount: serviceFeeAmount.value,
+      extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
+      discountAmount: Math.max(0, Math.trunc(discountAmount.value || 0)),
+      pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+      couponCode: couponCode.value.trim(),
+      memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
       paymentMethod: paymentMethod.value,
       paymentStatus: nextPaymentStatus,
       claimedBy: currentOrder.claimedBy ?? stationClaimId,
@@ -1482,7 +1650,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   watch(
-    [cartLines, serviceMode, paymentMethod, customer, counterDraftOrderId, counterDraftStartedAt],
+    [
+      cartLines,
+      serviceMode,
+      paymentMethod,
+      customer,
+      counterDraftOrderId,
+      counterDraftStartedAt,
+      orderLabels,
+      serviceFeeRate,
+      extraFeeAmount,
+      discountAmount,
+      pointsRedeemed,
+      couponCode,
+    ],
     () => {
       writeCounterDraft({
         cartLines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -1491,6 +1672,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         draftStartedAt: counterDraftOrderId.value ? counterDraftStartedAt.value : null,
         paymentMethod: paymentMethod.value,
         serviceMode: serviceMode.value,
+        orderLabels: [...orderLabels.value],
+        serviceFeeRate: serviceFeeRate.value,
+        extraFeeAmount: extraFeeAmount.value,
+        discountAmount: discountAmount.value,
+        pointsRedeemed: pointsRedeemed.value,
+        couponCode: couponCode.value,
       })
       syncActiveCounterOrderSnapshot()
     },
@@ -2875,9 +3062,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: customer.phone.trim(),
       deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
       subtotal: cartTotal.value,
+      orderLabels: [...orderLabels.value],
+      serviceFeeRate: Math.min(Math.max(Math.trunc(serviceFeeRate.value || 0), 0), 30),
+      serviceFeeAmount: serviceFeeAmount.value,
+      extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
+      discountAmount: Math.max(0, Math.trunc(discountAmount.value || 0)),
+      pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+      couponCode: couponCode.value.trim(),
+      memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
       paymentMethod: paymentMethod.value,
       paymentStatus,
       status: existingOrder?.status ?? 'new',
@@ -2894,6 +3090,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const finishCounterDraft = (): void => {
     clearCart()
     resetCustomerDraft()
+    resetOrderAdjustments()
     clearCounterDraftIdentity()
   }
 
@@ -3061,8 +3258,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const editableOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
     serviceMode.value = editableOrder.mode
     paymentMethod.value = editableOrder.paymentMethod
+    orderLabels.value = [...editableOrder.orderLabels]
+    serviceFeeRate.value = editableOrder.serviceFeeRate
+    extraFeeAmount.value = editableOrder.extraFeeAmount
+    discountAmount.value = editableOrder.discountAmount
+    pointsRedeemed.value = editableOrder.pointsRedeemed
+    couponCode.value = editableOrder.couponCode
+    customer.memberId = editableOrder.memberId
     customer.name = editableOrder.customerName || '現場客'
     customer.phone = editableOrder.customerPhone
+    customer.customerType = customer.memberId ? customer.customerType : '一般顧客'
     customer.deliveryAddress = editableOrder.deliveryAddress
     customer.requestedFulfillmentAt = toDatetimeLocalInputValue(editableOrder.requestedFulfillmentAt)
     customer.note = editableOrder.note
@@ -3248,15 +3453,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     activeOnlineReminderOrders,
     backendStatus,
     cartLines,
+    cartItemSubtotal,
     cartQuantity,
     cartTotal,
     clearCart,
+    clearCustomerMember,
     closeRegisterSessionForStation,
     counterDraftOrderId,
     counterDraftStartedAt,
     customer,
     customerHasNote,
     deletingPrintJobId,
+    discountAmount,
+    engagementSettings,
+    extraFeeAmount,
     createProductForStation,
     decreaseLine,
     deleteOrderFromQueue,
@@ -3284,9 +3494,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     onlineOrderRequiresAcceptance,
     onlineOrderReminder,
     onlineOrderingSettings,
+    orderLabels,
     paymentMethod,
     pendingOrders,
     posAppearanceSettings,
+    pointsRedeemed,
     printOrder,
     printingOrderId,
     printStation,
@@ -3305,6 +3517,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     searchTerm,
     selectedCategory,
     serviceMode,
+    serviceFeeAmount,
+    serviceFeeRate,
     saveCounterOrder,
     setItemQuantity,
     setLineQuantity,
@@ -3314,6 +3528,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationHeartbeatMessage,
     togglingProductId,
     toggleCustomerNote,
+    toggleOrderLabel,
+    applyCustomerMember,
+    couponCode,
     unconfirmedOnlineOrders,
     updatingPaymentOrderId,
     addConfiguredItem,

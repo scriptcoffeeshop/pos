@@ -46,7 +46,7 @@ import {
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import { defaultFloorPlanSettings, isPosApiConfigured, normalizeFloorPlanSettings, updateAdminSetting } from './lib/posApi'
+import { defaultFloorPlanSettings, isPosApiConfigured, normalizeFloorPlanSettings, searchPosMembers, updateAdminSetting } from './lib/posApi'
 import type {
   CartLine,
   FloorDisplayPreferences,
@@ -61,6 +61,7 @@ import type {
   PaymentMethod,
   PaymentStatus,
   PosAppearanceSettings,
+  PosMember,
   PosOrder,
   PrinterSettings,
   ProductSupplyStatus,
@@ -665,10 +666,13 @@ const {
   acknowledgeOnlineOrderReminders,
   activeOnlineReminderOrders,
   backendStatus,
+  applyCustomerMember,
+  cartItemSubtotal,
   cartLines,
   cartQuantity,
   cartTotal,
   clearCart,
+  clearCustomerMember,
   claimLabelFor,
   claimOrderForStation,
   claimingOrderId,
@@ -676,6 +680,7 @@ const {
   counterDraftOrderId,
   counterDraftStartedAt,
   createProductForStation,
+  couponCode,
   customer,
   customerHasNote,
   deletingPrintJobId,
@@ -683,6 +688,9 @@ const {
   deleteOrderFromQueue,
   deleteProductForStation,
   deletePrintJobForOrder,
+  discountAmount,
+  engagementSettings,
+  extraFeeAmount,
   filteredMenu,
   floorPlanSettings,
   increaseLine,
@@ -700,9 +708,11 @@ const {
   onlineOrderRequiresAcceptance,
   onlineOrderReminder,
   onlineOrderingSettings,
+  orderLabels,
   paymentMethod,
   pendingOrders,
   posAppearanceSettings,
+  pointsRedeemed,
   printOrder,
   printingOrderId,
   printStation,
@@ -722,6 +732,8 @@ const {
   selectedCategory,
   sendPrinterHealthcheck,
   serviceMode,
+  serviceFeeAmount,
+  serviceFeeRate,
   saveCounterOrder,
   setItemQuantity,
   setLineQuantity,
@@ -730,6 +742,7 @@ const {
   stationHeartbeatMessage,
   togglingProductId,
   toggleCustomerNote,
+  toggleOrderLabel,
   updateConfiguredLine,
   openRegisterSessionForStation,
   updateOrderFloorAssignmentForStation,
@@ -740,6 +753,95 @@ const {
   voidingOrderId,
   voidOrderForStation,
 } = usePosSession({ autoLoad: !isConsumerDomain })
+
+const crmSearchTerm = ref('')
+const crmMatches = ref<PosMember[]>([])
+const isCrmSearching = ref(false)
+const crmMessage = ref('輸入電話或姓名可查會員')
+
+const selectedOrderLabelSettings = computed(() =>
+  engagementSettings.value.orderLabels.filter((label) => orderLabels.value.includes(label.id)),
+)
+
+const activeCoupon = computed(() =>
+  customer.availableCoupons.find((coupon) => coupon.code === couponCode.value && coupon.status === 'active') ?? null,
+)
+
+const recommendedItems = computed(() => {
+  const cartCategories = new Set(cartLines.value.map((line) => line.category).filter(Boolean))
+  const cartItemIds = new Set(cartLines.value.map((line) => line.productId ?? line.itemId))
+  const ruleProductIds = engagementSettings.value.recommendations
+    .filter((rule) =>
+      rule.enabled &&
+      (
+        rule.trigger === 'any' ||
+        cartCategories.has(rule.trigger as MenuCategory) ||
+        (rule.trigger === 'morning' && new Date().getHours() < 12)
+      ),
+    )
+    .flatMap((rule) => rule.productIds)
+  const candidateIds = new Set(ruleProductIds)
+  const taggedCandidates = menuCatalog.value.filter((item) =>
+    item.tags.some((tag) => ['可加購', '熱賣', '限量'].includes(tag)),
+  )
+
+  return [...menuCatalog.value, ...taggedCandidates]
+    .filter((item) =>
+      item.available &&
+      item.posVisible &&
+      !cartItemIds.has(item.id) &&
+      (candidateIds.size === 0 || candidateIds.has(item.id) || item.tags.includes('可加購')),
+    )
+    .slice(0, 4)
+})
+
+const supplyCheckSummary = computed(() => {
+  const unavailableOnlineItems = menuCatalog.value.filter((item) =>
+    item.onlineVisible && (!item.available || item.inventoryCount === 0),
+  )
+  if (!engagementSettings.value.supplyRules.preOpenCheckEnabled) {
+    return '線上營業前檢查未啟用'
+  }
+
+  return unavailableOnlineItems.length > 0
+    ? `${unavailableOnlineItems.length} 個線上商品目前無供應`
+    : '線上供應檢查正常'
+})
+
+const runCrmSearch = async (): Promise<void> => {
+  const keyword = (crmSearchTerm.value || customer.phone || customer.name).trim()
+  if (!keyword) {
+    crmMessage.value = '請輸入電話或姓名'
+    return
+  }
+
+  isCrmSearching.value = true
+  crmMessage.value = '查詢會員中'
+  try {
+    crmMatches.value = await searchPosMembers(keyword)
+    crmMessage.value = crmMatches.value.length > 0 ? `找到 ${crmMatches.value.length} 位顧客` : '查無顧客'
+  } catch (error) {
+    crmMessage.value = error instanceof Error ? error.message : '會員查詢失敗'
+  } finally {
+    isCrmSearching.value = false
+  }
+}
+
+const applyCrmMember = (member: PosMember): void => {
+  applyCustomerMember(member)
+  crmSearchTerm.value = member.phone || member.displayName
+  crmMessage.value = `${member.displayName} 已套用`
+}
+
+watch(activeCoupon, (coupon) => {
+  if (!coupon) {
+    return
+  }
+
+  discountAmount.value = coupon.discountAmount > 0
+    ? coupon.discountAmount
+    : Math.round(cartItemSubtotal.value * coupon.discountPercent / 100)
+})
 
 const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
   { value: 'takeout', label: '外帶' },
@@ -5031,6 +5133,8 @@ const addProductToSupplyCategory = async (): Promise<void> => {
     inventoryCount: null,
     lowStockThreshold: null,
     soldOutUntil: null,
+    supplyPeriods: [...engagementSettings.value.supplyRules.defaultPeriods],
+    futureOrderAvailable: engagementSettings.value.supplyRules.allowFutureOrdersAcrossDay,
   })
 
   if (!product) {
@@ -6564,6 +6668,15 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="customer-grid order-info-grid">
+                    <label class="wide-field">
+                      顧客查詢
+                      <span class="inline-action-field">
+                        <input v-model="crmSearchTerm" type="search" placeholder="電話、姓名、LINE UID" @keyup.enter="runCrmSearch" />
+                        <button class="icon-button" type="button" title="搜尋顧客" :disabled="isCrmSearching" @click="runCrmSearch">
+                          <Search :size="18" aria-hidden="true" />
+                        </button>
+                      </span>
+                    </label>
                     <label>
                       姓名
                       <input v-model="customer.name" type="text" autocomplete="name" />
@@ -6571,6 +6684,18 @@ onBeforeUnmount(() => {
                     <label>
                       電話
                       <input v-model="customer.phone" type="tel" autocomplete="tel" />
+                    </label>
+                    <label>
+                      顧客類型
+                      <select v-model="customer.customerType">
+                        <option v-for="type in engagementSettings.customerTypes" :key="type" :value="type">
+                          {{ type }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      可用點數
+                      <input v-model.number="customer.pointsBalance" type="number" min="0" step="1" />
                     </label>
                     <label>
                       預計時間
@@ -6584,6 +6709,40 @@ onBeforeUnmount(() => {
                       備註
                       <textarea v-model="customer.note" rows="4" />
                     </label>
+                  </div>
+
+                  <div class="crm-result-strip" aria-label="CRM 查詢結果">
+                    <button
+                      v-for="member in crmMatches"
+                      :key="member.id"
+                      type="button"
+                      class="crm-result-chip"
+                      @click="applyCrmMember(member)"
+                    >
+                      <UserRound :size="16" aria-hidden="true" />
+                      <span>{{ member.displayName }}</span>
+                      <small>{{ member.phone || member.customerType }} · {{ member.pointsBalance }} 點</small>
+                    </button>
+                    <button v-if="customer.memberId" type="button" class="crm-result-chip" @click="clearCustomerMember">
+                      <X :size="16" aria-hidden="true" />
+                      <span>取消會員</span>
+                      <small>{{ customer.customerType }} · {{ customer.availableCoupons.length }} 張券</small>
+                    </button>
+                    <span v-if="crmMatches.length === 0 && !customer.memberId" class="panel-note">{{ crmMessage }}</span>
+                  </div>
+
+                  <div class="order-label-strip" aria-label="訂單標籤">
+                    <button
+                      v-for="label in engagementSettings.orderLabels"
+                      :key="label.id"
+                      type="button"
+                      class="order-label-chip"
+                      :class="{ 'order-label-chip--active': orderLabels.includes(label.id) }"
+                      :style="{ '--label-color': label.color }"
+                      @click="toggleOrderLabel(label.id)"
+                    >
+                      {{ label.label }}
+                    </button>
                   </div>
 
                   <div class="note-shortcuts" aria-label="常用備註">
@@ -6625,10 +6784,46 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
+                  <div class="payment-adjustment-grid" aria-label="費用與折抵">
+                    <label>
+                      服務費 %
+                      <input v-model.number="serviceFeeRate" type="number" min="0" max="30" step="1" />
+                    </label>
+                    <label>
+                      其他費用
+                      <input v-model.number="extraFeeAmount" type="number" min="0" step="1" />
+                    </label>
+                    <label>
+                      優惠折抵
+                      <input v-model.number="discountAmount" type="number" min="0" step="1" />
+                    </label>
+                    <label>
+                      點數折抵
+                      <input v-model.number="pointsRedeemed" type="number" min="0" :max="customer.pointsBalance" step="1" />
+                    </label>
+                    <label class="wide-field">
+                      優惠券
+                      <select v-model="couponCode">
+                        <option value="">未使用</option>
+                        <option v-for="coupon in customer.availableCoupons" :key="coupon.id" :value="coupon.code">
+                          {{ coupon.title }} · {{ coupon.discountAmount > 0 ? formatCurrency(coupon.discountAmount) : `${coupon.discountPercent}%` }}
+                        </option>
+                      </select>
+                    </label>
+                  </div>
+
                   <div class="payment-summary-grid" aria-label="付款摘要">
                     <article>
                       <span>品項</span>
                       <strong>{{ cartQuantity }} 件</strong>
+                    </article>
+                    <article>
+                      <span>小計</span>
+                      <strong>{{ formatCurrency(cartItemSubtotal) }}</strong>
+                    </article>
+                    <article>
+                      <span>服務費</span>
+                      <strong>{{ formatCurrency(serviceFeeAmount) }}</strong>
                     </article>
                     <article>
                       <span>顧客</span>
@@ -6643,6 +6838,31 @@ onBeforeUnmount(() => {
                       <strong>{{ formatCurrency(cartTotal) }}</strong>
                     </article>
                   </div>
+
+                  <div v-if="selectedOrderLabelSettings.length > 0 || activeCoupon" class="payment-meta-strip">
+                    <span v-for="label in selectedOrderLabelSettings" :key="label.id" class="order-label-pill" :style="{ '--label-color': label.color }">
+                      {{ label.label }}
+                    </span>
+                    <span v-if="activeCoupon" class="order-label-pill order-label-pill--coupon">
+                      {{ activeCoupon.title }}
+                    </span>
+                  </div>
+
+                  <div v-if="recommendedItems.length > 0" class="recommendation-strip" aria-label="推薦加購">
+                    <button
+                      v-for="item in recommendedItems"
+                      :key="`recommend-${item.id}`"
+                      type="button"
+                      class="recommendation-chip"
+                      @click="addItem(item)"
+                    >
+                      <Plus :size="16" aria-hidden="true" />
+                      <span>{{ item.name }}</span>
+                      <strong>{{ formatCurrency(item.price) }}</strong>
+                    </button>
+                  </div>
+
+                  <p class="supply-check-note">{{ supplyCheckSummary }}</p>
 
                   <div class="payment-order-lines">
                     <article v-for="line in cartLines" :key="`payment-${line.itemId}`">

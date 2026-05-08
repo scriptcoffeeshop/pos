@@ -9,6 +9,8 @@ const defaultChannelState = {
   inventoryCount: null,
   lowStockThreshold: null,
   soldOutUntil: null,
+  supplyPeriods: [],
+  futureOrderAvailable: true,
 }
 
 export const menuItems: MenuItem[] = [
