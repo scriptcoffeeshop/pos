@@ -2384,6 +2384,114 @@ h3 {
   justify-content: center;
 }
 
+.floor-transfer-actions,
+.floor-table-setting-row,
+.waitline-form-party {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.floor-transfer-actions {
+  flex-wrap: wrap;
+  padding: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.floor-transfer-actions span,
+.floor-sync-message,
+.floor-table-setting-row span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.floor-transfer-actions button,
+.floor-table-capacity-stepper button,
+.waitline-form-party button,
+.text-button {
+  display: inline-grid;
+  min-width: 38px;
+  min-height: 38px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.waitline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.waitline-form input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.waitline-form-party {
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.waitline-form-submit {
+  min-height: 42px;
+  justify-content: center;
+}
+
+.floor-table-settings-list {
+  display: grid;
+  gap: 8px;
+}
+
+.floor-table-setting-row {
+  justify-content: space-between;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.floor-table-setting-row div:first-child {
+  min-width: 0;
+}
+
+.floor-table-setting-row strong,
+.floor-table-setting-row span,
+.floor-sync-message {
+  display: block;
+}
+
+.floor-table-capacity-stepper {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.floor-table-capacity-stepper strong {
+  min-width: 48px;
+  text-align: center;
+}
+
 .waitline-list,
 .floor-notification-list,
 .floor-display-options {
@@ -8858,6 +8966,16 @@ button.cart-line-summary:focus-visible {
   .admin-row-header,
   .admin-subpanel-heading,
   .admin-action-row {
+    flex-direction: column;
+  }
+
+  .waitline-form,
+  .floor-display-options {
+    grid-template-columns: 1fr;
+  }
+
+  .floor-table-setting-row {
+    align-items: stretch;
     flex-direction: column;
   }
 

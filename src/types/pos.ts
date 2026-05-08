@@ -211,11 +211,47 @@ export interface PosAppearanceSettings {
   toolboxOpacity: number
 }
 
+export interface FloorTableSetting {
+  id: string
+  label: string
+  capacity: number
+  x: number
+  y: number
+  width: number
+}
+
+export interface FloorDisplayPreferences {
+  showPeople: boolean
+  showUnsubmittedWait: boolean
+  showTableStay: boolean
+  showWaitlinePeople: boolean
+  showWaitlineTime: boolean
+  showOrderLabels: boolean
+}
+
+export interface WaitlineEntry {
+  id: string
+  name: string
+  phone: string
+  customerType: string
+  partySize: number
+  createdAt: string
+  note: string
+}
+
+export interface FloorPlanSettings {
+  tables: FloorTableSetting[]
+  display: FloorDisplayPreferences
+  partySizes: Record<string, number>
+  waitline: WaitlineEntry[]
+}
+
 export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
   onlineOrdering: OnlineOrderingSettings
   posAppearance: PosAppearanceSettings
+  floorPlan: FloorPlanSettings
 }
 
 export type TransactionLedgerEntryType = 'top_up' | 'payment' | 'refund' | 'adjustment'

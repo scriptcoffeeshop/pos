@@ -12,7 +12,7 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan";
 type ProductChannel = "pos" | "online" | "qr";
 
 interface OrderLineInput {
@@ -47,6 +47,12 @@ interface UpdateStatusInput {
 
 interface UpdatePaymentInput {
   paymentStatus: PaymentStatus;
+  stationId?: string;
+}
+
+interface UpdateFloorAssignmentInput {
+  tableLabel?: string;
+  partySize?: number;
   stationId?: string;
 }
 
@@ -265,6 +271,41 @@ interface PosAppearanceSettings {
   toolboxOpacity: number;
 }
 
+interface FloorTableSetting {
+  id: string;
+  label: string;
+  capacity: number;
+  x: number;
+  y: number;
+  width: number;
+}
+
+interface FloorDisplayPreferences {
+  showPeople: boolean;
+  showUnsubmittedWait: boolean;
+  showTableStay: boolean;
+  showWaitlinePeople: boolean;
+  showWaitlineTime: boolean;
+  showOrderLabels: boolean;
+}
+
+interface WaitlineEntry {
+  id: string;
+  name: string;
+  phone: string;
+  customerType: string;
+  partySize: number;
+  createdAt: string;
+  note: string;
+}
+
+interface FloorPlanSettings {
+  tables: FloorTableSetting[];
+  display: FloorDisplayPreferences;
+  partySizes: Record<string, number>;
+  waitline: WaitlineEntry[];
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -424,6 +465,24 @@ const defaultPosAppearance: PosAppearanceSettings = {
   textSize: 0,
   darkMode: false,
   toolboxOpacity: 100,
+};
+
+const defaultFloorPlan: FloorPlanSettings = {
+  tables: [
+    { id: "A2", label: "A2", capacity: 2, x: 34, y: 28, width: 13 },
+    { id: "A3", label: "A3", capacity: 2, x: 58, y: 28, width: 13 },
+    { id: "A1", label: "A1", capacity: 4, x: 36, y: 58, width: 20 },
+  ],
+  display: {
+    showPeople: true,
+    showUnsubmittedWait: true,
+    showTableStay: true,
+    showWaitlinePeople: true,
+    showWaitlineTime: true,
+    showOrderLabels: false,
+  },
+  partySizes: {},
+  waitline: [],
 };
 
 const loadOrder = (orderId: string) =>
@@ -652,11 +711,16 @@ api.get("/settings/runtime", async (c) => {
     "pos_appearance",
     defaultPosAppearance,
   );
+  const floorPlan = await loadSetting<FloorPlanSettings>(
+    "floor_plan",
+    defaultFloorPlan,
+  );
 
   return c.json({
     printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
     onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
     posAppearance: normalizePosAppearanceForRuntime(posAppearance),
+    floorPlan: normalizeFloorPlanForRuntime(floorPlan),
   });
 });
 
@@ -1227,7 +1291,7 @@ api.get("/admin/settings", async (c) => {
   const { data, error } = await supabase
     .from("pos_settings")
     .select("key, value")
-    .in("key", ["printer_settings", "access_control", "online_ordering"]);
+    .in("key", ["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan"]);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -1324,7 +1388,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -1871,6 +1935,73 @@ api.patch("/orders/:id/payment", async (c) => {
   });
 
   return c.json({ order: savedOrder });
+});
+
+api.patch("/orders/:id/floor", async (c) => {
+  const orderId = c.req.param("id");
+  const input = await c.req.json<UpdateFloorAssignmentInput>();
+  const stationId = sanitizeStationId(input.stationId);
+  const tableLabel = sanitizeText(input.tableLabel, "").toUpperCase().slice(0, 12);
+  const partySize = Math.min(Math.max(Math.trunc(Number(input.partySize) || 1), 1), 20);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  if (!tableLabel) {
+    return c.json({ error: "tableLabel is required" }, 400);
+  }
+
+  const current = await loadOrderByIdOrNumber(orderId);
+  if (current.error) {
+    return c.json({ error: current.error.message }, 500);
+  }
+  if (!current.data) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+  if (terminalOrderStatuses.has(current.data.status as OrderStatus)) {
+    return c.json({ error: "Completed or voided orders cannot be moved", order: current.data }, 409);
+  }
+
+  const now = new Date();
+  if (isLeaseActiveForOtherStation(current.data, stationId, now)) {
+    return claimConflictResponse(c, String(current.data.id), stationId);
+  }
+
+  const preservedNotes = sanitizeText(current.data.note, "")
+    .split(/[、，,]/)
+    .map((note) => note.trim())
+    .filter((note) => note && !/^桌位\s*[A-Z]\d+/i.test(note) && !/^\d+\s*人$/.test(note));
+  const note = [`桌位 ${tableLabel}`, `${partySize} 人`, ...preservedNotes].join("、").slice(0, 500);
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({
+      service_mode: "dine-in" as ServiceMode,
+      customer_name: `${tableLabel} 內用客`,
+      note,
+      ...buildClaimPayload(stationId, now),
+    })
+    .eq("id", current.data.id)
+    .select(orderSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.floor.move",
+    orderId: data.id,
+    stationId,
+    metadata: {
+      orderNumber: data.order_number,
+      tableLabel,
+      partySize,
+    },
+  });
+
+  return c.json({ order: data });
 });
 
 api.post("/orders/:id/void", async (c) => {
@@ -3477,6 +3608,134 @@ const normalizePosAppearanceForRuntime = (input: unknown): PosAppearanceSettings
   };
 };
 
+const normalizeFloorTables = (input: unknown): FloorTableSetting[] => {
+  if (!Array.isArray(input)) {
+    return defaultFloorPlan.tables;
+  }
+
+  const seenTableIds = new Set<string>();
+  const tables = input.flatMap((entry): FloorTableSetting[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const table = entry as Partial<FloorTableSetting>;
+    const id = sanitizeText(table.id, "").toUpperCase().slice(0, 12);
+    const label = sanitizeText(table.label, id).toUpperCase().slice(0, 12);
+    const capacity = Number(table.capacity);
+    const x = Number(table.x);
+    const y = Number(table.y);
+    const width = Number(table.width);
+    if (!id || seenTableIds.has(id) || !Number.isFinite(capacity)) {
+      return [];
+    }
+
+    seenTableIds.add(id);
+    return [{
+      id,
+      label: label || id,
+      capacity: Math.min(Math.max(Math.trunc(capacity), 1), 20),
+      x: Number.isFinite(x) ? Math.min(Math.max(x, 4), 92) : 40,
+      y: Number.isFinite(y) ? Math.min(Math.max(y, 4), 92) : 40,
+      width: Number.isFinite(width) ? Math.min(Math.max(width, 10), 36) : 16,
+    }];
+  }).slice(0, 40);
+
+  return tables.length > 0 ? tables : defaultFloorPlan.tables;
+};
+
+const normalizeFloorDisplay = (input: unknown): FloorDisplayPreferences => {
+  const settings = input && typeof input === "object" ? input as Partial<FloorDisplayPreferences> : {};
+  return {
+    showPeople: settings.showPeople !== false,
+    showUnsubmittedWait: settings.showUnsubmittedWait !== false,
+    showTableStay: settings.showTableStay !== false,
+    showWaitlinePeople: settings.showWaitlinePeople !== false,
+    showWaitlineTime: settings.showWaitlineTime !== false,
+    showOrderLabels: settings.showOrderLabels === true,
+  };
+};
+
+const normalizeFloorPartySizes = (
+  input: unknown,
+  tables: FloorTableSetting[],
+): Record<string, number> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const tableCapacities = new Map(tables.map((table) => [table.id, table.capacity]));
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, number>>((sizes, [rawTableId, rawSize]) => {
+    const tableId = rawTableId.trim().toUpperCase();
+    const capacity = tableCapacities.get(tableId);
+    const size = Number(rawSize);
+    if (!capacity || !Number.isFinite(size)) {
+      return sizes;
+    }
+
+    sizes[tableId] = Math.min(Math.max(Math.trunc(size), 0), capacity);
+    return sizes;
+  }, {});
+};
+
+const normalizeWaitlineEntries = (input: unknown): WaitlineEntry[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.flatMap((entry): WaitlineEntry[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const waitline = entry as Partial<WaitlineEntry>;
+    const createdAt = sanitizeText(waitline.createdAt, "");
+    const createdTime = new Date(createdAt).getTime();
+    if (!Number.isFinite(createdTime)) {
+      return [];
+    }
+
+    return [{
+      id: sanitizeText(waitline.id, `wait-${createdTime}`).slice(0, 80),
+      name: sanitizeText(waitline.name, "候位客").slice(0, 40),
+      phone: sanitizeText(waitline.phone, "").slice(0, 32),
+      customerType: sanitizeText(waitline.customerType, "walk-in").slice(0, 24),
+      partySize: Math.min(Math.max(Math.trunc(Number(waitline.partySize) || 1), 1), 20),
+      createdAt,
+      note: sanitizeText(waitline.note, "").slice(0, 120),
+    }];
+  }).slice(0, 60);
+};
+
+const normalizeFloorPlanForRuntime = (input: unknown): FloorPlanSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultFloorPlan;
+  }
+
+  const settings = input as Partial<FloorPlanSettings>;
+  const tables = normalizeFloorTables(settings.tables);
+  return {
+    tables,
+    display: normalizeFloorDisplay(settings.display),
+    partySizes: normalizeFloorPartySizes(settings.partySizes, tables),
+    waitline: normalizeWaitlineEntries(settings.waitline),
+  };
+};
+
+const validateFloorPlan = (input: unknown): {
+  value: FloorPlanSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "floor_plan must be an object" };
+  }
+
+  return {
+    value: normalizeFloorPlanForRuntime(input),
+    error: null,
+  };
+};
+
 const validatePosAppearance = (input: unknown): {
   value: PosAppearanceSettings | null;
   error: string | null;
@@ -3557,7 +3816,7 @@ const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | FloorPlanSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
@@ -3570,6 +3829,10 @@ const validateAdminSetting = (
 
   if (key === "pos_appearance") {
     return validatePosAppearance(input);
+  }
+
+  if (key === "floor_plan") {
+    return validateFloorPlan(input);
   }
 
   return validateAccessControl(input);

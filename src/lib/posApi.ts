@@ -2,6 +2,9 @@ import type {
   AccessControlSettings,
   MenuCategory,
   MenuItem,
+  FloorDisplayPreferences,
+  FloorPlanSettings,
+  FloorTableSetting,
   OrderSource,
   OrderStatus,
   PaymentMethod,
@@ -21,6 +24,7 @@ import type {
   PosPaymentEvent,
   PosStationHeartbeat,
   RegisterSession,
+  WaitlineEntry,
   PrintJob,
   PrintLabelMode,
   PrintRuleSetting,
@@ -229,6 +233,7 @@ interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
   onlineOrdering: OnlineOrderingSettings
   posAppearance: PosAppearanceSettings
+  floorPlan: FloorPlanSettings
 }
 
 interface DailyReportResponse {
@@ -266,11 +271,16 @@ export interface WalletAdjustmentInput {
   note: string
 }
 
+export interface FloorAssignmentInput {
+  tableLabel: string
+  partySize: number
+}
+
 interface ProductResponse {
   product: ApiProduct
 }
 
-export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering' | 'pos_appearance'
+export type AdminSettingKey = 'printer_settings' | 'access_control' | 'online_ordering' | 'pos_appearance' | 'floor_plan'
 export type ProductChannel = 'pos' | 'online' | 'qr'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
@@ -868,17 +878,156 @@ export const normalizePosAppearanceSettings = (value: unknown): PosAppearanceSet
   }
 }
 
+export const defaultFloorPlanSettings = (): FloorPlanSettings => ({
+  tables: [
+    { id: 'A2', label: 'A2', capacity: 2, x: 34, y: 28, width: 13 },
+    { id: 'A3', label: 'A3', capacity: 2, x: 58, y: 28, width: 13 },
+    { id: 'A1', label: 'A1', capacity: 4, x: 36, y: 58, width: 20 },
+  ],
+  display: {
+    showPeople: true,
+    showUnsubmittedWait: true,
+    showTableStay: true,
+    showWaitlinePeople: true,
+    showWaitlineTime: true,
+    showOrderLabels: false,
+  },
+  partySizes: {},
+  waitline: [],
+})
+
+const normalizeFloorTableSettings = (value: unknown): FloorTableSetting[] => {
+  const defaults = defaultFloorPlanSettings().tables
+  if (!Array.isArray(value)) {
+    return defaults
+  }
+
+  const seenTableIds = new Set<string>()
+  const tables = value.flatMap((entry): FloorTableSetting[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const table = entry as Partial<FloorTableSetting>
+    const id = typeof table.id === 'string' ? table.id.trim().toUpperCase().slice(0, 12) : ''
+    const label = typeof table.label === 'string' ? table.label.trim().toUpperCase().slice(0, 12) : id
+    const capacity = Number(table.capacity)
+    const x = Number(table.x)
+    const y = Number(table.y)
+    const width = Number(table.width)
+    if (!id || seenTableIds.has(id) || !Number.isFinite(capacity)) {
+      return []
+    }
+
+    seenTableIds.add(id)
+    return [{
+      id,
+      label: label || id,
+      capacity: Math.min(20, Math.max(1, Math.trunc(capacity))),
+      x: Number.isFinite(x) ? Math.min(92, Math.max(4, x)) : 40,
+      y: Number.isFinite(y) ? Math.min(92, Math.max(4, y)) : 40,
+      width: Number.isFinite(width) ? Math.min(36, Math.max(10, width)) : 16,
+    }]
+  }).slice(0, 40)
+
+  return tables.length > 0 ? tables : defaults
+}
+
+const normalizeFloorDisplayPreferences = (value: unknown): FloorDisplayPreferences => {
+  const defaults = defaultFloorPlanSettings().display
+  const source = value && typeof value === 'object' ? value as Partial<FloorDisplayPreferences> : {}
+  return {
+    showPeople: source.showPeople !== false,
+    showUnsubmittedWait: source.showUnsubmittedWait !== false,
+    showTableStay: source.showTableStay !== false,
+    showWaitlinePeople: source.showWaitlinePeople !== false,
+    showWaitlineTime: source.showWaitlineTime !== false,
+    showOrderLabels: source.showOrderLabels === true || defaults.showOrderLabels,
+  }
+}
+
+const normalizeFloorPartySizes = (
+  value: unknown,
+  tables: FloorTableSetting[],
+): Record<string, number> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const tableCapacities = new Map(tables.map((table) => [table.id, table.capacity]))
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((sizes, [tableId, rawSize]) => {
+    const id = tableId.trim().toUpperCase()
+    const capacity = tableCapacities.get(id)
+    const size = Number(rawSize)
+    if (!capacity || !Number.isFinite(size)) {
+      return sizes
+    }
+
+    sizes[id] = Math.min(capacity, Math.max(0, Math.trunc(size)))
+    return sizes
+  }, {})
+}
+
+const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((entry): WaitlineEntry[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const source = entry as Partial<WaitlineEntry>
+    const createdAt = typeof source.createdAt === 'string' ? source.createdAt : ''
+    const timestamp = new Date(createdAt).getTime()
+    if (!Number.isFinite(timestamp)) {
+      return []
+    }
+
+    return [{
+      id: typeof source.id === 'string' && source.id ? source.id.slice(0, 80) : `wait-${timestamp}`,
+      name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 40) : '候位客',
+      phone: typeof source.phone === 'string' ? source.phone.trim().slice(0, 32) : '',
+      customerType: typeof source.customerType === 'string' && source.customerType.trim()
+        ? source.customerType.trim().slice(0, 24)
+        : 'walk-in',
+      partySize: Math.min(20, Math.max(1, Math.trunc(Number(source.partySize) || 1))),
+      createdAt,
+      note: typeof source.note === 'string' ? source.note.trim().slice(0, 120) : '',
+    }]
+  }).slice(0, 60)
+}
+
+export const normalizeFloorPlanSettings = (value: unknown): FloorPlanSettings => {
+  const defaults = defaultFloorPlanSettings()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+
+  const settings = value as Partial<FloorPlanSettings>
+  const tables = normalizeFloorTableSettings(settings.tables)
+  return {
+    tables,
+    display: normalizeFloorDisplayPreferences(settings.display),
+    partySizes: normalizeFloorPartySizes(settings.partySizes, tables),
+    waitline: normalizeWaitlineEntries(settings.waitline),
+  }
+}
+
 const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
   const accessControl = rows.find((row) => row.key === 'access_control')?.value
   const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
   const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
+  const floorPlan = rows.find((row) => row.key === 'floor_plan')?.value
 
   return {
     printerSettings: normalizePrinterSettings(printerSettings),
     accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(posAppearance),
+    floorPlan: normalizeFloorPlanSettings(floorPlan),
   }
 }
 
@@ -1104,6 +1253,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
     printerSettings: normalizePrinterSettings(data.printerSettings),
     onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(data.posAppearance),
+    floorPlan: normalizeFloorPlanSettings(data.floorPlan),
   }
 }
 
@@ -1225,6 +1375,18 @@ export const updateOrderPaymentStatus = async (
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/payment`, {
     method: 'PATCH',
     body: JSON.stringify({ paymentStatus, stationId: currentStationId() }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const updateOrderFloorAssignment = async (
+  order: PosOrder,
+  input: FloorAssignmentInput,
+): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/floor`, {
+    method: 'PATCH',
+    body: JSON.stringify({ ...input, stationId: currentStationId() }),
   })
 
   return normalizeOrder(data.order)

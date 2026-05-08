@@ -46,9 +46,12 @@ import {
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import { isPosApiConfigured, updateAdminSetting } from './lib/posApi'
+import { defaultFloorPlanSettings, isPosApiConfigured, normalizeFloorPlanSettings, updateAdminSetting } from './lib/posApi'
 import type {
   CartLine,
+  FloorDisplayPreferences,
+  FloorPlanSettings,
+  FloorTableSetting,
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
@@ -65,6 +68,7 @@ import type {
   PrintRuleSetting,
   PrintStationSetting,
   ServiceMode,
+  WaitlineEntry,
 } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online'
@@ -73,11 +77,11 @@ type CartQuickEditor = 'customer' | 'service' | 'payment' | null
 type FloorServiceView = 'dine-in' | 'takeout-delivery'
 type QueueFilter = 'active' | 'ready' | 'all'
 type QueuePaymentFilter = 'all' | 'pending' | 'authorized' | 'paid' | 'issue'
-type QueueDateFilter = 'today' | 'older' | 'all'
+type QueueDateFilter = 'today' | 'future' | 'older' | 'all'
 type QueueServiceFilter = 'all' | ServiceMode
 type QueueSourceFilter = 'all' | OrderSource
 type QueueFulfillmentFilter = 'all' | 'overdue' | 'due-soon' | 'scheduled'
-type QueueSortMode = 'fulfillment-asc' | 'created-desc' | 'amount-desc'
+type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
@@ -114,23 +118,7 @@ interface PosUiPreferences extends PosAppearanceSettings {
   toolboxOpacity: number
 }
 
-interface DiningTableDefinition {
-  id: string
-  label: string
-  capacity: number
-  x: number
-  y: number
-  width: number
-}
-
-interface FloorDisplayPreferences {
-  showPeople: boolean
-  showUnsubmittedWait: boolean
-  showTableStay: boolean
-  showWaitlinePeople: boolean
-  showWaitlineTime: boolean
-  showOrderLabels: boolean
-}
+type DiningTableDefinition = FloorTableSetting
 
 interface FloorTableState {
   table: DiningTableDefinition
@@ -142,14 +130,6 @@ interface FloorTableState {
   peopleLabel: string
   waitLabel: string
   stayLabel: string
-}
-
-interface WaitlineEntry {
-  id: string
-  name: string
-  partySize: number
-  createdAt: string
-  note: string
 }
 
 interface PosNotificationItem {
@@ -280,6 +260,7 @@ interface SupplyStateSnapshot {
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
 const posUiPreferenceStorageKey = 'script-coffee-pos-ui-preferences'
+const floorTablesStorageKey = 'script-coffee-pos-floor-tables'
 const floorDisplayStorageKey = 'script-coffee-pos-floor-display'
 const floorPartyStorageKey = 'script-coffee-pos-floor-parties'
 const waitlineStorageKey = 'script-coffee-pos-waitline'
@@ -295,9 +276,9 @@ const supplyNotesFilterValue = '__notes__'
 const supplyNoteGroupsFilterValue = '__note_groups__'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
 const queuePaymentFilterValues: QueuePaymentFilter[] = ['all', 'pending', 'authorized', 'paid', 'issue']
-const queueDateFilterValues: QueueDateFilter[] = ['today', 'older', 'all']
+const queueDateFilterValues: QueueDateFilter[] = ['today', 'future', 'older', 'all']
 const queueFulfillmentFilterValues: QueueFulfillmentFilter[] = ['all', 'overdue', 'due-soon', 'scheduled']
-const queueSortModeValues: QueueSortMode[] = ['fulfillment-asc', 'created-desc', 'amount-desc']
+const queueSortModeValues: QueueSortMode[] = ['fulfillment-asc', 'fulfillment-desc', 'created-desc', 'amount-desc']
 const serviceModeValues: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const orderSourceValues: OrderSource[] = ['counter', 'qr', 'online']
 const productSupplyStatusValues: ProductSupplyStatus[] = ['normal', 'online-stopped', 'stopped']
@@ -330,19 +311,9 @@ const defaultMenuCategoryDefinitions: MenuCategoryDefinition[] = [
   { id: 'food', label: '輕食' },
   { id: 'retail', label: '零售' },
 ]
-const diningTables: DiningTableDefinition[] = [
-  { id: 'A2', label: 'A2', capacity: 2, x: 34, y: 28, width: 13 },
-  { id: 'A3', label: 'A3', capacity: 2, x: 58, y: 28, width: 13 },
-  { id: 'A1', label: 'A1', capacity: 4, x: 36, y: 58, width: 20 },
-]
-const defaultFloorDisplayPreferences: FloorDisplayPreferences = {
-  showPeople: true,
-  showUnsubmittedWait: true,
-  showTableStay: true,
-  showWaitlinePeople: true,
-  showWaitlineTime: true,
-  showOrderLabels: false,
-}
+const defaultFloorPlanSettingsValue = defaultFloorPlanSettings()
+const defaultDiningTables: DiningTableDefinition[] = defaultFloorPlanSettingsValue.tables
+const defaultFloorDisplayPreferences: FloorDisplayPreferences = defaultFloorPlanSettingsValue.display
 
 const isConsumerDomain =
   globalThis.location?.hostname === 'order.scriptcoffee.com.tw' ||
@@ -443,27 +414,29 @@ const writeStorageValue = (storageKey: string, value: unknown): void => {
 }
 
 const normalizeFloorDisplayPreferences = (value: unknown): FloorDisplayPreferences => {
-  const source = value && typeof value === 'object' ? value as Partial<FloorDisplayPreferences> : {}
-  return {
-    showPeople: source.showPeople !== false,
-    showUnsubmittedWait: source.showUnsubmittedWait !== false,
-    showTableStay: source.showTableStay !== false,
-    showWaitlinePeople: source.showWaitlinePeople !== false,
-    showWaitlineTime: source.showWaitlineTime !== false,
-    showOrderLabels: source.showOrderLabels === true,
-  }
+  return normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, display: value }).display
 }
 
 const readFloorDisplayPreferences = (): FloorDisplayPreferences =>
   normalizeFloorDisplayPreferences(readStorageValue<unknown>(floorDisplayStorageKey, defaultFloorDisplayPreferences))
 
-const normalizeFloorPartySizes = (value: unknown): Record<string, number> => {
+const normalizeFloorTables = (value: unknown): DiningTableDefinition[] =>
+  normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, tables: value }).tables
+
+const readFloorTables = (): DiningTableDefinition[] =>
+  normalizeFloorTables(readStorageValue<unknown>(floorTablesStorageKey, defaultDiningTables))
+
+const normalizeFloorPartySizes = (
+  value: unknown,
+  tables: DiningTableDefinition[] = defaultDiningTables,
+): Record<string, number> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
   }
 
-  const tableCapacities = new Map(diningTables.map((table) => [table.id, table.capacity]))
-  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((sizes, [tableId, rawSize]) => {
+  const tableCapacities = new Map(tables.map((table) => [table.id, table.capacity]))
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((sizes, [rawTableId, rawSize]) => {
+    const tableId = rawTableId.trim().toUpperCase()
     const capacity = tableCapacities.get(tableId)
     const size = Number(rawSize)
     if (!capacity || !Number.isFinite(size)) {
@@ -475,34 +448,8 @@ const normalizeFloorPartySizes = (value: unknown): Record<string, number> => {
   }, {})
 }
 
-const readFloorPartySizes = (): Record<string, number> =>
-  normalizeFloorPartySizes(readStorageValue<unknown>(floorPartyStorageKey, {}))
-
 const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  return value.flatMap((entry): WaitlineEntry[] => {
-    if (!entry || typeof entry !== 'object') {
-      return []
-    }
-
-    const source = entry as Partial<WaitlineEntry>
-    const createdAt = typeof source.createdAt === 'string' ? source.createdAt : ''
-    const timestamp = new Date(createdAt).getTime()
-    if (!Number.isFinite(timestamp)) {
-      return []
-    }
-
-    return [{
-      id: typeof source.id === 'string' && source.id ? source.id : `wait-${timestamp}`,
-      name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 40) : '候位客',
-      partySize: Math.min(12, Math.max(1, Math.trunc(Number(source.partySize) || 1))),
-      createdAt,
-      note: typeof source.note === 'string' ? source.note.trim().slice(0, 80) : '',
-    }]
-  }).slice(0, 30)
+  return normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, waitline: value }).waitline
 }
 
 const readWaitlineEntries = (): WaitlineEntry[] =>
@@ -704,6 +651,7 @@ const {
   deleteProductForStation,
   deletePrintJobForOrder,
   filteredMenu,
+  floorPlanSettings,
   increaseLine,
   isSubmitting,
   isRegisterBusy,
@@ -751,6 +699,7 @@ const {
   toggleCustomerNote,
   updateConfiguredLine,
   openRegisterSessionForStation,
+  updateOrderFloorAssignmentForStation,
   updateOrderStatus,
   updatePaymentStatus,
   updateProductSupplyStatus,
@@ -1820,6 +1769,7 @@ const queuePaymentFilterOptions = computed(() => {
 const queueDateFilterOptions: Array<{ value: QueueDateFilter; label: string }> = [
   { value: 'all', label: '全部日期' },
   { value: 'today', label: '今日' },
+  { value: 'future', label: '今日之後' },
   { value: 'older', label: '較舊' },
 ]
 const queueServiceFilterOptions: Array<{ value: QueueServiceFilter; label: string }> = [
@@ -1841,12 +1791,13 @@ const queueFulfillmentFilterLabels: Record<QueueFulfillmentFilter, string> = {
   scheduled: '已排程',
 }
 const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
-  { value: 'fulfillment-asc', label: '取餐/送達時間' },
+  { value: 'fulfillment-asc', label: '取餐/送達時間早到晚' },
+  { value: 'fulfillment-desc', label: '取餐/送達時間晚到早' },
   { value: 'created-desc', label: '建立時間新到舊' },
   { value: 'amount-desc', label: '金額高到低' },
 ]
 const orderDateKey = (order: PosOrder): string | null => {
-  const orderDate = new Date(order.createdAt)
+  const orderDate = new Date(order.requestedFulfillmentAt ?? order.createdAt)
   return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
 }
 const orderFulfillmentTimestamp = (order: PosOrder): number | null => {
@@ -1885,7 +1836,15 @@ const orderMatchesQueueDate = (order: PosOrder): boolean => {
     return queueDateFilter.value === 'older'
   }
 
-  return queueDateFilter.value === 'today' ? dateKey === todayKey : dateKey !== todayKey
+  if (queueDateFilter.value === 'today') {
+    return dateKey === todayKey
+  }
+
+  if (queueDateFilter.value === 'future') {
+    return dateKey > todayKey
+  }
+
+  return dateKey < todayKey
 }
 const orderMatchesQueueService = (order: PosOrder): boolean =>
   queueServiceFilter.value === 'all' || order.mode === queueServiceFilter.value
@@ -1971,6 +1930,10 @@ const sortQueueOrders = (orders: PosOrder[]): PosOrder[] =>
 
     if (queueSortMode.value === 'amount-desc') {
       return b.subtotal - a.subtotal || orderCreatedTime(b) - orderCreatedTime(a)
+    }
+
+    if (queueSortMode.value === 'fulfillment-desc') {
+      return orderFulfillmentTime(b) - orderFulfillmentTime(a) || orderCreatedTime(b) - orderCreatedTime(a)
     }
 
     return orderFulfillmentTime(a) - orderFulfillmentTime(b) || orderCreatedTime(a) - orderCreatedTime(b)
@@ -2542,14 +2505,24 @@ const activeView = ref<AppView>(initialView === 'admin' && !backendEditModeEnabl
 const activeWorkspaceTab = ref<WorkspaceTab>('floor')
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
+const floorTables = ref<DiningTableDefinition[]>(readFloorTables())
 const floorDisplayPreferences = ref<FloorDisplayPreferences>(readFloorDisplayPreferences())
-const floorPartySizes = ref<Record<string, number>>(readFloorPartySizes())
+const floorPartySizes = ref<Record<string, number>>(normalizeFloorPartySizes(readStorageValue<unknown>(floorPartyStorageKey, {}), floorTables.value))
 const waitlineEntries = ref<WaitlineEntry[]>(readWaitlineEntries())
+const waitlineDraft = ref({
+  name: '',
+  phone: '',
+  customerType: 'walk-in',
+  partySize: 2,
+  note: '',
+})
 const activeFloorServiceView = ref<FloorServiceView>('dine-in')
 const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
+const isApplyingRemoteFloorPlanSettings = ref(false)
+const floorPlanSyncMessage = ref('桌位、候位與顯示設定會寫入資料庫')
 const preferenceOffsetLabel = (value: number): string => `${value > 0 ? '+' : ''}${Math.round(value)}%`
 const scaleFactorFromOffset = (offset: number): number => {
   const calibratedOffset = offset + interfaceScaleBaselineOffset
@@ -2686,6 +2659,74 @@ const persistPosAppearancePreferences = (preferences: PosUiPreferences): void =>
       })
   }, 650)
 }
+
+const floorPlanPayload = (): FloorPlanSettings =>
+  normalizeFloorPlanSettings({
+    tables: floorTables.value,
+    display: floorDisplayPreferences.value,
+    partySizes: floorPartySizes.value,
+    waitline: waitlineEntries.value,
+  })
+
+const writeFloorPlanCache = (settings: FloorPlanSettings): void => {
+  writeStorageValue(floorTablesStorageKey, settings.tables)
+  writeStorageValue(floorDisplayStorageKey, settings.display)
+  writeStorageValue(floorPartyStorageKey, settings.partySizes)
+  writeStorageValue(waitlineStorageKey, settings.waitline)
+}
+
+const clearFloorPlanPersistTimer = (): void => {
+  if (floorPlanPersistTimer !== null) {
+    globalThis.clearTimeout(floorPlanPersistTimer)
+    floorPlanPersistTimer = null
+  }
+}
+
+const applyFloorPlanSettings = (settings: FloorPlanSettings): void => {
+  const normalizedSettings = normalizeFloorPlanSettings(settings)
+  isApplyingRemoteFloorPlanSettings.value = true
+  floorTables.value = normalizedSettings.tables
+  floorDisplayPreferences.value = normalizedSettings.display
+  floorPartySizes.value = normalizedSettings.partySizes
+  waitlineEntries.value = normalizedSettings.waitline
+  writeFloorPlanCache(normalizedSettings)
+  if (selectedFloorTableId.value && !normalizedSettings.tables.some((table) => table.id === selectedFloorTableId.value)) {
+    selectedFloorTableId.value = normalizedSettings.tables[0]?.id ?? null
+  }
+  floorPlanSyncMessage.value = '桌位設定已由資料庫同步'
+  globalThis.setTimeout(() => {
+    isApplyingRemoteFloorPlanSettings.value = false
+  }, 0)
+}
+
+const persistFloorPlanSettings = (): void => {
+  const payload = floorPlanPayload()
+  writeFloorPlanCache(payload)
+
+  if (isApplyingRemoteFloorPlanSettings.value) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    floorPlanSyncMessage.value = '已暫存本機；連上 POS API 後才會寫入資料庫'
+    return
+  }
+
+  clearFloorPlanPersistTimer()
+  floorPlanPersistTimer = globalThis.setTimeout(() => {
+    floorPlanPersistTimer = null
+    void updateAdminSetting<FloorPlanSettings>('floor_plan', payload)
+      .then((settings) => {
+        const normalizedSettings = normalizeFloorPlanSettings(settings)
+        floorPlanSettings.value = normalizedSettings
+        floorPlanSyncMessage.value = '桌位、候位與顯示設定已寫入資料庫'
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : '同步失敗'
+        floorPlanSyncMessage.value = `已暫存本機；資料庫同步失敗：${message}`
+      })
+  }, 650)
+}
 const queueFilter = ref<QueueFilter>(savedQueueView.filter)
 const queuePaymentFilter = ref<QueuePaymentFilter>(savedQueueView.paymentFilter)
 const queueDateFilter = ref<QueueDateFilter>(savedQueueView.dateFilter)
@@ -2768,6 +2809,7 @@ let claimClockTimer: number | null = null
 let backendEditTapTimer: number | null = null
 let toolboxBackendEditLongPressTimer: number | null = null
 let appearancePersistTimer: number | null = null
+let floorPlanPersistTimer: number | null = null
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
 const ticketStartedLabel = computed(() =>
@@ -2883,7 +2925,7 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
 }))
 const tableNoteToken = (tableLabel: string): string => `桌位 ${tableLabel}`
 const tableIdFromOrder = (order: PosOrder): string | null => {
-  const tableLabels = new Set(diningTables.map((table) => table.label))
+  const tableLabels = new Set(floorTables.value.map((table) => table.label))
   const noteMatch = order.note.match(/桌位\s*([A-Z]\d+)/i)
   const nameMatch = order.customerName.match(/^([A-Z]\d+)\b/i)
   const label = (noteMatch?.[1] ?? nameMatch?.[1] ?? '').toUpperCase()
@@ -2917,7 +2959,7 @@ const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null)
   return Math.min(table.capacity, Math.max(1, Math.trunc(Number(storedSize) || 1)))
 }
 const floorTableStates = computed<FloorTableState[]>(() =>
-  diningTables.map((table) => {
+  floorTables.value.map((table) => {
     const order = dineInOrderForTable(table.id)
     const isLocked = Boolean(order && orderClaimedByOtherStation(order))
     const status: FloorTableState['status'] = !order
@@ -2943,6 +2985,9 @@ const floorTableStates = computed<FloorTableState[]>(() =>
 )
 const selectedFloorTable = computed(() =>
   floorTableStates.value.find((state) => state.table.id === selectedFloorTableId.value) ?? floorTableStates.value[0] ?? null,
+)
+const emptyFloorTableStates = computed(() =>
+  floorTableStates.value.filter((state) => state.status === 'empty'),
 )
 const waitlinePeopleCount = computed(() =>
   waitlineEntries.value.reduce((total, entry) => total + entry.partySize, 0),
@@ -3728,6 +3773,19 @@ const updateFloorPartySize = (table: DiningTableDefinition, delta: number): void
   }
 }
 
+const updateFloorTableCapacity = (table: DiningTableDefinition, delta: number): void => {
+  const nextCapacity = Math.min(20, Math.max(1, table.capacity + delta))
+  floorTables.value = floorTables.value.map((currentTable) =>
+    currentTable.id === table.id ? { ...currentTable, capacity: nextCapacity } : currentTable,
+  )
+  floorPartySizes.value = normalizeFloorPartySizes(floorPartySizes.value, floorTables.value)
+}
+
+const resetFloorTablesToDefault = (): void => {
+  floorTables.value = defaultDiningTables.map((table) => ({ ...table }))
+  floorPartySizes.value = normalizeFloorPartySizes(floorPartySizes.value, floorTables.value)
+}
+
 const startDineInTableOrder = async (
   table: DiningTableDefinition,
   options: { partySize?: number; waitlineEntry?: WaitlineEntry } = {},
@@ -3743,11 +3801,30 @@ const startDineInTableOrder = async (
     tableNoteToken(table.label),
     `${partySize} 人`,
     options.waitlineEntry?.name ? `候位 ${options.waitlineEntry.name}` : '',
+    options.waitlineEntry?.phone ? `電話 ${options.waitlineEntry.phone}` : '',
     options.waitlineEntry?.note ?? '',
   ].filter(Boolean).join('、')
   activeCartQuickEditor.value = null
   closeOptionPanel()
   setWorkspaceTab('order')
+}
+
+const transferFloorTableOrder = async (
+  state: FloorTableState,
+  targetTable: DiningTableDefinition,
+): Promise<void> => {
+  if (!state.order || orderClaimedByOtherStation(state.order)) {
+    return
+  }
+
+  const partySize = Math.min(targetTable.capacity, Math.max(1, state.partySize || floorPartySizes.value[state.table.id] || 1))
+  await updateOrderFloorAssignmentForStation(state.order.id, targetTable.label, partySize)
+  floorPartySizes.value = {
+    ...floorPartySizes.value,
+    [state.table.id]: 0,
+    [targetTable.id]: partySize,
+  }
+  selectedFloorTableId.value = targetTable.id
 }
 
 const selectFloorTable = (state: FloorTableState): void => {
@@ -3775,24 +3852,41 @@ const markFloorTableServed = (state: FloorTableState): void => {
   void updateOrderStatus(state.order.id, 'served')
 }
 
+const updateWaitlineDraftPartySize = (delta: number): void => {
+  waitlineDraft.value = {
+    ...waitlineDraft.value,
+    partySize: Math.min(20, Math.max(1, waitlineDraft.value.partySize + delta)),
+  }
+}
+
 const addWaitlineEntry = (): void => {
   const now = new Date()
+  const draft = waitlineDraft.value
   waitlineEntries.value = [
     ...waitlineEntries.value,
     {
       id: `wait-${now.getTime()}`,
-      name: `候位 ${waitlineEntries.value.length + 1}`,
-      partySize: 2,
+      name: draft.name.trim() || `候位 ${waitlineEntries.value.length + 1}`,
+      phone: draft.phone.trim(),
+      customerType: draft.customerType,
+      partySize: Math.min(20, Math.max(1, Math.trunc(draft.partySize || 1))),
       createdAt: now.toISOString(),
-      note: '',
+      note: draft.note.trim(),
     },
   ]
+  waitlineDraft.value = {
+    name: '',
+    phone: '',
+    customerType: 'walk-in',
+    partySize: 2,
+    note: '',
+  }
 }
 
 const updateWaitlinePartySize = (entry: WaitlineEntry, delta: number): void => {
   waitlineEntries.value = waitlineEntries.value.map((currentEntry) =>
     currentEntry.id === entry.id
-      ? { ...currentEntry, partySize: Math.min(12, Math.max(1, currentEntry.partySize + delta)) }
+      ? { ...currentEntry, partySize: Math.min(20, Math.max(1, currentEntry.partySize + delta)) }
       : currentEntry,
   )
 }
@@ -4965,16 +5059,12 @@ watch(posUiPreferences, (preferences) => {
   }
 }, { deep: true })
 
-watch(floorDisplayPreferences, (preferences) => {
-  writeStorageValue(floorDisplayStorageKey, normalizeFloorDisplayPreferences(preferences))
+watch(floorPlanSettings, (settings) => {
+  applyFloorPlanSettings(settings)
 }, { deep: true })
 
-watch(floorPartySizes, (sizes) => {
-  writeStorageValue(floorPartyStorageKey, normalizeFloorPartySizes(sizes))
-}, { deep: true })
-
-watch(waitlineEntries, (entries) => {
-  writeStorageValue(waitlineStorageKey, normalizeWaitlineEntries(entries))
+watch([floorTables, floorDisplayPreferences, floorPartySizes, waitlineEntries], () => {
+  persistFloorPlanSettings()
 }, { deep: true })
 
 watch(productSupplyStatuses, (statuses) => {
@@ -5037,6 +5127,7 @@ onBeforeUnmount(() => {
   clearBackendEditTapTimer()
   clearToolboxBackendEditLongPressTimer()
   clearAppearancePersistTimer()
+  clearFloorPlanPersistTimer()
   clearCategorySortTimer()
   clearProductSortTimer()
   if (categorySortSuppressTimer !== null) {
@@ -5817,6 +5908,22 @@ onBeforeUnmount(() => {
                             開桌點餐
                           </button>
                         </div>
+                        <div
+                          v-if="selectedFloorTable.order && emptyFloorTableStates.length > 0"
+                          class="floor-transfer-actions"
+                          aria-label="移桌"
+                        >
+                          <span>移桌</span>
+                          <button
+                            v-for="target in emptyFloorTableStates"
+                            :key="`move-${target.table.id}`"
+                            type="button"
+                            :disabled="orderClaimedByOtherStation(selectedFloorTable.order)"
+                            @click="transferFloorTableOrder(selectedFloorTable, target.table)"
+                          >
+                            {{ target.table.label }}
+                          </button>
+                        </div>
                       </section>
 
                       <section class="floor-control-block floor-waitline-block">
@@ -5830,11 +5937,32 @@ onBeforeUnmount(() => {
                             <template v-if="floorDisplayPreferences.showWaitlineTime"> · 平均 {{ averageWaitlineMinutes }} min</template>
                           </small>
                         </div>
+                        <div class="waitline-form" aria-label="新增候位">
+                          <input v-model="waitlineDraft.name" type="text" placeholder="姓名/稱呼" />
+                          <input v-model="waitlineDraft.phone" type="tel" inputmode="tel" placeholder="電話" />
+                          <div class="waitline-form-party" aria-label="候位人數">
+                            <button type="button" @click="updateWaitlineDraftPartySize(-1)">
+                              <Minus :size="14" aria-hidden="true" />
+                            </button>
+                            <strong>{{ waitlineDraft.partySize }} 人</strong>
+                            <button type="button" @click="updateWaitlineDraftPartySize(1)">
+                              <Plus :size="14" aria-hidden="true" />
+                            </button>
+                          </div>
+                          <input v-model="waitlineDraft.note" type="text" placeholder="備註/標籤" />
+                          <button type="button" class="primary-button waitline-form-submit" @click="addWaitlineEntry">
+                            加入
+                          </button>
+                        </div>
                         <div class="waitline-list">
                           <article v-for="entry in waitlineEntries" :key="entry.id" class="waitline-row">
                             <div>
                               <strong>{{ entry.name }}</strong>
-                              <span>{{ entry.partySize }} 人 · {{ elapsedMinuteLabel(entry.createdAt) }}</span>
+                              <span>
+                                {{ entry.partySize }} 人 · {{ elapsedMinuteLabel(entry.createdAt) }}
+                                <template v-if="entry.phone"> · {{ entry.phone }}</template>
+                                <template v-if="entry.note"> · {{ entry.note }}</template>
+                              </span>
                             </div>
                             <div class="waitline-actions">
                               <button type="button" title="減少人數" @click="updateWaitlinePartySize(entry, -1)">
@@ -5894,6 +6022,34 @@ onBeforeUnmount(() => {
                             <input v-model="floorDisplayPreferences.showOrderLabels" type="checkbox" />
                             顯示訂單標籤
                           </label>
+                        </div>
+                        <small class="floor-sync-message">{{ floorPlanSyncMessage }}</small>
+                      </section>
+
+                      <section class="floor-control-block floor-table-settings-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>桌位設定</span>
+                            <strong>{{ floorTables.length }} 桌</strong>
+                          </div>
+                          <button class="text-button" type="button" @click="resetFloorTablesToDefault">還原</button>
+                        </div>
+                        <div class="floor-table-settings-list">
+                          <article v-for="table in floorTables" :key="`setting-${table.id}`" class="floor-table-setting-row">
+                            <div>
+                              <strong>{{ table.label }}</strong>
+                              <span>{{ table.x }}%, {{ table.y }}%</span>
+                            </div>
+                            <div class="floor-table-capacity-stepper" aria-label="桌位容納人數">
+                              <button type="button" @click="updateFloorTableCapacity(table, -1)">
+                                <Minus :size="14" aria-hidden="true" />
+                              </button>
+                              <strong>{{ table.capacity }} 人</strong>
+                              <button type="button" @click="updateFloorTableCapacity(table, 1)">
+                                <Plus :size="14" aria-hidden="true" />
+                              </button>
+                            </div>
+                          </article>
                         </div>
                       </section>
 

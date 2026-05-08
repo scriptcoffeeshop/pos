@@ -35,7 +35,9 @@ import {
   releaseOrderClaim,
   refundOrder,
   sendStationHeartbeat,
+  defaultFloorPlanSettings,
   updateCounterDraftOrder,
+  updateOrderFloorAssignment as persistOrderFloorAssignment,
   updateProduct,
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
@@ -64,6 +66,7 @@ import type {
   OnlineOrderingSettings,
   PaymentMethod,
   PaymentStatus,
+  FloorPlanSettings,
   PosAppearanceSettings,
   PosOrder,
   ProductSupplyStatus,
@@ -864,6 +867,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
   const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
   const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
+  const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
   const onlineReminderClock = ref(Date.now())
   const acknowledgedOnlineReminderIds = ref<string[]>([])
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
@@ -912,6 +916,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
     posAppearanceSettings.value = runtimeSettings.posAppearance
+    floorPlanSettings.value = runtimeSettings.floorPlan
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
       : buildDefaultPrinterSettings(printStation)
@@ -2252,6 +2257,72 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const orderWithFloorAssignment = (order: PosOrder, tableLabel: string, partySize: number): PosOrder => {
+    const normalizedTableLabel = tableLabel.trim().toUpperCase()
+    const normalizedPartySize = Math.min(20, Math.max(1, Math.trunc(partySize)))
+    const preservedNotes = noteTokensFromText(order.note).filter((token) =>
+      !/^桌位\s*[A-Z]\d+/i.test(token) && !/^\d+\s*人$/.test(token),
+    )
+
+    return {
+      ...order,
+      mode: 'dine-in',
+      customerName: `${normalizedTableLabel} 內用客`,
+      note: [
+        `桌位 ${normalizedTableLabel}`,
+        `${normalizedPartySize} 人`,
+        ...preservedNotes,
+      ].join('、'),
+    }
+  }
+
+  const updateOrderFloorAssignmentForStation = async (
+    orderId: string,
+    tableLabel: string,
+    partySize: number,
+  ): Promise<void> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
+
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    const previousOrder = { ...claimedOrder, lines: [...claimedOrder.lines], printJobs: [...claimedOrder.printJobs] }
+    const optimisticOrder = orderWithFloorAssignment(claimedOrder, tableLabel, partySize)
+    replaceOrder(orderId, optimisticOrder)
+
+    if (!isPosApiConfigured || !optimisticOrder.remoteId) {
+      setBackendStatus('fallback', '本機移桌', `${orderId} 已移至 ${tableLabel}，等待 API 連線後同步`)
+      return
+    }
+
+    try {
+      const persistedOrder = await persistOrderFloorAssignment(optimisticOrder, {
+        tableLabel,
+        partySize,
+      })
+      replaceOrder(orderId, {
+        ...persistedOrder,
+        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : optimisticOrder.lines,
+        printStatus: persistedOrder.printStatus === 'skipped' ? optimisticOrder.printStatus : persistedOrder.printStatus,
+      })
+      setBackendStatus('connected', '桌位已同步', `${orderId} 已移至 ${tableLabel}`)
+    } catch (error) {
+      replaceOrder(orderId, previousOrder)
+      setBackendStatus('fallback', '移桌失敗', `${orderId} 移桌同步失敗：${getErrorMessage(error)}`)
+    }
+  }
+
   const voidOrderForStation = async (orderId: string, note = ''): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
@@ -3183,6 +3254,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     deleteProductForStation,
     deletePrintJobForOrder,
     filteredMenu,
+    floorPlanSettings,
     increaseLine,
     isSubmitting,
     isLoadingProductStatus,
@@ -3244,6 +3316,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,
+    updateOrderFloorAssignmentForStation,
     updatePaymentStatus,
     updateProductAvailability,
     updateProductSupplyStatus,
