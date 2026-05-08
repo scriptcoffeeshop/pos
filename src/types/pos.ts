@@ -9,6 +9,8 @@ export type RegisterSessionStatus = 'open' | 'closed'
 export type ProductSupplyStatus = 'normal' | 'online-stopped' | 'stopped'
 export type ReservationStatus = 'booked' | 'seated' | 'cancelled' | 'no_show'
 export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-drawer' | 'ipad-qr-print'
+export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
+export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
 
 export interface SupplyPeriodRule {
   id: string
@@ -96,6 +98,19 @@ export interface PosOrder {
   claimExpiresAt: string | null
   printStatus: PrintStatus
   printJobs: PrintJob[]
+}
+
+export interface OnlineOrderReminderState {
+  orderId: string
+  orderNumber: string
+  status: OnlineOrderReminderStatus
+  snoozedUntil: string | null
+  snoozedByStationId: string
+  seenAt: string | null
+  seenByStationId: string
+  lastAction: 'active' | OnlineOrderReminderAction
+  createdAt: string
+  updatedAt: string
 }
 
 export interface PrintJob {

@@ -17,6 +17,8 @@ type ProductChannel = "pos" | "online" | "qr";
 type ReservationStatus = "booked" | "seated" | "cancelled" | "no_show";
 type MemberCouponStatus = "active" | "redeemed" | "expired";
 type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "ipad-qr-print";
+type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
+type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
 
 interface SupplyWindowRule {
   id: string;
@@ -154,6 +156,25 @@ interface AuditEventInput {
 interface ClaimOrderInput {
   stationId?: string;
   force?: boolean;
+}
+
+interface UpdateOnlineOrderReminderStateInput {
+  orderIds?: unknown;
+  orderNumbers?: unknown;
+  action?: OnlineOrderReminderAction;
+  snoozedUntil?: string | null;
+  stationId?: string;
+}
+
+interface OnlineOrderReminderStateUpsertRow {
+  order_id: string;
+  order_number: string;
+  status: OnlineOrderReminderStatus;
+  snoozed_until: string | null;
+  snoozed_by_station_id: string;
+  seen_at: string | null;
+  seen_by_station_id: string;
+  last_action: OnlineOrderReminderAction;
 }
 
 interface UpdatePrintJobStatusInput {
@@ -447,6 +468,8 @@ const paymentEventSelect =
   "id, provider, event_id, order_id, order_number, event_type, payment_status, amount, applied, duplicate, processed_at, created_at";
 const stationHeartbeatSelect =
   "station_id, station_label, platform, app_version, user_agent, last_seen_at, created_at";
+const onlineOrderReminderStateSelect =
+  "order_id, order_number, status, snoozed_until, snoozed_by_station_id, seen_at, seen_by_station_id, last_action, created_at, updated_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 const defaultPaymentExpiryMinutes = 20;
@@ -766,6 +789,102 @@ const expireStalePendingOnlineOrders = async (): Promise<void> => {
   ));
 };
 
+const normalizeReminderOrderIdentifiers = (value: unknown): string[] => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+
+  return [...new Set(rawValues
+    .map((entry) => sanitizeText(entry, "").slice(0, 80))
+    .filter(Boolean))]
+    .slice(0, 100);
+};
+
+const normalizeReminderInputOrderIdentifiers = (input: UpdateOnlineOrderReminderStateInput): string[] => [
+  ...new Set([
+    ...normalizeReminderOrderIdentifiers(input.orderIds),
+    ...normalizeReminderOrderIdentifiers(input.orderNumbers),
+  ]),
+].slice(0, 100);
+
+const normalizeReminderAction = (action: unknown): OnlineOrderReminderAction | null =>
+  action === "snooze" || action === "seen" || action === "accepted" || action === "rejected"
+    ? action
+    : null;
+
+const normalizeReminderSnoozedUntil = (value: unknown, now = new Date()): string | null => {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date <= now) {
+    return null;
+  }
+
+  return date.toISOString();
+};
+
+const resolveOnlineReminderOrders = async (
+  identifiers: string[],
+): Promise<{ orders: Array<{ id: string; order_number: string }>; error: string | null }> => {
+  if (identifiers.length === 0) {
+    return { orders: [], error: null };
+  }
+
+  const uuidIds = [...new Set(identifiers.map((identifier) => normalizeUuid(identifier)).filter(Boolean))] as string[];
+  const orderNumbers = identifiers.filter((identifier) => !normalizeUuid(identifier));
+  const resolved = new Map<string, { id: string; order_number: string }>();
+
+  if (uuidIds.length > 0) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, order_number")
+      .in("id", uuidIds);
+    if (error) {
+      return { orders: [], error: error.message };
+    }
+    for (const order of data ?? []) {
+      resolved.set(String(order.id), {
+        id: String(order.id),
+        order_number: String(order.order_number),
+      });
+    }
+  }
+
+  if (orderNumbers.length > 0) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, order_number")
+      .in("order_number", orderNumbers);
+    if (error) {
+      return { orders: [], error: error.message };
+    }
+    for (const order of data ?? []) {
+      resolved.set(String(order.id), {
+        id: String(order.id),
+        order_number: String(order.order_number),
+      });
+    }
+  }
+
+  return { orders: [...resolved.values()], error: null };
+};
+
+const fetchOnlineReminderStatesByOrderIds = async (orderIds: string[]) => {
+  if (orderIds.length === 0) {
+    return { data: [], error: null };
+  }
+
+  return supabase
+    .from("online_order_reminder_states")
+    .select(onlineOrderReminderStateSelect)
+    .in("order_id", orderIds)
+    .order("updated_at", { ascending: false });
+};
+
 api.use(
   "*",
   cors({
@@ -913,6 +1032,135 @@ api.get("/settings/runtime", async (c) => {
     engagementSettings: normalizeEngagementSettingsForRuntime(engagementSettings),
   });
 });
+
+api.get("/online-order-reminders/state", async (c) => {
+  const identifiers = [
+    ...new Set([
+      ...normalizeReminderOrderIdentifiers(c.req.query("orderIds")),
+      ...normalizeReminderOrderIdentifiers(c.req.query("orderNumbers")),
+    ]),
+  ].slice(0, 100);
+
+  const resolved = await resolveOnlineReminderOrders(identifiers);
+  if (resolved.error) {
+    return c.json({ error: resolved.error }, 500);
+  }
+
+  const { data, error } = await fetchOnlineReminderStatesByOrderIds(resolved.orders.map((order) => order.id));
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ states: data ?? [] });
+});
+
+const updateOnlineOrderReminderStatesHandler = async (c: Context): Promise<Response> => {
+  const input = await c.req.json<UpdateOnlineOrderReminderStateInput>()
+    .catch(() => ({} as UpdateOnlineOrderReminderStateInput));
+  const action = normalizeReminderAction(input.action);
+  if (!action) {
+    return c.json({ error: "action must be snooze, seen, accepted, or rejected" }, 400);
+  }
+
+  const identifiers = normalizeReminderInputOrderIdentifiers(input);
+  if (identifiers.length === 0) {
+    return c.json({ states: [] });
+  }
+
+  const now = new Date();
+  const snoozedUntil = action === "snooze"
+    ? normalizeReminderSnoozedUntil(input.snoozedUntil, now)
+    : null;
+  if (action === "snooze" && !snoozedUntil) {
+    return c.json({ error: "snoozedUntil must be a future ISO datetime" }, 400);
+  }
+
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const resolved = await resolveOnlineReminderOrders(identifiers);
+  if (resolved.error) {
+    return c.json({ error: resolved.error }, 500);
+  }
+
+  if (resolved.orders.length === 0) {
+    return c.json({ states: [] });
+  }
+
+  const orderIds = resolved.orders.map((order) => order.id);
+  const existing = await fetchOnlineReminderStatesByOrderIds(orderIds);
+  if (existing.error) {
+    return c.json({ error: existing.error.message }, 500);
+  }
+
+  const existingSeenOrderIds = new Set(
+    (existing.data ?? [])
+      .filter((state) => state.status === "seen")
+      .map((state) => String(state.order_id)),
+  );
+  const rows: OnlineOrderReminderStateUpsertRow[] = [];
+  for (const order of resolved.orders) {
+    if (action === "snooze" && existingSeenOrderIds.has(order.id)) {
+      continue;
+    }
+
+    const base = {
+      order_id: order.id,
+      order_number: order.order_number,
+      status: (action === "snooze" ? "snoozed" : "seen") as OnlineOrderReminderStatus,
+      last_action: action,
+    };
+
+    if (action === "snooze") {
+      rows.push({
+        ...base,
+        snoozed_until: snoozedUntil,
+        snoozed_by_station_id: stationId,
+        seen_at: null,
+        seen_by_station_id: "",
+      });
+      continue;
+    }
+
+    rows.push({
+      ...base,
+      snoozed_until: null,
+      snoozed_by_station_id: "",
+      seen_at: now.toISOString(),
+      seen_by_station_id: stationId,
+    });
+  }
+
+  if (rows.length > 0) {
+    const { error } = await supabase
+      .from("online_order_reminder_states")
+      .upsert(rows, { onConflict: "order_id" });
+    if (error) {
+      return c.json({ error: error.message }, 500);
+    }
+
+    await Promise.all(rows.map((row) =>
+      writeAuditEvent({
+        action: `online_order.reminder.${action}`,
+        orderId: row.order_id,
+        stationId,
+        metadata: {
+          orderNumber: row.order_number,
+          status: row.status,
+          snoozedUntil: row.snoozed_until,
+        },
+      })
+    ));
+  }
+
+  const { data, error } = await fetchOnlineReminderStatesByOrderIds(orderIds);
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ states: data ?? [] });
+};
+
+api.patch("/online-order-reminders/state", updateOnlineOrderReminderStatesHandler);
+api.post("/online-order-reminders/state", updateOnlineOrderReminderStatesHandler);
 
 api.post("/station/heartbeat", async (c) => {
   const input: StationHeartbeatInput = await c.req.json<StationHeartbeatInput>().catch(() => ({}));

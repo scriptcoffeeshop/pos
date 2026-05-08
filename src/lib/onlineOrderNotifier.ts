@@ -222,6 +222,10 @@ export const markOnlineOrderNotifierSeen = (orderIds: string[]): void => {
     return
   }
 
+  webNotification?.close()
+  webNotification = null
+  lastWebNotificationSignature = ''
+
   if (isNativeOnlineOrderNotifierAvailable()) {
     void OnlineOrderNotifier.markSeen({ orderIds }).catch(() => undefined)
   }

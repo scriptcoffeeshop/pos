@@ -30,6 +30,15 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。debug APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應與 Android TCP socket 列印 POC；消費者線上點餐不會出現在 APK 裡。
 
+## 多平板線上新單提醒
+
+線上/掃碼新單提醒的「稍後」「已讀」「接單」「拒絕接單」狀態會寫入 Supabase `online_order_reminder_states`，並透過 `pos_realtime_events` 的 `online_order_reminders` topic 讓其他平板重拉 `/online-order-reminders/state`。測試時至少準備兩台平板或一台 APK 加一個瀏覽器視窗：
+
+1. 送出一張線上或 QR 新單，確認兩邊都看到同一張待接單提醒。
+2. 在其中一台按「稍後」，確認另一台提醒同步消失；重開 App 後仍不會立刻再提醒，直到 snooze 到期。
+3. 再送新單，分別測「已讀」「接單」「拒絕接單」，確認另一台和重開後都不再提醒同一張單。
+4. 讓 APK 進背景或熄屏後送單，確認 Android notification 也遵守同一份共享狀態，而不是只看本機記憶體。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。

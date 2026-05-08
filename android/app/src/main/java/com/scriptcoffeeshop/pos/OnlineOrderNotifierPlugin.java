@@ -30,8 +30,10 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -43,6 +45,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -63,6 +66,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
     private final Object stateLock = new Object();
     private final Map<String, OrderSnapshot> activeOrders = new HashMap<>();
     private final Map<String, Long> snoozedUntilByOrderId = new HashMap<>();
+    private final Map<String, ReminderStateSnapshot> sharedReminderStatesByOrderId = new HashMap<>();
     private final Set<String> acceptedOrderIds = new HashSet<>();
 
     private ScheduledExecutorService pollExecutor;
@@ -145,6 +149,9 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             applySettings(call);
             acceptedOrderIds.clear();
             acceptedOrderIds.addAll(readStringSet(call.getArray("acceptedOrderIds", new JSArray())));
+            for (String orderId : acceptedOrderIds) {
+                sharedReminderStatesByOrderId.put(orderId, ReminderStateSnapshot.seen(orderId));
+            }
             activeOrders.clear();
             JSArray orders = call.getArray("activeOrders", new JSArray());
             for (int index = 0; index < orders.length(); index++) {
@@ -173,10 +180,12 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         synchronized (stateLock) {
             for (String orderId : orderIds) {
                 snoozedUntilByOrderId.put(orderId, untilEpochMs);
+                sharedReminderStatesByOrderId.put(orderId, ReminderStateSnapshot.snoozed(orderId, untilEpochMs));
             }
             lastNotificationSignature = "";
             maybeNotifyLocked();
         }
+        postReminderStateActionAsync("snooze", orderIds, untilEpochMs);
         call.resolve();
     }
 
@@ -188,10 +197,12 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             for (String orderId : orderIds) {
                 activeOrders.remove(orderId);
                 snoozedUntilByOrderId.remove(orderId);
+                sharedReminderStatesByOrderId.put(orderId, ReminderStateSnapshot.seen(orderId));
             }
             lastNotificationSignature = "";
             maybeNotifyLocked();
         }
+        postReminderStateActionAsync("seen", orderIds, 0L);
         call.resolve();
     }
 
@@ -214,6 +225,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         synchronized (stateLock) {
             activeOrders.clear();
             snoozedUntilByOrderId.clear();
+            sharedReminderStatesByOrderId.clear();
             lastNotificationSignature = "";
             cancelNotification();
         }
@@ -294,10 +306,13 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         try {
             fetchAndApplyRuntimeSettings(endpoint, token);
             List<OrderSnapshot> nextOrders = fetchActiveOrders(endpoint, token);
+            Map<String, ReminderStateSnapshot> nextReminderStates = fetchReminderStates(endpoint, token, nextOrders);
             synchronized (stateLock) {
                 activeOrders.clear();
+                sharedReminderStatesByOrderId.clear();
+                sharedReminderStatesByOrderId.putAll(nextReminderStates);
                 for (OrderSnapshot order : nextOrders) {
-                    if (!acceptedOrderIds.contains(order.id)) {
+                    if (!isOrderSuppressedLocked(order, System.currentTimeMillis())) {
                         activeOrders.put(order.id, order);
                     }
                 }
@@ -399,6 +414,134 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         return active;
     }
 
+    private Map<String, ReminderStateSnapshot> fetchReminderStates(
+        String endpoint,
+        String token,
+        List<OrderSnapshot> orders
+    ) throws Exception {
+        if (orders.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<String> orderIds = new ArrayList<>();
+        for (OrderSnapshot order : orders) {
+            orderIds.add(order.id);
+        }
+        String encodedOrderIds = URLEncoder.encode(String.join(",", orderIds), StandardCharsets.UTF_8.name());
+        HttpURLConnection connection = (HttpURLConnection) new URL(
+            endpoint + "/online-order-reminders/state?orderIds=" + encodedOrderIds
+        ).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setConnectTimeout(6_000);
+        connection.setReadTimeout(6_000);
+        connection.setRequestProperty("Authorization", "Bearer " + token);
+        connection.setRequestProperty("apikey", token);
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("X-POS-STATION-ID", stationId);
+
+        int statusCode = connection.getResponseCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IllegalStateException("reminder state request failed with " + statusCode);
+        }
+
+        StringBuilder body = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+            new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)
+        )) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
+            }
+        } finally {
+            connection.disconnect();
+        }
+
+        JSONArray states = new JSONObject(body.toString()).optJSONArray("states");
+        if (states == null) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, ReminderStateSnapshot> result = new HashMap<>();
+        for (int index = 0; index < states.length(); index++) {
+            ReminderStateSnapshot state = ReminderStateSnapshot.fromApiJson(states.optJSONObject(index));
+            if (state != null) {
+                result.put(state.orderId, state);
+            }
+        }
+        return result;
+    }
+
+    private void postReminderStateActionAsync(String action, Set<String> orderIds, long untilEpochMs) {
+        if (orderIds.isEmpty()) {
+            return;
+        }
+
+        String endpoint;
+        String token;
+        String currentStationId;
+        ScheduledExecutorService executor;
+        synchronized (stateLock) {
+            if (!configured || apiBaseUrl.isEmpty() || anonKey.isEmpty()) {
+                return;
+            }
+            endpoint = apiBaseUrl;
+            token = anonKey;
+            currentStationId = stationId;
+            executor = pollExecutor;
+        }
+
+        if (executor == null || executor.isShutdown()) {
+            return;
+        }
+
+        List<String> ids = new ArrayList<>(orderIds);
+        executor.execute(() -> {
+            try {
+                postReminderStateAction(endpoint, token, currentStationId, action, ids, untilEpochMs);
+            } catch (Exception ignored) {
+                // The WebView foreground path writes the same shared state when available.
+            }
+        });
+    }
+
+    private void postReminderStateAction(
+        String endpoint,
+        String token,
+        String currentStationId,
+        String action,
+        List<String> orderIds,
+        long untilEpochMs
+    ) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint + "/online-order-reminders/state").openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(6_000);
+        connection.setReadTimeout(6_000);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Authorization", "Bearer " + token);
+        connection.setRequestProperty("apikey", token);
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("X-POS-STATION-ID", currentStationId);
+
+        JSONObject body = new JSONObject();
+        body.put("orderIds", new JSONArray(orderIds));
+        body.put("action", action);
+        body.put("stationId", currentStationId);
+        if ("snooze".equals(action) && untilEpochMs > 0L) {
+            body.put("snoozedUntil", formatIsoUtc(untilEpochMs));
+        }
+
+        byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
+        try (OutputStream stream = connection.getOutputStream()) {
+            stream.write(payload);
+        }
+
+        int statusCode = connection.getResponseCode();
+        connection.disconnect();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IllegalStateException("reminder state update failed with " + statusCode);
+        }
+    }
+
     private boolean shouldRemind(OrderSnapshot order, long now) {
         if (!("online".equals(order.source) || "qr".equals(order.source))) {
             return false;
@@ -418,6 +561,20 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         return now - order.createdAtEpochMs >= reminderMinutes * 60_000L;
     }
 
+    private boolean isOrderSuppressedLocked(OrderSnapshot order, long now) {
+        if (acceptedOrderIds.contains(order.id)) {
+            return true;
+        }
+
+        ReminderStateSnapshot sharedState = sharedReminderStatesByOrderId.get(order.id);
+        if (sharedState != null && sharedState.isSuppressed(now)) {
+            return true;
+        }
+
+        Long snoozedUntil = snoozedUntilByOrderId.get(order.id);
+        return snoozedUntil != null && snoozedUntil > now;
+    }
+
     private void maybeNotifyLocked() {
         if (appActive) {
             cancelNotification();
@@ -427,8 +584,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         long now = System.currentTimeMillis();
         List<OrderSnapshot> visibleOrders = new ArrayList<>();
         for (OrderSnapshot order : activeOrders.values()) {
-            Long snoozedUntil = snoozedUntilByOrderId.get(order.id);
-            if (snoozedUntil == null || snoozedUntil <= now) {
+            if (!isOrderSuppressedLocked(order, now)) {
                 visibleOrders.add(order);
             }
         }
@@ -561,6 +717,16 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         for (String orderId : expiredIds) {
             snoozedUntilByOrderId.remove(orderId);
         }
+
+        List<String> staleSharedStateIds = new ArrayList<>();
+        for (String orderId : sharedReminderStatesByOrderId.keySet()) {
+            if (!activeOrders.containsKey(orderId) && !acceptedOrderIds.contains(orderId)) {
+                staleSharedStateIds.add(orderId);
+            }
+        }
+        for (String orderId : staleSharedStateIds) {
+            sharedReminderStatesByOrderId.remove(orderId);
+        }
     }
 
     private static String sanitizeBaseUrl(String value) {
@@ -568,6 +734,12 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             return "";
         }
         return value.trim().replaceAll("/+$", "");
+    }
+
+    private static String formatIsoUtc(long epochMs) {
+        SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return formatter.format(new Date(epochMs));
     }
 
     private static int clamp(Integer value, int minimum, int maximum) {
@@ -596,6 +768,75 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             }
         }
         return result;
+    }
+
+    private static class ReminderStateSnapshot {
+        final String orderId;
+        final String status;
+        final long snoozedUntilEpochMs;
+
+        ReminderStateSnapshot(String orderId, String status, long snoozedUntilEpochMs) {
+            this.orderId = orderId;
+            this.status = status;
+            this.snoozedUntilEpochMs = snoozedUntilEpochMs;
+        }
+
+        static ReminderStateSnapshot seen(String orderId) {
+            return new ReminderStateSnapshot(orderId, "seen", 0L);
+        }
+
+        static ReminderStateSnapshot snoozed(String orderId, long snoozedUntilEpochMs) {
+            return new ReminderStateSnapshot(orderId, "snoozed", snoozedUntilEpochMs);
+        }
+
+        static ReminderStateSnapshot fromApiJson(JSONObject value) {
+            if (value == null) {
+                return null;
+            }
+
+            String orderNumber = value.optString("order_number", "").trim();
+            if (orderNumber.isEmpty()) {
+                return null;
+            }
+
+            return new ReminderStateSnapshot(
+                orderNumber,
+                value.optString("status", ""),
+                parseIsoTimestamp(value.optString("snoozed_until", ""))
+            );
+        }
+
+        boolean isSuppressed(long now) {
+            if ("seen".equals(status)) {
+                return true;
+            }
+
+            return "snoozed".equals(status) && snoozedUntilEpochMs > now;
+        }
+
+        private static long parseIsoTimestamp(String value) {
+            if (value == null || value.trim().isEmpty() || "null".equals(value)) {
+                return 0L;
+            }
+
+            String[] patterns = {
+                "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+                "yyyy-MM-dd'T'HH:mm:ssX"
+            };
+            for (String pattern : patterns) {
+                try {
+                    SimpleDateFormat formatter = new SimpleDateFormat(pattern, Locale.US);
+                    formatter.setLenient(false);
+                    Date date = formatter.parse(value);
+                    if (date != null) {
+                        return date.getTime();
+                    }
+                } catch (Exception ignored) {
+                    // Try the next ISO timestamp shape.
+                }
+            }
+            return 0L;
+        }
     }
 
     private static class OrderSnapshot {

@@ -1,6 +1,11 @@
 import { createClient, type RealtimeChannel } from '@supabase/supabase-js'
 
-export type PosRealtimeTopic = 'orders' | 'runtime_settings' | 'register_sessions' | 'products'
+export type PosRealtimeTopic =
+  | 'orders'
+  | 'runtime_settings'
+  | 'register_sessions'
+  | 'products'
+  | 'online_order_reminders'
 
 export interface PosRealtimeEvent {
   id: string
@@ -64,7 +69,8 @@ const isTopic = (value: unknown): value is PosRealtimeTopic =>
   value === 'orders' ||
   value === 'runtime_settings' ||
   value === 'register_sessions' ||
-  value === 'products'
+  value === 'products' ||
+  value === 'online_order_reminders'
 
 const isEventName = (value: unknown): value is PosRealtimeEvent['eventName'] =>
   value === 'INSERT' || value === 'UPDATE' || value === 'DELETE'
