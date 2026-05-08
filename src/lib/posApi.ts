@@ -20,6 +20,9 @@ import type {
   OnlineMenuOptionChoice,
   OnlineMenuOptionGroup,
   OnlineNotificationRepeatMode,
+  OnlineOrderReminderAction,
+  OnlineOrderReminderState,
+  OnlineOrderReminderStatus,
   OnlineOrderingSettings,
   PosAppearanceSettings,
   PosMember,
@@ -113,6 +116,19 @@ interface ApiOrder {
   print_jobs?: ApiPrintJob[]
 }
 
+interface ApiOnlineOrderReminderState {
+  order_id: string
+  order_number: string
+  status: OnlineOrderReminderStatus
+  snoozed_until: string | null
+  snoozed_by_station_id: string | null
+  seen_at: string | null
+  seen_by_station_id: string | null
+  last_action: OnlineOrderReminderState['lastAction']
+  created_at: string
+  updated_at: string
+}
+
 interface CreateOrderResponse {
   order: ApiOrder
 }
@@ -123,6 +139,10 @@ interface ProductsResponse {
 
 interface OrdersResponse {
   orders: ApiOrder[]
+}
+
+interface OnlineOrderReminderStatesResponse {
+  states: ApiOnlineOrderReminderState[]
 }
 
 interface PrintJobResponse {
@@ -365,6 +385,12 @@ export interface ReservationInput {
   importantLabel: string
   preOrder: CartLine[]
   note: string
+}
+
+export interface OnlineOrderReminderStateUpdateInput {
+  orderIds: string[]
+  action: OnlineOrderReminderAction
+  snoozedUntil?: string
 }
 
 interface ProductResponse {
@@ -1418,6 +1444,19 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
   }
 }
 
+const normalizeOnlineOrderReminderState = (state: ApiOnlineOrderReminderState): OnlineOrderReminderState => ({
+  orderId: state.order_id,
+  orderNumber: state.order_number,
+  status: state.status,
+  snoozedUntil: state.snoozed_until,
+  snoozedByStationId: state.snoozed_by_station_id ?? '',
+  seenAt: state.seen_at,
+  seenByStationId: state.seen_by_station_id ?? '',
+  lastAction: state.last_action,
+  createdAt: state.created_at,
+  updatedAt: state.updated_at,
+})
+
 export const fetchProducts = async (channel: ProductChannel = 'pos'): Promise<MenuItem[]> => {
   const data = await request<ProductsResponse>(`/products?channel=${channel}`)
   return data.products.map(normalizeProduct)
@@ -1685,6 +1724,44 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
 export const fetchOrders = async (limit = 50): Promise<PosOrder[]> => {
   const data = await request<OrdersResponse>(`/orders?limit=${limit}`)
   return data.orders.map(normalizeOrder)
+}
+
+export const fetchOnlineOrderReminderStates = async (
+  orderIds: string[],
+): Promise<OnlineOrderReminderState[]> => {
+  const uniqueOrderIds = [...new Set(orderIds.map((orderId) => orderId.trim()).filter(Boolean))].slice(0, 100)
+  if (uniqueOrderIds.length === 0) {
+    return []
+  }
+
+  const params = new URLSearchParams({ orderIds: uniqueOrderIds.join(',') })
+  const data = await request<OnlineOrderReminderStatesResponse>(`/online-order-reminders/state?${params.toString()}`)
+  return data.states.map(normalizeOnlineOrderReminderState)
+}
+
+export const updateOnlineOrderReminderStates = async ({
+  orderIds,
+  action,
+  snoozedUntil,
+}: OnlineOrderReminderStateUpdateInput): Promise<OnlineOrderReminderState[]> => {
+  const uniqueOrderIds = [...new Set(orderIds.map((orderId) => orderId.trim()).filter(Boolean))].slice(0, 100)
+  if (uniqueOrderIds.length === 0) {
+    return []
+  }
+
+  const data = await request<OnlineOrderReminderStatesResponse>('/online-order-reminders/state', {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      orderIds: uniqueOrderIds,
+      action,
+      snoozedUntil,
+      stationId: currentStationId(),
+    }),
+  })
+  return data.states.map(normalizeOnlineOrderReminderState)
 }
 
 export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | null> => {

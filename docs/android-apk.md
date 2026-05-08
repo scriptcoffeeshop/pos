@@ -68,9 +68,10 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 APK 內含 `OnlineOrderNotifier` native plugin，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native plugin 會依目前 `online_ordering` 設定短輪詢：
 
 - `/settings/runtime`：同步 `acceptanceRequired`、`unconfirmedReminderMinutes`、`notificationRepeatMode`、`soundEnabled`、`notificationVolume`。
-- `/orders?limit=30`：找出 `online` / `qr`、`status=new`、付款狀態為 `pending` / `authorized` / `paid`，且尚未被本機標記已讀或已接單的訂單。
+- `/orders?limit=30`：找出 `online` / `qr`、`status=new`、付款狀態為 `pending` / `authorized` / `paid` 的候選訂單。
+- `/online-order-reminders/state?orderIds=...`：讀取 Supabase 共享的 `snoozed` / `seen` 狀態，讓背景 notification 與前景橫幅使用同一份跨平板提醒去重來源。
 
-Android 13 以上需允許通知權限；首次開啟 POS 後系統會跳出通知權限請求。若權限被拒絕，前景提醒不受影響，但背景 notification 不會顯示。提示音音量跟隨線上點餐設定的 `notificationVolume`，連續播放或只提醒一次跟隨 `notificationRepeatMode`；按 POS 內的「稍後」會把同一批 active orders snooze，按「查看訂單內容」可先檢查顧客與品項明細，按「接單」、按「拒絕接單」或訂單從佇列消失都會同步 mark seen，避免螢幕熄滅再回前景後重複提醒。
+Android 13 以上需允許通知權限；首次開啟 POS 後系統會跳出通知權限請求。若權限被拒絕，前景提醒不受影響，但背景 notification 不會顯示。提示音音量跟隨線上點餐設定的 `notificationVolume`，連續播放或只提醒一次跟隨 `notificationRepeatMode`；按 POS 內的「稍後」會把同一批 active orders snooze 並寫回 `/online-order-reminders/state`，按「已讀」「接單」「拒絕接單」或訂單從佇列消失都會寫入 seen/handled 狀態，避免另一台平板、fresh reinstall 或熄屏回前景後重複提醒。
 
 實機測試建議：
 
@@ -86,8 +87,8 @@ rtk adb logcat -v time | grep -Ei 'OnlineOrderNotifier|Notification|Capacitor|An
 1. 在 APK 前景確認線上/掃碼訂單可觸發原本的待接單浮層與提示音。
 2. 按 Home 或熄滅螢幕，從 Web 線上點餐送出一張新單。
 3. 確認平板顯示 `線上/掃碼新單待接單` Android notification，提示音節奏符合後台設定。
-4. 回到 APK，確認桌況頁補同步並只顯示上方待接單橫幅；按「查看訂單內容」確認顧客、付款與品項明細，按「稍後」後 1 分鐘內不重複提醒，按「接單」後 notification 消失且該單排入佇列。
-5. 重新送一張線上/掃碼新單，按「拒絕接單」後確認該單從待接單提醒移除，且回前景或熄屏後不再重複提醒同一單。
+4. 回到 APK，確認桌況頁補同步並只顯示上方待接單橫幅；按「查看訂單內容」確認顧客、付款與品項明細，按「稍後」後同一張單在其他平板與重開 App 後都不重複提醒，直到 snooze 到期。
+5. 重新送一張線上/掃碼新單，分別測「已讀」「接單」與「拒絕接單」；每次操作後確認該單從所有平板的待接單提醒移除，且回前景或熄屏後不再重複提醒同一單。
 6. 將後台 `online_ordering.soundEnabled`、`notificationRepeatMode` 或 `notificationVolume` 改掉，再背景送單，確認背景提醒套用新的 runtime 設定。
 
 Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授權時提供背景通知 fallback；未授權或瀏覽器不支援時，仍以回前景後的 Realtime/polling 補同步與前景提示音為準。

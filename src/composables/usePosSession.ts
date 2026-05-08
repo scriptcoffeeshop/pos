@@ -24,6 +24,7 @@ import {
   deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
+  fetchOnlineOrderReminderStates,
   fetchOrders,
   fetchProducts,
   fetchRuntimeSettings,
@@ -43,6 +44,7 @@ import {
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
   updateOrderStatus as persistOrderStatus,
+  updateOnlineOrderReminderStates,
   voidOrder,
 } from '../lib/posApi'
 import type { ProductUpdateInput } from '../lib/posApi'
@@ -64,6 +66,8 @@ import type {
   MenuItem,
   OrderSource,
   OrderStatus,
+  OnlineOrderReminderAction,
+  OnlineOrderReminderState,
   OnlineOrderingSettings,
   PaymentMethod,
   PaymentStatus,
@@ -961,7 +965,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
   const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
   const onlineReminderClock = ref(Date.now())
-  const acknowledgedOnlineReminderIds = ref<string[]>([])
+  const onlineReminderStates = ref<Record<string, OnlineOrderReminderState>>({})
   const acceptedOnlineOrderIds = ref<string[]>(readAcceptedOnlineOrderIds())
   const dismissedQueueOrderKeys = ref<string[]>(readDismissedQueueOrderKeys())
   const onlineReminderAudioMessage = ref('')
@@ -977,6 +981,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let realtimeRuntimeRefreshTimer: number | null = null
   let realtimeRegisterRefreshTimer: number | null = null
   let realtimeProductRefreshTimer: number | null = null
+  let realtimeOnlineReminderStateRefreshTimer: number | null = null
   let realtimeReconnectAttempt = 0
   let realtimeSubscriptionToken = 0
   let realtimeClosedByClient = false
@@ -1044,12 +1049,34 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     ['pending', 'authorized', 'paid'].includes(order.paymentStatus) &&
     !onlineOrderAccepted(order)
 
+  const isOnlineReminderCandidate = (order: PosOrder): boolean =>
+    (order.source === 'online' || order.source === 'qr') &&
+    order.status === 'new' &&
+    ['pending', 'authorized', 'paid'].includes(order.paymentStatus)
+
+  const onlineReminderStateForOrder = (order: PosOrder): OnlineOrderReminderState | null =>
+    onlineReminderStates.value[order.id] ?? null
+
+  const onlineReminderSuppressed = (order: PosOrder): boolean => {
+    const state = onlineReminderStateForOrder(order)
+    if (!state) {
+      return false
+    }
+
+    if (state.status === 'seen') {
+      return true
+    }
+
+    if (state.status !== 'snoozed' || !state.snoozedUntil) {
+      return false
+    }
+
+    const snoozedUntil = new Date(state.snoozedUntil).getTime()
+    return Number.isFinite(snoozedUntil) && snoozedUntil > onlineReminderClock.value
+  }
+
   const unconfirmedOnlineOrders = computed(() =>
-    orderQueue.value.filter((order) =>
-      (order.source === 'online' || order.source === 'qr') &&
-      order.status === 'new' &&
-      ['pending', 'authorized', 'paid'].includes(order.paymentStatus),
-    ),
+    orderQueue.value.filter(isOnlineReminderCandidate),
   )
 
   const overdueUnconfirmedOnlineOrders = computed(() => {
@@ -1067,11 +1094,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
 
   const activeOnlineReminderOrders = computed(() => {
-    const acknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
     const candidateOrders = onlineOrderingSettings.value.acceptanceRequired
       ? unconfirmedOnlineOrders.value.filter(onlineOrderRequiresAcceptance)
       : overdueUnconfirmedOnlineOrders.value
-    return candidateOrders.filter((order) => !acknowledgedIds.has(order.id))
+    return candidateOrders.filter((order) => !onlineReminderSuppressed(order))
   })
 
   const onlineReminderSignature = computed(() => {
@@ -1102,6 +1128,107 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       acceptedOrderIds: acceptedOnlineOrderIds.value,
       appActive: isDocumentActive(),
     })
+  }
+
+  const applyOnlineReminderStates = (
+    states: OnlineOrderReminderState[],
+    scopedOrderIds: string[] = [],
+  ): void => {
+    const nextStates = { ...onlineReminderStates.value }
+    for (const orderId of scopedOrderIds) {
+      delete nextStates[orderId]
+    }
+    for (const state of states) {
+      nextStates[state.orderNumber] = state
+    }
+    onlineReminderStates.value = nextStates
+  }
+
+  const onlineReminderStateScopeForOrders = (orders: PosOrder[]): string[] =>
+    [...new Set(orders.filter(isOnlineReminderCandidate).map((order) => order.id))]
+
+  const refreshOnlineReminderStatesForOrders = async (orders: PosOrder[] = orderQueue.value): Promise<void> => {
+    if (!isPosApiConfigured) {
+      return
+    }
+
+    const orderIds = onlineReminderStateScopeForOrders(orders)
+    if (orderIds.length === 0) {
+      onlineReminderStates.value = {}
+      return
+    }
+
+    try {
+      const states = await fetchOnlineOrderReminderStates(orderIds)
+      applyOnlineReminderStates(states, orderIds)
+      onlineReminderClock.value = Date.now()
+    } catch (error) {
+      setBackendStatus('fallback', '提醒狀態同步失敗', `線上新單提醒狀態無法同步：${getErrorMessage(error)}`)
+    }
+  }
+
+  const updateOnlineReminderStateOptimistically = (
+    orderIds: string[],
+    action: OnlineOrderReminderAction,
+    snoozedUntil: string | null,
+  ): void => {
+    const now = new Date().toISOString()
+    const nextStates = { ...onlineReminderStates.value }
+    for (const orderId of orderIds) {
+      const current = nextStates[orderId]
+      nextStates[orderId] = {
+        orderId: current?.orderId ?? '',
+        orderNumber: orderId,
+        status: action === 'snooze' ? 'snoozed' : 'seen',
+        snoozedUntil: action === 'snooze' ? snoozedUntil : null,
+        snoozedByStationId: action === 'snooze' ? stationClaimId : '',
+        seenAt: action === 'snooze' ? null : now,
+        seenByStationId: action === 'snooze' ? '' : stationClaimId,
+        lastAction: action,
+        createdAt: current?.createdAt ?? now,
+        updatedAt: now,
+      }
+    }
+    onlineReminderStates.value = nextStates
+    onlineReminderClock.value = Date.now()
+  }
+
+  const persistOnlineReminderState = (
+    orderIds: string[],
+    action: OnlineOrderReminderAction,
+    snoozedUntil?: string,
+  ): void => {
+    const uniqueOrderIds = [...new Set(orderIds)].filter(Boolean)
+    if (uniqueOrderIds.length === 0) {
+      return
+    }
+
+    if (action === 'snooze') {
+      const snoozedUntilEpochMs = new Date(snoozedUntil ?? '').getTime()
+      if (Number.isFinite(snoozedUntilEpochMs)) {
+        snoozeOnlineOrderNotifier(uniqueOrderIds, snoozedUntilEpochMs)
+      }
+    } else {
+      markOnlineOrderNotifierSeen(uniqueOrderIds)
+    }
+
+    updateOnlineReminderStateOptimistically(uniqueOrderIds, action, snoozedUntil ?? null)
+
+    if (!isPosApiConfigured) {
+      return
+    }
+
+    const updateInput = snoozedUntil
+      ? { orderIds: uniqueOrderIds, action, snoozedUntil }
+      : { orderIds: uniqueOrderIds, action }
+
+    void updateOnlineOrderReminderStates(updateInput)
+      .then((states) => {
+        applyOnlineReminderStates(states, uniqueOrderIds)
+      })
+      .catch((error) => {
+        setBackendStatus('fallback', '提醒狀態寫入失敗', `線上新單提醒狀態未同步：${getErrorMessage(error)}`)
+      })
   }
 
   const playOnlineOrderTone = async (): Promise<void> => {
@@ -1173,33 +1300,25 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const acknowledgeOnlineOrderReminders = (): void => {
     const snoozedIds = activeOnlineReminderOrders.value.map((order) => order.id)
-    const nextAcknowledgedIds = new Set(acknowledgedOnlineReminderIds.value)
-    for (const orderId of snoozedIds) {
-      nextAcknowledgedIds.add(orderId)
-    }
-
-    acknowledgedOnlineReminderIds.value = [...nextAcknowledgedIds]
     const snoozeMs = onlineOrderingSettings.value.acceptanceRequired
       ? onlineReminderShortSnoozeMs
       : onlineReminderLongSnoozeMs
-    snoozeOnlineOrderNotifier(snoozedIds, Date.now() + snoozeMs)
+    const snoozedUntil = new Date(Date.now() + snoozeMs).toISOString()
+    persistOnlineReminderState(snoozedIds, 'snooze', snoozedUntil)
+  }
 
-    if (onlineOrderingSettings.value.acceptanceRequired && snoozedIds.length > 0) {
-      globalThis.setTimeout(() => {
-        acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
-          !snoozedIds.includes(orderId),
-        )
-        onlineReminderClock.value = Date.now()
-      }, 60_000)
-    }
+  const markOnlineOrderRemindersSeen = (
+    orderIds = activeOnlineReminderOrders.value.map((order) => order.id),
+  ): void => {
+    persistOnlineReminderState(orderIds, 'seen')
   }
 
   watch(
     unconfirmedOnlineOrders,
     (orders) => {
       const activeIds = new Set(orders.map((order) => order.id))
-      acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((orderId) =>
-        activeIds.has(orderId),
+      onlineReminderStates.value = Object.fromEntries(
+        Object.entries(onlineReminderStates.value).filter(([orderId]) => activeIds.has(orderId)),
       )
     },
   )
@@ -1822,11 +1941,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const markOnlineOrderAccepted = (orderId: string): void => {
+  const markOnlineOrderHandled = (orderId: string, action: Extract<OnlineOrderReminderAction, 'accepted' | 'rejected'>): void => {
     acceptedOnlineOrderIds.value = [...new Set([...acceptedOnlineOrderIds.value, orderId])].slice(-100)
-    acknowledgedOnlineReminderIds.value = acknowledgedOnlineReminderIds.value.filter((entry) => entry !== orderId)
-    markOnlineOrderNotifierSeen([orderId])
+    persistOnlineReminderState([orderId], action)
     writeAcceptedOnlineOrderIds(acceptedOnlineOrderIds.value)
+  }
+
+  const markOnlineOrderAccepted = (orderId: string): void => {
+    markOnlineOrderHandled(orderId, 'accepted')
   }
 
   const acceptOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
@@ -1884,7 +2006,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         lines: rejectedOrder.lines.length > 0 ? rejectedOrder.lines : order.lines,
         printStatus: rejectedOrder.printStatus === 'skipped' ? order.printStatus : rejectedOrder.printStatus,
       })
-      markOnlineOrderAccepted(order.id)
+      markOnlineOrderHandled(order.id, 'rejected')
       setBackendStatus('connected', '已拒絕接單', `${order.id} 已從待接單移除`)
       void loadRegisterSession()
       return true
@@ -2016,6 +2138,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         fetchRuntimeSettings(),
       ])
       applyRuntimeSettings(runtimeSettings)
+      await refreshOnlineReminderStatesForOrders(remoteOrders)
       writeLocalProducts([])
       menuCatalog.value = sortProducts(remoteProducts)
       productStatusCatalog.value = sortProducts(remoteProducts)
@@ -2108,6 +2231,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }, realtimeRefreshDebounceMs)
   }
 
+  const scheduleRealtimeOnlineReminderStateRefresh = (): void => {
+    if (realtimeOnlineReminderStateRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeOnlineReminderStateRefreshTimer)
+    }
+
+    realtimeOnlineReminderStateRefreshTimer = globalThis.setTimeout(() => {
+      realtimeOnlineReminderStateRefreshTimer = null
+      void refreshOnlineReminderStatesForOrders()
+    }, realtimeRefreshDebounceMs)
+  }
+
   const handleRealtimeEvent = (event: PosRealtimeEvent): void => {
     if (event.topic === 'orders') {
       scheduleRealtimeQueueRefresh()
@@ -2127,6 +2261,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (event.topic === 'products') {
       scheduleRealtimeProductRefresh()
+      return
+    }
+
+    if (event.topic === 'online_order_reminders') {
+      scheduleRealtimeOnlineReminderStateRefresh()
+      onlineReminderClock.value = Date.now()
     }
   }
 
@@ -2147,7 +2287,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const subscriptionToken = realtimeSubscriptionToken + 1
     realtimeSubscriptionToken = subscriptionToken
     realtimeUnsubscribe = subscribeToPosRealtimeEvents({
-      topics: ['orders', 'runtime_settings', 'register_sessions', 'products'],
+      topics: ['orders', 'runtime_settings', 'register_sessions', 'products', 'online_order_reminders'],
       onEvent: handleRealtimeEvent,
       onStatus: (status) => {
         if (subscriptionToken === realtimeSubscriptionToken) {
@@ -2221,6 +2361,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       if (runtimeSettings) {
         applyRuntimeSettings(runtimeSettings)
       }
+      await refreshOnlineReminderStatesForOrders(remoteOrders)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
       syncNextSequenceFromQueue()
@@ -3438,6 +3579,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       globalThis.clearTimeout(realtimeProductRefreshTimer)
     }
 
+    if (realtimeOnlineReminderStateRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeOnlineReminderStateRefreshTimer)
+    }
+
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
     clearOnlineOrderNotifier()
   })
@@ -3486,6 +3631,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     loadProductStatusCatalog,
     loadCounterOrderForEditing,
     loadRegisterSession,
+    markOnlineOrderRemindersSeen,
     orderQueue,
     orderPendingSync,
     orderClaimExpired,

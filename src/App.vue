@@ -700,6 +700,7 @@ const {
   menuCatalog,
   loadCounterOrderForEditing,
   loadRegisterSession,
+  markOnlineOrderRemindersSeen,
   orderClaimExpired,
   orderClaimedByCurrentStation,
   orderClaimedByOtherStation,
@@ -4833,6 +4834,11 @@ const snoozeOnlineReminderFromDetail = (): void => {
   closeOnlineReminderDetail()
 }
 
+const markOnlineReminderReadFromDetail = (order: PosOrder): void => {
+  markOnlineOrderRemindersSeen([order.id])
+  closeOnlineReminderDetail()
+}
+
 const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
   const accepted = await acceptOnlineOrderForStation(order.id)
   if (accepted) {
@@ -6964,6 +6970,7 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="online-reminder-actions">
                       <button type="button" @click="acknowledgeOnlineOrderReminders">稍後提醒</button>
+                      <button type="button" @click="markOnlineOrderRemindersSeen()">已讀</button>
                       <button
                         class="primary-button"
                         type="button"
@@ -7914,6 +7921,7 @@ onBeforeUnmount(() => {
 
             <footer class="online-order-detail-actions">
               <button type="button" @click="snoozeOnlineReminderFromDetail">稍後提醒</button>
+              <button type="button" @click="markOnlineReminderReadFromDetail(onlineReminderDetailOrder)">已讀</button>
               <button
                 type="button"
                 class="online-order-reject-button"
@@ -7952,6 +7960,7 @@ onBeforeUnmount(() => {
             <small>{{ onlineReminderOrderLineSummary(primaryOnlineReminderOrder) }}</small>
           </div>
           <button type="button" @click="acknowledgeOnlineOrderReminders">稍後</button>
+          <button type="button" @click="markOnlineOrderRemindersSeen([primaryOnlineReminderOrder.id])">已讀</button>
           <button type="button" @click="openOnlineReminderDetail(primaryOnlineReminderOrder)">查看內容</button>
           <button
             type="button"
