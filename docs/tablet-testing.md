@@ -22,6 +22,23 @@ rtk npm run tablet:url
    - 開發伺服器是否仍在執行。
    - 平板是否被 Wi-Fi AP 的 client isolation 阻擋。
 
+## 雙平板同步自動實測
+
+可先跑本機 smoke，讓腳本啟動假 POS API、Vite 與兩個獨立瀏覽器 context 來模擬兩台平板：
+
+```bash
+rtk npm run smoke:dual-tablet
+```
+
+此 smoke 會加速 `VITE_POS_QUEUE_SYNC_INTERVAL_MS`，並驗證：
+
+- 桌位地圖與候位從平板 A 寫入後，平板 B 可同步看到。
+- 兩台平板同時接同一張線上單時，claim lease 只能有一台成功。
+- 任一平板按「稍後提醒」後，另一台不再提醒同一張線上單。
+- POS API 斷線後恢復時，平板會靠 fallback polling 拉回最新 runtime 設定。
+
+截圖會輸出到 `output/playwright/dual-tablet-a-final.png` 與 `output/playwright/dual-tablet-b-final.png`。這是本機可重跑的同步回歸；實機 APK 背景通知、熄屏與 fresh reinstall 仍需照下面 APK 測試流程補測。
+
 ## 公開網址測試
 
 GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費者線上點餐。`order.scriptcoffee.com.tw` 會預設開啟線上點餐頁；內部 POS / 後台仍建議用本機網址測試。

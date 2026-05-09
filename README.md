@@ -35,6 +35,7 @@ rtk npm run lint
 rtk npm run check:backend
 rtk npm run build
 rtk npm run ci-local
+rtk npm run smoke:dual-tablet
 rtk npm run tablet:url
 rtk npm run apk:debug
 ```

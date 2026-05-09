@@ -12,6 +12,8 @@ node_modules
 dist
 dist-ssr
 test-results
+output/playwright/
+.playwright-cli/
 .gradle-user-home
 *.local
 .env

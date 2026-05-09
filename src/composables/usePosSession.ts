@@ -89,7 +89,17 @@ type BackendMode = 'syncing' | 'connected' | 'fallback'
 type RuntimeSettings = Awaited<ReturnType<typeof fetchRuntimeSettings>>
 type WebAudioGlobal = typeof globalThis & { webkitAudioContext?: typeof AudioContext }
 
-const queueSyncIntervalMs = 20_000
+const envIntervalMs = (name: string, fallback: number, min: number, max: number): number => {
+  const rawValue = import.meta.env[name] as string | undefined
+  const value = Number(rawValue)
+  if (!Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, Math.trunc(value)))
+}
+
+const queueSyncIntervalMs = envIntervalMs('VITE_POS_QUEUE_SYNC_INTERVAL_MS', 20_000, 500, 60_000)
 const stationHeartbeatIntervalMs = 30_000
 const onlineReminderClockIntervalMs = 30_000
 const onlineReminderShortSnoozeMs = 60_000
