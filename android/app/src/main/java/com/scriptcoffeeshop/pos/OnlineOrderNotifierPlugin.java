@@ -12,6 +12,7 @@ import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 
@@ -58,6 +59,7 @@ import java.util.concurrent.TimeUnit;
     }
 )
 public class OnlineOrderNotifierPlugin extends Plugin {
+    private static final String TAG = "OnlineOrderNotifier";
     private static final String CHANNEL_ID = "script_coffee_online_orders";
     private static final int NOTIFICATION_ID = 7107;
     private static final int MIN_POLL_INTERVAL_MS = 10_000;
@@ -83,6 +85,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
     private int notificationVolume = 80;
     private int reminderMinutes = 5;
     private int pollIntervalMs = 20_000;
+    private boolean backgroundServiceRequested = false;
     private String lastNotificationSignature = "";
 
     @Override
@@ -105,9 +108,11 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             applySettings(call);
             configured = !apiBaseUrl.isEmpty() && !anonKey.isEmpty();
             if (configured) {
-                startPollingLocked();
+                ensureRequestExecutorLocked();
+                syncBackgroundServiceLocked();
             } else {
-                stopPollingLocked();
+                stopRequestExecutorLocked();
+                stopBackgroundService();
             }
         }
 
@@ -168,6 +173,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             }
             pruneSnoozesLocked(System.currentTimeMillis());
             maybeNotifyLocked();
+            syncBackgroundServiceLocked();
         }
         call.resolve();
     }
@@ -184,6 +190,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             }
             lastNotificationSignature = "";
             maybeNotifyLocked();
+            applyLocalStateToBackgroundService("snooze", new ArrayList<>(orderIds), untilEpochMs);
         }
         postReminderStateActionAsync("snooze", orderIds, untilEpochMs);
         call.resolve();
@@ -201,6 +208,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             }
             lastNotificationSignature = "";
             maybeNotifyLocked();
+            applyLocalStateToBackgroundService("seen", new ArrayList<>(orderIds), 0L);
         }
         postReminderStateActionAsync("seen", orderIds, 0L);
         call.resolve();
@@ -216,6 +224,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             } else {
                 maybeNotifyLocked();
             }
+            syncBackgroundServiceLocked();
         }
         call.resolve();
     }
@@ -228,6 +237,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             sharedReminderStatesByOrderId.clear();
             lastNotificationSignature = "";
             cancelNotification();
+            stopBackgroundService();
         }
         call.resolve();
     }
@@ -237,6 +247,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         synchronized (stateLock) {
             appActive = false;
             maybeNotifyLocked();
+            syncBackgroundServiceLocked();
         }
     }
 
@@ -245,13 +256,19 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         synchronized (stateLock) {
             appActive = true;
             cancelNotification();
+            stopBackgroundService();
         }
     }
 
     @Override
     protected void handleOnDestroy() {
         synchronized (stateLock) {
-            stopPollingLocked();
+            if (appActive || !configured) {
+                stopBackgroundService();
+            } else {
+                syncBackgroundServiceLocked();
+            }
+            stopRequestExecutorLocked();
         }
     }
 
@@ -266,11 +283,14 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         pollIntervalMs = clamp(call.getInt("pollIntervalMs", pollIntervalMs), MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS);
     }
 
-    private void startPollingLocked() {
+    private void ensureRequestExecutorLocked() {
         if (pollExecutor == null || pollExecutor.isShutdown()) {
             pollExecutor = Executors.newSingleThreadScheduledExecutor();
         }
+    }
 
+    private void startPollingLocked() {
+        ensureRequestExecutorLocked();
         if (pollTask != null && !pollTask.isCancelled()) {
             return;
         }
@@ -278,7 +298,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         pollTask = pollExecutor.scheduleWithFixedDelay(this::pollOrdersSafely, 2_000, pollIntervalMs, TimeUnit.MILLISECONDS);
     }
 
-    private void stopPollingLocked() {
+    private void stopRequestExecutorLocked() {
         if (pollTask != null) {
             pollTask.cancel(true);
             pollTask = null;
@@ -286,6 +306,57 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         if (pollExecutor != null) {
             pollExecutor.shutdownNow();
             pollExecutor = null;
+        }
+    }
+
+    private void syncBackgroundServiceLocked() {
+        if (!configured || appActive) {
+            stopBackgroundService();
+            return;
+        }
+
+        try {
+            OnlineOrderPollingService.start(getContext(), new OnlineOrderPollingService.ServiceConfig(
+                apiBaseUrl,
+                anonKey,
+                stationId,
+                stationLabel,
+                acceptanceRequired,
+                reminderMinutes,
+                soundEnabled,
+                notificationRepeatMode,
+                notificationVolume,
+                pollIntervalMs
+            ));
+            backgroundServiceRequested = true;
+        } catch (Exception error) {
+            Log.w(TAG, "foreground service start failed: " + error.getClass().getSimpleName() + ": " + error.getMessage(), error);
+            startPollingLocked();
+        }
+    }
+
+    private void stopBackgroundService() {
+        if (!backgroundServiceRequested) {
+            return;
+        }
+
+        try {
+            OnlineOrderPollingService.stop(getContext());
+            backgroundServiceRequested = false;
+        } catch (Exception error) {
+            Log.w(TAG, "foreground service stop failed: " + error.getClass().getSimpleName() + ": " + error.getMessage(), error);
+        }
+    }
+
+    private void applyLocalStateToBackgroundService(String action, List<String> orderIds, long untilEpochMs) {
+        if (orderIds.isEmpty() || !backgroundServiceRequested) {
+            return;
+        }
+
+        try {
+            OnlineOrderPollingService.applyLocalState(getContext(), action, orderIds, untilEpochMs);
+        } catch (Exception error) {
+            Log.w(TAG, "foreground service local state sync failed: " + error.getClass().getSimpleName() + ": " + error.getMessage(), error);
         }
     }
 
@@ -317,10 +388,11 @@ public class OnlineOrderNotifierPlugin extends Plugin {
                     }
                 }
                 pruneSnoozesLocked(System.currentTimeMillis());
+                Log.d(TAG, "background poll activeOrders=" + activeOrders.size() + " fetched=" + nextOrders.size());
                 maybeNotifyLocked();
             }
-        } catch (Exception ignored) {
-            // Foreground realtime and 20s polling remain the primary sync path.
+        } catch (Exception error) {
+            Log.w(TAG, "background poll failed: " + error.getClass().getSimpleName() + ": " + error.getMessage(), error);
         }
     }
 
@@ -332,7 +404,9 @@ public class OnlineOrderNotifierPlugin extends Plugin {
             connection.setReadTimeout(6_000);
             connection.setRequestProperty("Authorization", "Bearer " + token);
             connection.setRequestProperty("apikey", token);
+            connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("User-Agent", "ScriptCoffeePOS-Android");
             connection.setRequestProperty("X-POS-STATION-ID", stationId);
 
             int statusCode = connection.getResponseCode();
@@ -378,7 +452,9 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         connection.setReadTimeout(6_000);
         connection.setRequestProperty("Authorization", "Bearer " + token);
         connection.setRequestProperty("apikey", token);
+        connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("User-Agent", "ScriptCoffeePOS-Android");
         connection.setRequestProperty("X-POS-STATION-ID", stationId);
 
         int statusCode = connection.getResponseCode();
@@ -436,7 +512,9 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         connection.setReadTimeout(6_000);
         connection.setRequestProperty("Authorization", "Bearer " + token);
         connection.setRequestProperty("apikey", token);
+        connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("User-Agent", "ScriptCoffeePOS-Android");
         connection.setRequestProperty("X-POS-STATION-ID", stationId);
 
         int statusCode = connection.getResponseCode();
@@ -519,7 +597,9 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         connection.setDoOutput(true);
         connection.setRequestProperty("Authorization", "Bearer " + token);
         connection.setRequestProperty("apikey", token);
+        connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("User-Agent", "ScriptCoffeePOS-Android");
         connection.setRequestProperty("X-POS-STATION-ID", currentStationId);
 
         JSONObject body = new JSONObject();
@@ -611,6 +691,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
         }
 
         lastNotificationSignature = signature;
+        Log.d(TAG, "posting background notification signature=" + signature);
         postNotification(visibleOrders);
         if (soundEnabled && notificationVolume > 0) {
             playTone(notificationVolume);
@@ -619,6 +700,7 @@ public class OnlineOrderNotifierPlugin extends Plugin {
 
     private void postNotification(List<OrderSnapshot> orders) {
         if (!canPostNotifications()) {
+            Log.w(TAG, "notification permission not granted");
             return;
         }
 
@@ -906,11 +988,18 @@ public class OnlineOrderNotifierPlugin extends Plugin {
                 value.optString("source", ""),
                 value.optString("status", ""),
                 value.optString("payment_status", ""),
-                value.optString("customer_name", ""),
-                value.optString("claimed_by", ""),
+                optNullableString(value, "customer_name"),
+                optNullableString(value, "claimed_by"),
                 value.optInt("subtotal", 0),
                 parseCreatedAt(value.optString("created_at", ""))
             );
+        }
+
+        private static String optNullableString(JSONObject value, String key) {
+            if (!value.has(key) || value.isNull(key)) {
+                return "";
+            }
+            return value.optString(key, "");
         }
 
         private static long parseCreatedAt(String createdAt) {

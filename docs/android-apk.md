@@ -65,13 +65,15 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 
 ## 線上/掃碼新單背景提醒
 
-APK 內含 `OnlineOrderNotifier` native plugin，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native plugin 會依目前 `online_ordering` 設定短輪詢：
+APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：
 
 - `/settings/runtime`：同步 `acceptanceRequired`、`unconfirmedReminderMinutes`、`notificationRepeatMode`、`soundEnabled`、`notificationVolume`。
 - `/orders?limit=30`：找出 `online` / `qr`、`status=new`、付款狀態為 `pending` / `authorized` / `paid` 的候選訂單。
 - `/online-order-reminders/state?orderIds=...`：讀取 Supabase 共享的 `snoozed` / `seen` 狀態，讓背景 notification 與前景橫幅使用同一份跨平板提醒去重來源。
 
 Android 13 以上需允許通知權限；首次開啟 POS 後系統會跳出通知權限請求。若權限被拒絕，前景提醒不受影響，但背景 notification 不會顯示。提示音音量跟隨線上點餐設定的 `notificationVolume`，連續播放或只提醒一次跟隨 `notificationRepeatMode`；按 POS 內的「稍後」會把同一批 active orders snooze 並寫回 `/online-order-reminders/state`，按「已讀」「接單」「拒絕接單」或訂單從佇列消失都會寫入 seen/handled 狀態，避免另一台平板、fresh reinstall 或熄屏回前景後重複提醒。
+
+背景 service 會顯示低優先度的 `POS 線上接單提醒執行中` 常駐通知；真正的新單提醒仍使用 `線上/掃碼新單提醒` 高優先度 channel。測 log 時應看到 `foreground service poll activeOrders=... fetched=...`，並在新單符合條件時看到 `posting foreground service notification signature=...`。
 
 實機測試建議：
 
@@ -93,7 +95,7 @@ rtk adb logcat -v time | grep -Ei 'OnlineOrderNotifier|Notification|Capacitor|An
 
 Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授權時提供背景通知 fallback；未授權或瀏覽器不支援時，仍以回前景後的 Realtime/polling 補同步與前景提示音為準。
 
-這一版的 APK 背景提醒以 App 程序仍存活為前提，涵蓋按 Home、切到背景、螢幕熄滅與回前景補同步；若使用者從最近任務手動滑掉 App 或系統終止程序，後續正式版需再接 FCM push 或 foreground service 才能提供被終止後仍必達的提醒。
+這一版的 APK 背景提醒已改用 foreground service 覆蓋按 Home、切到背景、螢幕熄滅與回前景補同步；若使用者從最近任務手動滑掉 App、強制停止 App 或系統終止整個程序，後續正式版仍建議再接 FCM push 才能提供被終止後仍必達的提醒。
 
 ## 測試重點
 

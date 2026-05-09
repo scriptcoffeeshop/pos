@@ -54,7 +54,7 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 1. 送出一張線上或 QR 新單，確認兩邊都看到同一張待接單提醒。
 2. 在其中一台按「稍後」，確認另一台提醒同步消失；重開 App、回前景與 fresh reinstall 後仍不會立刻再提醒，直到 snooze 到期。
 3. 再送新單，分別測「已讀」「接單」「拒絕接單」，確認另一台、APK 重開、回前景與 fresh reinstall 後都不再提醒同一張單。
-4. 讓 APK 進背景或熄屏後送單，確認 Android notification 也遵守同一份共享狀態，而不是只看本機記憶體。
+4. 讓 APK 進背景或熄屏後送單，確認 Android foreground service 顯示背景接單常駐通知，並由 `線上/掃碼新單提醒` notification 提醒新單；logcat 應看到 `posting foreground service notification signature=...`，且通知遵守同一份共享狀態，而不是只看本機記憶體。
 5. 回前景時先觀察不應有舊單提示音或橫幅閃現；POS 應先重拉 `/online-order-reminders/state`，再決定是否恢復提醒。
 
 ## 列印測試邊界
