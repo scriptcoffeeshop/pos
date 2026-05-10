@@ -8691,6 +8691,158 @@ button.cart-line-summary:focus-visible {
   margin: 0;
 }
 
+.customer-management-panel {
+  gap: 12px;
+}
+
+.customer-management-toolbar,
+.customer-management-create,
+.customer-management-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.customer-management-toolbar .search-box {
+  flex: 1 1 260px;
+}
+
+.customer-management-toolbar label {
+  display: grid;
+  min-width: 160px;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.customer-management-toolbar select,
+.customer-management-create input,
+.customer-management-create select {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.customer-management-sort {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.customer-management-sort button {
+  min-height: 42px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 950;
+}
+
+.customer-management-sort button:last-child {
+  border-right: 0;
+}
+
+.customer-management-sort button.active {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.customer-management-create {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.customer-management-create input,
+.customer-management-create select {
+  flex: 1 1 150px;
+}
+
+.customer-management-actions p,
+.customer-management-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.customer-management-list {
+  display: grid;
+  gap: 10px;
+}
+
+.customer-management-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.customer-management-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.customer-management-row strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 950;
+}
+
+.customer-management-row span {
+  color: var(--muted);
+  font-size: 0.83rem;
+  font-weight: 850;
+}
+
+.customer-management-row dl {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 12px;
+  margin: 0;
+}
+
+.customer-management-row dl div {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.customer-management-row dt,
+.customer-management-row dd {
+  margin: 0;
+}
+
+.customer-management-row dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.customer-management-row dd {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
 .current-sales-header {
   display: flex;
   align-items: center;
@@ -11048,6 +11200,9 @@ button.cart-line-summary:focus-visible {
   .current-sales-mode-list article,
   .device-management-grid,
   .device-management-row,
+  .customer-management-sort,
+  .customer-management-row,
+  .customer-management-row dl,
   .cash-drawer-action-grid,
   .cash-drawer-history-grid,
   .cash-drawer-target,
@@ -11058,9 +11213,20 @@ button.cart-line-summary:focus-visible {
 
   .label-management-intro,
   .label-management-actions,
-  .device-management-actions {
+  .device-management-actions,
+  .customer-management-toolbar,
+  .customer-management-create,
+  .customer-management-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .customer-management-row dl div {
+    justify-items: start;
+  }
+
+  .customer-management-row dl {
+    grid-auto-flow: row;
   }
 
   .workspace--queue .order-row {

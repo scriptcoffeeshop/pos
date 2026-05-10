@@ -158,6 +158,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'customer-management',
+    category: 'orders',
+    title: '顧客資訊管理',
+    summary: '工具箱「顧客資訊管理」可搜尋顧客、依類型篩選、切換排序並新增顧客資料。',
+    steps: [
+      '開啟工具箱「顧客資訊管理」，進入後台編輯模式後按「刷新顧客」載入資料。',
+      '可用姓名、電話、LINE UID 或顧客類型搜尋，也可用顧客類型篩選。',
+      '排序可切換為最近消費時間或建立時間；最近消費時間以會員流水紀錄推算，沒有流水時使用更新時間。',
+      '新增顧客時可填姓名、電話、顧客類型與開通點數，資料會寫入 `members` 與既有會員 API。',
+      '點餐頁 CRM 搜尋、後台會員錢包與工具箱都讀同一份顧客資料，換平板或 fresh reinstall 後仍可查。',
+    ],
+    keywords: ['顧客資訊', '會員', 'CRM', '顧客類型', '搜尋顧客', '新增顧客'],
+    target: 'order',
+  },
+  {
     id: 'waitline-preorder',
     category: 'orders',
     title: '候位提前點餐與入座出單',

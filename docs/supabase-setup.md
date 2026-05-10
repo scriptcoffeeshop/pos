@@ -109,6 +109,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - 標籤管理走 `engagement_settings.orderLabels`；工具箱儲存標籤時呼叫 `PATCH /admin/settings/engagement_settings`，點餐頁使用同一組標籤，送單後以 `orders.order_labels` 保存該訂單實際勾選的標籤。
 - 裝置管理面板不新增資料表；出單機讀 `printer_settings.stations`，刷卡/掃碼/錢櫃外設讀 `engagement_settings.hardwareDevices`，未印出單據讀目前訂單的 `print_jobs`，取消未印出單據沿用 `DELETE /print-jobs/:id`。
+- 顧客資訊管理面板不新增資料表；搜尋與列表走 `GET /admin/members`，新增走 `POST /admin/members`，顧客類型讀 `engagement_settings.customerTypes` 與既有會員資料，最近消費時間以會員 `ledger` 最新紀錄推算。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
 - 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依服務方式、品項分類、指定品項、貼紙/收據/copies 拆分多筆 `POST /print-jobs`，未被規則納入的品項不會列印。
 - 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。
