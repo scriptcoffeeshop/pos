@@ -8201,6 +8201,147 @@ button.cart-line-summary:focus-visible {
   gap: 8px;
 }
 
+.current-sales-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.current-sales-header div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.current-sales-header strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.current-sales-header span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.current-sales-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.current-sales-card {
+  display: grid;
+  gap: 7px;
+  min-height: 118px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.current-sales-card--success {
+  border-color: rgba(13, 122, 104, 0.38);
+}
+
+.current-sales-card--warning {
+  border-color: rgba(185, 125, 36, 0.45);
+  background: var(--amber-soft);
+}
+
+.current-sales-card span,
+.system-info-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.current-sales-card strong {
+  color: var(--ink);
+  font-size: 1.35rem;
+  font-weight: 1000;
+}
+
+.current-sales-card small,
+.system-info-list small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.current-sales-mode-list,
+.system-info-list {
+  display: grid;
+  gap: 10px;
+}
+
+.current-sales-mode-list article,
+.system-info-list article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.current-sales-mode-list article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.current-sales-mode-list div {
+  display: grid;
+  gap: 4px;
+}
+
+.current-sales-mode-list strong,
+.system-info-list strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 950;
+}
+
+.current-sales-mode-list span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.current-sales-mode-list dl {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 12px;
+  margin: 0;
+}
+
+.current-sales-mode-list dl div {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.current-sales-mode-list dt,
+.current-sales-mode-list dd {
+  margin: 0;
+}
+
+.current-sales-mode-list dt {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.current-sales-mode-list dd {
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-weight: 950;
+}
+
 .time-clock-form {
   display: grid;
   gap: 12px;
@@ -10339,7 +10480,9 @@ button.cart-line-summary:focus-visible {
   .admin-station-grid,
   .admin-rule-grid,
   .admin-special-date-grid,
-  .admin-role-header {
+  .admin-role-header,
+  .current-sales-grid,
+  .current-sales-mode-list article {
     grid-template-columns: 1fr;
   }
 

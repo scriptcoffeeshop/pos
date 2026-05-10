@@ -106,8 +106,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -303,6 +303,19 @@ interface SupplyStateSnapshot {
   noteStatuses: Record<string, ProductSupplyStatus>
   products: MenuItem[]
   selectedCategory: SupplyCategoryFilter
+}
+
+interface CurrentSalesMetric {
+  label: string
+  value: string
+  detail: string
+  tone: 'neutral' | 'success' | 'warning'
+}
+
+interface SystemInfoItem {
+  label: string
+  value: string
+  detail: string
 }
 
 const queueFilterStorageKey = 'script-coffee-pos-queue-view'
@@ -3214,6 +3227,14 @@ const toolboxPanelTitle = computed(() => {
     return '員工打卡'
   }
 
+  if (activeToolboxPanel.value === 'current-sales') {
+    return '目前營業概況'
+  }
+
+  if (activeToolboxPanel.value === 'system-info') {
+    return '系統資訊'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3223,6 +3244,14 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'time-clock') {
     return 'Time Clock'
+  }
+
+  if (activeToolboxPanel.value === 'current-sales') {
+    return 'Current Sales'
+  }
+
+  if (activeToolboxPanel.value === 'system-info') {
+    return 'System'
   }
 
   return 'Toolbox'
@@ -3643,6 +3672,138 @@ const activeFloor = computed(() =>
   floorLevels.value.find((floor) => floor.id === activeFloorId.value) ?? floorLevels.value[0] ?? defaultFloorPlanSettingsValue.floors[0],
 )
 const activeFloorLabel = computed(() => activeFloor.value?.label ?? '1F')
+const salesPeriodStart = computed(() => {
+  const openedAt = registerSession.value?.status === 'open' ? new Date(registerSession.value.openedAt) : null
+  if (openedAt && Number.isFinite(openedAt.getTime())) {
+    return openedAt
+  }
+
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  return todayStart
+})
+const currentSalesPeriodLabel = computed(() =>
+  registerSession.value?.status === 'open'
+    ? `${formatOrderTime(registerSession.value.openedAt)} 起`
+    : '今日 00:00 起',
+)
+const currentSalesOrders = computed(() => {
+  const startTime = salesPeriodStart.value.getTime()
+
+  return orderQueue.value.filter((order) => {
+    if (order.status === 'failed' || order.status === 'voided') {
+      return false
+    }
+
+    const createdAt = new Date(order.createdAt).getTime()
+    return Number.isFinite(createdAt) && createdAt >= startTime
+  })
+})
+const currentSalesPendingOrders = computed(() =>
+  currentSalesOrders.value.filter((order) => order.paymentStatus === 'pending'),
+)
+const currentSalesPaidOrders = computed(() =>
+  currentSalesOrders.value.filter((order) => order.paymentStatus === 'paid' || order.paymentStatus === 'authorized'),
+)
+const sumOrderTotals = (orders: PosOrder[]): number =>
+  orders.reduce((total, order) => total + Math.max(0, Number(order.subtotal) || 0), 0)
+const currentSalesPendingTotal = computed(() =>
+  registerSession.value?.status === 'open'
+    ? registerSession.value.pendingTotal
+    : sumOrderTotals(currentSalesPendingOrders.value),
+)
+const currentSalesPaidTotal = computed(() =>
+  registerSession.value?.status === 'open'
+    ? registerSession.value.cashSales + registerSession.value.nonCashSales
+    : sumOrderTotals(currentSalesPaidOrders.value),
+)
+const currentSalesIssueCount = computed(() =>
+  currentSalesOrders.value.filter((order) => order.paymentStatus === 'expired' || order.paymentStatus === 'failed').length,
+)
+const currentSalesMetrics = computed<CurrentSalesMetric[]>(() => [
+  {
+    label: '未結帳金額',
+    value: formatCurrency(currentSalesPendingTotal.value),
+    detail: `${currentSalesPendingOrders.value.length} 張待收 · 服務費/折抵已含入訂單金額`,
+    tone: currentSalesPendingOrders.value.length > 0 ? 'warning' : 'neutral',
+  },
+  {
+    label: '已結帳金額',
+    value: formatCurrency(currentSalesPaidTotal.value),
+    detail: `${currentSalesPaidOrders.value.length} 張已付款/已授權`,
+    tone: 'success',
+  },
+  {
+    label: '餐期訂單',
+    value: `${currentSalesOrders.value.length} 張`,
+    detail: `${currentSalesIssueCount.value} 張付款異常 · ${closeoutVoidedOrders.value.length} 張作廢已排除`,
+    tone: currentSalesIssueCount.value > 0 ? 'warning' : 'neutral',
+  },
+])
+const currentSalesModeRows = computed(() =>
+  serviceModeValues.map((mode) => {
+    const matchingOrders = currentSalesOrders.value.filter((order) => order.mode === mode)
+    const paidTotal = sumOrderTotals(matchingOrders.filter((order) => order.paymentStatus === 'paid' || order.paymentStatus === 'authorized'))
+    const pendingTotal = sumOrderTotals(matchingOrders.filter((order) => order.paymentStatus === 'pending'))
+
+    return {
+      mode,
+      label: serviceModeLabels[mode],
+      count: matchingOrders.length,
+      paidTotal,
+      pendingTotal,
+    }
+  })
+)
+const currentSalesSummary = computed(() =>
+  `餐期 ${currentSalesPeriodLabel.value} · 已結 ${formatCurrency(currentSalesPaidTotal.value)} · 未結 ${formatCurrency(currentSalesPendingTotal.value)}`,
+)
+const enabledPrinterRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
+const enabledPrinterStationCount = computed(() => printerSettings.value.stations.filter((station) => station.enabled).length)
+const systemInfoItems = computed<SystemInfoItem[]>(() => [
+  {
+    label: '運行平台',
+    value: isNativeApp ? `Tablet APK · ${Capacitor.getPlatform()}` : 'Web 工作站',
+    detail: isNativeApp ? 'Android WebView / Capacitor' : globalThis.location?.host || 'local',
+  },
+  {
+    label: 'POS API',
+    value: backendStatus.label,
+    detail: backendStatus.detail || '等待下一次同步',
+  },
+  {
+    label: '工作站',
+    value: stationClaimLabel,
+    detail: stationHeartbeatMessage.value,
+  },
+  {
+    label: '線上接單',
+    value: onlineOrderingSettings.value.enabled ? '開啟' : '暫停',
+    detail: `${onlineOrderingSettings.value.acceptanceRequired ? '需接單確認' : '自動入單'} · 提醒 ${onlineOrderingSettings.value.soundEnabled ? '開' : '關'}`,
+  },
+  {
+    label: '桌位圖',
+    value: `${floorLevels.value.length} 樓 · ${floorTables.value.length} 桌`,
+    detail: `目前 ${activeFloorLabel.value} · 候位 ${waitlineEntries.value.length} 組`,
+  },
+  {
+    label: '列印站',
+    value: `${enabledPrinterStationCount.value} 台啟用 · ${enabledPrinterRuleCount.value} 條規則`,
+    detail: `${printStation.online ? '目前在線' : '目前離線'} · ${printStation.host}:${printStation.port}`,
+  },
+  {
+    label: '商品供應',
+    value: `${menuCatalog.value.length} 商品 · ${availableStationProducts.value} 可售`,
+    detail: `${stoppedStationProducts.value} 項暫停 · ${productStatusCatalog.value.length} 項可遠端管理`,
+  },
+  {
+    label: '班別',
+    value: registerStatusLabel.value,
+    detail: registerSession.value
+      ? `預期現金 ${formatCurrency(registerSession.value.expectedCash)} · ${queueHealth.value}`
+      : '尚未開班，營業概況改用今日訂單估算',
+  },
+])
 const activeFloorTables = computed(() => floorTables.value.filter((table) => table.floorId === activeFloorId.value))
 const floorLabelForTable = (table: DiningTableDefinition): string =>
   floorLevels.value.find((floor) => floor.id === table.floorId)?.label ?? activeFloorLabel.value
@@ -5894,6 +6055,16 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'time-clock') {
     activeToolboxPanel.value = 'time-clock'
+    return
+  }
+
+  if (action === 'current-sales') {
+    activeToolboxPanel.value = 'current-sales'
+    return
+  }
+
+  if (action === 'system-info') {
+    activeToolboxPanel.value = 'system-info'
     return
   }
 
@@ -10431,10 +10602,20 @@ onBeforeUnmount(() => {
             <strong>班別關帳</strong>
             <span>{{ workspaceTabSummaries.closeout }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('current-sales')">
+            <LayoutDashboard :size="24" aria-hidden="true" />
+            <strong>目前營業概況</strong>
+            <span>{{ currentSalesSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('time-clock')">
             <Clock3 :size="24" aria-hidden="true" />
             <strong>員工打卡</strong>
             <span>{{ latestTimeClockEntry ? `${latestTimeClockEntry.staffName} ${latestTimeClockEntry.eventType === 'clock-in' ? '上班' : '下班'}` : '識別碼上下班' }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('system-info')">
+            <Wifi :size="24" aria-hidden="true" />
+            <strong>系統資訊</strong>
+            <span>{{ backendStatus.label }} · {{ stationClaimLabel }}</span>
           </button>
           <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
             <Settings2 :size="24" aria-hidden="true" />
@@ -10524,7 +10705,68 @@ onBeforeUnmount(() => {
             重設
           </button>
         </section>
-        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+        <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+          <header class="current-sales-header">
+            <div>
+              <strong>{{ currentSalesPeriodLabel }}</strong>
+              <span>依 iCHEF 餐期概況顯示未結帳與已結帳金額</span>
+            </div>
+            <button class="secondary-button" type="button" @click="runToolboxAction('closeout')">
+              前往班別
+            </button>
+          </header>
+
+          <div class="current-sales-grid" aria-label="目前營業概況">
+            <article
+              v-for="metric in currentSalesMetrics"
+              :key="metric.label"
+              class="current-sales-card"
+              :class="`current-sales-card--${metric.tone}`"
+            >
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+              <small>{{ metric.detail }}</small>
+            </article>
+          </div>
+
+          <div class="current-sales-mode-list" aria-label="服務方式營業概況">
+            <article v-for="row in currentSalesModeRows" :key="row.mode">
+              <div>
+                <strong>{{ row.label }}</strong>
+                <span>{{ row.count }} 張訂單</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>已結</dt>
+                  <dd>{{ formatCurrency(row.paidTotal) }}</dd>
+                </div>
+                <div>
+                  <dt>未結</dt>
+                  <dd>{{ formatCurrency(row.pendingTotal) }}</dd>
+                </div>
+              </dl>
+            </article>
+          </div>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'system-info'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+          <div class="system-info-list" aria-label="系統資訊">
+            <article v-for="item in systemInfoItems" :key="item.label">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.detail }}</small>
+            </article>
+          </div>
+          <button
+            class="secondary-button preference-reset-button"
+            type="button"
+            :disabled="backendStatus.mode === 'syncing'"
+            @click="refreshBackendData"
+          >
+            <RefreshCw :size="18" aria-hidden="true" />
+            重新同步
+          </button>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'time-clock'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <form class="time-clock-form" @submit.prevent="submitTimeClockAction">
             <label>
               員工識別碼
