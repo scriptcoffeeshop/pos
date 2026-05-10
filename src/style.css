@@ -8576,6 +8576,121 @@ button.cart-line-summary:focus-visible {
   white-space: nowrap;
 }
 
+.device-management-panel {
+  gap: 12px;
+}
+
+.device-management-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.device-management-tabs span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 950;
+}
+
+.device-management-tabs span:first-child {
+  color: var(--primary-dark);
+  background: var(--surface);
+}
+
+.device-management-tabs span:last-child {
+  border-right: 0;
+}
+
+.device-management-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.device-management-card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.device-management-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.device-management-card header div,
+.device-management-row div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.device-management-card strong,
+.device-management-row strong {
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.device-management-card span,
+.device-management-row span,
+.device-management-message,
+.device-management-empty,
+.device-management-host-id {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.device-management-list {
+  display: grid;
+  gap: 8px;
+}
+
+.device-management-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.device-management-row b {
+  color: var(--primary-dark);
+  font-size: 0.82rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.device-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.device-management-message,
+.device-management-empty {
+  margin: 0;
+}
+
 .current-sales-header {
   display: flex;
   align-items: center;
@@ -10931,6 +11046,8 @@ button.cart-line-summary:focus-visible {
   .transaction-preview-lines article,
   .current-sales-grid,
   .current-sales-mode-list article,
+  .device-management-grid,
+  .device-management-row,
   .cash-drawer-action-grid,
   .cash-drawer-history-grid,
   .cash-drawer-target,
@@ -10940,7 +11057,8 @@ button.cart-line-summary:focus-visible {
   }
 
   .label-management-intro,
-  .label-management-actions {
+  .label-management-actions,
+  .device-management-actions {
     align-items: stretch;
     flex-direction: column;
   }

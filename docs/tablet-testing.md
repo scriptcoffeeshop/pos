@@ -195,6 +195,16 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 4. 平板 B 建立訂單並勾選該標籤，送出後確認訂單明細顯示該標籤。
 5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認標籤仍從 `engagement_settings` 還原，既有訂單仍從 `orders.order_labels` 顯示勾選結果。
 
+## 多平板裝置管理
+
+工具箱裝置管理只彙整既有列印站、外設、工作站與 print jobs，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 平板 A 開啟工具箱「裝置管理」，確認出單機清單與後台列印站設定一致。
+2. 確認刷卡機、掃碼裝置、錢櫃等外設狀態與後台「iCHEF 補齊」外設設定一致。
+3. 送出一筆列印單但讓它維持 queued 或 failed，確認裝置管理的「未印出單據」會列出該訂單。
+4. 平板 A 進入後台編輯模式，按「取消所有未印出的單據」後，平板 B 重新同步應看不到同一批 print jobs。
+5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認出單機、外設與剩餘 print jobs 都仍從 Supabase 還原。
+
 ## 多平板員工打卡
 
 員工帳號與打卡紀錄走 `pos-api` 與 Supabase，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
