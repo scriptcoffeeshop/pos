@@ -49,11 +49,14 @@ import {
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import {
+  createAdminReservation,
   createStaffTimeClockEntry,
   defaultFloorPlanSettings,
+  fetchAdminReservations,
   isPosApiConfigured,
   normalizeFloorPlanSettings,
   searchPosMembers,
+  updateAdminReservation,
   updateAdminSetting,
 } from './lib/posApi'
 import type {
@@ -72,6 +75,7 @@ import type {
   PosAppearanceSettings,
   PosMember,
   PosOrder,
+  PosReservation,
   PrinterSettings,
   ProductSupplyStatus,
   PrintLabelMode,
@@ -79,13 +83,14 @@ import type {
   PrintRuleSetting,
   PrintStationSetting,
   RegisterCashAdjustmentKind,
+  ReservationStatus,
   ServiceMode,
   StaffTimeClockEntry,
   WaitlineEntry,
 } from './types/pos'
 
 type AppView = 'pos' | 'admin' | 'online' | 'reservation'
-type WorkspaceTab = 'floor' | 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
+type WorkspaceTab = 'floor' | 'order' | 'details' | 'payment' | 'queue' | 'reservations' | 'printing' | 'closeout'
 type CartQuickEditor = 'customer' | 'service' | 'payment' | null
 type FloorServiceView = 'dine-in' | 'takeout-delivery'
 type QueueFilter = 'active' | 'ready' | 'all'
@@ -98,7 +103,7 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock'
 type ToolboxPanel = 'home' | 'appearance' | 'time-clock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
@@ -110,6 +115,8 @@ type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
 type CategoryMoveDirection = -1 | 1
 type MenuCategoryOptionValue = 'all' | MenuCategory
+type ReservationViewMode = 'day' | 'week' | 'month'
+type ReservationStatusFilter = 'all' | ReservationStatus
 
 interface SavedQueueView {
   filter: QueueFilter
@@ -120,6 +127,16 @@ interface SavedQueueView {
   fulfillmentFilter: QueueFulfillmentFilter
   sortMode: QueueSortMode
   searchTerm: string
+}
+
+interface ReservationDraft {
+  customerName: string
+  customerPhone: string
+  partySize: number
+  reservedAt: string
+  importantLabel: string
+  note: string
+  assignedTableIds: string[]
 }
 
 interface PosUiPreferences extends PosAppearanceSettings {
@@ -1868,6 +1885,7 @@ const workspaceTabLabels: Record<WorkspaceTab, string> = {
   details: '顧客與備註',
   payment: '付款確認',
   queue: '外帶 / 外送',
+  reservations: '訂位管理',
   printing: '列印站',
   closeout: '班別關帳',
 }
@@ -1951,6 +1969,62 @@ const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
   { value: 'created-desc', label: '建立時間新到舊' },
   { value: 'amount-desc', label: '金額高到低' },
 ]
+const reservationViewModeOptions: Array<{ value: ReservationViewMode; label: string }> = [
+  { value: 'day', label: '日' },
+  { value: 'week', label: '週' },
+  { value: 'month', label: '月' },
+]
+const reservationStatusOptions: Array<{ value: ReservationStatusFilter; label: string }> = [
+  { value: 'all', label: '全部狀態' },
+  { value: 'booked', label: '已訂位' },
+  { value: 'seated', label: '已入座' },
+  { value: 'cancelled', label: '已取消' },
+  { value: 'no_show', label: '未出席' },
+]
+const reservationStatusLabels: Record<ReservationStatus, string> = {
+  booked: '已訂位',
+  seated: '已入座',
+  cancelled: '已取消',
+  no_show: '未出席',
+}
+const reservationCheckInLeadMs = 2 * 60 * 60 * 1000
+const localDateInputValue = (date: Date): string => formatDateKey(date)
+const localDateFromKey = (dateKey: string): Date => {
+  const date = new Date(`${dateKey}T00:00:00`)
+  return Number.isFinite(date.getTime()) ? date : new Date()
+}
+const localDateTimeInputValue = (date: Date): string => {
+  const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
+  return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+}
+const fromDateTimeInputValue = (value: string): string | null => {
+  if (!value) {
+    return null
+  }
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null
+}
+const addLocalDays = (date: Date, days: number): Date => {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+const nextReservationSlotInput = (): string => {
+  const now = new Date()
+  const slotMinutes = Math.max(15, engagementSettings.value.reservationWebsite.slotMinutes || 30)
+  const next = new Date(now.getTime() + slotMinutes * 60 * 1000)
+  next.setMinutes(Math.ceil(next.getMinutes() / slotMinutes) * slotMinutes, 0, 0)
+  return localDateTimeInputValue(next)
+}
+const defaultReservationDraft = (): ReservationDraft => ({
+  customerName: '',
+  customerPhone: '',
+  partySize: Math.max(1, engagementSettings.value.reservationWebsite.minPartySize || 1),
+  reservedAt: nextReservationSlotInput(),
+  importantLabel: '',
+  note: '',
+  assignedTableIds: [],
+})
 const orderDateKey = (order: PosOrder): string | null => {
   const orderDate = new Date(order.requestedFulfillmentAt ?? order.createdAt)
   return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
@@ -2731,6 +2805,14 @@ const backendEditModeEnabled = ref(readStorageValue<boolean>(backendEditModeStor
 const initialView = readInitialView()
 const activeView = ref<AppView>(initialView === 'admin' && !backendEditModeEnabled.value ? 'pos' : initialView)
 const activeWorkspaceTab = ref<WorkspaceTab>('floor')
+const posReservations = ref<PosReservation[]>([])
+const reservationViewMode = ref<ReservationViewMode>('day')
+const reservationStatusFilter = ref<ReservationStatusFilter>('all')
+const reservationSelectedDate = ref(localDateInputValue(new Date()))
+const reservationMessage = ref('訂位尚未同步')
+const reservationActionId = ref('')
+const isReservationLoading = ref(false)
+const reservationDraft = ref<ReservationDraft>(defaultReservationDraft())
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const floorLevels = ref<FloorLevelSetting[]>(readFloorLevels())
@@ -3205,6 +3287,7 @@ const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
   payment: paymentLabels[paymentMethod.value],
   queue: queueFulfillmentAlert.value.count > 0 ? `${queueFulfillmentAlert.value.count} 張到點` : `${pendingOrders.value.length} 待處理`,
+  reservations: lateReservationCount.value > 0 ? `${lateReservationCount.value} 筆遲到` : `${todayReservationCount.value} 筆今日訂位`,
   printing: printStation.online ? '列印在線' : '列印離線',
   closeout: closeoutPreflightBlockingCount.value > 0 ? `${closeoutPreflightBlockingCount.value} 項待處理` : registerStatusLabel.value,
 }))
@@ -3303,6 +3386,171 @@ const emptyFloorTableStates = computed(() =>
   floorTableStates.value.filter((state) => state.status === 'empty'),
 )
 const activeFloorOrderCount = computed(() => floorTableStates.value.filter((state) => state.order).length)
+const reservationRange = computed(() => {
+  const selected = localDateFromKey(reservationSelectedDate.value)
+  if (reservationViewMode.value === 'week') {
+    const start = addLocalDays(selected, -selected.getDay())
+    const end = addLocalDays(start, 7)
+    return { start, end }
+  }
+  if (reservationViewMode.value === 'month') {
+    const start = new Date(selected.getFullYear(), selected.getMonth(), 1)
+    const end = new Date(selected.getFullYear(), selected.getMonth() + 1, 1)
+    return { start, end }
+  }
+
+  return { start: selected, end: addLocalDays(selected, 1) }
+})
+const reservationRangeLabel = computed(() => {
+  const start = reservationRange.value.start
+  const end = addLocalDays(reservationRange.value.end, -1)
+  if (reservationViewMode.value === 'day') {
+    return start.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' })
+  }
+
+  return `${start.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })} - ${end.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })}`
+})
+const reservationAssignableTables = computed(() =>
+  [...floorTables.value].sort((first, second) => {
+    const floorCompare = floorLabelForTable(first).localeCompare(floorLabelForTable(second), 'zh-TW')
+    return floorCompare || first.label.localeCompare(second.label, 'zh-TW', { numeric: true })
+  }),
+)
+const tableByReservationId = computed(() =>
+  new Map(floorTables.value.map((table) => [table.id, table])),
+)
+const tableLabelForReservationId = (tableId: string): string => {
+  const table = tableByReservationId.value.get(tableId)
+  return table ? `${floorLabelForTable(table)} ${table.label}` : tableId
+}
+const reservationAssignedTables = (reservation: PosReservation): DiningTableDefinition[] =>
+  reservation.assignedTableIds.flatMap((tableId) => {
+    const table = tableByReservationId.value.get(tableId)
+    return table ? [table] : []
+  })
+const reservationTableLabel = (reservation: PosReservation): string =>
+  reservation.assignedTableIds.length > 0
+    ? reservation.assignedTableIds.map(tableLabelForReservationId).join(' / ')
+    : '未排桌'
+const reservationDateKey = (reservation: PosReservation): string | null => {
+  const date = new Date(reservation.reservedAt)
+  return Number.isFinite(date.getTime()) ? formatDateKey(date) : null
+}
+const reservationTimestamp = (reservation: PosReservation): number => {
+  const timestamp = new Date(reservation.reservedAt).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+const reservationWindow = (reservation: PosReservation): { start: number; end: number } => {
+  const start = reservationTimestamp(reservation)
+  const durationMinutes = Math.max(15, engagementSettings.value.reservationWebsite.durationMinutes || 120)
+  const holdMinutes = Math.max(0, engagementSettings.value.reservationWebsite.seatHoldMinutes || 0)
+  return { start, end: start + (durationMinutes + holdMinutes) * 60 * 1000 }
+}
+const reservationWindowsOverlap = (first: PosReservation, second: PosReservation): boolean => {
+  const firstWindow = reservationWindow(first)
+  const secondWindow = reservationWindow(second)
+  return firstWindow.start < secondWindow.end && secondWindow.start < firstWindow.end
+}
+const activeReservableReservations = computed(() =>
+  posReservations.value.filter((reservation) => ['booked', 'seated'].includes(reservation.status)),
+)
+const reservationWarnings = (reservation: PosReservation): string[] => {
+  const warnings: string[] = []
+  const tables = reservationAssignedTables(reservation)
+  const totalCapacity = tables.reduce((sum, table) => sum + table.capacity, 0)
+  if (reservation.status === 'booked' && reservationIsLate(reservation)) {
+    warnings.push('遲到')
+  }
+  if (reservation.assignedTableIds.length === 0) {
+    warnings.push('未排桌')
+  } else if (totalCapacity > 0 && totalCapacity < reservation.partySize) {
+    warnings.push('座位數不足')
+  }
+  const tableIds = new Set(reservation.assignedTableIds)
+  const hasOverlap = activeReservableReservations.value.some((candidate) =>
+    candidate.id !== reservation.id &&
+    candidate.assignedTableIds.some((tableId) => tableIds.has(tableId)) &&
+    reservationWindowsOverlap(reservation, candidate),
+  )
+  if (hasOverlap) {
+    warnings.push('桌位重疊')
+  }
+  return warnings
+}
+const reservationTone = (reservation: PosReservation): string => {
+  const warnings = reservationWarnings(reservation)
+  if (reservation.status === 'cancelled' || reservation.status === 'no_show') {
+    return 'muted'
+  }
+  if (warnings.includes('遲到') || warnings.includes('桌位重疊')) {
+    return 'danger'
+  }
+  if (warnings.length > 0) {
+    return 'warning'
+  }
+  if (reservation.status === 'seated') {
+    return 'success'
+  }
+  return 'neutral'
+}
+const reservationIsLate = (reservation: PosReservation): boolean => {
+  if (reservation.status !== 'booked') {
+    return false
+  }
+  const holdMinutes = Math.max(0, engagementSettings.value.reservationWebsite.seatHoldMinutes || 0)
+  return reservationTimestamp(reservation) + holdMinutes * 60 * 1000 < currentTime.value
+}
+const reservationCanCheckIn = (reservation: PosReservation): boolean =>
+  reservation.status === 'booked' &&
+  reservationTimestamp(reservation) - reservationCheckInLeadMs <= currentTime.value
+const visibleReservations = computed(() => {
+  const start = reservationRange.value.start.getTime()
+  const end = reservationRange.value.end.getTime()
+  return posReservations.value
+    .filter((reservation) => {
+      const timestamp = reservationTimestamp(reservation)
+      return timestamp >= start && timestamp < end
+    })
+    .filter((reservation) => reservationStatusFilter.value === 'all' || reservation.status === reservationStatusFilter.value)
+    .sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
+})
+const reservationSummaryRows = computed(() => {
+  const buckets = new Map<string, { dateKey: string; count: number; people: number; seated: number; late: number }>()
+  for (const reservation of visibleReservations.value) {
+    const dateKey = reservationDateKey(reservation)
+    if (!dateKey) {
+      continue
+    }
+    const current = buckets.get(dateKey) ?? { dateKey, count: 0, people: 0, seated: 0, late: 0 }
+    current.count += 1
+    current.people += reservation.partySize
+    current.seated += reservation.status === 'seated' ? 1 : 0
+    current.late += reservationIsLate(reservation) ? 1 : 0
+    buckets.set(dateKey, current)
+  }
+  return [...buckets.values()].sort((first, second) => first.dateKey.localeCompare(second.dateKey))
+})
+const todayReservationCount = computed(() => {
+  const todayKey = formatDateKey(new Date(currentTime.value))
+  return posReservations.value.filter((reservation) => reservationDateKey(reservation) === todayKey && reservation.status === 'booked').length
+})
+const lateReservationCount = computed(() => posReservations.value.filter(reservationIsLate).length)
+const nextReservationsByTableId = computed(() => {
+  const nextMap = new Map<string, PosReservation>()
+  const upcoming = posReservations.value
+    .filter((reservation) => reservation.status === 'booked' && reservationTimestamp(reservation) >= currentTime.value)
+    .sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
+  for (const reservation of upcoming) {
+    for (const tableId of reservation.assignedTableIds) {
+      if (!nextMap.has(tableId)) {
+        nextMap.set(tableId, reservation)
+      }
+    }
+  }
+  return nextMap
+})
+const nextReservationForTable = (tableId: string): PosReservation | null =>
+  nextReservationsByTableId.value.get(tableId) ?? null
 const waitlinePeopleCount = computed(() =>
   waitlineEntries.value.reduce((total, entry) => total + entry.partySize, 0),
 )
@@ -4411,6 +4659,163 @@ const openFloorTableOrder = async (state: FloorTableState): Promise<void> => {
   setWorkspaceTab('queue')
 }
 
+const replaceReservation = (reservation: PosReservation): void => {
+  posReservations.value = [
+    reservation,
+    ...posReservations.value.filter((entry) => entry.id !== reservation.id),
+  ].sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
+}
+
+const refreshReservations = async (): Promise<void> => {
+  if (!isPosApiConfigured) {
+    reservationMessage.value = '本機模式無法同步訂位'
+    return
+  }
+
+  isReservationLoading.value = true
+  const { start, end } = reservationRange.value
+  try {
+    const rows = await fetchAdminReservations(start.toISOString(), end.toISOString())
+    const startTime = start.getTime()
+    const endTime = end.getTime()
+    posReservations.value = [
+      ...posReservations.value.filter((reservation) => {
+        const timestamp = reservationTimestamp(reservation)
+        return timestamp < startTime || timestamp >= endTime
+      }),
+      ...rows,
+    ].sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
+    reservationMessage.value = `${reservationRangeLabel.value} 已同步 ${rows.length} 筆訂位`
+  } catch (error) {
+    reservationMessage.value = `訂位同步失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isReservationLoading.value = false
+  }
+}
+
+const resetReservationDraft = (): void => {
+  reservationDraft.value = defaultReservationDraft()
+}
+
+const toggleReservationDraftTable = (tableId: string): void => {
+  const currentIds = new Set(reservationDraft.value.assignedTableIds)
+  if (currentIds.has(tableId)) {
+    currentIds.delete(tableId)
+  } else {
+    currentIds.add(tableId)
+  }
+  reservationDraft.value = {
+    ...reservationDraft.value,
+    assignedTableIds: [...currentIds],
+  }
+}
+
+const createReservationFromPos = async (): Promise<void> => {
+  if (!isPosApiConfigured) {
+    reservationMessage.value = '本機模式無法建立雲端訂位'
+    return
+  }
+
+  const reservedAt = fromDateTimeInputValue(reservationDraft.value.reservedAt)
+  if (!reservedAt) {
+    reservationMessage.value = '請先選擇有效訂位時間'
+    return
+  }
+
+  reservationActionId.value = 'reservation-create'
+  try {
+    const reservation = await createAdminReservation({
+      customerName: reservationDraft.value.customerName.trim() || '訂位客',
+      customerPhone: reservationDraft.value.customerPhone.trim(),
+      partySize: Math.max(1, Math.trunc(reservationDraft.value.partySize || 1)),
+      reservedAt,
+      status: 'booked',
+      importantLabel: reservationDraft.value.importantLabel.trim(),
+      note: reservationDraft.value.note.trim(),
+      assignedTableIds: [...reservationDraft.value.assignedTableIds],
+      preOrder: [],
+    })
+    replaceReservation(reservation)
+    resetReservationDraft()
+    reservationMessage.value = `${reservation.customerName} 訂位已建立`
+  } catch (error) {
+    reservationMessage.value = `訂位建立失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    reservationActionId.value = ''
+  }
+}
+
+const setReservationStatusFromPos = async (
+  reservation: PosReservation,
+  status: ReservationStatus,
+): Promise<void> => {
+  reservationActionId.value = `${reservation.id}-${status}`
+  try {
+    const saved = await updateAdminReservation(reservation.id, { status })
+    replaceReservation(saved)
+    reservationMessage.value = `${reservation.customerName} 已更新為${reservationStatusLabels[status]}`
+  } catch (error) {
+    reservationMessage.value = `訂位狀態更新失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    reservationActionId.value = ''
+  }
+}
+
+const focusReservationTable = (reservation: PosReservation): void => {
+  const table = reservationAssignedTables(reservation)[0]
+  if (!table) {
+    reservationMessage.value = '此訂位尚未安排桌位'
+    return
+  }
+  setActiveFloor(table.floorId)
+  selectedFloorTableId.value = table.id
+  setWorkspaceTab('floor')
+}
+
+const checkInReservation = async (reservation: PosReservation): Promise<void> => {
+  const assignedTables = reservationAssignedTables(reservation)
+  const firstTable = assignedTables[0] ??
+    reservationAssignableTables.value.find((table) => !dineInOrderForTable(table.id) && table.capacity >= reservation.partySize) ??
+    reservationAssignableTables.value.find((table) => !dineInOrderForTable(table.id))
+
+  if (!firstTable) {
+    reservationMessage.value = '沒有可開桌的空桌'
+    return
+  }
+
+  reservationActionId.value = `${reservation.id}-check-in`
+  try {
+    setActiveFloor(firstTable.floorId)
+    selectedFloorTableId.value = firstTable.id
+    await startDineInTableOrder(firstTable, { partySize: Math.min(firstTable.capacity, reservation.partySize) })
+    const reservedTimeLabel = formatOrderTime(reservation.reservedAt)
+    const reservedTables = assignedTables
+      .filter((table) => table.id !== firstTable.id)
+      .map((table) => `${floorLabelForTable(table)} ${table.label}`)
+    customer.name = reservation.customerName || `${floorLabelForTable(firstTable)} ${firstTable.label} 訂位客`
+    customer.phone = reservation.customerPhone
+    customer.note = [
+      floorNoteToken(floorLabelForTable(firstTable)),
+      tableNoteToken(firstTable.label),
+      `${reservation.partySize} 人`,
+      `訂位 ${reservedTimeLabel}`,
+      reservation.importantLabel,
+      reservation.note,
+      reservedTables.length > 0 ? `保留桌位 ${reservedTables.join(' / ')}` : '',
+    ].filter(Boolean).join('、')
+    const saved = await updateAdminReservation(reservation.id, {
+      status: 'seated',
+      assignedTableIds: reservation.assignedTableIds.length > 0 ? reservation.assignedTableIds : [firstTable.id],
+    })
+    replaceReservation(saved)
+    reservationMessage.value = `${reservation.customerName} 已帶位開單`
+  } catch (error) {
+    reservationMessage.value = `帶位開單失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    reservationActionId.value = ''
+  }
+}
+
 const returnFromOrderWorkspace = (): void => {
   setWorkspaceTab(serviceMode.value === 'dine-in' ? 'floor' : 'queue')
 }
@@ -4722,6 +5127,7 @@ const closeKnowledge = (): void => {
 const knowledgeTargetLabels: Record<PosKnowledgeArticle['target'], string> = {
   order: '點餐',
   queue: '桌況',
+  reservations: '訂位',
   printing: '列印/供應',
   closeout: '班別',
   admin: '後台',
@@ -4819,6 +5225,10 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'queue') {
     setWorkspaceTab('queue')
+  }
+
+  if (action === 'reservations') {
+    setWorkspaceTab('reservations')
   }
 
   if (action === 'supply') {
@@ -4967,6 +5377,9 @@ const setWorkspaceTab = (tab: WorkspaceTab): void => {
     activeFloorServiceView.value = 'takeout-delivery'
   }
   activeWorkspaceTab.value = tab
+  if (tab === 'reservations') {
+    void refreshReservations()
+  }
 }
 
 const resetQueueFilters = (): void => {
@@ -5747,8 +6160,15 @@ watch(supplyCategoryOptions, (options) => {
   }
 }, { immediate: true })
 
+watch([reservationSelectedDate, reservationViewMode], () => {
+  if (activeWorkspaceTab.value === 'reservations') {
+    void refreshReservations()
+  }
+})
+
 onMounted(() => {
   updatePosStableViewportHeight(true)
+  void refreshReservations()
   globalThis.addEventListener('keydown', handlePosShortcut)
   globalThis.addEventListener('resize', handleViewportResize)
   globalThis.addEventListener('orientationchange', scheduleForcedViewportRefresh)
@@ -5888,16 +6308,16 @@ onBeforeUnmount(() => {
             class="pos-main-surface"
             :class="{
               'pos-main-surface--ordering': activeWorkspaceTab === 'order',
-              'pos-main-surface--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor',
+              'pos-main-surface--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor' || activeWorkspaceTab === 'reservations',
             }"
           >
             <header
               v-if="activeWorkspaceTab !== 'order'"
               class="pos-command-bar"
-              :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor' }"
+              :class="{ 'pos-command-bar--queue': activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'floor' || activeWorkspaceTab === 'reservations' }"
             >
               <div>
-                <template v-if="activeWorkspaceTab === 'floor' || activeWorkspaceTab === 'queue'">
+                <template v-if="activeWorkspaceTab === 'floor' || activeWorkspaceTab === 'queue' || activeWorkspaceTab === 'reservations'">
                   <h1>{{ activeWorkspaceTitle }}</h1>
                 </template>
                 <template v-else>
@@ -5921,6 +6341,14 @@ onBeforeUnmount(() => {
                 <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
                   <ShoppingBag :size="22" aria-hidden="true" />
                   新增外帶
+                </button>
+              </div>
+              <div v-else-if="activeWorkspaceTab === 'reservations'" class="queue-command-actions">
+                <span>{{ reservationRangeLabel }}</span>
+                <span>{{ visibleReservations.length }} 筆 · 遲到 {{ lateReservationCount }} 筆</span>
+                <button class="primary-button queue-new-order-button" type="button" :disabled="isReservationLoading" @click="refreshReservations">
+                  <RefreshCw :size="22" aria-hidden="true" />
+                  同步訂位
                 </button>
               </div>
               <div v-else class="pos-command-status" aria-label="POS 狀態">
@@ -6535,6 +6963,9 @@ onBeforeUnmount(() => {
                             <strong>{{ state.table.label }}</strong>
                             <small v-if="floorDisplayPreferences.showPeople">{{ state.peopleLabel }}</small>
                           </span>
+                          <span v-if="nextReservationForTable(state.table.id)" class="floor-table-reservation">
+                            {{ formatOrderTime(nextReservationForTable(state.table.id)?.reservedAt ?? '') }} 訂位
+                          </span>
                           <span v-if="state.order" class="floor-table-order">
                             <strong>{{ state.amountLabel }}</strong>
                             <small v-if="floorDisplayPreferences.showOrderLabels">No. {{ state.orderLabel }}</small>
@@ -6858,6 +7289,171 @@ onBeforeUnmount(() => {
                             <small>{{ item.summary }}</small>
                           </button>
                         </div>
+                      </section>
+                    </aside>
+                  </div>
+                </section>
+
+                <section v-if="activeWorkspaceTab === 'reservations'" class="reservation-section" aria-labelledby="reservation-title">
+                  <div class="reservation-layout">
+                    <section class="reservation-main-panel">
+                      <header class="panel-heading reservation-heading">
+                        <div>
+                          <p class="eyebrow">Reservations</p>
+                          <h2 id="reservation-title">訂位時間軸</h2>
+                          <span class="panel-note">{{ reservationMessage }}</span>
+                        </div>
+                        <CalendarDays :size="22" aria-hidden="true" />
+                      </header>
+
+                      <div class="reservation-toolbar">
+                        <div class="segmented-control" aria-label="訂位檢視模式">
+                          <button
+                            v-for="mode in reservationViewModeOptions"
+                            :key="mode.value"
+                            class="segment-button"
+                            :class="{ 'segment-button--active': reservationViewMode === mode.value }"
+                            type="button"
+                            @click="reservationViewMode = mode.value"
+                          >
+                            {{ mode.label }}
+                          </button>
+                        </div>
+                        <input v-model="reservationSelectedDate" type="date" aria-label="訂位日期" />
+                        <select v-model="reservationStatusFilter" aria-label="訂位狀態篩選">
+                          <option v-for="option in reservationStatusOptions" :key="option.value" :value="option.value">
+                            {{ option.label }}
+                          </option>
+                        </select>
+                        <button class="secondary-button" type="button" :disabled="isReservationLoading" @click="refreshReservations">
+                          <RefreshCw :size="18" aria-hidden="true" />
+                          重新整理
+                        </button>
+                      </div>
+
+                      <div v-if="reservationViewMode !== 'day'" class="reservation-summary-grid" aria-label="週月訂位摘要">
+                        <article v-for="row in reservationSummaryRows" :key="row.dateKey" class="reservation-summary-card">
+                          <span>{{ row.dateKey }}</span>
+                          <strong>{{ row.count }} 組 · {{ row.people }} 人</strong>
+                          <small>入座 {{ row.seated }} · 遲到 {{ row.late }}</small>
+                        </article>
+                        <div v-if="reservationSummaryRows.length === 0" class="empty-state">
+                          <CalendarDays :size="22" aria-hidden="true" />
+                          <span>此區間沒有訂位</span>
+                        </div>
+                      </div>
+
+                      <div class="reservation-list" aria-label="訂位列表">
+                        <article
+                          v-for="reservation in visibleReservations"
+                          :key="reservation.id"
+                          class="reservation-row"
+                          :class="`reservation-row--${reservationTone(reservation)}`"
+                        >
+                          <div class="reservation-row-time">
+                            <strong>{{ formatOrderTime(reservation.reservedAt) }}</strong>
+                            <span>{{ reservationDateKey(reservation) }}</span>
+                          </div>
+                          <div class="reservation-row-body">
+                            <div class="reservation-row-title">
+                              <strong>{{ reservation.customerName }}</strong>
+                              <span>{{ reservation.partySize }} 人 · {{ reservation.customerPhone || '無電話' }}</span>
+                            </div>
+                            <div class="reservation-row-meta">
+                              <span>{{ reservationTableLabel(reservation) }}</span>
+                              <span>{{ reservationStatusLabels[reservation.status] }}</span>
+                              <span v-if="reservation.importantLabel">{{ reservation.importantLabel }}</span>
+                              <span v-for="warning in reservationWarnings(reservation)" :key="`${reservation.id}-${warning}`" class="reservation-warning">
+                                {{ warning }}
+                              </span>
+                            </div>
+                            <small v-if="reservation.note">{{ reservation.note }}</small>
+                          </div>
+                          <div class="reservation-row-actions">
+                            <button
+                              class="primary-button"
+                              type="button"
+                              :disabled="!reservationCanCheckIn(reservation) || reservationActionId === `${reservation.id}-check-in`"
+                              @click="checkInReservation(reservation)"
+                            >
+                              <ShoppingCart :size="16" aria-hidden="true" />
+                              帶位開單
+                            </button>
+                            <button class="secondary-button" type="button" @click="focusReservationTable(reservation)">
+                              桌位
+                            </button>
+                            <button
+                              v-if="reservation.status === 'booked'"
+                              class="secondary-button"
+                              type="button"
+                              :disabled="reservationActionId === `${reservation.id}-cancelled`"
+                              @click="setReservationStatusFromPos(reservation, 'cancelled')"
+                            >
+                              取消
+                            </button>
+                            <button
+                              v-if="reservation.status === 'booked'"
+                              class="secondary-button"
+                              type="button"
+                              :disabled="reservationActionId === `${reservation.id}-no_show`"
+                              @click="setReservationStatusFromPos(reservation, 'no_show')"
+                            >
+                              未出席
+                            </button>
+                          </div>
+                        </article>
+                        <div v-if="visibleReservations.length === 0" class="empty-state reservation-empty-state">
+                          <CalendarDays :size="24" aria-hidden="true" />
+                          <span>目前沒有符合條件的訂位</span>
+                        </div>
+                      </div>
+                    </section>
+
+                    <aside class="reservation-side-panel">
+                      <section class="reservation-form-panel">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>新增訂位</span>
+                            <strong>{{ reservationDraft.partySize }} 人</strong>
+                          </div>
+                        </div>
+                        <div class="reservation-form-grid">
+                          <input v-model="reservationDraft.customerName" type="text" placeholder="姓名" />
+                          <input v-model="reservationDraft.customerPhone" type="tel" inputmode="tel" placeholder="電話" />
+                          <div class="floor-party-stepper reservation-party-stepper" aria-label="訂位人數">
+                            <button type="button" @click="reservationDraft.partySize = Math.max(1, reservationDraft.partySize - 1)">
+                              <Minus :size="16" aria-hidden="true" />
+                            </button>
+                            <strong>{{ reservationDraft.partySize }} 人</strong>
+                            <button type="button" @click="reservationDraft.partySize = Math.min(50, reservationDraft.partySize + 1)">
+                              <Plus :size="16" aria-hidden="true" />
+                            </button>
+                          </div>
+                          <input v-model="reservationDraft.reservedAt" type="datetime-local" />
+                          <input v-model="reservationDraft.importantLabel" type="text" placeholder="標籤 / 節日" />
+                          <input v-model="reservationDraft.note" type="text" placeholder="店內備註 / 客人備註" />
+                        </div>
+                        <div class="reservation-table-picker" aria-label="安排桌位">
+                          <button
+                            v-for="table in reservationAssignableTables"
+                            :key="`reservation-table-${table.id}`"
+                            type="button"
+                            :class="{ 'reservation-table-choice--active': reservationDraft.assignedTableIds.includes(table.id) }"
+                            @click="toggleReservationDraftTable(table.id)"
+                          >
+                            <Check v-if="reservationDraft.assignedTableIds.includes(table.id)" :size="14" aria-hidden="true" />
+                            {{ floorLabelForTable(table) }} {{ table.label }} · {{ table.capacity }} 人
+                          </button>
+                        </div>
+                        <button
+                          class="primary-button reservation-create-button"
+                          type="button"
+                          :disabled="reservationActionId === 'reservation-create'"
+                          @click="createReservationFromPos"
+                        >
+                          <CalendarDays :size="18" aria-hidden="true" />
+                          建立訂位
+                        </button>
                       </section>
                     </aside>
                   </div>
@@ -8828,6 +9424,11 @@ onBeforeUnmount(() => {
             <ReceiptText :size="24" aria-hidden="true" />
             <strong>外帶 / 外送</strong>
             <span>{{ queueFilterNote }}</span>
+          </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('reservations')">
+            <CalendarDays :size="24" aria-hidden="true" />
+            <strong>訂位管理</strong>
+            <span>{{ workspaceTabSummaries.reservations }}</span>
           </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
             <Eye :size="24" aria-hidden="true" />

@@ -1,5 +1,5 @@
 export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations'
-export type PosKnowledgeTarget = 'order' | 'queue' | 'printing' | 'closeout' | 'admin' | 'online'
+export type PosKnowledgeTarget = 'order' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
 
 export interface PosKnowledgeCategoryOption {
   value: PosKnowledgeCategory
@@ -169,6 +169,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     ],
     keywords: ['訂位', '黑名單', 'No show', '手機', '後台', 'iCHEF', '訂位管理'],
     target: 'admin',
+  },
+  {
+    id: 'pos-reservation-manager',
+    category: 'reservations',
+    title: 'POS 訂位管理與帶位開單',
+    summary: '平板 POS 工具箱可進入訂位管理，日/週/月檢視訂位並從訂位直接帶位開單。',
+    steps: [
+      '在平板工作站開啟工具箱，點選「訂位管理」。',
+      '用日、週、月切換與狀態篩選查看訂位，系統會標示遲到、座位數不足、桌位重疊與未排桌。',
+      '新增訂位時可直接勾選一張或多張桌位，資料寫入 Supabase 並同步到其他平板與後台。',
+      '到訂位時間前 2 小時起可按「帶位開單」，系統會在第一張桌開內用單，帶入姓名、電話、備註、訂位人數與保留桌位資訊。',
+      '桌位地圖會顯示下一組已安排訂位時間，現場可先看到即將到店的桌況提醒。',
+    ],
+    keywords: ['訂位管理', '帶位開單', '日檢視', '週檢視', '月檢視', '遲到', '桌位重疊', '保留桌位', 'iCHEF'],
+    target: 'reservations',
   },
   {
     id: 'public-reservation-website',
