@@ -33,7 +33,9 @@ import {
   claimOrder,
   currentStationId,
   currentStationLabel,
+  createCashDrawerOpenEvent,
   finalizeCounterDraftOrder,
+  fetchCashDrawerEvents,
   isPosApiConfigured,
   normalizePaymentBreakdown,
   normalizePaymentSplits,
@@ -59,6 +61,7 @@ import {
 } from '../lib/posRealtime'
 import {
   buildCustomerReceiptPayload,
+  buildCashDrawerPulsePayload,
   buildOrderQrCodePayload,
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
@@ -67,6 +70,8 @@ import {
 } from '../lib/printing'
 import type {
   CartLine,
+  CashDrawerDeliveryStatus,
+  CashDrawerEvent,
   CustomerDraft,
   MenuCategory,
   MenuItem,
@@ -86,6 +91,7 @@ import type {
   PrintJob,
   PrinterSettings,
   PrintStation,
+  PrintStationSetting,
   PrintStatus,
   RegisterCashAdjustmentKind,
   RegisterSession,
@@ -1004,6 +1010,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const productStatusMessage = ref('後台編輯模式可載入完整商品清單，並在平板上暫停或恢復供應')
   const registerSession = ref<RegisterSession | null>(null)
   const registerMessage = ref('尚未載入開班資料')
+  const cashDrawerEvents = ref<CashDrawerEvent[]>([])
   const stationHeartbeatMessage = ref('尚未回報平板在線狀態')
   const isRegisterBusy = ref(false)
   const backendStatus = reactive<BackendStatus>({
@@ -1046,6 +1053,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let realtimeRegisterRefreshTimer: number | null = null
   let realtimeProductRefreshTimer: number | null = null
   let realtimeOnlineReminderStateRefreshTimer: number | null = null
+  let realtimeCashDrawerRefreshTimer: number | null = null
   let realtimeReconnectAttempt = 0
   let realtimeSubscriptionToken = 0
   let realtimeClosedByClient = false
@@ -1072,6 +1080,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       categories: [...rule.categories],
       itemIds: [...(rule.itemIds ?? [])],
     })),
+  })
+
+  const printStationFromSetting = (setting: PrintStationSetting): PrintStation => ({
+    id: setting.id,
+    name: setting.name,
+    host: setting.host,
+    port: setting.port,
+    protocol: setting.protocol,
+    online: setting.enabled,
+    autoPrint: setting.autoPrint,
+    lastPrintAt: null,
   })
 
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
@@ -2274,6 +2293,85 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const loadCashDrawerEvents = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      cashDrawerEvents.value = []
+      return
+    }
+
+    try {
+      cashDrawerEvents.value = await fetchCashDrawerEvents(60)
+    } catch (error) {
+      setBackendStatus('fallback', '錢櫃紀錄載入失敗', `錢櫃紀錄同步失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const resolveCashDrawerPrintStation = (targetStationId = ''): PrintStation => {
+    const targetSetting = printerSettings.value.stations.find((station) => station.id === targetStationId)
+      ?? printerSettings.value.stations.find((station) => station.enabled)
+
+    return targetSetting ? printStationFromSetting(targetSetting) : { ...printStation }
+  }
+
+  const openCashDrawerForStation = async (input: {
+    reason: string
+    deviceId?: string
+    targetStationId?: string
+  }): Promise<CashDrawerEvent> => {
+    if (!isPosApiConfigured) {
+      throw new Error('POS API is not configured')
+    }
+
+    const targetStation = resolveCashDrawerPrintStation(input.targetStationId)
+    const payload = buildCashDrawerPulsePayload()
+    const openedAt = new Date()
+    lastPrintPreview.value = [
+      'CASH DRAWER',
+      `${targetStation.name} ${targetStation.host}:${targetStation.port}`,
+      'ESC/POS pulse',
+      openedAt.toISOString(),
+    ].join('\n')
+
+    const printResult = await tryNativeLanPrint(payload, targetStation)
+    let deliveryStatus: CashDrawerDeliveryStatus = 'preview'
+    let errorMessage = ''
+    if (printResult.ok) {
+      deliveryStatus = 'sent'
+      if (targetStation.id === printStation.id) {
+        printStation.online = true
+        printStation.lastPrintAt = openedAt.toISOString()
+      }
+    } else {
+      errorMessage = printResult.error
+      deliveryStatus = isNativeLanPrinterAvailable() ? 'failed' : 'preview'
+    }
+
+    const event = await createCashDrawerOpenEvent({
+      reason: input.reason.trim() || '手動開啟錢櫃',
+      deviceId: input.deviceId ?? '',
+      targetStationId: targetStation.id ?? input.targetStationId ?? '',
+      printerHost: targetStation.host,
+      printerPort: targetStation.port,
+      deliveryStatus,
+      errorMessage,
+    })
+
+    cashDrawerEvents.value = [
+      event,
+      ...cashDrawerEvents.value.filter((entry) => entry.id !== event.id),
+    ].slice(0, 60)
+
+    setBackendStatus(
+      deliveryStatus === 'failed' ? 'fallback' : 'connected',
+      deliveryStatus === 'sent' ? '錢櫃已送出' : '錢櫃已記錄',
+      deliveryStatus === 'failed'
+        ? `已寫入錢櫃紀錄，硬體送出失敗：${errorMessage}`
+        : `已寫入錢櫃開啟紀錄 · ${targetStation.host}:${targetStation.port}`,
+    )
+
+    return event
+  }
+
   const scheduleRealtimeQueueRefresh = (delay = realtimeRefreshDebounceMs): void => {
     if (realtimeQueueRefreshTimer !== null) {
       globalThis.clearTimeout(realtimeQueueRefreshTimer)
@@ -2334,6 +2432,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }, realtimeRefreshDebounceMs)
   }
 
+  const scheduleRealtimeCashDrawerRefresh = (): void => {
+    if (realtimeCashDrawerRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeCashDrawerRefreshTimer)
+    }
+
+    realtimeCashDrawerRefreshTimer = globalThis.setTimeout(() => {
+      realtimeCashDrawerRefreshTimer = null
+      void loadCashDrawerEvents()
+    }, realtimeRefreshDebounceMs)
+  }
+
   const handleRealtimeEvent = (event: PosRealtimeEvent): void => {
     if (event.topic === 'orders') {
       scheduleRealtimeQueueRefresh()
@@ -2359,6 +2468,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (event.topic === 'online_order_reminders') {
       scheduleRealtimeOnlineReminderStateRefresh()
       onlineReminderClock.value = Date.now()
+      return
+    }
+
+    if (event.topic === 'cash_drawer') {
+      scheduleRealtimeCashDrawerRefresh()
     }
   }
 
@@ -2379,7 +2493,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const subscriptionToken = realtimeSubscriptionToken + 1
     realtimeSubscriptionToken = subscriptionToken
     realtimeUnsubscribe = subscribeToPosRealtimeEvents({
-      topics: ['orders', 'runtime_settings', 'register_sessions', 'products', 'online_order_reminders'],
+      topics: ['orders', 'runtime_settings', 'register_sessions', 'products', 'online_order_reminders', 'cash_drawer'],
       onEvent: handleRealtimeEvent,
       onStatus: (status) => {
         if (subscriptionToken === realtimeSubscriptionToken) {
@@ -3865,6 +3979,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       globalThis.clearTimeout(realtimeOnlineReminderStateRefreshTimer)
     }
 
+    if (realtimeCashDrawerRefreshTimer !== null) {
+      globalThis.clearTimeout(realtimeCashDrawerRefreshTimer)
+    }
+
     globalThis.document?.removeEventListener('visibilitychange', handleVisibilitySync)
     clearOnlineOrderNotifier()
   })
@@ -3879,6 +3997,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     acceptOnlineOrderForStation,
     activeOnlineReminderOrders,
     backendStatus,
+    cashDrawerEvents,
     cartLines,
     cartItemSubtotal,
     cartQuantity,
@@ -3913,6 +4032,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     claimingOrderId,
     loadProductStatusCatalog,
     loadCounterOrderForEditing,
+    loadCashDrawerEvents,
     loadRegisterSession,
     markOnlineOrderRemindersSeen,
     orderQueue,
@@ -3973,6 +4093,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     addItem,
     updateConfiguredLine,
     openRegisterSessionForStation,
+    openCashDrawerForStation,
     refreshBackendData: refreshPosData,
     refreshQueueState,
     sendPrinterHealthcheck,

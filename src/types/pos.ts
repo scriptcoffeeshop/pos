@@ -9,6 +9,7 @@ export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'fai
 export type PrintStatus = 'queued' | 'printed' | 'skipped' | 'failed'
 export type RegisterSessionStatus = 'open' | 'closed'
 export type RegisterCashAdjustmentKind = 'income' | 'expense'
+export type CashDrawerDeliveryStatus = 'sent' | 'preview' | 'failed'
 export type ProductSupplyStatus = 'normal' | 'online-stopped' | 'stopped'
 export type ReservationStatus = 'booked' | 'reminded' | 'confirmed' | 'seated' | 'cancelled' | 'no_show'
 export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-drawer' | 'ipad-qr-print'
@@ -159,6 +160,20 @@ export interface RegisterCashAdjustment {
   amount: number
   note: string
   stationId: string
+  createdAt: string
+}
+
+export interface CashDrawerEvent {
+  id: string
+  stationId: string
+  registerSessionId: string | null
+  reason: string
+  deviceId: string
+  targetStationId: string
+  printerHost: string
+  printerPort: number
+  deliveryStatus: CashDrawerDeliveryStatus
+  errorMessage: string
   createdAt: string
 }
 

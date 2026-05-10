@@ -14,6 +14,7 @@ type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | 
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
+type CashDrawerDeliveryStatus = "sent" | "preview" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
@@ -245,6 +246,17 @@ interface RegisterCashAdjustmentInput {
   amount?: number;
   note?: string;
   stationId?: string;
+}
+
+interface CashDrawerOpenInput {
+  stationId?: string;
+  reason?: string;
+  deviceId?: string;
+  targetStationId?: string;
+  printerHost?: string;
+  printerPort?: number;
+  deliveryStatus?: CashDrawerDeliveryStatus;
+  errorMessage?: string;
 }
 
 interface StaffTimeClockInput {
@@ -598,6 +610,8 @@ const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
   "id, action, order_id, register_session_id, station_id, actor, metadata, created_at";
+const cashDrawerEventSelect =
+  "id, register_session_id, station_id, metadata, created_at";
 const paymentEventSelect =
   "id, provider, event_id, order_id, order_number, event_type, payment_status, amount, applied, duplicate, processed_at, created_at";
 const stationHeartbeatSelect =
@@ -608,6 +622,70 @@ const staffTimeClockEntrySelect =
   "id, staff_account_id, staff_code, staff_name, role_id, role_name, event_type, station_id, note, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
+
+interface CashDrawerAuditRow {
+  id: string;
+  register_session_id: string | null;
+  station_id: string | null;
+  metadata: unknown;
+  created_at: string;
+}
+
+const normalizeCashDrawerMetadata = (metadata: unknown): Record<string, unknown> => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return {};
+  }
+
+  return metadata as Record<string, unknown>;
+};
+
+const normalizeCashDrawerDeliveryStatus = (value: unknown): CashDrawerDeliveryStatus =>
+  value === "sent" || value === "failed" || value === "preview" ? value : "preview";
+
+const cashDrawerEventFromAudit = (row: CashDrawerAuditRow) => {
+  const metadata = normalizeCashDrawerMetadata(row.metadata);
+  const printerPort = Number(metadata.printerPort);
+
+  return {
+    id: row.id,
+    station_id: row.station_id ?? "",
+    register_session_id: row.register_session_id ?? null,
+    reason: sanitizeText(metadata.reason, ""),
+    device_id: sanitizeText(metadata.deviceId, ""),
+    target_station_id: sanitizeText(metadata.targetStationId, ""),
+    printer_host: sanitizeText(metadata.printerHost, ""),
+    printer_port: Number.isFinite(printerPort) ? Math.trunc(printerPort) : 0,
+    delivery_status: normalizeCashDrawerDeliveryStatus(metadata.deliveryStatus),
+    error_message: sanitizeText(metadata.errorMessage, ""),
+    created_at: row.created_at,
+  };
+};
+
+const emitCashDrawerRealtimeEvent = async (row: CashDrawerAuditRow): Promise<void> => {
+  const event = cashDrawerEventFromAudit(row);
+  const { error } = await supabase
+    .from("pos_realtime_events")
+    .insert({
+      topic: "cash_drawer",
+      event_name: "INSERT",
+      source_table: "pos_audit_events",
+      entity_id: row.id,
+      payload: {
+        stationId: event.station_id,
+        registerSessionId: event.register_session_id,
+        reason: event.reason,
+        deliveryStatus: event.delivery_status,
+      },
+    });
+
+  if (error) {
+    console.error(JSON.stringify({
+      scope: "pos-realtime",
+      topic: "cash_drawer",
+      error: error.message,
+    }));
+  }
+};
 const defaultPaymentExpiryMinutes = 20;
 const reportTimezoneOffsetMinutes = 8 * 60;
 const terminalOrderStatuses = new Set<OrderStatus>(["served", "failed", "voided"]);
@@ -1813,6 +1891,85 @@ api.post("/register/cash-adjustments", async (c) => {
   } catch (error) {
     return c.json({ error: toPosApiError(error).message }, 500);
   }
+});
+
+api.get("/cash-drawer/events", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 60);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 120)
+    : 60;
+
+  const { data, error } = await supabase
+    .from("pos_audit_events")
+    .select(cashDrawerEventSelect)
+    .eq("action", "cash_drawer.open")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ events: (data ?? []).map((row) => cashDrawerEventFromAudit(row as CashDrawerAuditRow)) });
+});
+
+api.post("/cash-drawer/open", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input: CashDrawerOpenInput = await c.req.json<CashDrawerOpenInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const reason = sanitizeText(input.reason, "手動開啟錢櫃").slice(0, 120) || "手動開啟錢櫃";
+  const deviceId = sanitizeText(input.deviceId, "").slice(0, 120);
+  const targetStationId = sanitizeText(input.targetStationId, "").slice(0, 120);
+  const printerHost = sanitizeText(input.printerHost, "").slice(0, 120);
+  const rawPrinterPort = Number(input.printerPort);
+  const printerPort = Number.isFinite(rawPrinterPort)
+    ? Math.min(Math.max(Math.trunc(rawPrinterPort), 0), 65_535)
+    : 0;
+  const deliveryStatus = normalizeCashDrawerDeliveryStatus(input.deliveryStatus);
+  const errorMessage = sanitizeText(input.errorMessage, "").slice(0, 240);
+
+  const openSession = await loadOpenRegisterSession();
+  if (openSession.error) {
+    return c.json({ error: openSession.error.message }, 500);
+  }
+
+  const { data, error } = await supabase
+    .from("pos_audit_events")
+    .insert({
+      action: "cash_drawer.open",
+      register_session_id: openSession.session?.id ?? null,
+      station_id: stationId,
+      actor: "pos-api",
+      metadata: {
+        reason,
+        deviceId,
+        targetStationId,
+        printerHost,
+        printerPort,
+        deliveryStatus,
+        errorMessage,
+      },
+    })
+    .select(cashDrawerEventSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const row = data as CashDrawerAuditRow;
+  await emitCashDrawerRealtimeEvent(row);
+
+  return c.json({ event: cashDrawerEventFromAudit(row) }, 201);
 });
 
 api.get("/admin/products", async (c) => {

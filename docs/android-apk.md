@@ -229,6 +229,16 @@ rtk npm run apk:install:fresh
 4. 按「補印交易明細」確認列印佇列新增交易明細 print job。
 5. 待收款單應可作廢，已付款或已授權單應可退款；fresh reinstall 後重新進入，交易狀態仍從資料庫還原。
 
+## 錢櫃管理
+
+工具箱「錢櫃管理」使用 `pos-api` 寫入 `cash_drawer.open` 稽核事件；Android APK 會透過既有 `LanPrinter` plugin 對目標列印站送 ESC/POS cash drawer pulse，Web 工作站只保留預覽紀錄。實機測試建議：
+
+1. 連點工具箱 6 下進入後台編輯模式，確認後台「iCHEF 補齊」已有啟用的錢櫃外設並指向目前列印站。
+2. 回 POS 工具箱開啟「錢櫃管理」，輸入原因後按「開啟錢櫃並記錄」。
+3. 實體錢櫃若接在收據機或出單機 DK port，應收到 pulse；若目前只接 GODEX 貼紙機，至少確認畫面顯示硬體送出或失敗狀態並寫入紀錄。
+4. 另一台平板或瀏覽器開同一面板，確認可看到同一筆開啟紀錄。
+5. 再跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認錢櫃開啟紀錄仍從 `/cash-drawer/events` 還原，不依賴 APK 本機資料。
+
 ## 訂位黑名單
 
 訂位黑名單由後台「iCHEF 補齊」頁管理，資料寫入 Supabase `reservation_blacklist_entries`，不是 APK 本機資料。APK fresh reinstall 後應仍能從 `pos-api` 讀到同一份名單。

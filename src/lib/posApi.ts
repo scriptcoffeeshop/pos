@@ -39,6 +39,8 @@ import type {
   RegisterCashAdjustment,
   RegisterCashAdjustmentKind,
   RegisterSession,
+  CashDrawerDeliveryStatus,
+  CashDrawerEvent,
   ReservationStatus,
   StaffTimeClockEntry,
   SupplyPeriodRule,
@@ -204,6 +206,24 @@ interface ApiRegisterCashAdjustment {
 interface RegisterSessionResponse {
   session: ApiRegisterSession | null
   adjustment?: ApiRegisterCashAdjustment
+}
+
+interface ApiCashDrawerEvent {
+  id: string
+  station_id: string | null
+  register_session_id: string | null
+  reason?: string | null
+  device_id?: string | null
+  target_station_id?: string | null
+  printer_host?: string | null
+  printer_port?: number | null
+  delivery_status?: CashDrawerDeliveryStatus | null
+  error_message?: string | null
+  created_at: string
+}
+
+interface CashDrawerEventsResponse {
+  events: ApiCashDrawerEvent[]
 }
 
 interface ApiAuditEvent {
@@ -728,6 +748,20 @@ const normalizeRegisterCashAdjustment = (
   note: adjustment.note ?? '',
   stationId: adjustment.station_id ?? '',
   createdAt: adjustment.created_at,
+})
+
+const normalizeCashDrawerEvent = (event: ApiCashDrawerEvent): CashDrawerEvent => ({
+  id: event.id,
+  stationId: event.station_id ?? '',
+  registerSessionId: event.register_session_id ?? null,
+  reason: event.reason ?? '',
+  deviceId: event.device_id ?? '',
+  targetStationId: event.target_station_id ?? '',
+  printerHost: event.printer_host ?? '',
+  printerPort: event.printer_port ?? 0,
+  deliveryStatus: event.delivery_status ?? 'preview',
+  errorMessage: event.error_message ?? '',
+  createdAt: event.created_at,
 })
 
 const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
@@ -2406,6 +2440,31 @@ export const createRegisterCashAdjustment = async (
   }
 
   return normalizeRegisterSession(data.session)
+}
+
+export const fetchCashDrawerEvents = async (limit = 60): Promise<CashDrawerEvent[]> => {
+  const cappedLimit = Math.min(Math.max(Math.trunc(limit), 1), 120)
+  const data = await request<CashDrawerEventsResponse>(`/cash-drawer/events?limit=${cappedLimit}`)
+  return (data.events ?? []).map(normalizeCashDrawerEvent)
+}
+
+export const createCashDrawerOpenEvent = async (input: {
+  reason: string
+  deviceId: string
+  targetStationId: string
+  printerHost: string
+  printerPort: number
+  deliveryStatus: CashDrawerDeliveryStatus
+  errorMessage?: string
+}): Promise<CashDrawerEvent> => {
+  const data = await request<{ event: ApiCashDrawerEvent }>('/cash-drawer/open', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({ ...input, stationId: currentStationId() }),
+  })
+  return normalizeCashDrawerEvent(data.event)
 }
 
 const orderPayload = (order: PosOrder) => ({
