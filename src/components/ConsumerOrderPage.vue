@@ -61,11 +61,14 @@ const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: 'jkopay', label: '街口' },
   { value: 'cash', label: '現場付款' },
 ]
+const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
+const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
+const qrTableLabel = urlParams.get('table')?.trim() ?? ''
 
 const selectedCategory = ref<CategoryFilter>('all')
 const searchTerm = ref('')
 const displayMode = ref<DisplayMode>('list')
-const serviceMode = ref<ServiceMode>('takeout')
+const serviceMode = ref<ServiceMode>(urlParams.get('mode') === 'dine-in' || qrTableLabel ? 'dine-in' : 'takeout')
 const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 const menuCatalog = ref<MenuItem[]>([])
@@ -501,14 +504,14 @@ const submitOnlineOrder = async (): Promise<void> => {
   const now = new Date()
   const order: PosOrder = {
     id: buildOnlineOrderNumber(now),
-    source: 'online',
+    source: consumerOrderSource,
     mode: serviceMode.value,
     customerName: customer.name.trim(),
     customerPhone: customer.phone.trim(),
     deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
     requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
     memberId: null,
-    note: customer.note.trim(),
+    note: [qrTableLabel ? `桌位 ${qrTableLabel}` : '', customer.note.trim()].filter(Boolean).join(' · '),
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
     subtotal: cartTotal.value,
     orderLabels: [],
@@ -608,7 +611,7 @@ watch(
           </p>
           <p class="consumer-status-line">
             <ShoppingBag :size="18" aria-hidden="true" />
-            <span>{{ orderMessage }}</span>
+            <span>{{ qrTableLabel ? `掃碼內用 · ${qrTableLabel}` : orderMessage }}</span>
           </p>
         </div>
         <button class="icon-button" type="button" title="餐廳資訊">

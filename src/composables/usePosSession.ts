@@ -56,6 +56,8 @@ import {
   type PosRealtimeStatus,
 } from '../lib/posRealtime'
 import {
+  buildCustomerReceiptPayload,
+  buildOrderQrCodePayload,
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
   buildPrinterHealthcheckPreview,
@@ -2884,6 +2886,96 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const printManualOrderPayload = async (
+    orderId: string,
+    buildPayload: (order: PosOrder, station: PrintStation) => string,
+    label: string,
+  ): Promise<void> => {
+    if (printingOrderId.value) {
+      return
+    }
+
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return
+    }
+
+    const claimed = await claimOrderForStation(orderId)
+    if (!claimed) {
+      return
+    }
+
+    printingOrderId.value = orderId
+    const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
+    const station = { ...printStation }
+    const payload = buildPayload(claimedOrder, station)
+    lastPrintPreview.value = [`JOB ${label}`, `ORDER ${claimedOrder.id}`, `PRINTER ${station.name}`, payload].join('\n')
+    printStation.lastPrintAt = new Date().toISOString()
+
+    const createdPrintJobs: PrintJob[] = []
+    let jobStatus: PrintStatus = 'queued'
+    let printJobId: string | null = null
+
+    try {
+      if (isPosApiConfigured && claimedOrder.remoteId) {
+        const printJob = await createPrintJob(claimedOrder, payload, {
+          ...station,
+          name: `${station.name} ${label}`,
+        })
+        jobStatus = printJob.status
+        printJobId = printJob.id
+        createdPrintJobs.push(printJob)
+      }
+
+      if (isNativeLanPrinterAvailable()) {
+        const printResult = await tryNativeLanPrint(payload, station)
+        jobStatus = printResult.ok ? 'printed' : 'failed'
+
+        if (printJobId) {
+          const updatedPrintJob = await updatePrintJobStatus(
+            printJobId,
+            printResult.ok ? 'printed' : 'failed',
+            printResult.ok ? undefined : printResult.error,
+          )
+          jobStatus = updatedPrintJob.status
+          createdPrintJobs.push(updatedPrintJob)
+        }
+      }
+
+      replaceOrder(order.id, {
+        ...claimedOrder,
+        printStatus: summarizePrintStatuses([jobStatus]),
+        printJobs: mergePrintJobs(claimedOrder, createdPrintJobs),
+      })
+
+      if (!isNativeLanPrinterAvailable()) {
+        appendPrintPreviewStatus(`STATUS ${lanPrinterModeLabel()}，已準備 ${label}`)
+      }
+
+      setBackendStatus('connected', `${label}已送出`, `${claimedOrder.id} ${label}狀態：${jobStatus}`)
+    } catch (error) {
+      replaceOrder(order.id, {
+        ...claimedOrder,
+        printStatus: 'failed',
+        printJobs: mergePrintJobs(claimedOrder, createdPrintJobs),
+      })
+      setBackendStatus('fallback', `${label}失敗`, `${claimedOrder.id} ${label}失敗：${getErrorMessage(error)}`)
+    } finally {
+      printingOrderId.value = null
+    }
+  }
+
+  const printOrderQrCode = (orderId: string): Promise<void> =>
+    printManualOrderPayload(orderId, buildOrderQrCodePayload, '訂單 QR Code')
+
+  const printCustomerReceipt = (orderId: string): Promise<void> =>
+    printManualOrderPayload(orderId, buildCustomerReceiptPayload, '顧客聯')
+
   const deletePrintJobForOrder = async (orderId: string, printJobId: string): Promise<void> => {
     if (deletingPrintJobId.value) {
       return
@@ -3751,7 +3843,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     pendingOrders,
     posAppearanceSettings,
     pointsRedeemed,
+    printCustomerReceipt,
     printOrder,
+    printOrderQrCode,
     printingOrderId,
     printStation,
     printerSettings,

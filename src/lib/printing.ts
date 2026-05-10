@@ -97,6 +97,7 @@ const buildReceiptPayload = (
   station: PrintStation,
   lines: CartLine[],
   ruleName = station.name,
+  title = 'Script Coffee POS',
 ): string => {
   const itemCommands = lines.flatMap((line, index) => {
     const y = 112 + index * 28
@@ -119,7 +120,7 @@ const buildReceiptPayload = (
     '^H10',
     '^P1',
     '^S2',
-    `A20,20,0,3,1,1,N,"Script Coffee POS"`,
+    `A20,20,0,3,1,1,N,"${escapeEzplText(title)}"`,
     `A20,58,0,2,1,1,N,"${escapeEzplText(order.id)}"`,
     `A20,84,0,2,1,1,N,"${escapeEzplText(`${order.mode} ${ruleName}`)}"`,
     ...itemCommands,
@@ -265,6 +266,54 @@ export const buildPrintPlanPreview = (plan: OrderPrintPlan): string => {
 
 export const buildEzplTicketPreview = (order: PosOrder, station: PrintStation): string =>
   buildReceiptPayload(order, station, order.lines)
+
+const orderQrUrl = (order: PosOrder): string => {
+  const params = new URLSearchParams({
+    view: 'order',
+    source: 'qr',
+    order: order.remoteId ?? order.id,
+  })
+
+  if (order.mode === 'dine-in') {
+    params.set('mode', 'dine-in')
+  }
+
+  if (order.note) {
+    const tableMatch = order.note.match(/桌位\s*([A-Z0-9-]+)/i)
+    if (tableMatch?.[1]) {
+      params.set('table', tableMatch[1])
+    }
+  }
+
+  return `https://order.scriptcoffee.com.tw/?${params.toString()}`
+}
+
+export const buildOrderQrCodePayload = (
+  order: PosOrder,
+  station: PrintStation,
+  url = orderQrUrl(order),
+): string => {
+  const qrData = url.slice(0, 180)
+
+  return [
+    '^Q90,3',
+    '^W80',
+    '^H10',
+    '^P1',
+    '^S2',
+    `A20,18,0,3,1,1,N,"${escapeEzplText('Script Coffee QR')}"`,
+    `A20,52,0,2,1,1,N,"${escapeEzplText(order.id)}"`,
+    `A20,78,0,2,1,1,N,"${escapeEzplText(`${order.customerName} ${order.mode}`)}"`,
+    `W150,112,1,1,H,0,6,${qrData.length},0`,
+    qrData,
+    `A20,320,0,2,1,1,N,"${escapeEzplText('Scan to order')}"`,
+    `A20,346,0,1,1,1,N,"${escapeEzplText(station.name)}"`,
+    'E',
+  ].join('\n')
+}
+
+export const buildCustomerReceiptPayload = (order: PosOrder, station: PrintStation): string =>
+  buildReceiptPayload(order, station, order.lines, '顧客聯', 'Script Coffee 顧客聯')
 
 export const buildPrinterHealthcheckPayload = (station: PrintStation, testedAt = new Date()): string =>
   [
