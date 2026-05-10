@@ -1,6 +1,7 @@
 export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
+export type PaymentSplitStatus = 'open' | 'paid'
 export type OrderSource = 'counter' | 'qr' | 'online'
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 'voided'
 export type PaymentStatus = 'pending' | 'authorized' | 'paid' | 'expired' | 'failed' | 'refunded'
@@ -57,6 +58,16 @@ export interface CartLine {
   printPaused?: boolean
 }
 
+export interface PaymentSplit {
+  id: string
+  label: string
+  amount: number
+  lineKeys: string[]
+  paymentMethod: PaymentMethod
+  status: PaymentSplitStatus
+  paidAt: string | null
+}
+
 export interface CustomerDraft {
   memberId: string | null
   name: string
@@ -94,6 +105,7 @@ export interface PosOrder {
   discountAmount: number
   pointsRedeemed: number
   couponCode: string
+  paymentSplits: PaymentSplit[]
   memberPointsEarned: number
   paymentMethod: PaymentMethod
   paymentStatus: PaymentStatus

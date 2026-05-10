@@ -72,6 +72,7 @@ import type {
   OrderSource,
   OrderStatus,
   PaymentMethod,
+  PaymentSplit,
   PaymentStatus,
   PosAppearanceSettings,
   PosMember,
@@ -749,6 +750,7 @@ const {
   onlineOrderingSettings,
   orderLabels,
   paymentMethod,
+  paymentSplits,
   pendingOrders,
   posAppearanceSettings,
   pointsRedeemed,
@@ -808,6 +810,189 @@ const selectedOrderLabelSettings = computed(() =>
 const activeCoupon = computed(() =>
   customer.availableCoupons.find((coupon) => coupon.code === couponCode.value && coupon.status === 'active') ?? null,
 )
+
+const paymentSplitLineKey = (line: CartLine): string => line.itemId
+
+const paymentSplitAmounts = (total: number, count: number): number[] => {
+  if (count <= 0) {
+    return []
+  }
+
+  const baseAmount = Math.floor(total / count)
+  const remainder = total - baseAmount * count
+  return Array.from({ length: count }, (_, index) => baseAmount + (index < remainder ? 1 : 0))
+}
+
+const makePaymentSplit = (index: number, amount: number, lineKeys: string[] = []): PaymentSplit => ({
+  id: `split-${Date.now()}-${index + 1}`,
+  label: `子單 ${index + 1}`,
+  amount,
+  lineKeys,
+  paymentMethod: paymentMethod.value,
+  status: 'open',
+  paidAt: null,
+})
+
+const lineTotalByKey = computed(() =>
+  new Map(cartLines.value.map((line) => [paymentSplitLineKey(line), line.unitPrice * line.quantity])),
+)
+
+const assignedPaymentSplitLineKeys = computed(() =>
+  new Set(paymentSplits.value.flatMap((split) => split.lineKeys)),
+)
+
+const unassignedPaymentSplitTotal = computed(() =>
+  cartLines.value.reduce((total, line) =>
+    assignedPaymentSplitLineKeys.value.has(paymentSplitLineKey(line))
+      ? total
+      : total + line.unitPrice * line.quantity,
+  0),
+)
+
+const paymentSplitTotal = computed(() =>
+  paymentSplits.value.reduce((total, split) => total + Math.max(0, Math.trunc(split.amount || 0)), 0),
+)
+
+const paymentSplitPaidTotal = computed(() =>
+  paymentSplits.value.reduce((total, split) => split.status === 'paid' ? total + split.amount : total, 0),
+)
+
+const paymentSplitOpenCount = computed(() =>
+  paymentSplits.value.filter((split) => split.status !== 'paid').length,
+)
+
+const paymentSplitSummary = computed(() => {
+  if (paymentSplits.value.length === 0) {
+    return '尚未拆單'
+  }
+
+  return `${paymentSplits.value.length} 張子單 · 未結 ${paymentSplitOpenCount.value} 張 · 已結 ${formatCurrency(paymentSplitPaidTotal.value)}`
+})
+
+const orderPaymentSplitSummary = (order: PosOrder): string => {
+  if (order.paymentSplits.length === 0) {
+    return ''
+  }
+
+  const paidTotal = order.paymentSplits.reduce((total, split) => split.status === 'paid' ? total + split.amount : total, 0)
+  const openCount = order.paymentSplits.filter((split) => split.status !== 'paid').length
+  return `拆單 ${order.paymentSplits.length} 張 · 未結 ${openCount} 張 · 已結 ${formatCurrency(paidTotal)}`
+}
+
+const paymentSplitBalanced = computed(() =>
+  paymentSplits.value.length === 0 || paymentSplitTotal.value === cartTotal.value,
+)
+
+const recalculatePaymentSplitAmounts = (): void => {
+  const count = paymentSplits.value.length
+  if (count === 0) {
+    return
+  }
+
+  const hasAssignedLines = paymentSplits.value.some((split) => split.lineKeys.length > 0)
+  if (!hasAssignedLines) {
+    const amounts = paymentSplitAmounts(cartTotal.value, count)
+    paymentSplits.value = paymentSplits.value.map((split, index) => ({ ...split, amount: amounts[index] ?? 0 }))
+    return
+  }
+
+  const baseAmounts = paymentSplits.value.map((split, index) => {
+    const lineTotal = split.lineKeys.reduce((total, lineKey) => total + (lineTotalByKey.value.get(lineKey) ?? 0), 0)
+    return index === 0 ? lineTotal + unassignedPaymentSplitTotal.value : lineTotal
+  })
+  const baseTotal = baseAmounts.reduce((total, amount) => total + amount, 0)
+  if (baseTotal <= 0) {
+    const amounts = paymentSplitAmounts(cartTotal.value, count)
+    paymentSplits.value = paymentSplits.value.map((split, index) => ({ ...split, amount: amounts[index] ?? 0 }))
+    return
+  }
+
+  const rawAmounts = baseAmounts.map((amount) => Math.floor(cartTotal.value * amount / baseTotal))
+  let remainder = cartTotal.value - rawAmounts.reduce((total, amount) => total + amount, 0)
+  paymentSplits.value = paymentSplits.value.map((split, index) => {
+    const extra = remainder > 0 ? 1 : 0
+    remainder -= extra
+    return { ...split, amount: (rawAmounts[index] ?? 0) + extra }
+  })
+}
+
+const createEqualPaymentSplits = (count = 2): void => {
+  const splitCount = Math.min(Math.max(count, 2), 12)
+  const amounts = paymentSplitAmounts(cartTotal.value, splitCount)
+  paymentSplits.value = amounts.map((amount, index) => makePaymentSplit(index, amount))
+}
+
+const addPaymentSplit = (): void => {
+  const nextCount = Math.min(paymentSplits.value.length + 1, 12)
+  if (paymentSplits.value.length === 0) {
+    createEqualPaymentSplits(2)
+    return
+  }
+
+  paymentSplits.value = [
+    ...paymentSplits.value,
+    makePaymentSplit(nextCount - 1, 0),
+  ]
+  recalculatePaymentSplitAmounts()
+}
+
+const resetPaymentSplits = (): void => {
+  paymentSplits.value = []
+}
+
+const updatePaymentSplitMethod = (splitId: string, event: Event): void => {
+  const value = event.target instanceof HTMLSelectElement ? event.target.value : 'cash'
+  const method: PaymentMethod = value === 'card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
+    ? value
+    : 'cash'
+  paymentSplits.value = paymentSplits.value.map((split) =>
+    split.id === splitId ? { ...split, paymentMethod: method } : split,
+  )
+}
+
+const togglePaymentSplitPaid = (splitId: string): void => {
+  const paidAt = new Date().toISOString()
+  paymentSplits.value = paymentSplits.value.map((split) =>
+    split.id === splitId
+      ? {
+          ...split,
+          status: split.status === 'paid' ? 'open' : 'paid',
+          paidAt: split.status === 'paid' ? null : paidAt,
+        }
+      : split,
+  )
+}
+
+const assignLineToPaymentSplit = (line: CartLine, splitId: string): void => {
+  if (paymentSplits.value.length === 0) {
+    createEqualPaymentSplits(2)
+  }
+
+  const lineKey = paymentSplitLineKey(line)
+  paymentSplits.value = paymentSplits.value.map((split) => {
+    const lineKeys = split.lineKeys.filter((key) => key !== lineKey)
+    return split.id === splitId ? { ...split, lineKeys: [...lineKeys, lineKey] } : { ...split, lineKeys }
+  })
+  recalculatePaymentSplitAmounts()
+}
+
+const unassignLineFromPaymentSplits = (line: CartLine): void => {
+  const lineKey = paymentSplitLineKey(line)
+  paymentSplits.value = paymentSplits.value.map((split) => ({
+    ...split,
+    lineKeys: split.lineKeys.filter((key) => key !== lineKey),
+  }))
+  recalculatePaymentSplitAmounts()
+}
+
+const lineAssignedToSplit = (line: CartLine, splitId: string): boolean => {
+  const split = paymentSplits.value.find((entry) => entry.id === splitId)
+  return Boolean(split?.lineKeys.includes(paymentSplitLineKey(line)))
+}
+
+watch([cartTotal, cartLines], () => {
+  recalculatePaymentSplitAmounts()
+}, { deep: true })
 
 const recommendedItems = computed(() => {
   const cartCategories = new Set(cartLines.value.map((line) => line.category).filter(Boolean))
@@ -2131,6 +2316,7 @@ const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
     paymentLabels[order.paymentMethod],
     paymentStatusLabels[order.paymentStatus],
     statusLabels[order.status],
+    orderPaymentSplitSummary(order),
     `列印${printStatusLabels[order.printStatus]}`,
     orderNeedsOnlineReminder(order) ? '未確認 線上未確認 掃碼未確認' : '',
     fulfillmentLabel(order),
@@ -5448,6 +5634,7 @@ const closeKnowledge = (): void => {
 const knowledgeTargetLabels: Record<PosKnowledgeArticle['target'], string> = {
   floor: '桌位地圖',
   order: '點餐',
+  payment: '付款',
   queue: '桌況',
   reservations: '訂位',
   printing: '列印/供應',
@@ -6974,6 +7161,17 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="ticket-action-group" aria-label="訂單操作">
                       <button
+                        class="ticket-submit-button ticket-submit-button--secondary"
+                        type="button"
+                        :disabled="cartLines.length === 0"
+                        @click="setWorkspaceTab('payment')"
+                      >
+                        <span class="ticket-action-icon">
+                          <CreditCard :size="24" aria-hidden="true" />
+                        </span>
+                        <span class="ticket-action-label">付款/拆單</span>
+                      </button>
+                      <button
                         class="primary-button ticket-submit-button"
                         type="button"
                         :disabled="ticketActionDisabled()"
@@ -8015,7 +8213,10 @@ onBeforeUnmount(() => {
                       <h2 id="payment-title">付款</h2>
                       <span class="panel-note">確認付款方式後送出目前訂單</span>
                     </div>
-                    <CreditCard :size="22" aria-hidden="true" />
+                    <button type="button" class="secondary-button payment-back-button" @click="setWorkspaceTab('order')">
+                      <ChevronLeft :size="18" aria-hidden="true" />
+                      返回點餐
+                    </button>
                   </div>
 
                   <div class="payment-list payment-list--focused" aria-label="付款方式">
@@ -8086,6 +8287,74 @@ onBeforeUnmount(() => {
                       <strong>{{ formatCurrency(cartTotal) }}</strong>
                     </article>
                   </div>
+
+                  <section class="payment-split-panel" aria-label="拆單子單">
+                    <div class="payment-split-header">
+                      <div>
+                        <p class="eyebrow">Split Bills</p>
+                        <h3>拆單</h3>
+                        <span>{{ paymentSplitSummary }}</span>
+                      </div>
+                      <div class="payment-split-actions">
+                        <button type="button" @click="createEqualPaymentSplits(2)">均分 2 張</button>
+                        <button type="button" :disabled="paymentSplits.length >= 12" @click="addPaymentSplit">新增子單</button>
+                        <button type="button" :disabled="paymentSplits.length === 0" @click="resetPaymentSplits">重置</button>
+                      </div>
+                    </div>
+
+                    <div v-if="paymentSplits.length > 0" class="payment-split-list">
+                      <article
+                        v-for="split in paymentSplits"
+                        :key="split.id"
+                        class="payment-split-card"
+                        :class="{ 'payment-split-card--paid': split.status === 'paid' }"
+                      >
+                        <div>
+                          <strong>{{ split.label }}</strong>
+                          <span>{{ formatCurrency(split.amount) }}</span>
+                        </div>
+                        <select :value="split.paymentMethod" @change="updatePaymentSplitMethod(split.id, $event)">
+                          <option v-for="payment in visiblePaymentOptions" :key="`split-${split.id}-${payment.value}`" :value="payment.value">
+                            {{ payment.label }}
+                          </option>
+                        </select>
+                        <button type="button" @click="togglePaymentSplitPaid(split.id)">
+                          {{ split.status === 'paid' ? '改未結' : '標記已結' }}
+                        </button>
+                      </article>
+                    </div>
+
+                    <div v-if="paymentSplits.length > 0" class="payment-split-assignment" aria-label="商品各付各">
+                      <article v-for="line in cartLines" :key="`split-line-${line.itemId}`">
+                        <div>
+                          <strong>{{ line.name }}</strong>
+                          <span>x{{ line.quantity }} · {{ formatCurrency(line.unitPrice * line.quantity) }}</span>
+                        </div>
+                        <div class="payment-split-assignment-buttons">
+                          <button
+                            type="button"
+                            :class="{ 'payment-split-assignment-button--active': !assignedPaymentSplitLineKeys.has(paymentSplitLineKey(line)) }"
+                            @click="unassignLineFromPaymentSplits(line)"
+                          >
+                            未分配
+                          </button>
+                          <button
+                            v-for="split in paymentSplits"
+                            :key="`assign-${line.itemId}-${split.id}`"
+                            type="button"
+                            :class="{ 'payment-split-assignment-button--active': lineAssignedToSplit(line, split.id) }"
+                            @click="assignLineToPaymentSplit(line, split.id)"
+                          >
+                            {{ split.label }}
+                          </button>
+                        </div>
+                      </article>
+                    </div>
+
+                    <p v-if="paymentSplits.length > 0 && !paymentSplitBalanced" class="payment-split-warning">
+                      子單合計 {{ formatCurrency(paymentSplitTotal) }} 與訂單合計 {{ formatCurrency(cartTotal) }} 不一致，請重新均分或調整品項指派。
+                    </p>
+                  </section>
 
                   <div v-if="selectedOrderLabelSettings.length > 0 || activeCoupon" class="payment-meta-strip">
                     <span v-for="label in selectedOrderLabelSettings" :key="label.id" class="order-label-pill" :style="{ '--label-color': label.color }">
@@ -8473,6 +8742,10 @@ onBeforeUnmount(() => {
                               <CircleAlert :size="13" aria-hidden="true" />
                               未確認
                             </span>
+                            <span v-if="orderPaymentSplitSummary(order)" class="payment-split-chip">
+                              <CreditCard :size="13" aria-hidden="true" />
+                              {{ orderPaymentSplitSummary(order) }}
+                            </span>
                             <span
                               v-if="fulfillmentUrgencyLabel(order)"
                               class="fulfillment-chip"
@@ -8594,6 +8867,10 @@ onBeforeUnmount(() => {
                               </template>
                               <span>付款</span>
                               <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                              <template v-if="orderPaymentSplitSummary(order)">
+                                <span>拆單</span>
+                                <strong>{{ orderPaymentSplitSummary(order) }}</strong>
+                              </template>
                               <span>履約</span>
                               <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
                               <span>備註</span>

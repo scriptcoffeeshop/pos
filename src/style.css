@@ -1204,7 +1204,7 @@ button:disabled {
 
 .ticket-action-group {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr) minmax(0, 1.36fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr) minmax(0, 1.22fr);
   width: 100%;
   min-width: 0;
   gap: 8px;
@@ -3312,6 +3312,168 @@ h3 {
   white-space: nowrap;
 }
 
+.payment-split-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.payment-back-button {
+  min-width: 116px;
+}
+
+.payment-split-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.payment-split-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.payment-split-header span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.payment-split-actions,
+.payment-split-assignment-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.payment-split-actions button,
+.payment-split-card button,
+.payment-split-assignment-buttons button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.payment-split-list,
+.payment-split-assignment {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-split-card,
+.payment-split-assignment article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px 92px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.payment-split-card--paid {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+}
+
+.payment-split-card div,
+.payment-split-assignment article > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.payment-split-card strong,
+.payment-split-assignment strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-split-card span,
+.payment-split-assignment span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-split-card select {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.payment-split-assignment article {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 1.4fr);
+}
+
+.payment-split-assignment-button--active {
+  border-color: #91c5b6 !important;
+  background: var(--primary-soft) !important;
+  color: var(--primary-dark) !important;
+}
+
+.payment-split-warning {
+  margin: 0;
+  color: #b45309;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.payment-split-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  max-width: 100%;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #a9d2c4;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.payment-split-chip svg {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .payment-split-header {
+    display: grid;
+  }
+
+  .payment-split-actions,
+  .payment-split-assignment-buttons {
+    justify-content: flex-start;
+  }
+
+  .payment-split-card,
+  .payment-split-assignment article {
+    grid-template-columns: 1fr;
+  }
+}
+
 .cart-inline-editor {
   margin-top: 9px;
 }
@@ -3678,6 +3840,25 @@ button.cart-line-summary:focus-visible {
   background: var(--primary);
   color: white;
   font-weight: 950;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.secondary-button:not(:disabled):hover {
+  border-color: #91c5b6;
+  color: var(--primary-dark);
 }
 
 .primary-button:not(:disabled):hover {
