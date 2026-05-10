@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   CreditCard,
@@ -137,6 +138,10 @@ interface ReservationDraft {
   importantLabel: string
   note: string
   assignedTableIds: string[]
+}
+
+interface ReservationEditDraft extends ReservationDraft {
+  status: ReservationStatus
 }
 
 interface PosUiPreferences extends PosAppearanceSettings {
@@ -1981,6 +1986,12 @@ const reservationStatusOptions: Array<{ value: ReservationStatusFilter; label: s
   { value: 'cancelled', label: '已取消' },
   { value: 'no_show', label: '未出席' },
 ]
+const reservationEditableStatusOptions: Array<{ value: ReservationStatus; label: string }> = [
+  { value: 'booked', label: '已訂位' },
+  { value: 'seated', label: '已入座' },
+  { value: 'cancelled', label: '已取消' },
+  { value: 'no_show', label: '未出席' },
+]
 const reservationStatusLabels: Record<ReservationStatus, string> = {
   booked: '已訂位',
   seated: '已入座',
@@ -2813,6 +2824,8 @@ const reservationMessage = ref('訂位尚未同步')
 const reservationActionId = ref('')
 const isReservationLoading = ref(false)
 const reservationDraft = ref<ReservationDraft>(defaultReservationDraft())
+const selectedReservationEditId = ref<string | null>(null)
+const reservationEditDraft = ref<ReservationEditDraft | null>(null)
 const savedQueueView = readSavedQueueView()
 const posUiPreferences = ref<PosUiPreferences>(readPosUiPreferences())
 const floorLevels = ref<FloorLevelSetting[]>(readFloorLevels())
@@ -3551,6 +3564,11 @@ const nextReservationsByTableId = computed(() => {
 })
 const nextReservationForTable = (tableId: string): PosReservation | null =>
   nextReservationsByTableId.value.get(tableId) ?? null
+const selectedReservationEdit = computed(() =>
+  selectedReservationEditId.value
+    ? posReservations.value.find((reservation) => reservation.id === selectedReservationEditId.value) ?? null
+    : null,
+)
 const waitlinePeopleCount = computed(() =>
   waitlineEntries.value.reduce((total, entry) => total + entry.partySize, 0),
 )
@@ -4659,11 +4677,28 @@ const openFloorTableOrder = async (state: FloorTableState): Promise<void> => {
   setWorkspaceTab('queue')
 }
 
+const reservationToEditDraft = (reservation: PosReservation): ReservationEditDraft => {
+  const reservedAt = new Date(reservation.reservedAt)
+  return {
+    customerName: reservation.customerName,
+    customerPhone: reservation.customerPhone,
+    partySize: Math.max(1, reservation.partySize),
+    reservedAt: Number.isFinite(reservedAt.getTime()) ? localDateTimeInputValue(reservedAt) : nextReservationSlotInput(),
+    importantLabel: reservation.importantLabel,
+    note: reservation.note,
+    assignedTableIds: [...reservation.assignedTableIds],
+    status: reservation.status,
+  }
+}
+
 const replaceReservation = (reservation: PosReservation): void => {
   posReservations.value = [
     reservation,
     ...posReservations.value.filter((entry) => entry.id !== reservation.id),
   ].sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
+  if (selectedReservationEditId.value === reservation.id) {
+    reservationEditDraft.value = reservationToEditDraft(reservation)
+  }
 }
 
 const refreshReservations = async (): Promise<void> => {
@@ -4707,6 +4742,86 @@ const toggleReservationDraftTable = (tableId: string): void => {
   reservationDraft.value = {
     ...reservationDraft.value,
     assignedTableIds: [...currentIds],
+  }
+}
+
+const startEditingReservation = (reservation: PosReservation): void => {
+  selectedReservationEditId.value = reservation.id
+  reservationEditDraft.value = reservationToEditDraft(reservation)
+  reservationMessage.value = `${reservation.customerName} 可修改時間、桌位與店內資訊`
+}
+
+const cancelReservationEdit = (): void => {
+  selectedReservationEditId.value = null
+  reservationEditDraft.value = null
+}
+
+const toggleReservationEditTable = (tableId: string): void => {
+  if (!reservationEditDraft.value) {
+    return
+  }
+  const currentIds = new Set(reservationEditDraft.value.assignedTableIds)
+  if (currentIds.has(tableId)) {
+    currentIds.delete(tableId)
+  } else {
+    currentIds.add(tableId)
+  }
+  reservationEditDraft.value = {
+    ...reservationEditDraft.value,
+    assignedTableIds: [...currentIds],
+  }
+}
+
+const shiftReservationEditTime = (minutes: number): void => {
+  if (!reservationEditDraft.value) {
+    return
+  }
+  const current = reservationEditDraft.value.reservedAt ? new Date(reservationEditDraft.value.reservedAt) : new Date()
+  const next = Number.isFinite(current.getTime()) ? current : new Date()
+  next.setMinutes(next.getMinutes() + minutes, 0, 0)
+  reservationEditDraft.value = {
+    ...reservationEditDraft.value,
+    reservedAt: localDateTimeInputValue(next),
+  }
+}
+
+const saveReservationEdits = async (): Promise<void> => {
+  const reservation = selectedReservationEdit.value
+  const draft = reservationEditDraft.value
+  if (!reservation || !draft) {
+    reservationMessage.value = '請先選擇要修改的訂位'
+    return
+  }
+  if (!isPosApiConfigured) {
+    reservationMessage.value = '本機模式無法修改雲端訂位'
+    return
+  }
+
+  const reservedAt = fromDateTimeInputValue(draft.reservedAt)
+  if (!reservedAt) {
+    reservationMessage.value = '請先選擇有效訂位時間'
+    return
+  }
+
+  reservationActionId.value = `${reservation.id}-edit`
+  try {
+    const saved = await updateAdminReservation(reservation.id, {
+      customerName: draft.customerName.trim() || '訂位客',
+      customerPhone: draft.customerPhone.trim(),
+      partySize: Math.max(1, Math.trunc(draft.partySize || 1)),
+      reservedAt,
+      status: draft.status,
+      importantLabel: draft.importantLabel.trim(),
+      note: draft.note.trim(),
+      assignedTableIds: [...new Set(draft.assignedTableIds)],
+    })
+    replaceReservation(saved)
+    selectedReservationEditId.value = saved.id
+    reservationMessage.value = `${saved.customerName} 訂位已更新`
+  } catch (error) {
+    reservationMessage.value = `訂位修改失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    reservationActionId.value = ''
   }
 }
 
@@ -7348,7 +7463,7 @@ onBeforeUnmount(() => {
                           v-for="reservation in visibleReservations"
                           :key="reservation.id"
                           class="reservation-row"
-                          :class="`reservation-row--${reservationTone(reservation)}`"
+                          :class="[`reservation-row--${reservationTone(reservation)}`, { 'reservation-row--selected': selectedReservationEditId === reservation.id }]"
                         >
                           <div class="reservation-row-time">
                             <strong>{{ formatOrderTime(reservation.reservedAt) }}</strong>
@@ -7370,6 +7485,9 @@ onBeforeUnmount(() => {
                             <small v-if="reservation.note">{{ reservation.note }}</small>
                           </div>
                           <div class="reservation-row-actions">
+                            <button class="secondary-button" type="button" @click="startEditingReservation(reservation)">
+                              修改
+                            </button>
                             <button
                               class="primary-button"
                               type="button"
@@ -7410,6 +7528,74 @@ onBeforeUnmount(() => {
                     </section>
 
                     <aside class="reservation-side-panel">
+                      <section v-if="reservationEditDraft && selectedReservationEdit" class="reservation-form-panel reservation-form-panel--edit">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>修改訂位</span>
+                            <strong>{{ selectedReservationEdit.customerName || '訂位客' }}</strong>
+                          </div>
+                          <button class="icon-button" type="button" aria-label="關閉修改訂位" @click="cancelReservationEdit">
+                            <X :size="18" aria-hidden="true" />
+                          </button>
+                        </div>
+                        <div class="reservation-form-grid">
+                          <input v-model="reservationEditDraft.customerName" type="text" placeholder="姓名" />
+                          <input v-model="reservationEditDraft.customerPhone" type="tel" inputmode="tel" placeholder="電話" />
+                          <div class="floor-party-stepper reservation-party-stepper" aria-label="修改訂位人數">
+                            <button type="button" @click="reservationEditDraft.partySize = Math.max(1, reservationEditDraft.partySize - 1)">
+                              <Minus :size="16" aria-hidden="true" />
+                            </button>
+                            <strong>{{ reservationEditDraft.partySize }} 人</strong>
+                            <button type="button" @click="reservationEditDraft.partySize = Math.min(50, reservationEditDraft.partySize + 1)">
+                              <Plus :size="16" aria-hidden="true" />
+                            </button>
+                          </div>
+                          <input v-model="reservationEditDraft.reservedAt" type="datetime-local" />
+                          <div class="reservation-time-actions" aria-label="快速調整訂位時間">
+                            <button type="button" @click="shiftReservationEditTime(-Math.max(15, engagementSettings.reservationWebsite.slotMinutes || 30))">
+                              <ChevronLeft :size="15" aria-hidden="true" />
+                              前一時段
+                            </button>
+                            <button type="button" @click="shiftReservationEditTime(Math.max(15, engagementSettings.reservationWebsite.slotMinutes || 30))">
+                              後一時段
+                              <ChevronRight :size="15" aria-hidden="true" />
+                            </button>
+                          </div>
+                          <select v-model="reservationEditDraft.status" aria-label="訂位狀態">
+                            <option
+                              v-for="status in reservationEditableStatusOptions"
+                              :key="`reservation-edit-status-${status.value}`"
+                              :value="status.value"
+                            >
+                              {{ status.label }}
+                            </option>
+                          </select>
+                          <input v-model="reservationEditDraft.importantLabel" type="text" placeholder="標籤 / 節日" />
+                          <input v-model="reservationEditDraft.note" type="text" placeholder="店內備註 / 客人備註" />
+                        </div>
+                        <div class="reservation-table-picker" aria-label="修改安排桌位">
+                          <button
+                            v-for="table in reservationAssignableTables"
+                            :key="`reservation-edit-table-${table.id}`"
+                            type="button"
+                            :class="{ 'reservation-table-choice--active': reservationEditDraft.assignedTableIds.includes(table.id) }"
+                            @click="toggleReservationEditTable(table.id)"
+                          >
+                            <Check v-if="reservationEditDraft.assignedTableIds.includes(table.id)" :size="14" aria-hidden="true" />
+                            {{ floorLabelForTable(table) }} {{ table.label }} · {{ table.capacity }} 人
+                          </button>
+                        </div>
+                        <button
+                          class="primary-button reservation-create-button"
+                          type="button"
+                          :disabled="reservationActionId === `${selectedReservationEdit.id}-edit`"
+                          @click="saveReservationEdits"
+                        >
+                          <CalendarDays :size="18" aria-hidden="true" />
+                          儲存修改
+                        </button>
+                      </section>
+
                       <section class="reservation-form-panel">
                         <div class="floor-control-heading">
                           <div>
