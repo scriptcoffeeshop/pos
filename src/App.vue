@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Plus,
   Printer,
+  QrCode,
   ReceiptText,
   RefreshCw,
   Search,
@@ -724,7 +725,9 @@ const {
   pendingOrders,
   posAppearanceSettings,
   pointsRedeemed,
+  printCustomerReceipt,
   printOrder,
+  printOrderQrCode,
   printingOrderId,
   printStation,
   printerSettings,
@@ -3662,6 +3665,12 @@ const printSummary = (order: PosOrder): string => {
 
   return `${printStatusLabels[order.printStatus]}${attemptText}`
 }
+
+const manualPrintActionDisabled = (order: PosOrder): boolean =>
+  printingOrderId.value === order.id || orderClaimedByOtherStation(order)
+
+const customerReceiptDisabled = (order: PosOrder): boolean =>
+  manualPrintActionDisabled(order) || order.lines.length === 0
 
 const fulfillmentUrgencyLabel = (order: PosOrder): string => {
   const urgency = orderFulfillmentUrgency(order)
@@ -7422,6 +7431,24 @@ onBeforeUnmount(() => {
                               {{ printActionLabel(order) }}
                             </button>
                             <button
+                              class="order-action--print"
+                              type="button"
+                              :disabled="manualPrintActionDisabled(order)"
+                              @click="printOrderQrCode(order.id)"
+                            >
+                              <QrCode :size="16" aria-hidden="true" />
+                              QR
+                            </button>
+                            <button
+                              class="order-action--print"
+                              type="button"
+                              :disabled="customerReceiptDisabled(order)"
+                              @click="printCustomerReceipt(order.id)"
+                            >
+                              <ReceiptText :size="16" aria-hidden="true" />
+                              顧客聯
+                            </button>
+                            <button
                               class="order-action--claim"
                               type="button"
                               :class="{ 'order-action--active': orderClaimedByCurrentStation(order) }"
@@ -8141,6 +8168,24 @@ onBeforeUnmount(() => {
                   >
                     <Printer :size="16" aria-hidden="true" />
                     {{ printingOrderId === activeOrder.id ? '出單中' : '立即出單' }}
+                  </button>
+                  <button
+                    class="active-order-print-button"
+                    type="button"
+                    :disabled="manualPrintActionDisabled(activeOrder)"
+                    @click="printOrderQrCode(activeOrder.id)"
+                  >
+                    <QrCode :size="16" aria-hidden="true" />
+                    列印 QR
+                  </button>
+                  <button
+                    class="active-order-print-button"
+                    type="button"
+                    :disabled="customerReceiptDisabled(activeOrder)"
+                    @click="printCustomerReceipt(activeOrder.id)"
+                  >
+                    <ReceiptText :size="16" aria-hidden="true" />
+                    顧客聯
                   </button>
                 </section>
               </aside>

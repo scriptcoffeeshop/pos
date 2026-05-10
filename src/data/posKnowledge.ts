@@ -100,14 +100,15 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     id: 'printer-reprint',
     category: 'printing',
     title: '出單機與重新列印',
-    summary: '列印站依後台規則拆分收據/貼紙，Android APK 會逐筆送到 GODEX DT2X。',
+    summary: '列印站依後台規則拆分收據/貼紙，訂單列也可手動列印 QR Code 與顧客聯。',
     steps: [
       '在「列印」工作區確認目前出單機 IP、連線狀態與最後列印時間。',
       '用 healthcheck 送出測試標籤，瀏覽器版只建立預覽與 print job。',
       '訂單列可按「出單」或「重印」，列印工作會顯示成功、失敗或略過。',
+      '需要顧客掃碼追加點餐時，按訂單列「QR」列印訂單 QR Code；需要顧客聯時按「顧客聯」。',
       '若 LAN 失敗，先確認平板與 GODEX 是否在同一網段，再回到後台檢查出單機設定。',
     ],
-    keywords: ['列印', '出單', '重印', 'GODEX', 'LAN', '貼紙', '收據'],
+    keywords: ['列印', '出單', '重印', 'GODEX', 'LAN', '貼紙', '收據', 'QR', '顧客聯'],
     target: 'printing',
   },
   {
