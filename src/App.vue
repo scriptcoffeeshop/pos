@@ -109,8 +109,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -3217,6 +3217,9 @@ const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
 const labelManagementDrafts = ref<OrderLabelSetting[]>([])
 const labelManagementMessage = ref('訂單標籤會同步到點餐頁與後台紀錄')
 const isLabelManagementSaving = ref(false)
+const deviceManagementMessage = ref('裝置狀態會由列印站、外設與 print jobs 重建')
+const isDeviceManagementRefreshing = ref(false)
+const isDeviceManagementCancelling = ref(false)
 const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
 const transactionSearchTerm = ref('')
 const selectedTransactionOrderId = ref<string | null>(null)
@@ -3277,6 +3280,10 @@ const toolboxPanelTitle = computed(() => {
     return '標籤管理'
   }
 
+  if (activeToolboxPanel.value === 'device-management') {
+    return '裝置管理'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3306,6 +3313,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'label-management') {
     return 'Order Labels'
+  }
+
+  if (activeToolboxPanel.value === 'device-management') {
+    return 'Devices'
   }
 
   return 'Toolbox'
@@ -3733,6 +3744,35 @@ const cashDrawerSummary = computed(() => {
     ? `${cashDrawerEvents.value.length} 筆開啟紀錄 · 最近 ${formatOrderTime(latestEvent.createdAt)}`
     : `${cashDrawerDevices.value.length} 個錢櫃裝置 · 尚無開啟紀錄`
 })
+const unprintedPrintJobs = computed(() =>
+  orderQueue.value.flatMap((order) =>
+    order.printJobs
+      .filter((printJob) => printJob.status === 'queued' || printJob.status === 'failed')
+      .map((printJob) => ({ orderId: order.id, printJob })),
+  ),
+)
+const deviceManagementSummary = computed(() =>
+  `${printerSettings.value.stations.length} 出單機 · ${engagementSettings.value.hardwareDevices.length} 外設 · ${unprintedPrintJobs.value.length} 未印出`,
+)
+const deviceKindLabel = (kind: string): string => {
+  if (kind === 'bluetooth-scanner') {
+    return '掃碼裝置'
+  }
+
+  if (kind === 'payment-qr') {
+    return '行動支付掃碼'
+  }
+
+  if (kind === 'cash-drawer') {
+    return '錢櫃'
+  }
+
+  if (kind === 'ipad-qr-print') {
+    return '指定 iPad 列印 QR code'
+  }
+
+  return kind
+}
 const cashDrawerDeliveryLabel = (status: 'sent' | 'preview' | 'failed'): string => {
   if (status === 'sent') {
     return '已送出'
@@ -6324,6 +6364,47 @@ const saveLabelManagementDrafts = async (): Promise<void> => {
   }
 }
 
+const refreshDeviceManagementAction = async (): Promise<void> => {
+  isDeviceManagementRefreshing.value = true
+  deviceManagementMessage.value = '重新整理裝置狀態中'
+
+  try {
+    await refreshBackendData()
+    deviceManagementMessage.value = `已更新 · ${formatOrderTime(new Date().toISOString())}`
+  } catch (error) {
+    deviceManagementMessage.value = `重新整理失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isDeviceManagementRefreshing.value = false
+  }
+}
+
+const cancelAllUnprintedPrintJobsAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('取消未印出單據')) {
+    return
+  }
+
+  const jobs = unprintedPrintJobs.value
+  if (jobs.length === 0) {
+    deviceManagementMessage.value = '目前沒有未印出的單據'
+    return
+  }
+
+  isDeviceManagementCancelling.value = true
+  deviceManagementMessage.value = `取消 ${jobs.length} 筆未印出單據中`
+
+  try {
+    for (const job of jobs) {
+      await deletePrintJobForOrder(job.orderId, job.printJob.id)
+    }
+    await refreshBackendData()
+    deviceManagementMessage.value = `已取消 ${jobs.length} 筆未印出單據`
+  } catch (error) {
+    deviceManagementMessage.value = `取消失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isDeviceManagementCancelling.value = false
+  }
+}
+
 const submitTimeClockAction = async (): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
@@ -6425,6 +6506,11 @@ const runToolboxAction = (action: ToolboxAction): void => {
   if (action === 'label-management') {
     syncLabelManagementDrafts()
     activeToolboxPanel.value = 'label-management'
+    return
+  }
+
+  if (action === 'device-management') {
+    activeToolboxPanel.value = 'device-management'
     return
   }
 
@@ -11008,6 +11094,11 @@ onBeforeUnmount(() => {
             <strong>錢櫃管理</strong>
             <span>{{ cashDrawerSummary }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('device-management')">
+            <Printer :size="24" aria-hidden="true" />
+            <strong>裝置管理</strong>
+            <span>{{ deviceManagementSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('current-sales')">
             <LayoutDashboard :size="24" aria-hidden="true" />
             <strong>目前營業概況</strong>
@@ -11356,6 +11447,89 @@ onBeforeUnmount(() => {
               <p v-if="cashDrawerRecentAdjustments.length === 0" class="cash-drawer-empty">本班尚無臨時收支</p>
             </section>
           </div>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'device-management'" class="toolbox-detail-panel device-management-panel" aria-labelledby="toolbox-title">
+          <div class="device-management-tabs" aria-label="裝置分類">
+            <span>出單機</span>
+            <span>刷卡機</span>
+            <span>掃碼裝置</span>
+          </div>
+          <div class="device-management-grid">
+            <article class="device-management-card">
+              <header>
+                <Printer :size="20" aria-hidden="true" />
+                <div>
+                  <strong>出單機</strong>
+                  <span>{{ printerSettings.stations.length }} 台設定 · 目前 {{ printStation.name }}</span>
+                </div>
+              </header>
+              <div class="device-management-list">
+                <div v-for="station in printerSettings.stations" :key="station.id" class="device-management-row">
+                  <div>
+                    <strong>{{ station.name }}</strong>
+                    <span>{{ station.host }}:{{ station.port }} · {{ station.protocol.toUpperCase() }}</span>
+                  </div>
+                  <b>{{ station.enabled ? '已啟用' : '停用' }}</b>
+                </div>
+                <p v-if="printerSettings.stations.length === 0" class="device-management-empty">尚未設定出單機</p>
+              </div>
+            </article>
+            <article class="device-management-card">
+              <header>
+                <QrCode :size="20" aria-hidden="true" />
+                <div>
+                  <strong>刷卡機 / 掃碼裝置</strong>
+                  <span>{{ engagementSettings.hardwareDevices.length }} 個外設設定</span>
+                </div>
+              </header>
+              <div class="device-management-list">
+                <div v-for="device in engagementSettings.hardwareDevices" :key="device.id" class="device-management-row">
+                  <div>
+                    <strong>{{ device.name }}</strong>
+                    <span>{{ deviceKindLabel(device.kind) }} · {{ device.targetStationId || '未指定工作站' }}</span>
+                  </div>
+                  <b>{{ device.enabled ? '已啟用' : '停用' }}</b>
+                </div>
+                <p v-if="engagementSettings.hardwareDevices.length === 0" class="device-management-empty">尚未設定外設</p>
+              </div>
+            </article>
+            <article class="device-management-card">
+              <header>
+                <ReceiptText :size="20" aria-hidden="true" />
+                <div>
+                  <strong>未印出單據</strong>
+                  <span>{{ unprintedPrintJobs.length }} 筆列印單待處理</span>
+                </div>
+              </header>
+              <div class="device-management-list">
+                <div v-for="job in unprintedPrintJobs.slice(0, 6)" :key="job.printJob.id" class="device-management-row">
+                  <div>
+                    <strong>{{ compactOrderId(job.orderId) }}</strong>
+                    <span>{{ job.printJob.status === 'failed' ? '列印失敗' : '等待列印' }} · {{ formatOrderTime(job.printJob.createdAt) }}</span>
+                  </div>
+                  <b>{{ job.printJob.attempts }} 次</b>
+                </div>
+                <p v-if="unprintedPrintJobs.length === 0" class="device-management-empty">目前沒有未印出的單據</p>
+              </div>
+            </article>
+          </div>
+          <div class="device-management-actions">
+            <button class="secondary-button" type="button" :disabled="isDeviceManagementRefreshing" @click="refreshDeviceManagementAction">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isDeviceManagementRefreshing ? '整理中' : '重新整理連線狀態' }}
+            </button>
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="isDeviceManagementCancelling || unprintedPrintJobs.length === 0"
+              @click="cancelAllUnprintedPrintJobsAction"
+            >
+              <Trash2 :size="18" aria-hidden="true" />
+              {{ isDeviceManagementCancelling ? '取消中' : '取消所有未印出的單據' }}
+            </button>
+          </div>
+          <p class="device-management-message" aria-live="polite">{{ deviceManagementMessage }}</p>
+          <small class="device-management-host-id">主機 App ID：{{ stationClaimLabel }}</small>
         </section>
         <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <header class="current-sales-header">
