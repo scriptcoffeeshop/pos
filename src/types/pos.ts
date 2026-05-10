@@ -313,6 +313,7 @@ export interface OnlinePaymentMethodSetting {
   id: PaymentMethod
   label: string
   enabled: boolean
+  opensCashDrawer: boolean
 }
 
 export interface OnlineScheduledOrderTimeWindow {

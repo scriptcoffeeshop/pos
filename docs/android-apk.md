@@ -176,14 +176,15 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 
 ## 線上支付模組
 
-支付模組存在 `online_ordering.paymentMethods`，對照 iCHEF 外帶/外送訂餐的支付模組設定。消費者頁付款方式顯示順序會跟隨後台排序，已停用方式不得送單。
+支付模組存在 `online_ordering.paymentMethods`，對照 iCHEF 外帶/外送訂餐的支付模組設定。消費者頁付款方式顯示順序會跟隨後台排序，已停用方式不得送單；`opensCashDrawer` 會決定 POS 收款完成後是否自動開錢櫃。
 
 1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」的「支付模組」區塊。
-2. 停用其中一個付款方式、修改顯示名稱，並用上/下箭頭調整排序後儲存。
+2. 停用其中一個付款方式、修改顯示名稱，必要時勾選「結帳開錢櫃」，並用上/下箭頭調整排序後儲存。
 3. 用消費者頁重新整理，確認付款方式只顯示啟用項目，名稱與排序跟後台一致。
 4. 選取「取餐時付款」送出訂單時，訂單應維持待收款；選 LINE Pay、街口、線上刷卡或轉帳時，訂單付款方式應保存為對應 enum。
 5. 嘗試用 API 或已開啟的舊頁送出被停用的付款方式，`POST /orders` 應回覆 409，不得寫入訂單。
-6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認支付模組設定仍從 `online_ordering` runtime 還原。
+6. 用已勾選「結帳開錢櫃」的付款方式完成收款，確認工具箱「錢櫃管理」新增一筆 `結帳開啟 <訂單號>` 紀錄。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認支付模組設定與錢櫃開啟紀錄仍從後端還原。
 
 ## 線上外送規則
 
@@ -231,13 +232,14 @@ rtk npm run apk:install:fresh
 
 ## 錢櫃管理
 
-工具箱「錢櫃管理」使用 `pos-api` 寫入 `cash_drawer.open` 稽核事件；Android APK 會透過既有 `LanPrinter` plugin 對目標列印站送 ESC/POS cash drawer pulse，Web 工作站只保留預覽紀錄。實機測試建議：
+工具箱「錢櫃管理」使用 `pos-api` 寫入 `cash_drawer.open` 稽核事件；Android APK 會透過既有 `LanPrinter` plugin 對目標列印站送 ESC/POS cash drawer pulse，Web 工作站只保留預覽紀錄。支付模組的「結帳開錢櫃」也會走同一個流程。實機測試建議：
 
 1. 連點工具箱 6 下進入後台編輯模式，確認後台「iCHEF 補齊」已有啟用的錢櫃外設並指向目前列印站。
 2. 回 POS 工具箱開啟「錢櫃管理」，輸入原因後按「開啟錢櫃並記錄」。
 3. 實體錢櫃若接在收據機或出單機 DK port，應收到 pulse；若目前只接 GODEX 貼紙機，至少確認畫面顯示硬體送出或失敗狀態並寫入紀錄。
 4. 另一台平板或瀏覽器開同一面板，確認可看到同一筆開啟紀錄。
-5. 再跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認錢櫃開啟紀錄仍從 `/cash-drawer/events` 還原，不依賴 APK 本機資料。
+5. 回後台「線上點餐」的「支付模組」勾選「結帳開錢櫃」，用該付款方式在 POS 完成收款，確認自動新增開啟紀錄。
+6. 再跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認錢櫃開啟紀錄仍從 `/cash-drawer/events` 還原，不依賴 APK 本機資料。
 
 ## 訂位黑名單
 

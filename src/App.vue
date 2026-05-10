@@ -3723,6 +3723,51 @@ const cashDrawerDeliveryLabel = (status: 'sent' | 'preview' | 'failed'): string 
 
   return '預覽記錄'
 }
+
+const paymentMethodOpensCashDrawer = (method: PaymentMethod): boolean =>
+  onlineOrderingSettings.value.paymentMethods.find((entry) => entry.id === method)?.opensCashDrawer ?? method === 'cash'
+
+const orderOpensCashDrawerOnCheckout = (order: PosOrder): boolean => {
+  if (order.paymentBreakdown.length > 0) {
+    return order.paymentBreakdown.some((payment) =>
+      payment.amount > 0 && paymentMethodOpensCashDrawer(payment.paymentMethod),
+    )
+  }
+
+  if (order.paymentSplits.length > 0) {
+    return order.paymentSplits.some((split) =>
+      split.amount > 0 && paymentMethodOpensCashDrawer(split.paymentMethod),
+    )
+  }
+
+  return paymentMethodOpensCashDrawer(order.paymentMethod)
+}
+
+const openCashDrawerForCheckout = async (order: PosOrder): Promise<void> => {
+  if (!orderOpensCashDrawerOnCheckout(order)) {
+    return
+  }
+
+  try {
+    const event = await openCashDrawerForStation({
+      reason: `結帳開啟 ${order.id}`,
+      deviceId: activeCashDrawerDevice.value?.id ?? '',
+      targetStationId: cashDrawerTargetStation.value?.id ?? activeCashDrawerDevice.value?.targetStationId ?? '',
+    })
+    cashDrawerActionMessage.value = `${cashDrawerDeliveryLabel(event.deliveryStatus)} · ${formatOrderTime(event.createdAt)}`
+  } catch (error) {
+    cashDrawerActionMessage.value = `自動開錢櫃失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  }
+}
+
+const collectOrderPaymentAction = async (order: PosOrder): Promise<void> => {
+  await updatePaymentStatus(order.id, 'paid')
+  const paidOrder = orderQueue.value.find((entry) => entry.id === order.id) ?? order
+  if (paidOrder.paymentStatus === 'paid') {
+    await openCashDrawerForCheckout(paidOrder)
+  }
+}
+
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   floor: `${activeDineInOrders.value.length} 桌內用 · ${floorLevels.value.length} 樓層`,
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
@@ -4519,7 +4564,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
 
   try {
     if (action === 'checkout-print' || action === 'checkout-only') {
-      await updatePaymentStatus(order.id, 'paid')
+      await collectOrderPaymentAction(order)
     }
 
     if (action === 'checkout-print' || action === 'print') {
@@ -4763,7 +4808,7 @@ const paymentActionDisabled = (order: PosOrder): boolean =>
   !payableStatuses.includes(order.paymentStatus)
 
 const confirmPaymentAction = (order: PosOrder): void => {
-  void updatePaymentStatus(order.id, 'paid')
+  void collectOrderPaymentAction(order)
 }
 
 const orderCanBeVoided = (order: PosOrder): boolean =>

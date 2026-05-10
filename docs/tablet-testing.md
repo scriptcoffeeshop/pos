@@ -141,14 +141,15 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 ## 多平板線上支付模組
 
-線上支付方式存在 `online_ordering.paymentMethods`，顯示名稱、啟用狀態與順序都要跨平板同步：
+線上支付方式存在 `online_ordering.paymentMethods`，顯示名稱、啟用狀態、排序與「結帳開錢櫃」都要跨平板同步：
 
 1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」的「支付模組」區塊。
-2. 停用 LINE Pay、將「取餐時付款」改名，並移到列表第一個後儲存。
+2. 停用 LINE Pay、將「取餐時付款」改名、勾選「結帳開錢櫃」，並移到列表第一個後儲存。
 3. 在平板 B 或消費者頁重新整理，確認付款方式不顯示 LINE Pay，且第一個付款方式名稱與平板 A 設定一致。
 4. 送出訂單後，POS 訂單中心應保存選到的付款方式；取餐時付款會維持待收款，供現場 POS 結帳。
 5. 用舊頁面或測試 API 繞過前端送出已停用付款方式，`POST /orders` 應回覆 disabled payment method 的 409，不得寫入 `orders`。
-6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認支付模組設定仍從 Supabase runtime 還原。
+6. 平板 B 用已勾選「結帳開錢櫃」的付款方式完成收款，確認工具箱「錢櫃管理」新增同一筆自動開啟紀錄。
+7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認支付模組設定與錢櫃開啟紀錄仍從 Supabase runtime/API 還原。
 
 ## 多平板線上外送規則
 
@@ -204,14 +205,15 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 ## 多平板錢櫃管理
 
-錢櫃管理會把每次開啟寫入 Supabase `pos_audit_events` 的 `cash_drawer.open`，並透過 `pos_realtime_events.cash_drawer` 通知其他平板重拉 `/cash-drawer/events`。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+錢櫃管理會把每次開啟寫入 Supabase `pos_audit_events` 的 `cash_drawer.open`，並透過 `pos_realtime_events.cash_drawer` 通知其他平板重拉 `/cash-drawer/events`。手動開啟與支付模組「結帳開錢櫃」都走同一個紀錄來源。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
 
 1. 在平板 A 連點工具箱 6 下進入後台編輯模式，確認後台「iCHEF 補齊」已有啟用的錢櫃外設並指向一個列印站。
 2. 平板 A 開啟工具箱「錢櫃管理」，輸入開啟原因後按「開啟錢櫃並記錄」。
 3. APK 實機應透過 LAN printer plugin 送出 ESC/POS pulse；瀏覽器工作站應顯示預覽記錄而不送硬體指令。
 4. 平板 B 開啟同一工具箱面板，確認可看到平板 A 的原因、站台與送出狀態。
-5. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認同一批錢櫃開啟紀錄仍從資料庫還原。
-6. 回到關帳頁登記一筆現金臨時收支，再回錢櫃管理確認「臨時收支」摘要與本班紀錄一致。
+5. 回後台「線上點餐」支付模組勾選「結帳開錢櫃」，用該付款方式完成收款，確認另一台平板也看到 `結帳開啟 <訂單號>`。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認同一批錢櫃開啟紀錄仍從資料庫還原。
+7. 回到關帳頁登記一筆現金臨時收支，再回錢櫃管理確認「臨時收支」摘要與本班紀錄一致。
 
 ## 多平板訂位黑名單
 
