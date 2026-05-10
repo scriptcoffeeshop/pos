@@ -35,6 +35,7 @@ import {
   currentStationLabel,
   finalizeCounterDraftOrder,
   isPosApiConfigured,
+  normalizePaymentBreakdown,
   normalizePaymentSplits,
   releaseOrderClaim,
   refundOrder,
@@ -62,6 +63,7 @@ import {
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
   buildPrinterHealthcheckPreview,
+  buildTransactionDetailPayload,
 } from '../lib/printing'
 import type {
   CartLine,
@@ -73,6 +75,7 @@ import type {
   OnlineOrderReminderAction,
   OnlineOrderReminderState,
   OnlineOrderingSettings,
+  PaymentAllocation,
   PaymentMethod,
   PaymentSplit,
   PaymentStatus,
@@ -147,6 +150,8 @@ interface CounterDraftState {
   pointsRedeemed: number
   couponCode: string
   paymentSplits: PaymentSplit[]
+  paymentBreakdown: PaymentAllocation[]
+  transactionReceiptCount: number
 }
 
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
@@ -332,6 +337,8 @@ const readCounterDraft = (): CounterDraftState | null => {
         : 0,
       couponCode: typeof parsed.couponCode === 'string' ? parsed.couponCode : '',
       paymentSplits: normalizePaymentSplits(parsed.paymentSplits),
+      paymentBreakdown: normalizePaymentBreakdown(parsed.paymentBreakdown),
+      transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(Number(parsed.transactionReceiptCount) || 0))),
     }
   } catch {
     return null
@@ -359,7 +366,9 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.discountAmount > 0 ||
       draft.pointsRedeemed > 0 ||
       draft.couponCode.trim().length > 0 ||
-      draft.paymentSplits.length > 0
+      draft.paymentSplits.length > 0 ||
+      draft.paymentBreakdown.length > 0 ||
+      draft.transactionReceiptCount > 0
 
     if (!hasDraft) {
       globalThis.localStorage?.removeItem(counterDraftStorageKey)
@@ -451,6 +460,8 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     pointsRedeemed: Math.max(0, Math.trunc(Number(order.pointsRedeemed) || 0)),
     couponCode: typeof order.couponCode === 'string' ? order.couponCode : '',
     paymentSplits: normalizePaymentSplits(order.paymentSplits),
+    paymentBreakdown: normalizePaymentBreakdown(order.paymentBreakdown),
+    transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(Number(order.transactionReceiptCount) || 0))),
     memberPointsEarned: Math.max(0, Math.trunc(Number(order.memberPointsEarned) || 0)),
     paymentMethod: isPaymentMethod(order.paymentMethod) ? order.paymentMethod : 'cash',
     paymentStatus: isPaymentStatus(order.paymentStatus) ? order.paymentStatus : 'pending',
@@ -961,6 +972,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const pointsRedeemed = ref(savedCounterDraft?.pointsRedeemed ?? 0)
   const couponCode = ref(savedCounterDraft?.couponCode ?? '')
   const paymentSplits = ref<PaymentSplit[]>(savedCounterDraft?.paymentSplits ?? [])
+  const paymentBreakdown = ref<PaymentAllocation[]>(savedCounterDraft?.paymentBreakdown ?? [])
+  const transactionReceiptCount = ref(savedCounterDraft?.transactionReceiptCount ?? 0)
   const savedLocalProducts = readLocalProducts()
   const menuCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
   const productStatusCatalog = ref<MenuItem[]>(sortProducts([...menuItems, ...savedLocalProducts]))
@@ -1550,6 +1563,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     pointsRedeemed.value = 0
     couponCode.value = ''
     paymentSplits.value = []
+    paymentBreakdown.value = []
+    transactionReceiptCount.value = 0
   }
 
   const syncNextSequenceFromQueue = (): void => {
@@ -1592,6 +1607,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       pointsRedeemed: 0,
       couponCode: '',
       paymentSplits: [],
+      paymentBreakdown: [],
+      transactionReceiptCount: 0,
       memberPointsEarned: 0,
       paymentMethod: 'cash',
       paymentStatus: 'pending',
@@ -1816,6 +1833,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
+      paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
+      transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0))),
       memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
       paymentMethod: paymentMethod.value,
       paymentStatus: nextPaymentStatus,
@@ -1850,6 +1869,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       pointsRedeemed,
       couponCode,
       paymentSplits,
+      paymentBreakdown,
+      transactionReceiptCount,
     ],
     () => {
       writeCounterDraft({
@@ -1866,6 +1887,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         pointsRedeemed: pointsRedeemed.value,
         couponCode: couponCode.value,
         paymentSplits: normalizePaymentSplits(paymentSplits.value),
+        paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
+        transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0))),
       })
       syncActiveCounterOrderSnapshot()
     },
@@ -3019,6 +3042,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printCustomerReceipt = (orderId: string): Promise<void> =>
     printManualOrderPayload(orderId, buildCustomerReceiptPayload, '顧客聯')
 
+  const printTransactionDetail = (orderId: string): Promise<void> =>
+    printManualOrderPayload(orderId, buildTransactionDetailPayload, '交易明細')
+
   const deletePrintJobForOrder = async (orderId: string, printJobId: string): Promise<void> => {
     if (deletingPrintJobId.value) {
       return
@@ -3437,6 +3463,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
+      paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
+      transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0))),
       memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
       paymentMethod: paymentMethod.value,
       paymentStatus,
@@ -3635,6 +3663,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     pointsRedeemed.value = editableOrder.pointsRedeemed
     couponCode.value = editableOrder.couponCode
     paymentSplits.value = normalizePaymentSplits(editableOrder.paymentSplits)
+    paymentBreakdown.value = normalizePaymentBreakdown(editableOrder.paymentBreakdown)
+    transactionReceiptCount.value = Math.min(10, Math.max(0, Math.trunc(editableOrder.transactionReceiptCount || 0)))
     customer.memberId = editableOrder.memberId
     customer.name = editableOrder.customerName || '現場客'
     customer.phone = editableOrder.customerPhone
@@ -3894,12 +3924,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     onlineOrderReminder,
     onlineOrderingSettings,
     orderLabels,
+    paymentBreakdown,
     paymentMethod,
     paymentSplits,
+    transactionReceiptCount,
     pendingOrders,
     posAppearanceSettings,
     pointsRedeemed,
     printCustomerReceipt,
+    printTransactionDetail,
     printOrder,
     printOrderQrCode,
     printingOrderId,

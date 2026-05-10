@@ -1,6 +1,7 @@
 export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
 export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
+export type PaymentAllocationStatus = 'open' | 'paid'
 export type PaymentSplitStatus = 'open' | 'paid'
 export type OrderSource = 'counter' | 'qr' | 'online'
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'served' | 'failed' | 'voided'
@@ -68,6 +69,14 @@ export interface PaymentSplit {
   paidAt: string | null
 }
 
+export interface PaymentAllocation {
+  id: string
+  paymentMethod: PaymentMethod
+  amount: number
+  status: PaymentAllocationStatus
+  paidAt: string | null
+}
+
 export interface CustomerDraft {
   memberId: string | null
   name: string
@@ -106,6 +115,8 @@ export interface PosOrder {
   pointsRedeemed: number
   couponCode: string
   paymentSplits: PaymentSplit[]
+  paymentBreakdown: PaymentAllocation[]
+  transactionReceiptCount: number
   memberPointsEarned: number
   paymentMethod: PaymentMethod
   paymentStatus: PaymentStatus

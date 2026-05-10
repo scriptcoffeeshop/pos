@@ -123,6 +123,8 @@ const createOrder = (orderNumber, overrides = {}) => {
     points_redeemed: 0,
     coupon_code: '',
     payment_splits: overrides.payment_splits ?? overrides.paymentSplits ?? [],
+    payment_breakdown: overrides.payment_breakdown ?? overrides.paymentBreakdown ?? [],
+    transaction_receipt_count: overrides.transaction_receipt_count ?? overrides.transactionReceiptCount ?? 0,
     member_points_earned: 0,
     payment_method: overrides.payment_method ?? 'line-pay',
     payment_status: overrides.payment_status ?? 'paid',
@@ -179,6 +181,8 @@ const applyDraftPayload = (order, input, stationId) => {
   order.points_redeemed = Number(input.pointsRedeemed) || 0
   order.coupon_code = input.couponCode ?? ''
   order.payment_splits = Array.isArray(input.paymentSplits) ? input.paymentSplits : []
+  order.payment_breakdown = Array.isArray(input.paymentBreakdown) ? input.paymentBreakdown : []
+  order.transaction_receipt_count = Number(input.transactionReceiptCount) || 0
   order.member_points_earned = Number(input.memberPointsEarned) || 0
   order.payment_method = input.paymentMethod ?? order.payment_method ?? 'cash'
   order.payment_status = input.paymentStatus ?? order.payment_status ?? 'pending'
@@ -395,6 +399,8 @@ const createMockApiServer = async () => {
         points_redeemed: Number(input.pointsRedeemed) || 0,
         coupon_code: input.couponCode ?? '',
         payment_splits: Array.isArray(input.paymentSplits) ? input.paymentSplits : [],
+        payment_breakdown: Array.isArray(input.paymentBreakdown) ? input.paymentBreakdown : [],
+        transaction_receipt_count: Number(input.transactionReceiptCount) || 0,
         member_points_earned: Number(input.memberPointsEarned) || 0,
         payment_method: input.paymentMethod ?? 'cash',
         payment_status: input.paymentStatus ?? 'pending',
@@ -775,17 +781,25 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await tabletA.page.locator('.payment-split-panel').waitFor({ state: 'visible', timeout: 8_000 })
     await tabletA.page.getByRole('button', { name: '均分 2 張' }).click()
     await tabletA.page.locator('.payment-split-card').first().getByRole('button', { name: '標記已結' }).click()
+    await tabletA.page.getByRole('button', { name: '開啟混合支付' }).click()
+    await tabletA.page.locator('.mixed-payment-row').first().getByRole('button', { name: '標記已結' }).click()
+    await tabletA.page.locator('.receipt-count-stepper').getByRole('button').last().click()
     await waitForState((snapshot) => {
       const order = snapshot.orders.find((entry) => entry.order_number === preorderEntry.orderId)
       return (
         Array.isArray(order?.payment_splits) &&
         order.payment_splits.length === 2 &&
-        order.payment_splits.some((split) => split.status === 'paid')
+        order.payment_splits.some((split) => split.status === 'paid') &&
+        Array.isArray(order.payment_breakdown) &&
+        order.payment_breakdown.length === 1 &&
+        order.payment_breakdown[0].status === 'paid' &&
+        order.transaction_receipt_count === 1
       )
-    }, 'split bill draft persisted')
+    }, 'split bill and mixed payment draft persisted')
     await openQueueWorkspace(tabletB.page)
     await waitForText(tabletB.page, '拆單 2 張', 12_000)
-    record('split bill state persisted and appeared on tablet B queue')
+    await waitForText(tabletB.page, '混合支付 1 筆', 12_000)
+    record('split bill and mixed payment state persisted and appeared on tablet B queue')
 
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])

@@ -700,6 +700,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     pointsRedeemed: 0,
     couponCode: '',
     paymentSplits: [],
+    paymentBreakdown: [],
+    transactionReceiptCount: 0,
     memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
     paymentMethod: paymentMethod.value,
     paymentStatus: 'pending',

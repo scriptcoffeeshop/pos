@@ -71,6 +71,7 @@ import type {
   OnlineOrderingSettings,
   OrderSource,
   OrderStatus,
+  PaymentAllocation,
   PaymentMethod,
   PaymentSplit,
   PaymentStatus,
@@ -749,12 +750,14 @@ const {
   onlineOrderReminder,
   onlineOrderingSettings,
   orderLabels,
+  paymentBreakdown,
   paymentMethod,
   paymentSplits,
   pendingOrders,
   posAppearanceSettings,
   pointsRedeemed,
   printCustomerReceipt,
+  printTransactionDetail,
   printOrder,
   printOrderQrCode,
   printingOrderId,
@@ -783,6 +786,7 @@ const {
   startCounterDraft,
   stationClaimLabel,
   stationHeartbeatMessage,
+  transactionReceiptCount,
   togglingProductId,
   toggleCustomerNote,
   toggleLinePrintPaused,
@@ -877,6 +881,119 @@ const orderPaymentSplitSummary = (order: PosOrder): string => {
   const paidTotal = order.paymentSplits.reduce((total, split) => split.status === 'paid' ? total + split.amount : total, 0)
   const openCount = order.paymentSplits.filter((split) => split.status !== 'paid').length
   return `拆單 ${order.paymentSplits.length} 張 · 未結 ${openCount} 張 · 已結 ${formatCurrency(paidTotal)}`
+}
+
+const onlineMixedPaymentMethods = new Set<PaymentMethod>(['card', 'line-pay', 'jkopay'])
+
+const makePaymentAllocation = (index: number, amount: number, method: PaymentMethod = paymentMethod.value): PaymentAllocation => ({
+  id: `payment-${Date.now()}-${index + 1}`,
+  paymentMethod: method,
+  amount,
+  status: 'open',
+  paidAt: null,
+})
+
+const paymentBreakdownTotal = computed(() =>
+  paymentBreakdown.value.reduce((total, payment) => total + Math.max(0, Math.trunc(payment.amount || 0)), 0),
+)
+
+const paymentBreakdownRemaining = computed(() => Math.max(0, cartTotal.value - paymentBreakdownTotal.value))
+
+const paymentBreakdownOnlineMethodCount = computed(() => {
+  const methods = new Set(paymentBreakdown.value
+    .filter((payment) => payment.amount > 0 && onlineMixedPaymentMethods.has(payment.paymentMethod))
+    .map((payment) => payment.paymentMethod))
+  return methods.size
+})
+
+const paymentBreakdownBalanced = computed(() =>
+  paymentBreakdown.value.length === 0 || paymentBreakdownTotal.value === cartTotal.value,
+)
+
+const paymentBreakdownValid = computed(() =>
+  paymentBreakdownBalanced.value && paymentBreakdownOnlineMethodCount.value <= 1,
+)
+
+const paymentBreakdownSummary = computed(() => {
+  if (paymentBreakdown.value.length === 0) {
+    return '單一付款'
+  }
+
+  return `混合支付 ${paymentBreakdown.value.length} 筆 · 已分配 ${formatCurrency(paymentBreakdownTotal.value)}`
+})
+
+const orderPaymentBreakdownSummary = (order: PosOrder): string => {
+  if (order.paymentBreakdown.length === 0) {
+    return ''
+  }
+
+  const paidTotal = order.paymentBreakdown.reduce((total, payment) => payment.status === 'paid' ? total + payment.amount : total, 0)
+  return `混合支付 ${order.paymentBreakdown.length} 筆 · 已結 ${formatCurrency(paidTotal)}`
+}
+
+const paymentAmountForOrder = (order: PosOrder, method: PaymentMethod): number => {
+  if (order.paymentBreakdown.length > 0) {
+    return order.paymentBreakdown
+      .filter((payment) => payment.paymentMethod === method)
+      .reduce((total, payment) => total + payment.amount, 0)
+  }
+
+  return order.paymentMethod === method ? order.subtotal : 0
+}
+
+const enableMixedPayments = (): void => {
+  if (paymentBreakdown.value.length > 0) {
+    return
+  }
+
+  paymentBreakdown.value = [makePaymentAllocation(0, cartTotal.value)]
+}
+
+const addPaymentAllocation = (): void => {
+  if (paymentBreakdown.value.length === 0) {
+    enableMixedPayments()
+    return
+  }
+
+  paymentBreakdown.value = [
+    ...paymentBreakdown.value,
+    makePaymentAllocation(paymentBreakdown.value.length, paymentBreakdownRemaining.value, 'cash'),
+  ].slice(0, 8)
+}
+
+const resetPaymentBreakdown = (): void => {
+  paymentBreakdown.value = []
+}
+
+const updatePaymentAllocationMethod = (paymentId: string, event: Event): void => {
+  const value = event.target instanceof HTMLSelectElement ? event.target.value : 'cash'
+  const method: PaymentMethod = value === 'card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
+    ? value
+    : 'cash'
+  paymentBreakdown.value = paymentBreakdown.value.map((payment) =>
+    payment.id === paymentId ? { ...payment, paymentMethod: method } : payment,
+  )
+}
+
+const updatePaymentAllocationAmount = (paymentId: string, event: Event): void => {
+  const value = event.target instanceof HTMLInputElement ? event.target.value : '0'
+  const amount = Math.max(0, Math.trunc(Number(value) || 0))
+  paymentBreakdown.value = paymentBreakdown.value.map((payment) =>
+    payment.id === paymentId ? { ...payment, amount } : payment,
+  )
+}
+
+const togglePaymentAllocationPaid = (paymentId: string): void => {
+  const paidAt = new Date().toISOString()
+  paymentBreakdown.value = paymentBreakdown.value.map((payment) =>
+    payment.id === paymentId
+      ? {
+          ...payment,
+          status: payment.status === 'paid' ? 'open' : 'paid',
+          paidAt: payment.status === 'paid' ? null : paidAt,
+        }
+      : payment,
+  )
 }
 
 const paymentSplitBalanced = computed(() =>
@@ -2317,6 +2434,7 @@ const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
     paymentStatusLabels[order.paymentStatus],
     statusLabels[order.status],
     orderPaymentSplitSummary(order),
+    orderPaymentBreakdownSummary(order),
     `列印${printStatusLabels[order.printStatus]}`,
     orderNeedsOnlineReminder(order) ? '未確認 線上未確認 掃碼未確認' : '',
     fulfillmentLabel(order),
@@ -3015,11 +3133,11 @@ const closeoutPreflightSummary = computed(() => {
 const paymentCloseoutRows = computed(() =>
   paymentOptions
     .map((payment) => {
-      const matchingOrders = salesCloseoutOrders.value.filter((order) => order.paymentMethod === payment.value)
+      const matchingOrders = salesCloseoutOrders.value.filter((order) => paymentAmountForOrder(order, payment.value) > 0)
       return {
         ...payment,
         count: matchingOrders.length,
-        total: matchingOrders.reduce((sum, order) => sum + order.subtotal, 0),
+        total: matchingOrders.reduce((sum, order) => sum + paymentAmountForOrder(order, payment.value), 0),
         pending: matchingOrders.filter((order) => order.paymentStatus === 'pending').length,
       }
     })
@@ -3996,7 +4114,8 @@ const activeTicketAction = ref<TicketAction | null>(null)
 const ticketActionDisabled = (): boolean =>
   (cartLines.value.length === 0 && !activeOptionItem.value) ||
   Boolean(activeTicketAction.value) ||
-  isSubmitting.value
+  isSubmitting.value ||
+  !paymentBreakdownValid.value
 
 const optionSelectionsFromLine = (line: CartLine): Record<MenuOptionGroupId, string[]> => {
   const lineOptions = new Set(line.options)
@@ -4090,6 +4209,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
   }
 
   activeTicketAction.value = action
+  const transactionDetailCopies = Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0)))
   const order = await saveCounterOrder()
   if (!order) {
     activeTicketAction.value = null
@@ -4103,6 +4223,12 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
 
     if (action === 'checkout-print' || action === 'print') {
       await printOrder(order.id)
+    }
+
+    if (action === 'checkout-print' || action === 'checkout-only') {
+      for (let copy = 0; copy < transactionDetailCopies; copy += 1) {
+        await printTransactionDetail(order.id)
+      }
     }
 
     expandedOrderId.value = order.id
@@ -8233,6 +8359,71 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
+                  <section class="mixed-payment-panel" aria-label="混合支付">
+                    <div class="mixed-payment-header">
+                      <div>
+                        <p class="eyebrow">Mixed Payment</p>
+                        <h3>混合支付</h3>
+                        <span>{{ paymentBreakdownSummary }}</span>
+                      </div>
+                      <div class="mixed-payment-actions">
+                        <button type="button" @click="enableMixedPayments">開啟混合支付</button>
+                        <button type="button" :disabled="paymentBreakdown.length >= 8" @click="addPaymentAllocation">新增付款方式</button>
+                        <button type="button" :disabled="paymentBreakdown.length === 0" @click="resetPaymentBreakdown">重置</button>
+                      </div>
+                    </div>
+
+                    <div v-if="paymentBreakdown.length > 0" class="mixed-payment-list">
+                      <article
+                        v-for="payment in paymentBreakdown"
+                        :key="payment.id"
+                        class="mixed-payment-row"
+                        :class="{ 'mixed-payment-row--paid': payment.status === 'paid' }"
+                      >
+                        <select :value="payment.paymentMethod" @change="updatePaymentAllocationMethod(payment.id, $event)">
+                          <option v-for="option in visiblePaymentOptions" :key="`mixed-${payment.id}-${option.value}`" :value="option.value">
+                            {{ option.label }}
+                          </option>
+                        </select>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          :value="payment.amount"
+                          :aria-label="`${paymentLabels[payment.paymentMethod]} 金額`"
+                          @input="updatePaymentAllocationAmount(payment.id, $event)"
+                        />
+                        <button type="button" @click="togglePaymentAllocationPaid(payment.id)">
+                          {{ payment.status === 'paid' ? '改未結' : '標記已結' }}
+                        </button>
+                      </article>
+                    </div>
+
+                    <div v-if="paymentBreakdown.length > 0" class="mixed-payment-summary">
+                      <span>剩餘 {{ formatCurrency(paymentBreakdownRemaining) }}</span>
+                    </div>
+
+                    <div class="transaction-receipt-row">
+                      <span>結帳列印交易明細</span>
+                      <div class="quantity-stepper receipt-count-stepper" aria-label="交易明細張數">
+                        <button type="button" @click="transactionReceiptCount = Math.max(0, transactionReceiptCount - 1)">
+                          <Minus :size="16" aria-hidden="true" />
+                        </button>
+                        <span>{{ transactionReceiptCount }} 張</span>
+                        <button type="button" @click="transactionReceiptCount = Math.min(10, transactionReceiptCount + 1)">
+                          <Plus :size="16" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <p v-if="paymentBreakdown.length > 0 && !paymentBreakdownBalanced" class="payment-split-warning">
+                      混合支付合計 {{ formatCurrency(paymentBreakdownTotal) }} 與訂單合計 {{ formatCurrency(cartTotal) }} 不一致。
+                    </p>
+                    <p v-else-if="paymentBreakdown.length > 0 && paymentBreakdownOnlineMethodCount > 1" class="payment-split-warning">
+                      同一張訂單的線上支付只能選一種，請保留一個 LINE Pay、街口或刷卡模組。
+                    </p>
+                  </section>
+
                   <div class="payment-adjustment-grid" aria-label="費用與折抵">
                     <label>
                       服務費 %
@@ -8746,6 +8937,10 @@ onBeforeUnmount(() => {
                               <CreditCard :size="13" aria-hidden="true" />
                               {{ orderPaymentSplitSummary(order) }}
                             </span>
+                            <span v-if="orderPaymentBreakdownSummary(order)" class="mixed-payment-chip">
+                              <CreditCard :size="13" aria-hidden="true" />
+                              {{ orderPaymentBreakdownSummary(order) }}
+                            </span>
                             <span
                               v-if="fulfillmentUrgencyLabel(order)"
                               class="fulfillment-chip"
@@ -8800,6 +8995,15 @@ onBeforeUnmount(() => {
                             >
                               <ReceiptText :size="16" aria-hidden="true" />
                               顧客聯
+                            </button>
+                            <button
+                              class="order-action--print"
+                              type="button"
+                              :disabled="manualPrintActionDisabled(order)"
+                              @click="printTransactionDetail(order.id)"
+                            >
+                              <ReceiptText :size="16" aria-hidden="true" />
+                              交易明細
                             </button>
                             <button
                               class="order-action--claim"
@@ -8870,6 +9074,14 @@ onBeforeUnmount(() => {
                               <template v-if="orderPaymentSplitSummary(order)">
                                 <span>拆單</span>
                                 <strong>{{ orderPaymentSplitSummary(order) }}</strong>
+                              </template>
+                              <template v-if="orderPaymentBreakdownSummary(order)">
+                                <span>混合支付</span>
+                                <strong>{{ orderPaymentBreakdownSummary(order) }}</strong>
+                              </template>
+                              <template v-if="order.transactionReceiptCount > 0">
+                                <span>交易明細</span>
+                                <strong>{{ order.transactionReceiptCount }} 張</strong>
                               </template>
                               <span>履約</span>
                               <strong>{{ fulfillmentLabel(order) || serviceModeLabels[order.mode] }}</strong>
@@ -9551,6 +9763,15 @@ onBeforeUnmount(() => {
                   >
                     <ReceiptText :size="16" aria-hidden="true" />
                     顧客聯
+                  </button>
+                  <button
+                    class="active-order-print-button"
+                    type="button"
+                    :disabled="manualPrintActionDisabled(activeOrder)"
+                    @click="printTransactionDetail(activeOrder.id)"
+                  >
+                    <ReceiptText :size="16" aria-hidden="true" />
+                    交易明細
                   </button>
                 </section>
               </aside>
