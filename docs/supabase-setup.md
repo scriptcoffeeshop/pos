@@ -28,7 +28,8 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ## 初始 schema 草案
 
-- `products`：商品、自訂文字分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與庫存。
+- `products`：商品、自訂文字分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與可售商品庫存。
+- `inventory_categories` / `inventory_items` / `inventory_records`：iCHEF 式庫存管理來源，保存庫存類別、原料/包材品項、目前存量、安全庫存與進貨/退貨/消耗/報廢/盤點紀錄。
 - `pos_settings`：出單機/印單規則、角色權限與線上點餐 runtime 等後台設定。
 - `orders`：訂單主檔、來源、服務方式、希望取餐/送達時間、外送地址、付款狀態、製作狀態，以及櫃台未出單草稿用的 `draft_lines`。
 - `order_items`：訂單品項、數量、單價、客製選項。
@@ -37,7 +38,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `payment_events`：外部金流 webhook 事件，以 provider + event id 做冪等。
 - `print_jobs`：列印 payload、出單機、重試次數、列印結果。
 - `register_sessions`：收銀開班/關班、開班現金、實點現金、預期現金、付款彙總與待收款。
-- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，並由後台稽核頁查詢。
+- `pos_audit_events`：POS 關鍵操作事件，包含建單、訂單 claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、庫存管理、會員建立、錢包調整、開班與關班；商品稽核會保存庫存/售價等欄位的前後值與差額，庫存稽核會保存操作類型與操作後存量，並由後台稽核頁查詢。
 - `pos_station_heartbeats`：平板工作站在線狀態，保存 station id、顯示名稱、平台與最後心跳。
 - `pos_realtime_events`：Realtime invalidation 專用表，只保存低敏感 topic、來源表、entity id 與精簡 payload；前端收到事件後仍透過 `pos-api` 重新拉取正式資料。
 
@@ -55,6 +56,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - Admin 設定擴充：`20260428102000_add_pos_admin_settings.sql`
 - 外送出單規則補強：`20260428193000_add_delivery_print_rule.sql`
 - 商品庫存控管：`20260429110000_add_product_inventory_controls.sql`
+- 庫存管理：`20260511235500_add_inventory_management.sql`
 - 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
 - 收銀班別：`20260429133000_add_register_sessions.sql`
 - 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
@@ -90,6 +92,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 開班端點：`/functions/v1/pos-api/register/open`
 - 關班端點：`/functions/v1/pos-api/register/close`
 - 後台商品端點：`/functions/v1/pos-api/admin/products`、`/functions/v1/pos-api/admin/products/:id`
+- 後台庫存端點：`/functions/v1/pos-api/admin/inventory`、`/functions/v1/pos-api/admin/inventory/categories`、`/functions/v1/pos-api/admin/inventory/items`、`/functions/v1/pos-api/admin/inventory/records`
 - 後台會員端點：`/functions/v1/pos-api/admin/members`
 - 後台錢包調整端點：`/functions/v1/pos-api/admin/members/:id/wallet-adjustments`
 - 後台營運日報端點：`/functions/v1/pos-api/admin/reports/daily`
@@ -105,11 +108,12 @@ SUPABASE_DB_PASSWORD=<database-password>
 - `src/lib/posApi.ts` 負責把 Edge Function 的 snake_case 回應轉成 `src/types/pos.ts` 的 camelCase view model。
 - `src/lib/posRealtime.ts` 只訂閱 `pos_realtime_events`，不直接讀 `orders`、`pos_settings`、`register_sessions` 或 `products` 等受保護來源表；事件用來通知前端重拉 `pos-api`，避免把完整訂單或設定資料放進 public realtime stream。
 - `src/composables/usePosSession.ts` 啟動時會嘗試載入 `/products`、`/orders`、`/settings/runtime` 與 `/register/current`；成功時以 Supabase 為準，失敗時保留本機 fallback，避免門市 POS 無法操作。`/products?channel=pos` 會回傳所有 `pos_visible` 商品，包含 `is_available=false` 的停售品項，前端以反灰不可點保留恢復入口；`online`/`qr` 通路仍只回傳可售商品。消費者線上點餐頁也會讀 `/settings/runtime` 的 `online_ordering`，用來顯示接單狀態、平均備餐時間、商品註記選項與加價，並阻擋暫停時送單。
-- POS 工作台會訂閱 `orders`、runtime settings、`register_sessions` 與 `products` 的 Realtime invalidation event，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。Realtime 斷線時會以 2 秒到 30 秒退避重連，且每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current` 仍保留為 fallback。Android APK 進入背景或螢幕熄滅後，`OnlineOrderNotifier` native plugin 會以同一組 `online_ordering` 提醒設定短輪詢 `/settings/runtime` 與 `/orders?limit=30`，顯示系統通知並播放原生提示音；POS 內的稍後提醒、接單與已讀狀態會同步給 native plugin。Web 背景只在 Browser Notification API 已授權時顯示 fallback notification。平板回到前景時也會補同步一次。消費者線上點餐頁會訂閱 runtime/products event，並保留每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
+- POS 工作台會訂閱 `orders`、runtime settings、`register_sessions`、`products`、`online_order_reminders`、`cash_drawer` 與 `inventory_management` 的 Realtime invalidation event，用最新 `online_ordering` 設定顯示線上/掃碼新單待接單提醒；若 `acceptanceRequired=true`，線上/掃碼新單需按「接單」取得 claim 後才會進桌況頁佇列。Realtime 斷線時會以 2 秒到 30 秒退避重連，且每 20 秒短輪詢 `/orders`、`/settings/runtime` 與 `/register/current` 仍保留為 fallback。工具箱庫存管理面板開啟時收到 `inventory_management` 事件會重新讀 `/admin/inventory`，讓另一台平板進貨、盤點或停用品項後目前平板不用靠 localStorage 推測。Android APK 進入背景或螢幕熄滅後，`OnlineOrderNotifier` native plugin 會以同一組 `online_ordering` 提醒設定短輪詢 `/settings/runtime` 與 `/orders?limit=30`，顯示系統通知並播放原生提示音；POS 內的稍後提醒、接單與已讀狀態會同步給 native plugin。Web 背景只在 Browser Notification API 已授權時顯示 fallback notification。平板回到前景時也會補同步一次。消費者線上點餐頁會訂閱 runtime/products event，並保留每 15 秒短輪詢 runtime 與線上商品，讓平板供應狀態儲存後的分類順序、註記新增、刪除、停售與商品綁定變更可更新到公開頁。API 失敗建立的櫃台單會保存到本機 `script-coffee-pos-pending-orders`，後續同步成功時先補寫遠端並去重。手動刷新才會重新載入商品。
 - `GET /orders` 會先清理逾時線上/QR 待付款新單，並寫入 `order.payment.expired` 稽核事件；已被平板有效 claim 的訂單不會被逾期清理。
 - 標籤管理走 `engagement_settings.orderLabels`；工具箱儲存標籤時呼叫 `PATCH /admin/settings/engagement_settings`，點餐頁使用同一組標籤，送單後以 `orders.order_labels` 保存該訂單實際勾選的標籤。
 - 裝置管理面板不新增資料表；出單機讀 `printer_settings.stations`，刷卡/掃碼/錢櫃外設讀 `engagement_settings.hardwareDevices`，未印出單據讀目前訂單的 `print_jobs`，取消未印出單據沿用 `DELETE /print-jobs/:id`。
 - 顧客資訊管理面板不新增資料表；搜尋與列表走 `GET /admin/members`，新增走 `POST /admin/members`，顧客類型讀 `engagement_settings.customerTypes` 與既有會員資料，最近消費時間以會員 `ledger` 最新紀錄推算。
+- 庫存管理面板新增資料表；類別與品項走 `POST/PATCH /admin/inventory/categories`、`POST/PATCH /admin/inventory/items`，五種操作走 `POST /admin/inventory/records` 並呼叫 `apply_inventory_record()`。進貨會增加存量，退貨/消耗/報廢會扣存量，盤點會改成實際清點值並保存盤差；所有資料都在 Supabase，fresh reinstall 後重新登入仍能載入。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
 - 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依服務方式、品項分類、指定品項、貼紙/收據/copies 拆分多筆 `POST /print-jobs`，未被規則納入的品項不會列印。
 - 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。

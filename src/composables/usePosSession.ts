@@ -2473,6 +2473,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (event.topic === 'cash_drawer') {
       scheduleRealtimeCashDrawerRefresh()
+      return
+    }
+
+    if (event.topic === 'inventory_management') {
+      globalThis.dispatchEvent(new CustomEvent('script-coffee-pos-inventory-management-changed'))
     }
   }
 
@@ -2493,7 +2498,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const subscriptionToken = realtimeSubscriptionToken + 1
     realtimeSubscriptionToken = subscriptionToken
     realtimeUnsubscribe = subscribeToPosRealtimeEvents({
-      topics: ['orders', 'runtime_settings', 'register_sessions', 'products', 'online_order_reminders', 'cash_drawer'],
+      topics: ['orders', 'runtime_settings', 'register_sessions', 'products', 'online_order_reminders', 'cash_drawer', 'inventory_management'],
       onEvent: handleRealtimeEvent,
       onStatus: (status) => {
         if (subscriptionToken === realtimeSubscriptionToken) {

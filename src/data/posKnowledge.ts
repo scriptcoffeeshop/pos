@@ -447,4 +447,19 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     keywords: ['訂位網站', '線上訂位', '訂位間隔', '開放天數', '營業時間', '特殊訂位日', '不開放訂位', '訂位規則', '桌位容量', '座位保留', 'iCHEF'],
     target: 'online',
   },
+  {
+    id: 'toolbox-inventory-management',
+    category: 'supply',
+    title: '工具箱庫存管理',
+    summary: '平板工具箱可依 iCHEF 庫存流程管理庫存類別、品項與進貨/退貨/消耗/報廢/盤點紀錄。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟「庫存管理」。',
+      '新增庫存類別與庫存品項，設定單位、預設單價、目前存量與安全庫存。',
+      '選擇品項後用操作表單建立進貨、退貨、消耗、報廢或盤點紀錄。',
+      '進貨會增加存量，退貨、消耗與報廢會扣減存量，盤點會把目前存量調整為實際清點值並留下盤差。',
+      '所有類別、品項與操作紀錄都寫入 Supabase，換平板、重開 App 或 fresh reinstall 後仍由資料庫同步。',
+    ],
+    keywords: ['庫存管理', '庫存品項', '進貨', '退貨', '消耗', '報廢', '盤點', '安全庫存', 'iCHEF'],
+    target: 'printing',
+  },
 ]

@@ -23,6 +23,7 @@ type MemberCouponStatus = "active" | "redeemed" | "expired";
 type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "ipad-qr-print";
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
 type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
+type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
 
 const awaitingGuestReservationStatuses: ReservationStatus[] = ["booked", "reminded", "confirmed"];
 const taipeiTimeZoneOffsetMs = 8 * 60 * 60 * 1000;
@@ -258,6 +259,37 @@ interface CashDrawerOpenInput {
   printerPort?: number;
   deliveryStatus?: CashDrawerDeliveryStatus;
   errorMessage?: string;
+}
+
+interface InventoryCategoryInput {
+  name?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+  stationId?: string;
+}
+
+interface InventoryItemInput {
+  categoryId?: string;
+  name?: string;
+  unit?: string;
+  defaultUnitCost?: number;
+  stockQuantity?: number;
+  lowStockQuantity?: number | null;
+  note?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+  stationId?: string;
+}
+
+interface InventoryRecordInput {
+  itemId?: string;
+  action?: InventoryRecordAction;
+  quantity?: number;
+  unitCost?: number;
+  totalCost?: number;
+  countedQuantity?: number;
+  note?: string;
+  stationId?: string;
 }
 
 interface StaffTimeClockInput {
@@ -608,6 +640,12 @@ const reservationSelect =
   "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, note, created_at, updated_at";
 const reservationBlacklistSelect =
   "id, phone, normalized_phone, customer_name, reason, note, is_active, created_at, updated_at";
+const inventoryCategorySelect =
+  "id, name, sort_order, is_active, created_at, updated_at";
+const inventoryItemSelect =
+  "id, category_id, name, unit, default_unit_cost, stock_quantity, low_stock_quantity, note, is_active, sort_order, created_at, updated_at";
+const inventoryRecordSelect =
+  "id, item_id, action, quantity, quantity_delta, quantity_after, unit_cost, total_cost, note, station_id, created_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
@@ -2180,6 +2218,280 @@ api.delete("/admin/products/:id", async (c) => {
   });
 
   return c.json({ product: previousProduct });
+});
+
+api.get("/admin/inventory", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawRecordLimit = Number(c.req.query("recordLimit") ?? "80");
+  const recordLimit = Number.isFinite(rawRecordLimit) ? Math.min(Math.max(Math.trunc(rawRecordLimit), 1), 200) : 80;
+
+  const [categoriesResult, itemsResult, recordsResult] = await Promise.all([
+    supabase
+      .from("inventory_categories")
+      .select(inventoryCategorySelect)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("inventory_items")
+      .select(inventoryItemSelect)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("inventory_records")
+      .select(inventoryRecordSelect)
+      .order("created_at", { ascending: false })
+      .limit(recordLimit),
+  ]);
+
+  if (categoriesResult.error) {
+    return c.json({ error: categoriesResult.error.message }, 500);
+  }
+  if (itemsResult.error) {
+    return c.json({ error: itemsResult.error.message }, 500);
+  }
+  if (recordsResult.error) {
+    return c.json({ error: recordsResult.error.message }, 500);
+  }
+
+  return c.json({
+    categories: categoriesResult.data ?? [],
+    items: itemsResult.data ?? [],
+    records: recordsResult.data ?? [],
+  });
+});
+
+api.post("/admin/inventory/categories", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<InventoryCategoryInput>().catch(() => ({} as InventoryCategoryInput));
+  const { payload, error: validationError } = validateInventoryCategoryInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_categories")
+    .insert(payload)
+    .select(inventoryCategorySelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.category.create",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      categoryId: data.id,
+      name: data.name,
+    },
+  });
+
+  return c.json({ category: data }, 201);
+});
+
+api.patch("/admin/inventory/categories/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const categoryId = c.req.param("id");
+  const input = await c.req.json<InventoryCategoryInput>().catch(() => ({} as InventoryCategoryInput));
+  const { data: previousCategory, error: previousError } = await supabase
+    .from("inventory_categories")
+    .select(inventoryCategorySelect)
+    .eq("id", categoryId)
+    .maybeSingle();
+
+  if (previousError) {
+    return c.json({ error: previousError.message }, 500);
+  }
+  if (!previousCategory) {
+    return c.json({ error: "Inventory category not found" }, 404);
+  }
+
+  const { payload, error: validationError } = validateInventoryCategoryInput(input, previousCategory);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_categories")
+    .update(payload)
+    .eq("id", categoryId)
+    .select(inventoryCategorySelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.category.update",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      categoryId,
+      name: data.name,
+      isActive: data.is_active,
+    },
+  });
+
+  return c.json({ category: data });
+});
+
+api.post("/admin/inventory/items", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<InventoryItemInput>().catch(() => ({} as InventoryItemInput));
+  const { payload, error: validationError } = validateInventoryItemInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .insert(payload)
+    .select(inventoryItemSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.item.create",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      itemId: data.id,
+      categoryId: data.category_id,
+      name: data.name,
+      stockQuantity: data.stock_quantity,
+    },
+  });
+
+  return c.json({ item: data }, 201);
+});
+
+api.patch("/admin/inventory/items/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const itemId = c.req.param("id");
+  const input = await c.req.json<InventoryItemInput>().catch(() => ({} as InventoryItemInput));
+  const { data: previousItem, error: previousError } = await supabase
+    .from("inventory_items")
+    .select(inventoryItemSelect)
+    .eq("id", itemId)
+    .maybeSingle();
+
+  if (previousError) {
+    return c.json({ error: previousError.message }, 500);
+  }
+  if (!previousItem) {
+    return c.json({ error: "Inventory item not found" }, 404);
+  }
+
+  const { payload, error: validationError } = validateInventoryItemInput(input, previousItem);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .update(payload)
+    .eq("id", itemId)
+    .select(inventoryItemSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.item.update",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      itemId,
+      categoryId: data.category_id,
+      name: data.name,
+      stockBefore: previousItem.stock_quantity,
+      stockAfter: data.stock_quantity,
+      isActive: data.is_active,
+    },
+  });
+
+  return c.json({ item: data });
+});
+
+api.post("/admin/inventory/records", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<InventoryRecordInput>().catch(() => ({} as InventoryRecordInput));
+  const itemId = normalizeUuid(input.itemId);
+  if (!itemId) {
+    return c.json({ error: "itemId is required" }, 400);
+  }
+  if (!isInventoryRecordAction(input.action)) {
+    return c.json({ error: "action must be purchase, return, consumption, scrapped, or count" }, 400);
+  }
+
+  const quantity = sanitizeInventoryQuantity(input.quantity, 0);
+  if (input.action !== "count" && quantity <= 0) {
+    return c.json({ error: "quantity must be greater than 0" }, 400);
+  }
+
+  const countedQuantity = sanitizeInventoryQuantity(input.countedQuantity, Number.NaN);
+  if (input.action === "count" && !Number.isFinite(countedQuantity)) {
+    return c.json({ error: "countedQuantity is required" }, 400);
+  }
+
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const { data, error } = await supabase.rpc("apply_inventory_record", {
+    p_item_id: itemId,
+    p_action: input.action,
+    p_quantity: quantity,
+    p_unit_cost: sanitizeInventoryCost(input.unitCost, 0),
+    p_total_cost: input.totalCost === undefined ? null : sanitizeInventoryCost(input.totalCost, 0),
+    p_counted_quantity: input.action === "count" ? countedQuantity : null,
+    p_note: sanitizeText(input.note, "").slice(0, 240),
+    p_station_id: stationId,
+  });
+
+  if (error) {
+    const status = /not found|required|quantity/i.test(error.message) ? 400 : 500;
+    return c.json({ error: error.message }, status);
+  }
+
+  await writeAuditEvent({
+    action: `inventory.record.${input.action}`,
+    stationId,
+    metadata: {
+      itemId,
+      quantity,
+      countedQuantity: input.action === "count" ? countedQuantity : null,
+      recordId: data?.id,
+      quantityAfter: data?.quantity_after,
+    },
+  });
+
+  return c.json({ record: data }, 201);
 });
 
 api.get("/admin/members", async (c) => {
@@ -5048,6 +5360,121 @@ const validateProductUpdateInput = (
   payload.future_order_available = input.futureOrderAvailable === true;
 
   return { payload, error: null };
+};
+
+const inventoryActions: InventoryRecordAction[] = ["purchase", "return", "consumption", "scrapped", "count"];
+
+const isInventoryRecordAction = (value: unknown): value is InventoryRecordAction =>
+  typeof value === "string" && inventoryActions.includes(value as InventoryRecordAction);
+
+const sanitizeInventoryQuantity = (value: unknown, fallback = 0): number => {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity)) {
+    return fallback;
+  }
+
+  return Math.round(quantity * 1000) / 1000;
+};
+
+const sanitizeInventoryCost = (value: unknown, fallback = 0): number => {
+  const cost = Number(value);
+  if (!Number.isFinite(cost)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.trunc(cost));
+};
+
+const validateInventoryCategoryInput = (
+  input: InventoryCategoryInput,
+  fallback?: { name?: string; sort_order?: number; is_active?: boolean },
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const name = sanitizeText(input.name, fallback?.name ?? "").slice(0, 80);
+  if (!name) {
+    return { payload: {}, error: "name is required" };
+  }
+
+  const sortOrder = Number.isInteger(input.sortOrder)
+    ? Math.trunc(input.sortOrder ?? 0)
+    : (fallback?.sort_order ?? 0);
+
+  return {
+    payload: {
+      name,
+      sort_order: sortOrder,
+      is_active: typeof input.isActive === "boolean" ? input.isActive : (fallback?.is_active ?? true),
+    },
+    error: null,
+  };
+};
+
+const validateInventoryItemInput = (
+  input: InventoryItemInput,
+  fallback?: {
+    category_id?: string;
+    name?: string;
+    unit?: string;
+    default_unit_cost?: number;
+    stock_quantity?: number;
+    low_stock_quantity?: number | null;
+    note?: string;
+    is_active?: boolean;
+    sort_order?: number;
+  },
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const categoryId = normalizeUuid(input.categoryId) ?? fallback?.category_id ?? "";
+  if (!categoryId) {
+    return { payload: {}, error: "categoryId is required" };
+  }
+
+  const name = sanitizeText(input.name, fallback?.name ?? "").slice(0, 100);
+  if (!name) {
+    return { payload: {}, error: "name is required" };
+  }
+
+  const stockQuantity = input.stockQuantity === undefined
+    ? sanitizeInventoryQuantity(fallback?.stock_quantity, 0)
+    : sanitizeInventoryQuantity(input.stockQuantity, Number.NaN);
+  if (!Number.isFinite(stockQuantity)) {
+    return { payload: {}, error: "stockQuantity must be a number" };
+  }
+
+  let lowStockQuantity: number | null = null;
+  if (input.lowStockQuantity === null) {
+    lowStockQuantity = null;
+  } else if (input.lowStockQuantity === undefined) {
+    lowStockQuantity = fallback?.low_stock_quantity ?? null;
+  } else {
+    lowStockQuantity = sanitizeInventoryQuantity(input.lowStockQuantity, Number.NaN);
+    if (!Number.isFinite(lowStockQuantity) || lowStockQuantity < 0) {
+      return { payload: {}, error: "lowStockQuantity must be null or a non-negative number" };
+    }
+  }
+
+  const sortOrder = Number.isInteger(input.sortOrder)
+    ? Math.trunc(input.sortOrder ?? 0)
+    : (fallback?.sort_order ?? 0);
+
+  return {
+    payload: {
+      category_id: categoryId,
+      name,
+      unit: sanitizeText(input.unit, fallback?.unit ?? "份").slice(0, 24),
+      default_unit_cost: sanitizeInventoryCost(input.defaultUnitCost, fallback?.default_unit_cost ?? 0),
+      stock_quantity: stockQuantity,
+      low_stock_quantity: lowStockQuantity,
+      note: sanitizeText(input.note, fallback?.note ?? "").slice(0, 240),
+      is_active: typeof input.isActive === "boolean" ? input.isActive : (fallback?.is_active ?? true),
+      sort_order: sortOrder,
+    },
+    error: null,
+  };
 };
 
 const validateCreateMemberInput = (

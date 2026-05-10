@@ -7,6 +7,7 @@ export type PosRealtimeTopic =
   | 'products'
   | 'online_order_reminders'
   | 'cash_drawer'
+  | 'inventory_management'
 
 export interface PosRealtimeEvent {
   id: string
@@ -72,7 +73,8 @@ const isTopic = (value: unknown): value is PosRealtimeTopic =>
   value === 'register_sessions' ||
   value === 'products' ||
   value === 'online_order_reminders' ||
-  value === 'cash_drawer'
+  value === 'cash_drawer' ||
+  value === 'inventory_management'
 
 const isEventName = (value: unknown): value is PosRealtimeEvent['eventName'] =>
   value === 'INSERT' || value === 'UPDATE' || value === 'DELETE'

@@ -20,6 +20,7 @@ import {
   LockKeyhole,
   Minus,
   MoreHorizontal,
+  PackageOpen,
   Plus,
   Printer,
   QrCode,
@@ -53,8 +54,12 @@ import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes }
 import {
   createAdminReservation,
   createAdminMember,
+  createInventoryCategory,
+  createInventoryItem,
+  createInventoryRecord,
   createStaffTimeClockEntry,
   defaultFloorPlanSettings,
+  fetchAdminInventory,
   fetchAdminMembers,
   fetchAdminReservations,
   isPosApiConfigured,
@@ -62,6 +67,7 @@ import {
   searchPosMembers,
   updateAdminReservation,
   updateAdminSetting,
+  updateInventoryItem,
 } from './lib/posApi'
 import type {
   CartLine,
@@ -69,6 +75,10 @@ import type {
   FloorLevelSetting,
   FloorPlanSettings,
   FloorTableSetting,
+  InventoryCategory,
+  InventoryItem,
+  InventoryRecord,
+  InventoryRecordAction,
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
@@ -111,8 +121,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -120,6 +130,7 @@ type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
 type TransactionSearchCriterion = 'receipt' | 'carrier' | 'table' | 'order'
 type CustomerManagementSortMode = 'consumed' | 'created'
+type InventoryOperationDraftMode = InventoryRecordAction
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
@@ -882,6 +893,54 @@ const filteredCustomerManagementMembers = computed(() => {
 })
 const customerManagementSummary = computed(() =>
   `${customerManagementMembers.value.length} 位顧客 · ${customerManagementTypes.value.length} 類型`,
+)
+
+const inventoryActionLabels: Record<InventoryRecordAction, string> = {
+  purchase: '進貨',
+  return: '退貨',
+  consumption: '消耗',
+  scrapped: '報廢',
+  count: '盤點',
+}
+
+const activeInventoryCategories = computed(() =>
+  inventoryCategories.value.filter((category) => category.isActive),
+)
+
+const selectedInventoryItem = computed(() =>
+  inventoryItems.value.find((item) => item.id === inventorySelectedItemId.value) ?? null,
+)
+
+const filteredInventoryItems = computed(() => {
+  const keyword = inventorySearchTerm.value.trim().toLowerCase()
+  const categoryFilter = inventoryCategoryFilter.value
+
+  return inventoryItems.value
+    .filter((item) => item.isActive)
+    .filter((item) => categoryFilter === 'all' || item.categoryId === categoryFilter)
+    .filter((item) => {
+      if (!keyword) {
+        return true
+      }
+      return [item.name, item.unit, item.note].some((value) => value.toLowerCase().includes(keyword))
+    })
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))
+})
+
+const lowStockInventoryItems = computed(() =>
+  inventoryItems.value.filter((item) =>
+    item.isActive &&
+    item.lowStockQuantity !== null &&
+    item.stockQuantity <= item.lowStockQuantity,
+  ),
+)
+
+const selectedInventoryRecords = computed(() =>
+  inventoryRecords.value.filter((record) => record.itemId === inventorySelectedItemId.value).slice(0, 8),
+)
+
+const inventoryManagementSummary = computed(() =>
+  `${inventoryItems.value.filter((item) => item.isActive).length} 品項 · ${lowStockInventoryItems.value.length} 低庫存`,
 )
 
 const activeCoupon = computed(() =>
@@ -3281,6 +3340,35 @@ const customerManagementDraft = ref({
   pointsBalance: 0,
   openingBalance: 0,
 })
+const inventoryCategories = ref<InventoryCategory[]>([])
+const inventoryItems = ref<InventoryItem[]>([])
+const inventoryRecords = ref<InventoryRecord[]>([])
+const inventorySearchTerm = ref('')
+const inventoryCategoryFilter = ref('all')
+const inventorySelectedItemId = ref('')
+const inventoryMessage = ref('庫存品項與操作紀錄會儲存在資料庫')
+const isInventoryLoading = ref(false)
+const isInventorySaving = ref(false)
+const inventoryCategoryDraft = ref({
+  name: '',
+})
+const inventoryItemDraft = ref({
+  categoryId: '',
+  name: '',
+  unit: '份',
+  defaultUnitCost: 0,
+  stockQuantity: 0,
+  lowStockQuantity: 0,
+  note: '',
+})
+const inventoryOperationDraft = ref({
+  action: 'purchase' as InventoryOperationDraftMode,
+  quantity: 0,
+  unitCost: 0,
+  totalCost: 0,
+  countedQuantity: 0,
+  note: '',
+})
 const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
 const transactionSearchTerm = ref('')
 const selectedTransactionOrderId = ref<string | null>(null)
@@ -3349,6 +3437,10 @@ const toolboxPanelTitle = computed(() => {
     return '顧客資訊'
   }
 
+  if (activeToolboxPanel.value === 'inventory-management') {
+    return '庫存管理'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3386,6 +3478,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'customer-management') {
     return 'Customers'
+  }
+
+  if (activeToolboxPanel.value === 'inventory-management') {
+    return 'Inventory'
   }
 
   return 'Toolbox'
@@ -6550,6 +6646,270 @@ const createCustomerManagementMember = async (): Promise<void> => {
   }
 }
 
+const inventoryCategoryName = (categoryId: string): string =>
+  inventoryCategories.value.find((category) => category.id === categoryId)?.name ?? '未分類'
+
+const inventoryQuantityLabel = (quantity: number, unit: string): string =>
+  `${Number.isInteger(quantity) ? Math.trunc(quantity) : quantity.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')} ${unit}`
+
+const inventoryStockTone = (item: InventoryItem): 'danger' | 'warning' | 'ok' => {
+  if (item.lowStockQuantity !== null && item.stockQuantity <= item.lowStockQuantity) {
+    return item.stockQuantity <= 0 ? 'danger' : 'warning'
+  }
+
+  return 'ok'
+}
+
+const inventoryRecordDeltaLabel = (record: InventoryRecord, item?: InventoryItem | null): string => {
+  const unit = item?.unit ?? ''
+  const delta = record.quantityDelta
+  const prefix = delta > 0 ? '+' : ''
+  return `${prefix}${inventoryQuantityLabel(delta, unit).trim()}`
+}
+
+const syncInventoryDraftCategory = (): void => {
+  const fallbackCategoryId = activeInventoryCategories.value[0]?.id ?? inventoryCategories.value[0]?.id ?? ''
+  if (!inventoryItemDraft.value.categoryId || !inventoryCategories.value.some((category) => category.id === inventoryItemDraft.value.categoryId)) {
+    inventoryItemDraft.value.categoryId = fallbackCategoryId
+  }
+  if (inventoryCategoryFilter.value !== 'all' && !inventoryCategories.value.some((category) => category.id === inventoryCategoryFilter.value)) {
+    inventoryCategoryFilter.value = 'all'
+  }
+}
+
+const loadInventoryManagement = async (): Promise<void> => {
+  if (!requireBackendEditMode('讀取庫存管理')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    inventoryMessage.value = '本機模式無法同步庫存管理'
+    return
+  }
+
+  isInventoryLoading.value = true
+  inventoryMessage.value = '載入庫存管理中'
+
+  try {
+    const inventory = await fetchAdminInventory(120)
+    inventoryCategories.value = inventory.categories
+    inventoryItems.value = inventory.items
+    inventoryRecords.value = inventory.records
+    syncInventoryDraftCategory()
+    if (!selectedInventoryItem.value) {
+      inventorySelectedItemId.value = filteredInventoryItems.value[0]?.id ?? ''
+    }
+    inventoryMessage.value = `已載入 ${inventory.items.length} 個庫存品項、${inventory.records.length} 筆紀錄`
+  } catch (error) {
+    inventoryMessage.value = `載入失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isInventoryLoading.value = false
+  }
+}
+
+const createInventoryCategoryAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('新增庫存類別')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    inventoryMessage.value = '本機模式無法新增庫存類別'
+    return
+  }
+
+  const name = inventoryCategoryDraft.value.name.trim()
+  if (!name) {
+    inventoryMessage.value = '請輸入庫存類別名稱'
+    return
+  }
+
+  isInventorySaving.value = true
+  inventoryMessage.value = '新增庫存類別中'
+
+  try {
+    const category = await createInventoryCategory({
+      name,
+      sortOrder: inventoryCategories.value.length * 10 + 10,
+      isActive: true,
+    })
+    inventoryCategories.value = [...inventoryCategories.value, category]
+    inventoryCategoryDraft.value.name = ''
+    inventoryItemDraft.value.categoryId = category.id
+    inventoryCategoryFilter.value = category.id
+    inventoryMessage.value = `已新增庫存類別 ${category.name}`
+  } catch (error) {
+    inventoryMessage.value = `新增類別失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isInventorySaving.value = false
+  }
+}
+
+const createInventoryItemAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('新增庫存品項')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    inventoryMessage.value = '本機模式無法新增庫存品項'
+    return
+  }
+
+  const categoryId = inventoryItemDraft.value.categoryId || activeInventoryCategories.value[0]?.id
+  if (!categoryId) {
+    inventoryMessage.value = '請先新增庫存類別'
+    return
+  }
+
+  const name = inventoryItemDraft.value.name.trim()
+  if (!name) {
+    inventoryMessage.value = '請輸入庫存品項名稱'
+    return
+  }
+
+  isInventorySaving.value = true
+  inventoryMessage.value = '新增庫存品項中'
+
+  try {
+    const item = await createInventoryItem({
+      categoryId,
+      name,
+      unit: inventoryItemDraft.value.unit.trim() || '份',
+      defaultUnitCost: Math.max(0, Math.trunc(inventoryItemDraft.value.defaultUnitCost || 0)),
+      stockQuantity: Number(inventoryItemDraft.value.stockQuantity) || 0,
+      lowStockQuantity: Number.isFinite(Number(inventoryItemDraft.value.lowStockQuantity))
+        ? Math.max(0, Number(inventoryItemDraft.value.lowStockQuantity))
+        : null,
+      note: inventoryItemDraft.value.note.trim(),
+      isActive: true,
+      sortOrder: inventoryItems.value.length * 10 + 10,
+    })
+    inventoryItems.value = [...inventoryItems.value, item]
+    inventorySelectedItemId.value = item.id
+    inventoryItemDraft.value = {
+      categoryId,
+      name: '',
+      unit: inventoryItemDraft.value.unit || '份',
+      defaultUnitCost: item.defaultUnitCost,
+      stockQuantity: 0,
+      lowStockQuantity: item.lowStockQuantity ?? 0,
+      note: '',
+    }
+    inventoryOperationDraft.value.unitCost = item.defaultUnitCost
+    inventoryMessage.value = `已新增庫存品項 ${item.name}`
+  } catch (error) {
+    inventoryMessage.value = `新增品項失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isInventorySaving.value = false
+  }
+}
+
+const applyInventoryRecordToLocalState = (record: InventoryRecord): void => {
+  inventoryRecords.value = [record, ...inventoryRecords.value.filter((entry) => entry.id !== record.id)].slice(0, 160)
+  inventoryItems.value = inventoryItems.value.map((item) =>
+    item.id === record.itemId ? { ...item, stockQuantity: record.quantityAfter, updatedAt: record.createdAt } : item,
+  )
+}
+
+const createInventoryRecordAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('新增庫存操作')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    inventoryMessage.value = '本機模式無法新增庫存操作'
+    return
+  }
+
+  const item = selectedInventoryItem.value
+  if (!item) {
+    inventoryMessage.value = '請先選擇庫存品項'
+    return
+  }
+
+  const action = inventoryOperationDraft.value.action
+  const quantity = Number(inventoryOperationDraft.value.quantity)
+  const countedQuantity = Number(inventoryOperationDraft.value.countedQuantity)
+  if (action !== 'count' && (!Number.isFinite(quantity) || quantity <= 0)) {
+    inventoryMessage.value = '請輸入大於 0 的庫存操作數量'
+    return
+  }
+  if (action === 'count' && !Number.isFinite(countedQuantity)) {
+    inventoryMessage.value = '盤點需輸入目前實際存量'
+    return
+  }
+
+  isInventorySaving.value = true
+  inventoryMessage.value = `${inventoryActionLabels[action]}同步中`
+
+  try {
+    const unitCost = Math.max(0, Math.trunc(Number(inventoryOperationDraft.value.unitCost) || item.defaultUnitCost || 0))
+    const operationQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+    const draftTotalCost = Number(inventoryOperationDraft.value.totalCost)
+    const totalCost = Math.max(
+      0,
+      Math.trunc(Number.isFinite(draftTotalCost) && draftTotalCost > 0 ? draftTotalCost : unitCost * operationQuantity),
+    )
+    const recordPayload = {
+      itemId: item.id,
+      action,
+      unitCost: ['purchase', 'return'].includes(action) ? unitCost : 0,
+      totalCost: ['purchase', 'return'].includes(action) ? totalCost : 0,
+      note: inventoryOperationDraft.value.note.trim(),
+    }
+    const record = await createInventoryRecord(
+      action === 'count'
+        ? { ...recordPayload, countedQuantity }
+        : { ...recordPayload, quantity },
+    )
+    applyInventoryRecordToLocalState(record)
+    inventoryOperationDraft.value = {
+      action,
+      quantity: 0,
+      unitCost,
+      totalCost: 0,
+      countedQuantity: record.quantityAfter,
+      note: '',
+    }
+    inventoryMessage.value = `${item.name} 已${inventoryActionLabels[action]}，目前 ${inventoryQuantityLabel(record.quantityAfter, item.unit)}`
+  } catch (error) {
+    inventoryMessage.value = `操作失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isInventorySaving.value = false
+  }
+}
+
+const deactivateInventoryItemAction = async (item: InventoryItem): Promise<void> => {
+  if (!requireBackendEditMode('停用庫存品項')) {
+    return
+  }
+
+  isInventorySaving.value = true
+  inventoryMessage.value = `停用 ${item.name} 中`
+
+  try {
+    const updated = await updateInventoryItem(item.id, {
+      categoryId: item.categoryId,
+      name: item.name,
+      unit: item.unit,
+      defaultUnitCost: item.defaultUnitCost,
+      stockQuantity: item.stockQuantity,
+      lowStockQuantity: item.lowStockQuantity,
+      note: item.note,
+      isActive: false,
+      sortOrder: item.sortOrder,
+    })
+    inventoryItems.value = inventoryItems.value.map((entry) => entry.id === updated.id ? updated : entry)
+    if (inventorySelectedItemId.value === updated.id) {
+      inventorySelectedItemId.value = filteredInventoryItems.value[0]?.id ?? ''
+    }
+    inventoryMessage.value = `${item.name} 已停用，歷史紀錄仍保留`
+  } catch (error) {
+    inventoryMessage.value = `停用失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isInventorySaving.value = false
+  }
+}
+
 const submitTimeClockAction = async (): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
@@ -6663,6 +7023,14 @@ const runToolboxAction = (action: ToolboxAction): void => {
     activeToolboxPanel.value = 'customer-management'
     if (backendEditModeEnabled.value && customerManagementMembers.value.length === 0) {
       void loadCustomerManagementMembers()
+    }
+    return
+  }
+
+  if (action === 'inventory-management') {
+    activeToolboxPanel.value = 'inventory-management'
+    if (backendEditModeEnabled.value && inventoryCategories.value.length === 0 && inventoryItems.value.length === 0) {
+      void loadInventoryManagement()
     }
     return
   }
@@ -7597,10 +7965,17 @@ watch([reservationSelectedDate, reservationViewMode], () => {
   }
 })
 
+const handleInventoryRealtimeRefresh = (): void => {
+  if (activeToolboxPanel.value === 'inventory-management' && backendEditModeEnabled.value) {
+    void loadInventoryManagement()
+  }
+}
+
 onMounted(() => {
   updatePosStableViewportHeight(true)
   void refreshReservations()
   globalThis.addEventListener('keydown', handlePosShortcut)
+  globalThis.addEventListener('script-coffee-pos-inventory-management-changed', handleInventoryRealtimeRefresh)
   globalThis.addEventListener('resize', handleViewportResize)
   globalThis.addEventListener('orientationchange', scheduleForcedViewportRefresh)
   globalThis.visualViewport?.addEventListener('resize', handleViewportResize)
@@ -7611,6 +7986,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handlePosShortcut)
+  globalThis.removeEventListener('script-coffee-pos-inventory-management-changed', handleInventoryRealtimeRefresh)
   globalThis.removeEventListener('resize', handleViewportResize)
   globalThis.removeEventListener('orientationchange', scheduleForcedViewportRefresh)
   globalThis.visualViewport?.removeEventListener('resize', handleViewportResize)
@@ -11232,6 +11608,11 @@ onBeforeUnmount(() => {
             <strong>供應狀態</strong>
             <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('inventory-management')">
+            <PackageOpen :size="24" aria-hidden="true" />
+            <strong>庫存管理</strong>
+            <span>{{ inventoryManagementSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
             <Printer :size="24" aria-hidden="true" />
             <strong>列印站</strong>
@@ -11763,6 +12144,140 @@ onBeforeUnmount(() => {
               尚無顧客資料，或目前篩選沒有結果
             </p>
           </div>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'inventory-management'" class="toolbox-detail-panel inventory-management-panel" aria-labelledby="toolbox-title">
+          <div class="inventory-management-toolbar">
+            <label class="search-box">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="inventorySearchTerm" type="search" placeholder="搜尋庫存品項" />
+            </label>
+            <label>
+              類別
+              <select v-model="inventoryCategoryFilter">
+                <option value="all">全部</option>
+                <option v-for="category in activeInventoryCategories" :key="category.id" :value="category.id">
+                  {{ category.name }}
+                </option>
+              </select>
+            </label>
+            <button class="primary-button" type="button" :disabled="isInventoryLoading" @click="loadInventoryManagement">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isInventoryLoading ? '讀取中' : '刷新庫存' }}
+            </button>
+          </div>
+
+          <div class="inventory-create-grid">
+            <form class="inventory-create-card" @submit.prevent="createInventoryCategoryAction">
+              <strong>庫存類別</strong>
+              <input v-model="inventoryCategoryDraft.name" type="text" placeholder="類別名稱" />
+              <button class="secondary-button" type="submit" :disabled="isInventorySaving">
+                <Plus :size="18" aria-hidden="true" />
+                新增類別
+              </button>
+            </form>
+            <form class="inventory-create-card inventory-create-card--item" @submit.prevent="createInventoryItemAction">
+              <strong>庫存品項</strong>
+              <select v-model="inventoryItemDraft.categoryId">
+                <option value="" disabled>選擇類別</option>
+                <option v-for="category in activeInventoryCategories" :key="category.id" :value="category.id">
+                  {{ category.name }}
+                </option>
+              </select>
+              <input v-model="inventoryItemDraft.name" type="text" placeholder="品項名稱" />
+              <input v-model="inventoryItemDraft.unit" type="text" placeholder="單位" />
+              <input v-model.number="inventoryItemDraft.defaultUnitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="預設單價" />
+              <input v-model.number="inventoryItemDraft.stockQuantity" type="number" step="0.001" inputmode="decimal" placeholder="目前存量" />
+              <input v-model.number="inventoryItemDraft.lowStockQuantity" type="number" min="0" step="0.001" inputmode="decimal" placeholder="安全庫存" />
+              <input v-model="inventoryItemDraft.note" type="text" placeholder="備註" />
+              <button class="secondary-button" type="submit" :disabled="isInventorySaving">
+                <Plus :size="18" aria-hidden="true" />
+                新增品項
+              </button>
+            </form>
+          </div>
+
+          <div class="inventory-management-grid">
+            <section class="inventory-list" aria-label="庫存品項">
+              <article
+                v-for="item in filteredInventoryItems"
+                :key="item.id"
+                class="inventory-row"
+                :class="{ 'inventory-row--active': inventorySelectedItemId === item.id }"
+                @click="inventorySelectedItemId = item.id"
+              >
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <span>{{ inventoryCategoryName(item.categoryId) }} · {{ item.unit }} · {{ item.note || '無備註' }}</span>
+                </div>
+                <b :class="`inventory-stock inventory-stock--${inventoryStockTone(item)}`">
+                  {{ inventoryQuantityLabel(item.stockQuantity, item.unit) }}
+                </b>
+              </article>
+              <p v-if="filteredInventoryItems.length === 0" class="inventory-empty">
+                尚未建立庫存品項
+              </p>
+            </section>
+
+            <section class="inventory-detail" aria-label="庫存操作">
+              <template v-if="selectedInventoryItem">
+                <header>
+                  <div>
+                    <strong>{{ selectedInventoryItem.name }}</strong>
+                    <span>{{ inventoryCategoryName(selectedInventoryItem.categoryId) }} · 安全庫存 {{ selectedInventoryItem.lowStockQuantity ?? '未設定' }}</span>
+                  </div>
+                  <button class="ghost-danger-button" type="button" :disabled="isInventorySaving" @click="deactivateInventoryItemAction(selectedInventoryItem)">
+                    停用
+                  </button>
+                </header>
+
+                <form class="inventory-operation-form" @submit.prevent="createInventoryRecordAction">
+                  <label>
+                    操作
+                    <select v-model="inventoryOperationDraft.action">
+                      <option value="purchase">進貨</option>
+                      <option value="return">退貨</option>
+                      <option value="consumption">消耗</option>
+                      <option value="scrapped">報廢</option>
+                      <option value="count">盤點</option>
+                    </select>
+                  </label>
+                  <label v-if="inventoryOperationDraft.action !== 'count'">
+                    數量
+                    <input v-model.number="inventoryOperationDraft.quantity" type="number" min="0" step="0.001" inputmode="decimal" />
+                  </label>
+                  <label v-else>
+                    盤點量
+                    <input v-model.number="inventoryOperationDraft.countedQuantity" type="number" step="0.001" inputmode="decimal" />
+                  </label>
+                  <label v-if="['purchase', 'return'].includes(inventoryOperationDraft.action)">
+                    單價
+                    <input v-model.number="inventoryOperationDraft.unitCost" type="number" min="0" step="1" inputmode="numeric" />
+                  </label>
+                  <label>
+                    備註
+                    <input v-model="inventoryOperationDraft.note" type="text" />
+                  </label>
+                  <button class="primary-button" type="submit" :disabled="isInventorySaving">
+                    <Check :size="18" aria-hidden="true" />
+                    {{ inventoryActionLabels[inventoryOperationDraft.action] }}
+                  </button>
+                </form>
+
+                <div class="inventory-records">
+                  <article v-for="record in selectedInventoryRecords" :key="record.id" class="inventory-record-row">
+                    <div>
+                      <strong>{{ inventoryActionLabels[record.action] }} · {{ inventoryRecordDeltaLabel(record, selectedInventoryItem) }}</strong>
+                      <span>{{ formatOrderTime(record.createdAt) }} · {{ record.note || record.stationId || '無備註' }}</span>
+                    </div>
+                    <b>{{ inventoryQuantityLabel(record.quantityAfter, selectedInventoryItem.unit) }}</b>
+                  </article>
+                  <p v-if="selectedInventoryRecords.length === 0" class="inventory-empty">尚無庫存紀錄</p>
+                </div>
+              </template>
+              <p v-else class="inventory-empty">請選擇庫存品項</p>
+            </section>
+          </div>
+          <p class="inventory-message" aria-live="polite">{{ inventoryMessage }}</p>
         </section>
         <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <header class="current-sales-header">
