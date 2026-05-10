@@ -3468,10 +3468,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     closingCashValue: number,
     note: string,
     force = false,
+    staffCode = '',
   ): Promise<void> => {
     const closingCash = readRegisterCashAmount(closingCashValue)
     if (closingCash === null) {
       registerMessage.value = '關班現金需為 0 以上整數'
+      return
+    }
+
+    const normalizedStaffCode = staffCode.trim().replace(/\s+/g, '')
+    if (!normalizedStaffCode) {
+      registerMessage.value = '請輸入員工識別碼'
       return
     }
 
@@ -3484,7 +3491,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     registerMessage.value = '關班結算中'
 
     try {
-      const session = await closeRegisterSession(closingCash, note, force)
+      const session = await closeRegisterSession(closingCash, note, force, normalizedStaffCode)
       applyRegisterSession(session)
       const variance = closingCash - session.expectedCash
       registerMessage.value = `已關班，現金差額 ${variance}`

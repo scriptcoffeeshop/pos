@@ -238,6 +238,7 @@ interface CloseRegisterInput {
   note?: string;
   stationId?: string;
   force?: boolean;
+  staffCode?: string;
 }
 
 interface RegisterCashAdjustmentInput {
@@ -1713,6 +1714,21 @@ api.post("/register/close", async (c) => {
     return c.json({ error: closingCash.error }, 400);
   }
 
+  const staffCode = normalizeStaffCode(input.staffCode);
+  if (!staffCode) {
+    return c.json({ error: "staffCode is required" }, 400);
+  }
+
+  const accessControl = await loadSetting<AccessControlSettings>("access_control", defaultAccessControl);
+  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
+  const staffAccount = normalizedAccessControl.staffAccounts.find((staff) =>
+    staff.active && staff.staffCode === staffCode
+  );
+  if (!staffAccount) {
+    return c.json({ error: "Staff account not found or inactive" }, 404);
+  }
+  const staffRole = normalizedAccessControl.roles.find((entry) => entry.id === staffAccount.roleId);
+
   const openSession = await loadOpenRegisterSession();
   if (openSession.error) {
     return c.json({ error: openSession.error.message }, 500);
@@ -1793,6 +1809,10 @@ api.post("/register/close", async (c) => {
       failedPrintCount: summary.failed_print_count,
       voidedOrderCount: summary.voided_order_count,
       forced: input.force === true,
+      operatorStaffCode: staffAccount.staffCode,
+      operatorStaffName: staffAccount.name,
+      operatorRoleId: staffAccount.roleId,
+      operatorRoleName: staffRole?.name ?? staffAccount.roleId,
     },
   });
 
