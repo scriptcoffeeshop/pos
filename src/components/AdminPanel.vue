@@ -58,6 +58,7 @@ import type {
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
+  OnlineScheduledOrderTimeWindow,
   PrinterSettings,
   PosAuditEvent,
   PosMember,
@@ -299,6 +300,16 @@ const emptyAccessControl = (): AccessControlSettings => ({
   staffAccounts: [],
 })
 
+const weekdayOptions = [
+  { value: 1, label: '一' },
+  { value: 2, label: '二' },
+  { value: 3, label: '三' },
+  { value: 4, label: '四' },
+  { value: 5, label: '五' },
+  { value: 6, label: '六' },
+  { value: 0, label: '日' },
+]
+
 const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   enabled: true,
   serviceModeAvailability: {
@@ -307,6 +318,18 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     delivery: true,
   },
   allowScheduledOrders: true,
+  scheduledOrderIntervalMinutes: 15,
+  scheduledOrderMaxDays: 7,
+  scheduledOrderTimeWindows: [
+    {
+      id: 'daily',
+      label: '每日',
+      days: [1, 2, 3, 4, 5, 6, 0],
+      start: '00:00',
+      end: '23:59',
+      allDay: true,
+    },
+  ],
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
   acceptanceRequired: true,
@@ -358,6 +381,9 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...settings.serviceModeAvailability,
   },
   paymentMethods: (settings.paymentMethods ?? defaultOnlineOrderingSettings().paymentMethods).map((method) => ({ ...method })),
+  scheduledOrderTimeWindows: (
+    settings.scheduledOrderTimeWindows ?? defaultOnlineOrderingSettings().scheduledOrderTimeWindows
+  ).map((timeWindow) => ({ ...timeWindow, days: [...timeWindow.days] })),
   menuCategories: settings.menuCategories.map((category) => ({ ...category })),
   availableOptionChoices: (settings.availableOptionChoices ?? []).map((choice) => ({ ...choice })),
   menuOptionGroups: settings.menuOptionGroups.map((group) => ({
@@ -1594,6 +1620,19 @@ const saveOnlineOrdering = async (): Promise<void> => {
         checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 240),
         showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
         showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
+        scheduledOrderIntervalMinutes: Math.min(
+          Math.max(Math.trunc(Number(onlineOrdering.value.scheduledOrderIntervalMinutes) || 15), 5),
+          120,
+        ),
+        scheduledOrderMaxDays: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.scheduledOrderMaxDays) || 1), 1), 60),
+        scheduledOrderTimeWindows: onlineOrdering.value.scheduledOrderTimeWindows.map((timeWindow) => ({
+          id: timeWindow.id,
+          label: timeWindow.label.trim().slice(0, 24) || '取餐時段',
+          days: [...new Set(timeWindow.days.filter((day) => day >= 0 && day <= 6))],
+          start: timeWindow.start,
+          end: timeWindow.end,
+          allDay: Boolean(timeWindow.allDay),
+        })),
         paymentMethods: onlineOrdering.value.paymentMethods.map((method) => ({
           id: method.id,
           label: method.label.trim().slice(0, 24) || method.id,
@@ -1643,6 +1682,39 @@ const moveOnlinePaymentMethod = (methodId: string, direction: -1 | 1): void => {
 
 const onlinePaymentMethodPosition = (methodId: string): number =>
   onlineOrdering.value.paymentMethods.findIndex((method) => method.id === methodId)
+
+const addScheduledOrderTimeWindow = (): void => {
+  onlineOrdering.value.scheduledOrderTimeWindows.push({
+    id: buildId('pickup-window'),
+    label: `取餐時段 ${onlineOrdering.value.scheduledOrderTimeWindows.length + 1}`,
+    days: [1, 2, 3, 4, 5],
+    start: '11:00',
+    end: '20:00',
+    allDay: false,
+  })
+}
+
+const deleteScheduledOrderTimeWindow = (windowId: string): void => {
+  if (onlineOrdering.value.scheduledOrderTimeWindows.length <= 1) {
+    adminMessage.value = '至少保留 1 個取餐時段'
+    return
+  }
+
+  onlineOrdering.value.scheduledOrderTimeWindows = onlineOrdering.value.scheduledOrderTimeWindows.filter(
+    (timeWindow) => timeWindow.id !== windowId,
+  )
+}
+
+const toggleScheduledOrderWindowDay = (timeWindow: OnlineScheduledOrderTimeWindow, day: number): void => {
+  const daySet = new Set(timeWindow.days)
+  if (daySet.has(day)) {
+    daySet.delete(day)
+  } else {
+    daySet.add(day)
+  }
+
+  timeWindow.days = [...daySet].sort((first, second) => first - second)
+}
 
 const addOrderLabel = (): void => {
   engagementSettings.value.orderLabels.push({
@@ -2359,6 +2431,67 @@ const saveAccessControl = async (): Promise<void> => {
                 placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
               />
             </label>
+          </div>
+
+          <div class="admin-online-schedule-rules" aria-label="預約訂單設定">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Scheduled orders</p>
+                <h3>預約訂單</h3>
+              </div>
+              <button class="utility-button" type="button" @click="addScheduledOrderTimeWindow">
+                <Plus :size="16" aria-hidden="true" />
+                新增時段
+              </button>
+            </div>
+            <div class="admin-online-settings-grid">
+              <label>
+                取餐時間間隔
+                <input v-model.number="onlineOrdering.scheduledOrderIntervalMinutes" type="number" min="5" max="120" step="5" />
+              </label>
+              <label>
+                最長預約天數
+                <input v-model.number="onlineOrdering.scheduledOrderMaxDays" type="number" min="1" max="60" step="1" />
+              </label>
+            </div>
+            <div class="admin-schedule-window-list">
+              <article
+                v-for="timeWindow in onlineOrdering.scheduledOrderTimeWindows"
+                :key="timeWindow.id"
+                class="admin-schedule-window-row"
+              >
+                <label>
+                  名稱
+                  <input v-model="timeWindow.label" type="text" maxlength="24" />
+                </label>
+                <label class="toggle-row">
+                  <input v-model="timeWindow.allDay" type="checkbox" />
+                  全天
+                </label>
+                <label>
+                  開始
+                  <input v-model="timeWindow.start" type="time" :disabled="timeWindow.allDay" />
+                </label>
+                <label>
+                  結束
+                  <input v-model="timeWindow.end" type="time" :disabled="timeWindow.allDay" />
+                </label>
+                <div class="admin-weekday-toggle" aria-label="可預約星期">
+                  <button
+                    v-for="day in weekdayOptions"
+                    :key="day.value"
+                    type="button"
+                    :class="{ 'admin-weekday-toggle--active': timeWindow.days.includes(day.value) }"
+                    @click="toggleScheduledOrderWindowDay(timeWindow, day.value)"
+                  >
+                    {{ day.label }}
+                  </button>
+                </div>
+                <button class="icon-button" type="button" title="刪除時段" @click="deleteScheduledOrderTimeWindow(timeWindow.id)">
+                  <Trash2 :size="18" aria-hidden="true" />
+                </button>
+              </article>
+            </div>
           </div>
 
           <div class="admin-online-delivery-rules" aria-label="外送運費規則">

@@ -217,6 +217,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-scheduled-order-rules',
+    category: 'online',
+    title: '線上預約訂單設定',
+    summary: '後台可依 iCHEF 預約訂單流程，設定最長可預約天數、取餐時間間隔與可預約取餐時段。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '開啟「允許顧客選希望時間」，並在「預約訂單」區塊設定取餐時間間隔與最長預約天數。',
+      '新增或調整取餐時段，設定星期、全天或開始/結束時間後儲存。',
+      '消費者頁的希望時間會限制在最早備餐時間、最長預約天數與可預約時段內。',
+      '舊頁面或 API 繞過前端送出不合規時間時，`POST /orders` 會重新讀 runtime 後拒絕。',
+    ],
+    keywords: ['預約訂單', '希望時間', '取餐時間', '最長預約天數', '時間間隔', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'reservation-blacklist',
     category: 'reservations',
     title: '線上訂位黑名單',

@@ -8604,6 +8604,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-stock-grid label,
 .admin-online-settings-grid label,
 .admin-payment-method-row label,
+.admin-schedule-window-row label,
 .admin-special-date-grid label,
 .admin-member-create label,
 .admin-member-row label,
@@ -8627,6 +8628,7 @@ button.cart-line-summary:focus-visible {
 .admin-online-settings-grid input,
 .admin-online-settings-grid textarea,
 .admin-payment-method-row input,
+.admin-schedule-window-row input,
 .admin-special-date-grid input,
 .admin-special-date-grid select,
 .admin-member-create input,
@@ -9101,11 +9103,50 @@ button.cart-line-summary:focus-visible {
   align-items: end;
 }
 
+.admin-online-schedule-rules,
 .admin-online-delivery-rules,
 .admin-online-payment-methods {
   display: grid;
   gap: 12px;
   margin-top: 16px;
+}
+
+.admin-schedule-window-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-schedule-window-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(84px, auto) 104px 104px minmax(230px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-weekday-toggle {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(28px, 1fr));
+  gap: 5px;
+  align-items: center;
+}
+
+.admin-weekday-toggle button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.admin-weekday-toggle .admin-weekday-toggle--active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-contrast);
 }
 
 .admin-payment-method-list {
@@ -9337,6 +9378,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-row select:focus,
 .admin-online-settings-grid input:focus,
 .admin-online-settings-grid textarea:focus,
+.admin-schedule-window-row input:focus,
 .admin-member-create input:focus,
 .admin-member-row input:focus,
 .admin-station-row input:focus,
@@ -9884,6 +9926,7 @@ button.cart-line-summary:focus-visible {
   .admin-report-sections,
   .admin-online-status-grid,
   .admin-online-settings-grid,
+  .admin-schedule-window-row,
   .admin-operation-summary,
   .admin-operation-row,
   .admin-station-grid,
