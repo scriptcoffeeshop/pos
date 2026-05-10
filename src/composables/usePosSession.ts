@@ -162,6 +162,8 @@ const defaultCustomerDraft = (): CustomerDraft => ({
   availableCoupons: [],
   deliveryAddress: '',
   requestedFulfillmentAt: '',
+  taxId: '',
+  invoiceCarrierBarcode: '',
   note: '',
 })
 
@@ -197,6 +199,21 @@ const isPaymentStatus = (value: unknown): value is PaymentStatus =>
 
 const isPrintStatus = (value: unknown): value is PrintStatus =>
   typeof value === 'string' && printStatuses.includes(value as PrintStatus)
+
+const normalizeTaxId = (value: string): string => value.replace(/\s/g, '').trim()
+const normalizeInvoiceCarrierBarcode = (value: string): string => value.replace(/\s/g, '').trim().toUpperCase()
+const invoiceFieldError = (taxId: string, carrierBarcode: string): string | null => {
+  const normalizedTaxId = normalizeTaxId(taxId)
+  if (normalizedTaxId && !/^[0-9]{8}$/.test(normalizedTaxId)) {
+    return '統一編號需為 8 碼數字'
+  }
+
+  if (normalizeInvoiceCarrierBarcode(carrierBarcode).length > 32) {
+    return '載具條碼最多 32 字元'
+  }
+
+  return null
+}
 
 const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
   if (!line || typeof line !== 'object') {
@@ -270,6 +287,10 @@ const sanitizeCustomerDraft = (value: unknown): CustomerDraft => {
     requestedFulfillmentAt: typeof draft.requestedFulfillmentAt === 'string'
       ? draft.requestedFulfillmentAt
       : fallback.requestedFulfillmentAt,
+    taxId: typeof draft.taxId === 'string' ? draft.taxId : fallback.taxId,
+    invoiceCarrierBarcode: typeof draft.invoiceCarrierBarcode === 'string'
+      ? draft.invoiceCarrierBarcode
+      : fallback.invoiceCarrierBarcode,
     note: typeof draft.note === 'string' ? draft.note : fallback.note,
   }
 }
@@ -320,6 +341,8 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.phone.trim().length > 0 ||
       draft.customer.deliveryAddress.trim().length > 0 ||
       draft.customer.requestedFulfillmentAt.trim().length > 0 ||
+      draft.customer.taxId.trim().length > 0 ||
+      draft.customer.invoiceCarrierBarcode.trim().length > 0 ||
       draft.customer.note.trim().length > 0 ||
       draft.customer.name.trim() !== '現場客' ||
       Boolean(draft.customer.memberId) ||
@@ -407,6 +430,8 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     customerPhone: order.customerPhone,
     deliveryAddress: order.deliveryAddress,
     requestedFulfillmentAt: nullableString(order.requestedFulfillmentAt),
+    taxId: typeof order.taxId === 'string' ? order.taxId : '',
+    invoiceCarrierBarcode: typeof order.invoiceCarrierBarcode === 'string' ? order.invoiceCarrierBarcode : '',
     memberId: nullableString(order.memberId),
     note: order.note,
     lines,
@@ -1505,6 +1530,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.availableCoupons = nextDraft.availableCoupons
     customer.deliveryAddress = nextDraft.deliveryAddress
     customer.requestedFulfillmentAt = nextDraft.requestedFulfillmentAt
+    customer.taxId = nextDraft.taxId
+    customer.invoiceCarrierBarcode = nextDraft.invoiceCarrierBarcode
     customer.note = nextDraft.note
   }
 
@@ -1543,6 +1570,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: '',
       deliveryAddress: '',
       requestedFulfillmentAt: null,
+      taxId: '',
+      invoiceCarrierBarcode: '',
       memberId: null,
       note: '',
       lines: [],
@@ -1764,6 +1793,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: customer.phone.trim(),
       deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      taxId: normalizeTaxId(customer.taxId),
+      invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
       memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -3380,6 +3411,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerPhone: customer.phone.trim(),
       deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+      taxId: normalizeTaxId(customer.taxId),
+      invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
       memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -3419,6 +3452,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (serviceMode.value === 'delivery' && !customer.deliveryAddress.trim()) {
       setBackendStatus('fallback', '外送地址未填', '外送訂單需要地址，避免交付資訊只留在備註')
+      return null
+    }
+
+    const invoiceError = invoiceFieldError(customer.taxId, customer.invoiceCarrierBarcode)
+    if (invoiceError) {
+      setBackendStatus('fallback', '發票資訊格式錯誤', invoiceError)
       return null
     }
 
@@ -3588,6 +3627,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.customerType = customer.memberId ? customer.customerType : '一般顧客'
     customer.deliveryAddress = editableOrder.deliveryAddress
     customer.requestedFulfillmentAt = toDatetimeLocalInputValue(editableOrder.requestedFulfillmentAt)
+    customer.taxId = editableOrder.taxId
+    customer.invoiceCarrierBarcode = editableOrder.invoiceCarrierBarcode
     customer.note = editableOrder.note
     cartLines.value = editableOrder.lines.map((line) => ({ ...line, options: [...line.options] }))
     counterDraftOrderId.value = editableOrder.id

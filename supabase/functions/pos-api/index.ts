@@ -50,6 +50,8 @@ interface CreateOrderInput {
   customerPhone?: string;
   deliveryAddress?: string;
   requestedFulfillmentAt?: string | null;
+  taxId?: string;
+  invoiceCarrierBarcode?: string;
   memberId?: string | null;
   note?: string;
   subtotal: number;
@@ -331,6 +333,9 @@ interface OnlineOrderingSettings {
   soundEnabled: boolean;
   notificationRepeatMode: OnlineNotificationRepeatMode;
   notificationVolume: number;
+  checkoutInstructions: string;
+  showTaxIdField: boolean;
+  showCarrierBarcodeField: boolean;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -671,6 +676,9 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   soundEnabled: true,
   notificationRepeatMode: "continuous",
   notificationVolume: 80,
+  checkoutInstructions: "",
+  showTaxIdField: false,
+  showCarrierBarcodeField: false,
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
   availableOptionChoices: [],
@@ -852,6 +860,8 @@ const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, u
   points_redeemed: clampNonNegativeInteger(input.pointsRedeemed),
   coupon_code: sanitizeText(input.couponCode, "").slice(0, 80),
   member_points_earned: clampNonNegativeInteger(input.memberPointsEarned),
+  tax_id: sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8),
+  invoice_carrier_barcode: sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32),
 });
 
 const applyOrderEnhancements = async (orderId: string, input: CreateOrderInput) =>
@@ -4138,6 +4148,16 @@ const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
     return "orderLabels must be an array";
   }
 
+  const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "");
+  if (taxId && !/^[0-9]{8}$/.test(taxId)) {
+    return "taxId must be 8 digits";
+  }
+
+  const carrierBarcode = sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "");
+  if (carrierBarcode.length > 32) {
+    return "invoiceCarrierBarcode must be 32 characters or fewer";
+  }
+
   return null;
 };
 
@@ -5606,6 +5626,12 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     notificationVolume: Number.isInteger(notificationVolume)
       ? Math.min(Math.max(notificationVolume, 0), 100)
       : defaultOnlineOrdering.notificationVolume,
+    checkoutInstructions: sanitizeText(
+      settings.checkoutInstructions,
+      defaultOnlineOrdering.checkoutInstructions,
+    ).slice(0, 240),
+    showTaxIdField: settings.showTaxIdField === true,
+    showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -5869,6 +5895,10 @@ const validateOnlineOrdering = (input: unknown): {
   }
 
   const pauseMessage = sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120);
+  const checkoutInstructions = sanitizeText(
+    settings.checkoutInstructions,
+    defaultOnlineOrdering.checkoutInstructions,
+  ).slice(0, 240);
   const notificationRepeatMode: OnlineNotificationRepeatMode =
     settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
       ? settings.notificationRepeatMode
@@ -5891,6 +5921,9 @@ const validateOnlineOrdering = (input: unknown): {
       soundEnabled: Boolean(settings.soundEnabled),
       notificationRepeatMode,
       notificationVolume,
+      checkoutInstructions,
+      showTaxIdField: settings.showTaxIdField === true,
+      showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
       pauseMessage,
       menuCategories,
       availableOptionChoices,

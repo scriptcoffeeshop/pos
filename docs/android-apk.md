@@ -97,6 +97,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 
 這一版的 APK 背景提醒已改用 foreground service 覆蓋按 Home、切到背景、螢幕熄滅與回前景補同步；若使用者從最近任務手動滑掉 App、強制停止 App 或系統終止整個程序，後續正式版仍建議再接 FCM push 才能提供被終止後仍必達的提醒。
 
+## 線上結帳統編與載具
+
+線上點餐結帳說明、統一編號欄位與載具條碼欄位由 `online_ordering` runtime 控制；實際送出的資料寫入 Supabase `orders.tax_id` 與 `orders.invoice_carrier_barcode`，不是 APK 本機資料。這對照 iCHEF 外帶/外送訂餐流程的結帳欄位顯示設定。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」開啟「結帳顯示統一編號」與「結帳顯示載具條碼」，並填入結帳說明後儲存。
+2. 用 `order.scriptcoffee.com.tw` 或本機消費者頁送出一張線上單，填入 8 碼統一編號與載具條碼。
+3. 回 APK 前景，確認線上新單提醒的「查看訂單內容」顯示統一編號與載具條碼。
+4. 接單後在訂單中心展開同一張單，確認訂單明細顯示相同資料；列印顧客聯或收據時 payload 也應帶出 `TAX ID` 與 `CARRIER`。
+5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認同一筆訂單仍能從 Supabase 載回統編與載具，欄位開關與結帳說明也仍從 runtime 還原。
+6. 輸入非 8 碼統編或超過 32 字元的載具時，消費者頁應先阻擋；若繞過前端，`pos-api` 與資料庫 constraint 也應拒絕。
+
 ## 員工打卡
 
 員工帳號與識別碼由後台「權限」頁的 `access_control` runtime setting 管理，打卡紀錄寫入 Supabase `staff_time_clock_entries`，不是 APK 本機資料。實機測試建議：
@@ -163,6 +174,7 @@ rtk npm run apk:install:fresh
 - 測線上訂位網站時，後台規則應透過 `/settings/runtime` 同步，公開送單應走 `/reservations`；特殊訂位日必須由前端與 API 同時阻擋或開放，黑名單手機不得只在前端阻擋。
 - 測線上訂位容量時，需檢查同時段 booked/reminded/confirmed/seated 訂位與 assigned table，而不是只看總人數欄位；沒有 assigned table 的舊訂位會以人數保守占用容量。
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
+- 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。

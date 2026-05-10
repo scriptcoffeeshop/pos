@@ -9,6 +9,8 @@ export const initialOrders: PosOrder[] = [
     customerPhone: '0912-000-128',
     deliveryAddress: '',
     requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 15).toISOString(),
+    taxId: '',
+    invoiceCarrierBarcode: '',
     memberId: null,
     note: '拿鐵少冰，15 分鐘後取餐',
     lines: [
@@ -65,6 +67,8 @@ export const initialOrders: PosOrder[] = [
     customerPhone: '0988-100-555',
     deliveryAddress: '台北市大安區復興南路一段 100 號',
     requestedFulfillmentAt: new Date(Date.now() + 1000 * 60 * 30).toISOString(),
+    taxId: '12345678',
+    invoiceCarrierBarcode: '/SC00001',
     memberId: null,
     note: '送到一樓櫃台',
     lines: [

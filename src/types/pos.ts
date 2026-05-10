@@ -66,6 +66,8 @@ export interface CustomerDraft {
   availableCoupons: MemberCoupon[]
   deliveryAddress: string
   requestedFulfillmentAt: string
+  taxId: string
+  invoiceCarrierBarcode: string
   note: string
 }
 
@@ -79,6 +81,8 @@ export interface PosOrder {
   customerPhone: string
   deliveryAddress: string
   requestedFulfillmentAt: string | null
+  taxId: string
+  invoiceCarrierBarcode: string
   memberId: string | null
   note: string
   lines: CartLine[]
@@ -275,6 +279,9 @@ export interface OnlineOrderingSettings {
   soundEnabled: boolean
   notificationRepeatMode: OnlineNotificationRepeatMode
   notificationVolume: number
+  checkoutInstructions: string
+  showTaxIdField: boolean
+  showCarrierBarcodeField: boolean
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]
