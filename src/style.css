@@ -8548,6 +8548,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-row label,
 .admin-product-stock-grid label,
 .admin-online-settings-grid label,
+.admin-special-date-grid label,
 .admin-member-create label,
 .admin-member-row label,
 .admin-station-row label,
@@ -8568,6 +8569,8 @@ button.cart-line-summary:focus-visible {
 .admin-product-row select,
 .admin-product-stock-grid input,
 .admin-online-settings-grid input,
+.admin-special-date-grid input,
+.admin-special-date-grid select,
 .admin-member-create input,
 .admin-member-row input,
 .admin-station-row input,
@@ -8869,6 +8872,13 @@ button.cart-line-summary:focus-visible {
 
 .admin-rule-grid {
   grid-template-columns: minmax(118px, 0.8fr) minmax(140px, 1fr) minmax(118px, 0.8fr) 82px;
+  align-items: end;
+}
+
+.admin-special-date-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 132px 132px 150px 112px 112px 42px;
+  gap: 9px;
   align-items: end;
 }
 
@@ -9793,6 +9803,7 @@ button.cart-line-summary:focus-visible {
   .admin-operation-row,
   .admin-station-grid,
   .admin-rule-grid,
+  .admin-special-date-grid,
   .admin-role-header {
     grid-template-columns: 1fr;
   }

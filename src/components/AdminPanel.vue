@@ -62,6 +62,7 @@ import type {
   PosPaymentEvent,
   PosReservation,
   ReservationBlacklistEntry,
+  ReservationSpecialDateRule,
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
@@ -351,6 +352,7 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
   const defaults = defaultEngagementSettings()
   const reservationWebsite = settings.reservationWebsite ?? defaults.reservationWebsite
   const reservationBusinessHours = reservationWebsite.businessHours ?? defaults.reservationWebsite.businessHours
+  const reservationSpecialDates = reservationWebsite.specialDates ?? defaults.reservationWebsite.specialDates
 
   return {
     ...defaults,
@@ -368,6 +370,7 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       ...defaults.reservationWebsite,
       ...reservationWebsite,
       businessHours: reservationBusinessHours.map((period) => ({ ...period })),
+      specialDates: reservationSpecialDates.map((rule) => ({ ...rule })),
     },
   }
 }
@@ -1612,6 +1615,24 @@ const removeSupplyWindow = (windowId: string): void => {
     engagementSettings.value.supplyRules.defaultPeriods.filter((period) => period.id !== windowId)
 }
 
+const addReservationSpecialDate = (mode: ReservationSpecialDateRule['mode'] = 'closed'): void => {
+  const date = toDateInput()
+  engagementSettings.value.reservationWebsite.specialDates.push({
+    id: buildId('reservation-special'),
+    label: mode === 'closed' ? '不開放訂位' : '特殊訂位日',
+    startDate: date,
+    endDate: date,
+    mode,
+    start: '09:00',
+    end: '20:00',
+  })
+}
+
+const removeReservationSpecialDate = (ruleId: string): void => {
+  engagementSettings.value.reservationWebsite.specialDates =
+    engagementSettings.value.reservationWebsite.specialDates.filter((rule) => rule.id !== ruleId)
+}
+
 const isReservationTableOnline = (tableId: string): boolean =>
   engagementSettings.value.reservationWebsite.onlineTableIds.length === 0 ||
   engagementSettings.value.reservationWebsite.onlineTableIds.includes(tableId)
@@ -2657,6 +2678,59 @@ const saveAccessControl = async (): Promise<void> => {
                 <input v-model="period.end" type="time" />
                 <span class="panel-note">{{ period.enabled ? '開放' : '關閉' }}</span>
               </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>特殊訂位日</strong>
+                <div class="admin-action-row">
+                  <button class="secondary-button" type="button" @click="addReservationSpecialDate('closed')">
+                    整日不開放
+                  </button>
+                  <button class="secondary-button" type="button" @click="addReservationSpecialDate('custom-hours')">
+                    自訂時段
+                  </button>
+                </div>
+              </div>
+              <article
+                v-for="rule in engagementSettings.reservationWebsite.specialDates"
+                :key="rule.id"
+                class="admin-special-date-grid"
+              >
+                <label>
+                  標籤
+                  <input v-model="rule.label" type="text" placeholder="連假 / 包場 / 店休" />
+                </label>
+                <label>
+                  起始日
+                  <input v-model="rule.startDate" type="date" />
+                </label>
+                <label>
+                  結束日
+                  <input v-model="rule.endDate" type="date" />
+                </label>
+                <label>
+                  模式
+                  <select v-model="rule.mode">
+                    <option value="closed">整日不開放</option>
+                    <option value="custom-hours">自訂時段開放</option>
+                  </select>
+                </label>
+                <label>
+                  開始
+                  <input v-model="rule.start" type="time" :disabled="rule.mode === 'closed'" />
+                </label>
+                <label>
+                  結束
+                  <input v-model="rule.end" type="time" :disabled="rule.mode === 'closed'" />
+                </label>
+                <button class="icon-button" type="button" title="刪除特殊訂位日" @click="removeReservationSpecialDate(rule.id)">
+                  <Trash2 :size="16" aria-hidden="true" />
+                </button>
+              </article>
+              <p v-if="engagementSettings.reservationWebsite.specialDates.length === 0" class="panel-note">
+                尚未設定特殊訂位日，會依照每週開放時段提供線上訂位。
+              </p>
             </div>
 
             <div class="admin-rule-scope">

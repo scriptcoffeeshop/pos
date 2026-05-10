@@ -31,6 +31,8 @@ import type {
   PosReservation,
   ReservationBusinessHour,
   ReservationBlacklistEntry,
+  ReservationSpecialDateMode,
+  ReservationSpecialDateRule,
   PosStationHeartbeat,
   RegisterCashAdjustment,
   RegisterCashAdjustmentKind,
@@ -924,6 +926,9 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
 })
 
 const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', 'continuous'])
+const reservationSpecialDateModes = new Set<ReservationSpecialDateMode>(['closed', 'custom-hours'])
+const reservationTimePattern = /^\d{2}:\d{2}$/
+const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
@@ -988,8 +993,8 @@ const normalizeReservationBusinessHours = (value: unknown): ReservationBusinessH
       return []
     }
 
-    const start = typeof period.start === 'string' && /^\d{2}:\d{2}$/.test(period.start) ? period.start : '09:00'
-    const end = typeof period.end === 'string' && /^\d{2}:\d{2}$/.test(period.end) ? period.end : '20:00'
+    const start = typeof period.start === 'string' && reservationTimePattern.test(period.start) ? period.start : '09:00'
+    const end = typeof period.end === 'string' && reservationTimePattern.test(period.end) ? period.end : '20:00'
     seenDays.add(day)
 
     return [{
@@ -1000,6 +1005,48 @@ const normalizeReservationBusinessHours = (value: unknown): ReservationBusinessH
       end,
     }]
   }).slice(0, 7)
+}
+
+const normalizeReservationSpecialDates = (value: unknown): ReservationSpecialDateRule[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenRuleIds = new Set<string>()
+  return value.flatMap((entry, index): ReservationSpecialDateRule[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const rule = entry as Partial<ReservationSpecialDateRule>
+    const startDate = typeof rule.startDate === 'string' && reservationDatePattern.test(rule.startDate)
+      ? rule.startDate
+      : ''
+    if (!startDate) {
+      return []
+    }
+
+    const rawEndDate = typeof rule.endDate === 'string' && reservationDatePattern.test(rule.endDate)
+      ? rule.endDate
+      : startDate
+    const endDate = rawEndDate < startDate ? startDate : rawEndDate
+    const mode = rule.mode && reservationSpecialDateModes.has(rule.mode) ? rule.mode : 'closed'
+    const id = sanitizeOnlineText(rule.id, `special-date-${index + 1}`)
+    if (!id || seenRuleIds.has(id)) {
+      return []
+    }
+
+    seenRuleIds.add(id)
+    return [{
+      id,
+      label: sanitizeOnlineText(rule.label, mode === 'closed' ? '不開放訂位' : '特殊訂位日'),
+      startDate,
+      endDate,
+      mode,
+      start: typeof rule.start === 'string' && reservationTimePattern.test(rule.start) ? rule.start : '09:00',
+      end: typeof rule.end === 'string' && reservationTimePattern.test(rule.end) ? rule.end : '20:00',
+    }]
+  }).slice(0, 80)
 }
 
 const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
@@ -1502,6 +1549,7 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     allowTableCombinations: true,
     onlineTableIds: [],
     businessHours: defaultReservationBusinessHours(),
+    specialDates: [],
   },
 })
 
@@ -1611,6 +1659,7 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         ? [...new Set(reservationWebsite.onlineTableIds.map((tableId) => sanitizeOnlineText(tableId).toUpperCase()).filter(Boolean))].slice(0, 80)
         : defaults.reservationWebsite.onlineTableIds,
       businessHours: normalizeReservationBusinessHours(reservationWebsite.businessHours),
+      specialDates: normalizeReservationSpecialDates(reservationWebsite.specialDates),
     },
   }
 }

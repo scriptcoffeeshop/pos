@@ -3457,6 +3457,27 @@ const reservationDateKey = (reservation: PosReservation): string | null => {
   const date = new Date(reservation.reservedAt)
   return Number.isFinite(date.getTime()) ? formatDateKey(date) : null
 }
+const compactDateKeyToDashed = (dateKey: string): string =>
+  dateKey.length === 8 ? `${dateKey.slice(0, 4)}-${dateKey.slice(4, 6)}-${dateKey.slice(6, 8)}` : dateKey
+const reservationSpecialRulesForDateKey = (dateKey: string) => {
+  const dashedDateKey = compactDateKeyToDashed(dateKey)
+  return engagementSettings.value.reservationWebsite.specialDates.filter((rule) =>
+    rule.startDate <= dashedDateKey && rule.endDate >= dashedDateKey,
+  )
+}
+const reservationSpecialDateLabelForDateKey = (dateKey: string): string => {
+  const rules = reservationSpecialRulesForDateKey(dateKey)
+  const closedRule = rules.find((rule) => rule.mode === 'closed')
+  if (closedRule) {
+    return closedRule.label || '不開放訂位'
+  }
+  const customRule = rules.find((rule) => rule.mode === 'custom-hours')
+  return customRule ? (customRule.label || '特殊訂位日') : ''
+}
+const reservationSpecialDateLabel = (reservation: PosReservation): string => {
+  const dateKey = reservationDateKey(reservation)
+  return dateKey ? reservationSpecialDateLabelForDateKey(dateKey) : ''
+}
 const reservationTimestamp = (reservation: PosReservation): number => {
   const timestamp = new Date(reservation.reservedAt).getTime()
   return Number.isFinite(timestamp) ? timestamp : 0
@@ -3543,13 +3564,20 @@ const visibleReservations = computed(() => {
     .sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
 })
 const reservationSummaryRows = computed(() => {
-  const buckets = new Map<string, { dateKey: string; count: number; people: number; seated: number; late: number }>()
+  const buckets = new Map<string, { dateKey: string; count: number; people: number; seated: number; late: number; specialLabel: string }>()
   for (const reservation of visibleReservations.value) {
     const dateKey = reservationDateKey(reservation)
     if (!dateKey) {
       continue
     }
-    const current = buckets.get(dateKey) ?? { dateKey, count: 0, people: 0, seated: 0, late: 0 }
+    const current = buckets.get(dateKey) ?? {
+      dateKey,
+      count: 0,
+      people: 0,
+      seated: 0,
+      late: 0,
+      specialLabel: reservationSpecialDateLabelForDateKey(dateKey),
+    }
     current.count += 1
     current.people += reservation.partySize
     current.seated += reservation.status === 'seated' ? 1 : 0
@@ -7465,7 +7493,10 @@ onBeforeUnmount(() => {
                         <article v-for="row in reservationSummaryRows" :key="row.dateKey" class="reservation-summary-card">
                           <span>{{ row.dateKey }}</span>
                           <strong>{{ row.count }} 組 · {{ row.people }} 人</strong>
-                          <small>入座 {{ row.seated }} · 遲到 {{ row.late }}</small>
+                          <small>
+                            入座 {{ row.seated }} · 遲到 {{ row.late }}
+                            <template v-if="row.specialLabel"> · {{ row.specialLabel }}</template>
+                          </small>
                         </article>
                         <div v-if="reservationSummaryRows.length === 0" class="empty-state">
                           <CalendarDays :size="22" aria-hidden="true" />
@@ -7492,6 +7523,9 @@ onBeforeUnmount(() => {
                             <div class="reservation-row-meta">
                               <span>{{ reservationTableLabel(reservation) }}</span>
                               <span>{{ reservationStatusLabels[reservation.status] }}</span>
+                              <span v-if="reservationSpecialDateLabel(reservation)" class="reservation-warning">
+                                {{ reservationSpecialDateLabel(reservation) }}
+                              </span>
                               <span v-if="reservation.importantLabel">{{ reservation.importantLabel }}</span>
                               <span v-for="warning in reservationWarnings(reservation)" :key="`${reservation.id}-${warning}`" class="reservation-warning">
                                 {{ warning }}

@@ -18,9 +18,19 @@ import {
 } from '../lib/posApi'
 import type {
   PosReservation,
-  ReservationBusinessHour,
+  ReservationSpecialDateRule,
   ReservationWebsiteSettings,
 } from '../types/pos'
+
+interface ReservationAvailableWindow {
+  id: string
+  label: string
+  start: string
+  end: string
+  day: number
+  special: boolean
+  previousOvernight: boolean
+}
 
 const dayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
@@ -61,14 +71,23 @@ const activeBusinessHours = computed(() =>
   orderedBusinessHours.value.filter((period) => period.enabled),
 )
 
+const activeSpecialDates = computed(() =>
+  [...reservationWebsite.value.specialDates].sort((first, second) =>
+    first.startDate.localeCompare(second.startDate) || first.start.localeCompare(second.start),
+  ),
+)
+
 const businessHoursSummary = computed(() => {
   if (activeBusinessHours.value.length === 0) {
     return '目前未設定開放時段'
   }
 
-  return activeBusinessHours.value
+  const weeklySummary = activeBusinessHours.value
     .map((period) => `${dayLabels[period.day]} ${period.start}-${period.end}`)
     .join(' · ')
+  return activeSpecialDates.value.length > 0
+    ? `${weeklySummary} · 特殊訂位日 ${activeSpecialDates.value.length} 筆`
+    : weeklySummary
 })
 
 const onlineStatusLabel = computed(() => reservationWebsite.value.enabled ? '開放訂位' : '暫停訂位')
@@ -83,42 +102,166 @@ const timeToMinutes = (value: string): number => {
   return Number(rawHours) * 60 + Number(rawMinutes)
 }
 
-const matchingBusinessHour = (date: Date): ReservationBusinessHour | null => {
-  const day = date.getDay()
-  const minutes = date.getHours() * 60 + date.getMinutes()
-  for (const period of reservationWebsite.value.businessHours) {
-    if (!period.enabled || period.day !== day) {
-      continue
-    }
+const reservationDateKey = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
+const addLocalDays = (date: Date, days: number): Date => {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+const specialDateRulesForKey = (dateKey: string): ReservationSpecialDateRule[] =>
+  reservationWebsite.value.specialDates.filter((rule) =>
+    rule.startDate <= dateKey && rule.endDate >= dateKey,
+  )
+
+const specialDateRulesFor = (date: Date): ReservationSpecialDateRule[] => {
+  const dateKey = reservationDateKey(date)
+  return specialDateRulesForKey(dateKey)
+}
+
+const reservationPeriodSlotMatches = (
+  start: number,
+  minutes: number,
+  slotMinutes: number,
+  previousOvernight = false,
+): boolean => {
+  const offset = previousOvernight ? minutes + 24 * 60 - start : minutes - start
+  return offset >= 0 && offset % slotMinutes === 0
+}
+
+const toReservationWindow = (
+  rule: ReservationSpecialDateRule,
+  day: number,
+  previousOvernight = false,
+): ReservationAvailableWindow => ({
+  id: rule.id,
+  label: rule.label || '特殊訂位日',
+  start: rule.start,
+  end: rule.end,
+  day,
+  special: true,
+  previousOvernight,
+})
+
+const weeklyReservationWindow = (
+  period: ReservationBusinessHourLike,
+  previousOvernight = false,
+): ReservationAvailableWindow => ({
+  id: period.id,
+  label: dayLabels[period.day] ?? '可預約時段',
+  start: period.start,
+  end: period.end,
+  day: period.day,
+  special: false,
+  previousOvernight,
+})
+
+type ReservationBusinessHourLike = ReservationWebsiteSettings['businessHours'][number]
+
+const availableWindowsForDate = (date: Date): ReservationAvailableWindow[] => {
+  const day = date.getDay()
+  const previousDay = addLocalDays(date, -1).getDay()
+  const currentDateKey = reservationDateKey(date)
+  const previousDateKey = reservationDateKey(addLocalDays(date, -1))
+  const specialRules = specialDateRulesForKey(currentDateKey)
+  if (specialRules.some((rule) => rule.mode === 'closed')) {
+    return []
+  }
+
+  const customRules = specialRules.filter((rule) => rule.mode === 'custom-hours')
+  const previousOvernightCustomRules = specialDateRulesForKey(previousDateKey)
+    .filter((rule) => rule.mode === 'custom-hours' && timeToMinutes(rule.start) > timeToMinutes(rule.end))
+  if (customRules.length > 0) {
+    return [
+      ...previousOvernightCustomRules.map((rule) => toReservationWindow(rule, previousDay, true)),
+      ...customRules.map((rule) => toReservationWindow(rule, day)),
+    ]
+  }
+
+  const weeklyWindows = reservationWebsite.value.businessHours
+    .filter((period) => period.enabled && period.day === day)
+    .map((period) => weeklyReservationWindow(period))
+  const previousOvernightWindows = reservationWebsite.value.businessHours
+    .filter((period) =>
+      period.enabled &&
+      period.day === previousDay &&
+      timeToMinutes(period.start) > timeToMinutes(period.end),
+    )
+    .map((period) => weeklyReservationWindow(period, true))
+  return reservationWebsite.value.specialDates.filter((rule) =>
+    rule.startDate <= currentDateKey && rule.endDate >= currentDateKey,
+  ).length > 0
+    ? []
+    : [...previousOvernightCustomRules.map((rule) => toReservationWindow(rule, previousDay, true)), ...weeklyWindows, ...previousOvernightWindows]
+}
+
+const matchingReservationWindow = (date: Date): ReservationAvailableWindow | null => {
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  const previousDateKey = reservationDateKey(addLocalDays(date, -1))
+  const previousOvernightCustomRules = specialDateRulesForKey(previousDateKey)
+    .filter((rule) => rule.mode === 'custom-hours' && timeToMinutes(rule.start) > timeToMinutes(rule.end))
+  for (const period of availableWindowsForDate(date)) {
     const start = timeToMinutes(period.start)
     const end = timeToMinutes(period.end)
     const isWithinPeriod = start <= end
       ? minutes >= start && minutes <= end
-      : minutes >= start || minutes <= end
+      : period.previousOvernight
+        ? minutes <= end
+        : minutes >= start
     if (!isWithinPeriod) {
       continue
     }
 
     const slotMinutes = Math.max(reservationWebsite.value.slotMinutes, 1)
-    const offset = start <= end || minutes >= start ? minutes - start : minutes + 24 * 60 - start
-    if (offset % slotMinutes === 0) {
+    if (reservationPeriodSlotMatches(start, minutes, slotMinutes, period.previousOvernight)) {
       return period
     }
   }
 
+  if (previousOvernightCustomRules.some((rule) => minutes <= timeToMinutes(rule.end))) {
+    return null
+  }
+
   return null
 }
+
+const selectedReservedDate = computed(() => {
+  if (!reservationDraft.reservedAt) {
+    return null
+  }
+
+  const reservedDate = new Date(reservationDraft.reservedAt)
+  return Number.isNaN(reservedDate.getTime()) ? null : reservedDate
+})
+
+const selectedReservationWindow = computed(() =>
+  selectedReservedDate.value ? matchingReservationWindow(selectedReservedDate.value) : null,
+)
 
 const selectedTimeMessage = computed(() => {
   if (!reservationDraft.reservedAt) {
     return `每 ${reservationWebsite.value.slotMinutes} 分鐘一格 · 用餐 ${reservationWebsite.value.durationMinutes} 分鐘 · 保留 ${reservationWebsite.value.seatHoldMinutes} 分鐘`
   }
 
-  const reservedDate = new Date(reservationDraft.reservedAt)
-  const period = Number.isNaN(reservedDate.getTime()) ? null : matchingBusinessHour(reservedDate)
+  const reservedDate = selectedReservedDate.value
+  if (!reservedDate) {
+    return '訂位時間格式不正確'
+  }
+
+  const closedRule = specialDateRulesFor(reservedDate).find((rule) => rule.mode === 'closed')
+  if (closedRule) {
+    return `${closedRule.label || '不開放訂位'} · 此日期整日不開放訂位`
+  }
+
+  const period = selectedReservationWindow.value
   return period
-    ? `${dayLabels[period.day]} ${period.start}-${period.end} 可預約`
+    ? `${period.special ? period.label : dayLabels[period.day]} ${period.start}-${period.end} 可預約`
     : '此時間不在開放訂位時段'
 })
 
@@ -129,6 +272,7 @@ const canSubmit = computed(() =>
   reservationDraft.partySize >= reservationWebsite.value.minPartySize &&
   reservationDraft.partySize <= reservationWebsite.value.maxPartySize &&
   reservationDraft.reservedAt.length > 0 &&
+  selectedReservationWindow.value !== null &&
   !isSubmitting.value,
 )
 
@@ -170,8 +314,8 @@ const submitReservation = async (): Promise<void> => {
     return
   }
 
-  const reservedDate = new Date(reservationDraft.reservedAt)
-  if (Number.isNaN(reservedDate.getTime()) || !matchingBusinessHour(reservedDate)) {
+  const reservedDate = selectedReservedDate.value
+  if (!reservedDate || !selectedReservationWindow.value) {
     formError.value = '請選擇開放訂位時段'
     return
   }

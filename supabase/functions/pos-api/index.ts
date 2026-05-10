@@ -433,6 +433,18 @@ interface ReservationBusinessHour {
   end: string;
 }
 
+type ReservationSpecialDateMode = "closed" | "custom-hours";
+
+interface ReservationSpecialDateRule {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  mode: ReservationSpecialDateMode;
+  start: string;
+  end: string;
+}
+
 interface ReservationWebsiteSettings {
   enabled: boolean;
   restaurantName: string;
@@ -449,6 +461,7 @@ interface ReservationWebsiteSettings {
   allowTableCombinations: boolean;
   onlineTableIds: string[];
   businessHours: ReservationBusinessHour[];
+  specialDates: ReservationSpecialDateRule[];
 }
 
 interface CustomerEngagementSettings {
@@ -750,6 +763,7 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     allowTableCombinations: true,
     onlineTableIds: [],
     businessHours: defaultReservationBusinessHours(),
+    specialDates: [],
   },
 };
 
@@ -4784,38 +4798,98 @@ const timeToMinutes = (value: string): number => {
   return Number.isInteger(hours) && Number.isInteger(minutes) ? hours * 60 + minutes : 0;
 };
 
+const localDateKey = (date: Date): string => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const reservationLocalParts = (reservedAt: string) => {
   const reservedDate = new Date(reservedAt);
   const localDate = new Date(reservedDate.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  const previousLocalDate = new Date(localDate.getTime() - 24 * 60 * 60_000);
   return {
     day: localDate.getUTCDay(),
+    previousDay: previousLocalDate.getUTCDay(),
+    dateKey: localDateKey(localDate),
+    previousDateKey: localDateKey(previousLocalDate),
     minutes: localDate.getUTCHours() * 60 + localDate.getUTCMinutes(),
   };
+};
+
+const reservationSpecialDateRulesFor = (
+  dateKey: string,
+  reservationWebsite: ReservationWebsiteSettings,
+): ReservationSpecialDateRule[] =>
+  reservationWebsite.specialDates.filter((rule) => rule.startDate <= dateKey && rule.endDate >= dateKey);
+
+const reservationPeriodSlotMatches = (
+  start: number,
+  minutes: number,
+  slotMinutes: number,
+  isPreviousOvernight = false,
+): boolean => {
+  const offset = isPreviousOvernight ? minutes + 24 * 60 - start : minutes - start;
+  return offset >= 0 && offset % slotMinutes === 0;
 };
 
 const findMatchingReservationBusinessHour = (
   reservedAt: string,
   reservationWebsite: ReservationWebsiteSettings,
-): ReservationBusinessHour | null => {
-  const { day, minutes } = reservationLocalParts(reservedAt);
+): ReservationBusinessHour | ReservationSpecialDateRule | null => {
+  const { day, previousDay, dateKey, previousDateKey, minutes } = reservationLocalParts(reservedAt);
+  const slotMinutes = Math.max(reservationWebsite.slotMinutes, 1);
+
+  const currentSpecialRules = reservationSpecialDateRulesFor(dateKey, reservationWebsite);
+  if (currentSpecialRules.some((rule) => rule.mode === "closed")) {
+    return null;
+  }
+
+  const currentCustomRules = currentSpecialRules.filter((rule) => rule.mode === "custom-hours");
+  const previousOvernightCustomRules = reservationSpecialDateRulesFor(previousDateKey, reservationWebsite)
+    .filter((rule) => rule.mode === "custom-hours" && timeToMinutes(rule.start) > timeToMinutes(rule.end));
+  for (const rule of currentCustomRules) {
+    const start = timeToMinutes(rule.start);
+    const end = timeToMinutes(rule.end);
+    const isWithinPeriod = start <= end
+      ? minutes >= start && minutes <= end
+      : minutes >= start;
+    if (isWithinPeriod && reservationPeriodSlotMatches(start, minutes, slotMinutes)) {
+      return rule;
+    }
+  }
+  for (const rule of previousOvernightCustomRules) {
+    const start = timeToMinutes(rule.start);
+    const end = timeToMinutes(rule.end);
+    if (minutes <= end && reservationPeriodSlotMatches(start, minutes, slotMinutes, true)) {
+      return rule;
+    }
+  }
+  if (
+    currentCustomRules.length > 0 ||
+    previousOvernightCustomRules.some((rule) => minutes <= timeToMinutes(rule.end))
+  ) {
+    return null;
+  }
 
   for (const period of reservationWebsite.businessHours) {
-    if (!period.enabled || period.day !== day) {
+    if (!period.enabled) {
       continue;
     }
 
     const start = timeToMinutes(period.start);
     const end = timeToMinutes(period.end);
-    const isWithinPeriod = start <= end
+    const isPreviousOvernight = start > end && period.day === previousDay && minutes <= end;
+    const isSameDayWindow = period.day === day && (start <= end
       ? minutes >= start && minutes <= end
-      : minutes >= start || minutes <= end;
+      : minutes >= start);
+    const isWithinPeriod = isSameDayWindow || isPreviousOvernight;
     if (!isWithinPeriod) {
       continue;
     }
 
-    const slotMinutes = Math.max(reservationWebsite.slotMinutes, 1);
-    const offset = start <= end || minutes >= start ? minutes - start : minutes + 24 * 60 - start;
-    if (offset % slotMinutes === 0) {
+    if (reservationPeriodSlotMatches(start, minutes, slotMinutes, isPreviousOvernight)) {
       return period;
     }
   }
@@ -5003,6 +5077,10 @@ const sanitizeText = (value: unknown, fallback: string): string =>
 const sanitizeColor = (value: unknown, fallback = "#0f766e"): string =>
   typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
 
+const reservationTimePattern = /^\d{2}:\d{2}$/;
+const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+const reservationSpecialDateModes: ReservationSpecialDateMode[] = ["closed", "custom-hours"];
+
 const normalizeSupplyWindows = (input: unknown): SupplyWindowRule[] => {
   if (!Array.isArray(input)) {
     return [];
@@ -5017,8 +5095,8 @@ const normalizeSupplyWindows = (input: unknown): SupplyWindowRule[] => {
     const window = entry as Partial<SupplyWindowRule>;
     const id = sanitizeText(window.id, `window-${index + 1}`).slice(0, 80);
     const label = sanitizeText(window.label, id).slice(0, 80);
-    const start = typeof window.start === "string" && /^\d{2}:\d{2}$/.test(window.start) ? window.start : "00:00";
-    const end = typeof window.end === "string" && /^\d{2}:\d{2}$/.test(window.end) ? window.end : "23:59";
+    const start = typeof window.start === "string" && reservationTimePattern.test(window.start) ? window.start : "00:00";
+    const end = typeof window.end === "string" && reservationTimePattern.test(window.end) ? window.end : "23:59";
     const days = Array.isArray(window.days)
       ? [...new Set(window.days.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
       : [1, 2, 3, 4, 5, 6, 0];
@@ -5046,8 +5124,8 @@ const normalizeReservationBusinessHours = (input: unknown): ReservationBusinessH
       return [];
     }
 
-    const start = typeof period.start === "string" && /^\d{2}:\d{2}$/.test(period.start) ? period.start : "09:00";
-    const end = typeof period.end === "string" && /^\d{2}:\d{2}$/.test(period.end) ? period.end : "20:00";
+    const start = typeof period.start === "string" && reservationTimePattern.test(period.start) ? period.start : "09:00";
+    const end = typeof period.end === "string" && reservationTimePattern.test(period.end) ? period.end : "20:00";
     seenDays.add(day);
     return [{
       id: sanitizeText(period.id, `reservation-${day}`).slice(0, 80),
@@ -5057,6 +5135,50 @@ const normalizeReservationBusinessHours = (input: unknown): ReservationBusinessH
       end,
     }];
   }).slice(0, 7);
+};
+
+const normalizeReservationSpecialDates = (input: unknown): ReservationSpecialDateRule[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenRuleIds = new Set<string>();
+  return input.flatMap((entry, index): ReservationSpecialDateRule[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const rule = entry as Partial<ReservationSpecialDateRule>;
+    const startDate = typeof rule.startDate === "string" && reservationDatePattern.test(rule.startDate)
+      ? rule.startDate
+      : "";
+    if (!startDate) {
+      return [];
+    }
+
+    const rawEndDate = typeof rule.endDate === "string" && reservationDatePattern.test(rule.endDate)
+      ? rule.endDate
+      : startDate;
+    const endDate = rawEndDate < startDate ? startDate : rawEndDate;
+    const mode = rule.mode && reservationSpecialDateModes.includes(rule.mode)
+      ? rule.mode
+      : "closed";
+    const id = sanitizeText(rule.id, `special-date-${index + 1}`).slice(0, 80);
+    if (!id || seenRuleIds.has(id)) {
+      return [];
+    }
+
+    seenRuleIds.add(id);
+    return [{
+      id,
+      label: sanitizeText(rule.label, mode === "closed" ? "不開放訂位" : "特殊訂位日").slice(0, 80),
+      startDate,
+      endDate,
+      mode,
+      start: typeof rule.start === "string" && reservationTimePattern.test(rule.start) ? rule.start : "09:00",
+      end: typeof rule.end === "string" && reservationTimePattern.test(rule.end) ? rule.end : "20:00",
+    }];
+  }).slice(0, 80);
 };
 
 const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
@@ -5902,6 +6024,7 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         ? [...new Set(rawReservationWebsite.onlineTableIds.map((tableId) => sanitizeText(tableId, "").toUpperCase().slice(0, 12)).filter(Boolean))].slice(0, 80)
         : defaultEngagementSettings.reservationWebsite.onlineTableIds,
       businessHours: normalizeReservationBusinessHours(rawReservationWebsite.businessHours),
+      specialDates: normalizeReservationSpecialDates(rawReservationWebsite.specialDates),
     },
   };
 };
