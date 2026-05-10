@@ -8201,6 +8201,227 @@ button.cart-line-summary:focus-visible {
   gap: 8px;
 }
 
+.transaction-lookup-panel {
+  min-height: min(650px, calc(var(--pos-stage-height) - 210px));
+}
+
+.transaction-search-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.transaction-search-grid label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.transaction-search-grid select,
+.transaction-search-grid input {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 0.96rem;
+  font-weight: 900;
+}
+
+.transaction-lookup-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.transaction-lookup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.86fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.transaction-result-list,
+.transaction-preview {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.transaction-result-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(88px, auto) auto;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.transaction-result-row:not(:disabled):hover,
+.transaction-result-row--active {
+  background: var(--primary-soft);
+}
+
+.transaction-result-row div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.transaction-result-row strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 950;
+}
+
+.transaction-result-row span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.transaction-preview {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.transaction-preview header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.transaction-preview header div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.transaction-preview h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.2rem;
+  font-weight: 1000;
+}
+
+.transaction-preview header span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.transaction-preview header > strong {
+  color: var(--ink);
+  font-size: 1.2rem;
+  font-weight: 1000;
+  white-space: nowrap;
+}
+
+.transaction-preview-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.transaction-preview-details div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.transaction-preview-details dt,
+.transaction-preview-details dd {
+  margin: 0;
+}
+
+.transaction-preview-details dt {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.transaction-preview-details dd {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 950;
+}
+
+.transaction-preview-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.transaction-preview-lines article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.transaction-preview-lines article div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.transaction-preview-lines strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.transaction-preview-lines span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.transaction-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.transaction-preview-actions .secondary-button {
+  min-height: 42px;
+  gap: 7px;
+}
+
+.transaction-action--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.transaction-empty-state {
+  margin: 12px;
+}
+
 .current-sales-header {
   display: flex;
   align-items: center;
@@ -10481,6 +10702,11 @@ button.cart-line-summary:focus-visible {
   .admin-rule-grid,
   .admin-special-date-grid,
   .admin-role-header,
+  .transaction-search-grid,
+  .transaction-lookup-grid,
+  .transaction-result-row,
+  .transaction-preview-details,
+  .transaction-preview-lines article,
   .current-sales-grid,
   .current-sales-mode-list article {
     grid-template-columns: 1fr;

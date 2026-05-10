@@ -106,13 +106,14 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
+type TransactionSearchCriterion = 'receipt' | 'carrier' | 'table' | 'order'
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
@@ -1259,6 +1260,13 @@ const statusLabels: Record<OrderStatus, string> = {
   failed: '異常',
   voided: '已作廢',
 }
+
+const transactionSearchOptions: Array<{ value: TransactionSearchCriterion; label: string; placeholder: string }> = [
+  { value: 'receipt', label: '發票/收據號碼', placeholder: '範例：#-00001234 或 POS-000123' },
+  { value: 'carrier', label: '載具/捐贈碼', placeholder: '輸入載具、統編或捐贈碼' },
+  { value: 'table', label: '桌號', placeholder: '範例：A1 或 1F A1' },
+  { value: 'order', label: '訂單號碼', placeholder: '輸入 POS / WEB / 短單號' },
+]
 
 const printStatusLabels = {
   queued: '待列印',
@@ -3194,6 +3202,10 @@ const timeClockNote = ref('')
 const timeClockMessage = ref('輸入員工識別碼打卡')
 const isTimeClockSubmitting = ref(false)
 const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
+const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
+const transactionSearchTerm = ref('')
+const selectedTransactionOrderId = ref<string | null>(null)
+const transactionLookupMessage = ref('可用收據、載具、桌號或訂單號碼查詢交易')
 const floorMapRef = ref<HTMLElement | null>(null)
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
@@ -3235,6 +3247,10 @@ const toolboxPanelTitle = computed(() => {
     return '系統資訊'
   }
 
+  if (activeToolboxPanel.value === 'transactions') {
+    return '交易查詢與作廢'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3252,6 +3268,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'system-info') {
     return 'System'
+  }
+
+  if (activeToolboxPanel.value === 'transactions') {
+    return 'Transactions'
   }
 
   return 'Toolbox'
@@ -3837,6 +3857,81 @@ const tableIdFromOrder = (order: PosOrder): string | null => {
 
   return matchingTables.find((table) => table.floorId === activeFloorId.value)?.id ?? matchingTables[0]?.id ?? null
 }
+const tableLabelFromOrder = (order: PosOrder): string => {
+  const tableId = tableIdFromOrder(order)
+  const table = tableId ? floorTables.value.find((entry) => entry.id === tableId) : null
+  if (!table) {
+    return '-'
+  }
+
+  const floor = floorLevels.value.find((entry) => entry.id === table.floorId)
+  return floor ? `${floor.label} ${table.label}` : table.label
+}
+const normalizeTransactionSearch = (value: string): string => value.trim().toLowerCase()
+const transactionSearchPlaceholder = computed(() =>
+  transactionSearchOptions.find((option) => option.value === transactionSearchCriterion.value)?.placeholder ?? '',
+)
+const transactionSearchHaystack = (order: PosOrder): string[] => {
+  const compactId = compactOrderId(order.id)
+  const tableLabel = tableLabelFromOrder(order)
+  const common = [
+    order.id,
+    compactId,
+    order.remoteId ?? '',
+    order.customerName,
+    order.customerPhone,
+    order.note,
+  ]
+
+  if (transactionSearchCriterion.value === 'receipt') {
+    return [...common, `#-${orderSequenceLabel(order.id).padStart(8, '0')}`]
+  }
+
+  if (transactionSearchCriterion.value === 'carrier') {
+    return [order.invoiceCarrierBarcode, order.taxId, order.couponCode, order.note]
+  }
+
+  if (transactionSearchCriterion.value === 'table') {
+    return [tableLabel, tableLabel.replace(/\s+/g, ''), order.note, order.customerName]
+  }
+
+  return [...common, orderSequenceLabel(order.id)]
+}
+const transactionSearchMatches = (order: PosOrder): boolean => {
+  const keyword = normalizeTransactionSearch(transactionSearchTerm.value)
+  if (!keyword) {
+    return true
+  }
+
+  return transactionSearchHaystack(order).some((value) => normalizeTransactionSearch(value).includes(keyword))
+}
+const transactionLookupRows = computed(() =>
+  [...orderQueue.value]
+    .filter(transactionSearchMatches)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 80),
+)
+const selectedTransactionOrder = computed(() => {
+  if (selectedTransactionOrderId.value) {
+    const selected = transactionLookupRows.value.find((order) => order.id === selectedTransactionOrderId.value)
+    if (selected) {
+      return selected
+    }
+  }
+
+  return transactionLookupRows.value[0] ?? null
+})
+const selectTransactionOrder = (order: PosOrder): void => {
+  selectedTransactionOrderId.value = order.id
+  transactionLookupMessage.value = `${compactOrderId(order.id)} 已載入交易預覽`
+}
+const transactionReceiptLabel = (order: PosOrder): string =>
+  orderSequenceLabel(order.id) === '新單'
+    ? compactOrderId(order.id)
+    : `#-${orderSequenceLabel(order.id).padStart(8, '0')}`
+const transactionLookupSummary = computed(() =>
+  `${transactionLookupRows.value.length} 筆交易 · ${transactionSearchOptions.find((option) => option.value === transactionSearchCriterion.value)?.label ?? '查詢'}`,
+)
 const activeDineInOrders = computed(() =>
   orderQueue.value.filter((order) => order.mode === 'dine-in' && orderIsOpenForFulfillment(order)),
 )
@@ -4722,6 +4817,38 @@ const requestQueueAdminAction = (kind: QueueAdminActionKind, order: PosOrder): v
   }
 
   void executeQueueAdminAction(kind, order)
+}
+
+const executeTransactionAdminAction = async (kind: QueueAdminActionKind, order: PosOrder): Promise<void> => {
+  const label = queueAdminActionLabel(kind)
+  transactionLookupMessage.value = `${compactOrderId(order.id)} ${label}處理中`
+
+  if (kind === 'void') {
+    await voidOrderAction(order)
+  } else {
+    await refundOrderAction(order)
+  }
+
+  const latestOrder = orderQueue.value.find((entry) => entry.id === order.id)
+  const actionSucceeded =
+    kind === 'void'
+      ? latestOrder?.status === 'voided'
+      : latestOrder?.paymentStatus === 'refunded'
+
+  transactionLookupMessage.value = actionSucceeded
+    ? `${compactOrderId(order.id)} ${label}完成`
+    : `${compactOrderId(order.id)} ${label}未完成：${backendStatus.detail || backendStatus.label}`
+}
+
+const requestTransactionAdminAction = (kind: QueueAdminActionKind, order: PosOrder): void => {
+  const label = queueAdminActionLabel(kind)
+
+  if (!requireBackendEditMode(label)) {
+    transactionLookupMessage.value = `${compactOrderId(order.id)} ${label}需先進入後台編輯模式`
+    return
+  }
+
+  void executeTransactionAdminAction(kind, order)
 }
 
 const orderSwipeCompleteLabel = (order: PosOrder): string => {
@@ -6065,6 +6192,11 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'system-info') {
     activeToolboxPanel.value = 'system-info'
+    return
+  }
+
+  if (action === 'transactions') {
+    activeToolboxPanel.value = 'transactions'
     return
   }
 
@@ -10582,6 +10714,11 @@ onBeforeUnmount(() => {
             <strong>外帶 / 外送</strong>
             <span>{{ queueFilterNote }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('transactions')">
+            <Search :size="24" aria-hidden="true" />
+            <strong>交易查詢與作廢</strong>
+            <span>{{ transactionLookupSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('reservations')">
             <CalendarDays :size="24" aria-hidden="true" />
             <strong>訂位管理</strong>
@@ -10704,6 +10841,137 @@ onBeforeUnmount(() => {
             <RefreshCw :size="18" aria-hidden="true" />
             重設
           </button>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'transactions'" class="toolbox-detail-panel transaction-lookup-panel" aria-labelledby="toolbox-title">
+          <div class="transaction-search-grid" aria-label="交易查詢條件">
+            <label>
+              查詢條件
+              <select v-model="transactionSearchCriterion">
+                <option v-for="option in transactionSearchOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label>
+              關鍵字
+              <input
+                v-model="transactionSearchTerm"
+                type="search"
+                :placeholder="transactionSearchPlaceholder"
+                autocomplete="off"
+              />
+            </label>
+          </div>
+          <p class="transaction-lookup-message" aria-live="polite">{{ transactionLookupMessage }}</p>
+
+          <div class="transaction-lookup-grid">
+            <div class="transaction-result-list" aria-label="交易清單">
+              <button
+                v-for="order in transactionLookupRows"
+                :key="order.id"
+                class="transaction-result-row"
+                :class="{ 'transaction-result-row--active': selectedTransactionOrder?.id === order.id }"
+                type="button"
+                @click="selectTransactionOrder(order)"
+              >
+                <div>
+                  <strong>{{ transactionReceiptLabel(order) }}</strong>
+                  <span>{{ formatOrderTime(order.createdAt) }} · {{ serviceModeLabels[order.mode] }} · {{ tableLabelFromOrder(order) }}</span>
+                </div>
+                <span>{{ compactOrderId(order.id) }}</span>
+                <strong>{{ formatCurrency(order.subtotal) }}</strong>
+              </button>
+              <div v-if="transactionLookupRows.length === 0" class="empty-state transaction-empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>沒有符合條件的交易</span>
+              </div>
+            </div>
+
+            <article v-if="selectedTransactionOrder" class="transaction-preview" aria-label="交易預覽">
+              <header>
+                <div>
+                  <p class="eyebrow">Transaction</p>
+                  <h3>{{ transactionReceiptLabel(selectedTransactionOrder) }}</h3>
+                  <span>{{ sourceLabels[selectedTransactionOrder.source] }} · {{ compactOrderId(selectedTransactionOrder.id) }}</span>
+                </div>
+                <strong>{{ formatCurrency(selectedTransactionOrder.subtotal) }}</strong>
+              </header>
+
+              <dl class="transaction-preview-details">
+                <div>
+                  <dt>結帳時間</dt>
+                  <dd>{{ formatOrderTime(selectedTransactionOrder.createdAt) }}</dd>
+                </div>
+                <div>
+                  <dt>桌號</dt>
+                  <dd>{{ tableLabelFromOrder(selectedTransactionOrder) }}</dd>
+                </div>
+                <div>
+                  <dt>訂單號碼</dt>
+                  <dd>{{ compactOrderId(selectedTransactionOrder.id) }}</dd>
+                </div>
+                <div>
+                  <dt>付款</dt>
+                  <dd>{{ paymentLabels[selectedTransactionOrder.paymentMethod] }} / {{ paymentStatusLabels[selectedTransactionOrder.paymentStatus] }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.invoiceCarrierBarcode">
+                  <dt>載具</dt>
+                  <dd>{{ selectedTransactionOrder.invoiceCarrierBarcode }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.taxId">
+                  <dt>統編</dt>
+                  <dd>{{ selectedTransactionOrder.taxId }}</dd>
+                </div>
+              </dl>
+
+              <div class="transaction-preview-lines">
+                <article v-for="line in selectedTransactionOrder.lines" :key="`${selectedTransactionOrder.id}-${line.itemId}`">
+                  <div>
+                    <strong>{{ line.name }}</strong>
+                    <span>{{ line.options.join(' / ') || '標準' }}</span>
+                  </div>
+                  <span>x{{ line.quantity }}</span>
+                  <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
+                </article>
+                <div v-if="selectedTransactionOrder.lines.length === 0" class="empty-state transaction-empty-state">
+                  <ReceiptText :size="24" aria-hidden="true" />
+                  <span>尚無交易明細</span>
+                </div>
+              </div>
+
+              <div class="transaction-preview-actions">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="manualPrintActionDisabled(selectedTransactionOrder)"
+                  @click="printTransactionDetail(selectedTransactionOrder.id)"
+                >
+                  <ReceiptText :size="16" aria-hidden="true" />
+                  補印交易明細
+                </button>
+                <button
+                  v-if="orderCanBeVoided(selectedTransactionOrder)"
+                  class="secondary-button transaction-action--danger"
+                  type="button"
+                  :disabled="voidingOrderId === selectedTransactionOrder.id"
+                  @click="requestTransactionAdminAction('void', selectedTransactionOrder)"
+                >
+                  <Trash2 :size="16" aria-hidden="true" />
+                  {{ voidActionLabel(selectedTransactionOrder) }}
+                </button>
+                <button
+                  v-if="orderCanBeRefunded(selectedTransactionOrder)"
+                  class="secondary-button transaction-action--danger"
+                  type="button"
+                  :disabled="refundingOrderId === selectedTransactionOrder.id"
+                  @click="requestTransactionAdminAction('refund', selectedTransactionOrder)"
+                >
+                  <WalletCards :size="16" aria-hidden="true" />
+                  {{ refundActionLabel(selectedTransactionOrder) }}
+                </button>
+              </div>
+            </article>
+          </div>
         </section>
         <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <header class="current-sales-header">

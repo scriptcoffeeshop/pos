@@ -821,6 +821,16 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await closeToolboxPanel(tabletB.page)
     record('current sales and system information toolbox panels rendered from synced runtime state')
 
+    await tabletB.page.locator('.floating-toolbox-button').click()
+    await tabletB.page.locator('.toolbox-card').filter({ hasText: '交易查詢與作廢' }).click()
+    await tabletB.page.locator('.transaction-search-grid select').waitFor({ state: 'visible', timeout: 8_000 })
+    await tabletB.page.locator('.transaction-search-grid input').fill(preorderEntry.orderId)
+    await tabletB.page.locator('.transaction-result-row').first().click()
+    await waitForText(tabletB.page, '補印交易明細', 8_000)
+    await tabletB.page.locator('.transaction-preview-details').getByText('付款').waitFor({ state: 'visible', timeout: 8_000 })
+    await closeToolboxPanel(tabletB.page)
+    record('transaction lookup toolbox panel found synced order and rendered receipt preview')
+
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])
 
