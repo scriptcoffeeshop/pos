@@ -3321,10 +3321,20 @@ h3 {
   background: var(--surface);
 }
 
+.mixed-payment-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .payment-back-button {
   min-width: 116px;
 }
 
+.mixed-payment-header,
 .payment-split-header {
   display: flex;
   align-items: flex-start;
@@ -3332,17 +3342,20 @@ h3 {
   gap: 12px;
 }
 
+.mixed-payment-header h3,
 .payment-split-header h3 {
   margin: 0;
   font-size: 1rem;
 }
 
+.mixed-payment-header span,
 .payment-split-header span {
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 850;
 }
 
+.mixed-payment-actions,
 .payment-split-actions,
 .payment-split-assignment-buttons {
   display: flex;
@@ -3351,6 +3364,7 @@ h3 {
   justify-content: flex-end;
 }
 
+.mixed-payment-actions button,
 .payment-split-actions button,
 .payment-split-card button,
 .payment-split-assignment-buttons button {
@@ -3360,6 +3374,76 @@ h3 {
   background: var(--surface-muted);
   color: var(--ink);
   font-weight: 900;
+}
+
+.mixed-payment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mixed-payment-row {
+  display: grid;
+  grid-template-columns: 132px minmax(96px, 1fr) 92px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.mixed-payment-row--paid {
+  border-color: #91c5b6;
+  background: var(--primary-soft);
+}
+
+.mixed-payment-row select,
+.mixed-payment-row input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.mixed-payment-row input {
+  padding: 0 10px;
+}
+
+.mixed-payment-row button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.mixed-payment-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.transaction-receipt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.receipt-count-stepper {
+  min-width: 134px;
+  border-radius: 9px;
 }
 
 .payment-split-list,
@@ -3458,19 +3542,48 @@ h3 {
   flex: 0 0 auto;
 }
 
+.mixed-payment-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  max-width: 100%;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #b7c7dc;
+  border-radius: 999px;
+  background: var(--secondary-soft);
+  color: var(--secondary);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.mixed-payment-chip svg {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 760px) {
+  .mixed-payment-header,
   .payment-split-header {
     display: grid;
   }
 
+  .mixed-payment-actions,
   .payment-split-actions,
   .payment-split-assignment-buttons {
     justify-content: flex-start;
   }
 
+  .mixed-payment-row,
   .payment-split-card,
   .payment-split-assignment article {
     grid-template-columns: 1fr;
+  }
+
+  .mixed-payment-summary,
+  .transaction-receipt-row {
+    display: grid;
+    justify-content: stretch;
   }
 }
 

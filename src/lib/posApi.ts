@@ -9,6 +9,7 @@ import type {
   FloorTableSetting,
   OrderSource,
   OrderStatus,
+  PaymentAllocation,
   PaymentMethod,
   PaymentSplit,
   PaymentStatus,
@@ -115,6 +116,8 @@ interface ApiOrder {
   points_redeemed?: number | null
   coupon_code?: string | null
   payment_splits?: unknown
+  payment_breakdown?: unknown
+  transaction_receipt_count?: number | null
   member_points_earned?: number | null
   payment_method: PaymentMethod
   payment_status: PaymentStatus
@@ -597,6 +600,40 @@ export const normalizePaymentSplits = (splits: unknown): PaymentSplit[] => {
       paidAt,
     }]
   }).slice(0, 12)
+}
+
+export const normalizePaymentBreakdown = (payments: unknown): PaymentAllocation[] => {
+  if (!Array.isArray(payments)) {
+    return []
+  }
+
+  return payments.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const payment = entry as Partial<PaymentAllocation>
+    const paymentMethod: PaymentMethod = payment.paymentMethod === 'card' ||
+      payment.paymentMethod === 'line-pay' ||
+      payment.paymentMethod === 'jkopay' ||
+      payment.paymentMethod === 'transfer'
+      ? payment.paymentMethod
+      : 'cash'
+    const paidAt = typeof payment.paidAt === 'string' && Number.isFinite(new Date(payment.paidAt).getTime())
+      ? payment.paidAt
+      : null
+    const status: PaymentAllocation['status'] = payment.status === 'paid' ? 'paid' : 'open'
+
+    return [{
+      id: typeof payment.id === 'string' && payment.id.trim()
+        ? payment.id.trim().slice(0, 80)
+        : `payment-${index + 1}`,
+      paymentMethod,
+      amount: Math.max(0, Math.trunc(Number(payment.amount) || 0)),
+      status,
+      paidAt,
+    }]
+  }).slice(0, 8)
 }
 
 const readDraftLineString = (line: Record<string, unknown>, camelKey: string, snakeKey: string): string =>
@@ -1890,6 +1927,8 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     pointsRedeemed: order.points_redeemed ?? 0,
     couponCode: order.coupon_code ?? '',
     paymentSplits: normalizePaymentSplits(order.payment_splits),
+    paymentBreakdown: normalizePaymentBreakdown(order.payment_breakdown),
+    transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(order.transaction_receipt_count ?? 0))),
     memberPointsEarned: order.member_points_earned ?? 0,
     paymentMethod: order.payment_method,
     paymentStatus: order.payment_status,
@@ -2398,6 +2437,14 @@ const orderPayload = (order: PosOrder) => ({
     status: split.status,
     paidAt: split.paidAt,
   })),
+  paymentBreakdown: order.paymentBreakdown.map((payment) => ({
+    id: payment.id,
+    paymentMethod: payment.paymentMethod,
+    amount: payment.amount,
+    status: payment.status,
+    paidAt: payment.paidAt,
+  })),
+  transactionReceiptCount: order.transactionReceiptCount,
   memberPointsEarned: order.memberPointsEarned,
   paymentMethod: order.paymentMethod,
   paymentStatus: order.paymentStatus,

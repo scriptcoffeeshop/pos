@@ -78,6 +78,24 @@ const invoiceLinesForOrder = (order: PosOrder): string[] => {
   return invoiceLines
 }
 
+const paymentMethodLabels: Record<PosOrder['paymentMethod'], string> = {
+  cash: 'CASH',
+  card: 'CARD',
+  'line-pay': 'LINE PAY',
+  jkopay: 'JKOPAY',
+  transfer: 'TRANSFER',
+}
+
+const paymentLinesForOrder = (order: PosOrder): string[] => {
+  if (order.paymentBreakdown.length === 0) {
+    return [`PAY ${paymentMethodLabels[order.paymentMethod]}`]
+  }
+
+  return order.paymentBreakdown
+    .filter((payment) => payment.amount > 0)
+    .map((payment) => `PAY ${paymentMethodLabels[payment.paymentMethod]} ${formatCurrency(payment.amount)}`)
+}
+
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
   const ruleCategories = rule.categories ?? []
   const ruleItemIds = rule.itemIds ?? []
@@ -124,6 +142,7 @@ const buildReceiptPayload = (
   const note = escapeEzplText(order.note || '-')
   const footerLines = [
     `TOTAL ${formatCurrency(lineTotal(lines))}`,
+    ...paymentLinesForOrder(order),
     ...fulfillmentLinesForOrder(order),
     ...invoiceLinesForOrder(order),
     `NOTE ${note}`,
@@ -329,6 +348,9 @@ export const buildOrderQrCodePayload = (
 
 export const buildCustomerReceiptPayload = (order: PosOrder, station: PrintStation): string =>
   buildReceiptPayload(order, station, order.lines, '顧客聯', 'Script Coffee 顧客聯')
+
+export const buildTransactionDetailPayload = (order: PosOrder, station: PrintStation): string =>
+  buildReceiptPayload(order, station, order.lines, '交易明細', 'Script Coffee 交易明細')
 
 export const buildPrinterHealthcheckPayload = (station: PrintStation, testedAt = new Date()): string =>
   [

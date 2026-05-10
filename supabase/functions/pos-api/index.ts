@@ -4,6 +4,7 @@ import type { Context } from "@hono/hono";
 import { createClient } from "@supabase/supabase-js";
 
 type MenuCategory = string;
+type PaymentAllocationStatus = "open" | "paid";
 type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
 type PaymentSplitStatus = "open" | "paid";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
@@ -64,6 +65,8 @@ interface CreateOrderInput {
   pointsRedeemed?: number;
   couponCode?: string;
   paymentSplits?: unknown;
+  paymentBreakdown?: unknown;
+  transactionReceiptCount?: number;
   memberPointsEarned?: number;
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
@@ -78,6 +81,14 @@ interface PaymentSplitInput {
   lineKeys?: unknown[];
   paymentMethod?: PaymentMethod;
   status?: PaymentSplitStatus;
+  paidAt?: string | null;
+}
+
+interface PaymentAllocationInput {
+  id?: string;
+  paymentMethod?: PaymentMethod;
+  amount?: number;
+  status?: PaymentAllocationStatus;
   paidAt?: string | null;
 }
 
@@ -960,6 +971,33 @@ const normalizePaymentSplits = (input: unknown): Array<Record<string, unknown>> 
   }).slice(0, 12);
 };
 
+const normalizePaymentBreakdown = (input: unknown): Array<Record<string, unknown>> => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.flatMap((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const payment = entry as PaymentAllocationInput;
+    const paymentMethod: PaymentMethod = ["cash", "card", "line-pay", "jkopay", "transfer"].includes(String(payment.paymentMethod))
+      ? payment.paymentMethod as PaymentMethod
+      : "cash";
+    const paidAt = sanitizeText(payment.paidAt, "");
+    const paidAtTimestamp = paidAt ? new Date(paidAt).getTime() : NaN;
+
+    return [{
+      id: sanitizeText(payment.id, `payment-${index + 1}`).slice(0, 80),
+      paymentMethod,
+      amount: clampNonNegativeInteger(payment.amount),
+      status: payment.status === "paid" ? "paid" : "open",
+      paidAt: Number.isFinite(paidAtTimestamp) ? paidAt : null,
+    }];
+  }).slice(0, 8);
+};
+
 const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, unknown> => ({
   member_id: normalizeUuid(input.memberId) ?? null,
   order_labels: normalizeOrderLabels(input.orderLabels),
@@ -970,6 +1008,8 @@ const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, u
   points_redeemed: clampNonNegativeInteger(input.pointsRedeemed),
   coupon_code: sanitizeText(input.couponCode, "").slice(0, 80),
   payment_splits: normalizePaymentSplits(input.paymentSplits),
+  payment_breakdown: normalizePaymentBreakdown(input.paymentBreakdown),
+  transaction_receipt_count: clampIntegerRange(input.transactionReceiptCount, 0, 0, 10),
   member_points_earned: clampNonNegativeInteger(input.memberPointsEarned),
   tax_id: sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8),
   invoice_carrier_barcode: sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32),
@@ -4284,6 +4324,10 @@ const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
 
   if (input.paymentSplits !== undefined && !Array.isArray(input.paymentSplits)) {
     return "paymentSplits must be an array";
+  }
+
+  if (input.paymentBreakdown !== undefined && !Array.isArray(input.paymentBreakdown)) {
+    return "paymentBreakdown must be an array";
   }
 
   const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "");
