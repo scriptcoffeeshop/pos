@@ -230,6 +230,16 @@ const paymentStatusLabels = {
   refunded: '已退款',
 } as const
 
+const activeReservationStatuses: ReservationStatus[] = ['booked', 'reminded', 'confirmed']
+const reservationStatusLabels: Record<ReservationStatus, string> = {
+  booked: '已預訂',
+  reminded: '已發送提醒',
+  confirmed: '已保留訂位',
+  seated: '已帶位',
+  cancelled: '已取消',
+  no_show: '未出席',
+}
+
 const paymentEventStatusOptions: Array<{ value: PaymentEventStatusFilter; label: string }> = [
   { value: 'all', label: '全部狀態' },
   { value: 'applied', label: '已套用' },
@@ -464,7 +474,7 @@ const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((ev
 const memberCount = computed(() => members.value.length)
 const couponCount = computed(() => coupons.value.length)
 const activeReservationCount = computed(() =>
-  reservations.value.filter((reservation) => reservation.status === 'booked').length,
+  reservations.value.filter((reservation) => activeReservationStatuses.includes(reservation.status)).length,
 )
 const activeReservationBlacklistCount = computed(() =>
   reservationBlacklist.value.filter((entry) => entry.isActive).length,
@@ -1809,7 +1819,7 @@ const setReservationStatus = async (reservation: PosReservation, status: Reserva
   try {
     const saved = await updateAdminReservation(reservation.id, { status })
     reservations.value = reservations.value.map((entry) => (entry.id === saved.id ? saved : entry))
-    adminMessage.value = `${saved.customerName} 已更新為 ${status}`
+    adminMessage.value = `${saved.customerName} 已更新為 ${reservationStatusLabels[saved.status]}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '訂位更新失敗'
   } finally {
@@ -2522,10 +2532,40 @@ const saveAccessControl = async (): Promise<void> => {
               <span>{{ formatAuditTime(reservation.reservedAt) }} · {{ reservation.customerName }}</span>
               <strong>{{ reservation.partySize }} 人</strong>
               <small>
-                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '黑名單' : (reservation.assignedTableIds.length > 0 ? reservation.assignedTableIds.join(' / ') : (reservation.importantLabel || reservation.status)) }}
+                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '黑名單' : (reservation.assignedTableIds.length > 0 ? reservation.assignedTableIds.join(' / ') : (reservation.importantLabel || reservationStatusLabels[reservation.status])) }}
               </small>
-              <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'seated')">入座</button>
-              <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'cancelled')">取消</button>
+              <button
+                v-if="reservation.status === 'booked'"
+                class="secondary-button"
+                type="button"
+                @click="setReservationStatus(reservation, 'reminded')"
+              >
+                發提醒
+              </button>
+              <button
+                v-if="reservation.status === 'booked' || reservation.status === 'reminded'"
+                class="secondary-button"
+                type="button"
+                @click="setReservationStatus(reservation, 'confirmed')"
+              >
+                保留
+              </button>
+              <button
+                v-if="activeReservationStatuses.includes(reservation.status)"
+                class="secondary-button"
+                type="button"
+                @click="setReservationStatus(reservation, 'seated')"
+              >
+                入座
+              </button>
+              <button
+                v-if="activeReservationStatuses.includes(reservation.status)"
+                class="secondary-button"
+                type="button"
+                @click="setReservationStatus(reservation, 'cancelled')"
+              >
+                取消
+              </button>
               <button class="secondary-button" type="button" @click="toggleReservationBlacklistForReservation(reservation)">
                 {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '解除黑名單' : '加入黑名單' }}
               </button>

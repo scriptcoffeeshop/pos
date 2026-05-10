@@ -15,7 +15,7 @@ type RegisterCashAdjustmentKind = "income" | "expense";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
-type ReservationStatus = "booked" | "seated" | "cancelled" | "no_show";
+type ReservationStatus = "booked" | "reminded" | "confirmed" | "seated" | "cancelled" | "no_show";
 type MemberCouponStatus = "active" | "redeemed" | "expired";
 type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "ipad-qr-print";
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
@@ -4687,7 +4687,7 @@ const validateReservationInput = (
   }
 
   if (input.status !== undefined) {
-    if (!["booked", "seated", "cancelled", "no_show"].includes(input.status)) {
+    if (!["booked", "reminded", "confirmed", "seated", "cancelled", "no_show"].includes(input.status)) {
       return { payload, error: "status is invalid" };
     }
     payload.status = input.status;
@@ -4852,7 +4852,7 @@ const assignReservationTables = async (
   const { data, error } = await supabase
     .from("reservations")
     .select("id, party_size, reserved_at, status, assigned_table_ids")
-    .in("status", ["booked", "seated"])
+    .in("status", ["booked", "reminded", "confirmed", "seated"])
     .gte("reserved_at", queryFrom)
     .lt("reserved_at", queryTo)
     .limit(500);
