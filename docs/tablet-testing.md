@@ -91,6 +91,18 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 用舊頁面或測試 API 繞過前端送出已停用付款方式，`POST /orders` 應回覆 disabled payment method 的 409，不得寫入 `orders`。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認支付模組設定仍從 Supabase runtime 還原。
 
+## 多平板線上外送規則
+
+外送費、外送最低金額、滿額免運與預計車程存在 `online_ordering` runtime，實際外送費寫入 `orders.extra_fee_amount`：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」的「外送規則」區塊。
+2. 設定外送費、外送最低金額、滿額免運與預計車程後儲存。
+3. 在平板 B 或消費者頁重新整理，選外送後確認合計顯示商品小計、外送費與合計，付款方式只剩 LINE Pay、街口與線上刷卡等線上付款。
+4. 未達外送最低金額時，消費者頁不得送出；用舊頁或測試 API 繞過時，`POST /orders` 應回覆 below minimum 的 409。
+5. 達滿額免運門檻後，合計應顯示外送費為 0；送出後在 POS 訂單明細與列印 payload 確認 `extra_fee_amount` 為 0。
+6. 未滿免運但達外送最低金額時送出外送單，確認 POS 訂單明細與列印 payload 帶出設定的外送費。
+7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認外送規則仍從 Supabase runtime 還原。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

@@ -345,6 +345,10 @@ interface OnlineOrderingSettings {
   showTaxIdField: boolean;
   showCarrierBarcodeField: boolean;
   paymentMethods: OnlinePaymentMethodSetting[];
+  deliveryFeeAmount: number;
+  deliveryMinimumSubtotal: number;
+  freeDeliveryThreshold: number;
+  deliveryTravelMinutes: number;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -702,6 +706,10 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   showTaxIdField: false,
   showCarrierBarcodeField: false,
   paymentMethods: defaultOnlinePaymentMethods(),
+  deliveryFeeAmount: 60,
+  deliveryMinimumSubtotal: 0,
+  freeDeliveryThreshold: 0,
+  deliveryTravelMinutes: 20,
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
   availableOptionChoices: [],
@@ -871,6 +879,14 @@ const normalizeOrderLabels = (labels: unknown): string[] => {
 const clampNonNegativeInteger = (value: unknown, fallback = 0): number => {
   const numberValue = Number(value ?? fallback);
   return Number.isFinite(numberValue) ? Math.max(0, Math.trunc(numberValue)) : fallback;
+};
+
+const clampIntegerRange = (value: unknown, fallback: number, min: number, max: number): number => {
+  const numberValue = Number(value ?? fallback);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(numberValue), min), max);
 };
 
 const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, unknown> => ({
@@ -2706,6 +2722,16 @@ api.post("/orders", async (c) => {
     if (!paymentMethodEnabled) {
       return c.json({ error: "Selected payment method is disabled" }, 409);
     }
+    const chargeableSubtotal = onlineDeliveryChargeableAmount(input);
+    if (serviceMode === "delivery") {
+      if (!deliveryOnlinePaymentMethods.has(paymentMethod)) {
+        return c.json({ error: "Delivery orders require online payment" }, 409);
+      }
+      if (onlineOrdering.deliveryMinimumSubtotal > 0 && chargeableSubtotal < onlineOrdering.deliveryMinimumSubtotal) {
+        return c.json({ error: "Delivery order subtotal is below the minimum" }, 409);
+      }
+      input.extraFeeAmount = calculateOnlineDeliveryFee(chargeableSubtotal, onlineOrdering);
+    }
     if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
       return c.json({ error: "Scheduled online orders are disabled" }, 409);
     }
@@ -4308,7 +4334,21 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
 
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "transfer"];
+const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card"]);
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
+const onlineDeliveryChargeableAmount = (input: CreateOrderInput): number =>
+  Math.max(
+    0,
+    clampNonNegativeInteger(input.subtotal) -
+      clampNonNegativeInteger(input.discountAmount) -
+      clampNonNegativeInteger(input.pointsRedeemed),
+  );
+const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSettings): number => {
+  if (settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold) {
+    return 0;
+  }
+  return settings.deliveryFeeAmount;
+};
 const normalizeOnlineServiceModeAvailability = (
   input: unknown,
 ): OnlineServiceModeAvailability => {
@@ -5711,6 +5751,30 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     showTaxIdField: settings.showTaxIdField === true,
     showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
     paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
+    deliveryFeeAmount: clampIntegerRange(
+      settings.deliveryFeeAmount,
+      defaultOnlineOrdering.deliveryFeeAmount,
+      0,
+      999_999,
+    ),
+    deliveryMinimumSubtotal: clampIntegerRange(
+      settings.deliveryMinimumSubtotal,
+      defaultOnlineOrdering.deliveryMinimumSubtotal,
+      0,
+      999_999,
+    ),
+    freeDeliveryThreshold: clampIntegerRange(
+      settings.freeDeliveryThreshold,
+      defaultOnlineOrdering.freeDeliveryThreshold,
+      0,
+      999_999,
+    ),
+    deliveryTravelMinutes: clampIntegerRange(
+      settings.deliveryTravelMinutes,
+      defaultOnlineOrdering.deliveryTravelMinutes,
+      0,
+      180,
+    ),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -5957,6 +6021,25 @@ const validateOnlineOrdering = (input: unknown): {
   const averagePrepMinutes = Number(settings.averagePrepMinutes);
   const unconfirmedReminderMinutes = Number(settings.unconfirmedReminderMinutes);
   const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
+  const deliveryFeeAmount = clampIntegerRange(settings.deliveryFeeAmount, defaultOnlineOrdering.deliveryFeeAmount, 0, 999_999);
+  const deliveryMinimumSubtotal = clampIntegerRange(
+    settings.deliveryMinimumSubtotal,
+    defaultOnlineOrdering.deliveryMinimumSubtotal,
+    0,
+    999_999,
+  );
+  const freeDeliveryThreshold = clampIntegerRange(
+    settings.freeDeliveryThreshold,
+    defaultOnlineOrdering.freeDeliveryThreshold,
+    0,
+    999_999,
+  );
+  const deliveryTravelMinutes = clampIntegerRange(
+    settings.deliveryTravelMinutes,
+    defaultOnlineOrdering.deliveryTravelMinutes,
+    0,
+    180,
+  );
   if (!Number.isInteger(averagePrepMinutes) || averagePrepMinutes < 0 || averagePrepMinutes > 180) {
     return { value: null, error: "averagePrepMinutes must be between 0 and 180" };
   }
@@ -6005,6 +6088,10 @@ const validateOnlineOrdering = (input: unknown): {
       showTaxIdField: settings.showTaxIdField === true,
       showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
       paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
+      deliveryFeeAmount,
+      deliveryMinimumSubtotal,
+      freeDeliveryThreshold,
+      deliveryTravelMinutes,
       pauseMessage,
       menuCategories,
       availableOptionChoices,

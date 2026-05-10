@@ -202,6 +202,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-delivery-rules',
+    category: 'online',
+    title: '外送運費規則',
+    summary: '後台可依 iCHEF 外送服務流程，設定外送費、外送最低金額、滿額免運與預計車程。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「外送規則」區塊設定外送費、外送最低金額、滿額免運與預計車程分鐘後儲存。',
+      '消費者選外送時，付款方式只會顯示 LINE Pay、街口與線上刷卡等線上付款，訂單合計會加入外送費。',
+      '外送最低金額未達時，消費者頁不得送出；即使用舊頁面或 API 繞過前端也會被後端拒絕。',
+      'API 會依扣除折抵後的金額重新計算免運，並把外送費寫入 `orders.extra_fee_amount`。',
+    ],
+    keywords: ['外送', '運費', '滿額免運', '外送門檻', '預計車程', '線上付款', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'reservation-blacklist',
     category: 'reservations',
     title: '線上訂位黑名單',

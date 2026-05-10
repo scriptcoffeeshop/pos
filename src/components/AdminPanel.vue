@@ -324,6 +324,10 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     { id: 'card', label: '線上刷卡', enabled: false },
     { id: 'transfer', label: '轉帳', enabled: false },
   ],
+  deliveryFeeAmount: 60,
+  deliveryMinimumSubtotal: 0,
+  freeDeliveryThreshold: 0,
+  deliveryTravelMinutes: 20,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1595,6 +1599,13 @@ const saveOnlineOrdering = async (): Promise<void> => {
           label: method.label.trim().slice(0, 24) || method.id,
           enabled: Boolean(method.enabled),
         })),
+        deliveryFeeAmount: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.deliveryFeeAmount) || 0), 0), 999_999),
+        deliveryMinimumSubtotal: Math.min(
+          Math.max(Math.trunc(Number(onlineOrdering.value.deliveryMinimumSubtotal) || 0), 0),
+          999_999,
+        ),
+        freeDeliveryThreshold: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.freeDeliveryThreshold) || 0), 0), 999_999),
+        deliveryTravelMinutes: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.deliveryTravelMinutes) || 0), 0), 180),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -2348,6 +2359,34 @@ const saveAccessControl = async (): Promise<void> => {
                 placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
               />
             </label>
+          </div>
+
+          <div class="admin-online-delivery-rules" aria-label="外送運費規則">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Delivery</p>
+                <h3>外送規則</h3>
+              </div>
+              <span class="panel-note">外送僅顯示線上付款方式</span>
+            </div>
+            <div class="admin-online-settings-grid">
+              <label>
+                外送費
+                <input v-model.number="onlineOrdering.deliveryFeeAmount" type="number" min="0" max="999999" step="1" />
+              </label>
+              <label>
+                外送最低金額
+                <input v-model.number="onlineOrdering.deliveryMinimumSubtotal" type="number" min="0" max="999999" step="1" />
+              </label>
+              <label>
+                滿額免運
+                <input v-model.number="onlineOrdering.freeDeliveryThreshold" type="number" min="0" max="999999" step="1" />
+              </label>
+              <label>
+                預計車程分鐘
+                <input v-model.number="onlineOrdering.deliveryTravelMinutes" type="number" min="0" max="180" step="1" />
+              </label>
+            </div>
           </div>
 
           <div class="admin-online-payment-methods" aria-label="線上支付模組">

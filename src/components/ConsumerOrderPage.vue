@@ -74,6 +74,9 @@ const fallbackPaymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: 'card', label: '線上刷卡' },
   { value: 'transfer', label: '轉帳' },
 ]
+const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(['line-pay', 'jkopay', 'card'])
+const paymentAllowedForServiceMode = (method: PaymentMethod, mode: ServiceMode): boolean =>
+  mode !== 'delivery' || deliveryOnlinePaymentMethods.has(method)
 const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
 const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
 const qrTableLabel = urlParams.get('table')?.trim() ?? ''
@@ -202,17 +205,41 @@ const menuGroups = computed(() =>
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
+const deliveryMinimumSubtotal = computed(() => Math.max(0, Math.trunc(onlineOrdering.value.deliveryMinimumSubtotal || 0)))
+const deliveryMinimumMet = computed(() => serviceMode.value !== 'delivery' || cartTotal.value >= deliveryMinimumSubtotal.value)
+const deliveryFeeAmount = computed(() => {
+  if (serviceMode.value !== 'delivery') {
+    return 0
+  }
+
+  const fee = Math.max(0, Math.trunc(onlineOrdering.value.deliveryFeeAmount || 0))
+  const freeThreshold = Math.max(0, Math.trunc(onlineOrdering.value.freeDeliveryThreshold || 0))
+  return freeThreshold > 0 && cartTotal.value >= freeThreshold ? 0 : fee
+})
+const orderTotal = computed(() => cartTotal.value + deliveryFeeAmount.value)
+const deliveryFeeLabel = computed(() => {
+  if (serviceMode.value !== 'delivery') {
+    return ''
+  }
+
+  const freeThreshold = Math.max(0, Math.trunc(onlineOrdering.value.freeDeliveryThreshold || 0))
+  if (freeThreshold > 0 && deliveryFeeAmount.value === 0) {
+    return `已達 ${formatCurrency(freeThreshold)} 免運`
+  }
+  return freeThreshold > 0 ? `滿 ${formatCurrency(freeThreshold)} 免運` : '外送運費'
+})
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
 const serviceModeOpen = (mode: ServiceMode): boolean => onlineOrdering.value.serviceModeAvailability[mode] !== false
 const currentServiceModeOpen = computed(() => serviceModeOpen(serviceMode.value))
 const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(() => {
   const configuredMethods = onlineOrdering.value.paymentMethods
   if (configuredMethods.length === 0) {
-    return fallbackPaymentOptions
+    return fallbackPaymentOptions.filter((method) => paymentAllowedForServiceMode(method.value, serviceMode.value))
   }
 
   return configuredMethods
     .filter((method) => method.enabled)
+    .filter((method) => paymentAllowedForServiceMode(method.id, serviceMode.value))
     .map((method) => ({
       value: method.id,
       label: method.label.trim() || (fallbackPaymentOptions.find((fallback) => fallback.value === method.id)?.label ?? method.id),
@@ -229,11 +256,16 @@ const onlineStatusDetail = computed(() =>
     : currentServiceModeOpen.value
       ? hasPaymentOptions.value
         ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
-        : '目前沒有開放付款方式'
+        : serviceMode.value === 'delivery'
+          ? '外送需啟用線上付款'
+          : '目前沒有開放付款方式'
       : `目前不開放${serviceModeLabels[serviceMode.value]}訂單`,
 )
 const requestedFulfillmentMinimum = computed(() => {
-  const nextTime = new Date(Date.now() + Math.max(onlineOrdering.value.averagePrepMinutes, 0) * 60_000)
+  const leadMinutes =
+    Math.max(onlineOrdering.value.averagePrepMinutes, 0) +
+    (serviceMode.value === 'delivery' ? Math.max(onlineOrdering.value.deliveryTravelMinutes, 0) : 0)
+  const nextTime = new Date(Date.now() + leadMinutes * 60_000)
   const timezoneOffsetMs = nextTime.getTimezoneOffset() * 60 * 1000
   return new Date(nextTime.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
 })
@@ -243,6 +275,7 @@ const canSubmit = computed(() =>
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
   paymentOptions.value.some((option) => option.value === paymentMethod.value) &&
+  deliveryMinimumMet.value &&
   (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
   !isSubmitting.value,
 )
@@ -544,6 +577,11 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
+  if (!deliveryMinimumMet.value) {
+    formError.value = `外送最低金額為 ${formatCurrency(deliveryMinimumSubtotal.value)}`
+    return
+  }
+
   if (!canSubmit.value) {
     formError.value = requiresDeliveryAddress.value
       ? '請填寫姓名、電話、外送地址並加入品項'
@@ -583,7 +621,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     orderLabels: [],
     serviceFeeRate: 0,
     serviceFeeAmount: 0,
-    extraFeeAmount: 0,
+    extraFeeAmount: deliveryFeeAmount.value,
     discountAmount: 0,
     pointsRedeemed: 0,
     couponCode: '',
@@ -811,7 +849,7 @@ watch(
         <div>
           <p class="eyebrow">Order</p>
           <h2 id="consumer-cart-title">訂單內容</h2>
-          <span class="panel-note">{{ cartQuantity }} 件 · {{ formatCurrency(cartTotal) }}</span>
+          <span class="panel-note">{{ cartQuantity }} 件 · {{ formatCurrency(orderTotal) }}</span>
         </div>
         <button class="icon-button" type="button" title="清空購物車" @click="clearCart">
           <Trash2 :size="20" aria-hidden="true" />
@@ -840,6 +878,24 @@ watch(
           <ShoppingBag :size="24" aria-hidden="true" />
           <span>購物車尚無品項</span>
         </div>
+      </div>
+
+      <div class="consumer-checkout-summary" aria-label="訂單金額">
+        <div>
+          <span>商品小計</span>
+          <strong>{{ formatCurrency(cartTotal) }}</strong>
+        </div>
+        <div v-if="serviceMode === 'delivery'">
+          <span>{{ deliveryFeeLabel }}</span>
+          <strong>{{ formatCurrency(deliveryFeeAmount) }}</strong>
+        </div>
+        <div class="consumer-checkout-summary-total">
+          <span>合計</span>
+          <strong>{{ formatCurrency(orderTotal) }}</strong>
+        </div>
+        <p v-if="serviceMode === 'delivery' && !deliveryMinimumMet" class="consumer-form-error">
+          外送最低金額 {{ formatCurrency(deliveryMinimumSubtotal) }}
+        </p>
       </div>
 
       <div class="segmented-control consumer-service-mode" aria-label="取餐方式">
@@ -924,7 +980,7 @@ watch(
         <CheckCircle2 :size="22" aria-hidden="true" />
         <div>
           <strong>{{ lastOrder.id }}</strong>
-          <span>{{ formatCurrency(lastOrder.subtotal) }} · 門市接單中</span>
+          <span>{{ formatCurrency(lastOrder.subtotal + lastOrder.extraFeeAmount + lastOrder.serviceFeeAmount - lastOrder.discountAmount) }} · 門市接單中</span>
         </div>
       </article>
     </aside>

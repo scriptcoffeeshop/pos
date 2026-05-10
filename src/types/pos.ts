@@ -292,6 +292,10 @@ export interface OnlineOrderingSettings {
   showTaxIdField: boolean
   showCarrierBarcodeField: boolean
   paymentMethods: OnlinePaymentMethodSetting[]
+  deliveryFeeAmount: number
+  deliveryMinimumSubtotal: number
+  freeDeliveryThreshold: number
+  deliveryTravelMinutes: number
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

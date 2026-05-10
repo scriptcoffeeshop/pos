@@ -8347,6 +8347,43 @@ button.cart-line-summary:focus-visible {
   min-height: 148px;
 }
 
+.consumer-checkout-summary {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.consumer-checkout-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.consumer-checkout-summary strong {
+  color: var(--ink);
+}
+
+.consumer-checkout-summary-total {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.consumer-checkout-summary-total span,
+.consumer-checkout-summary-total strong {
+  color: var(--ink);
+}
+
+.consumer-checkout-summary .consumer-form-error {
+  margin: 0;
+}
+
 .consumer-service-mode,
 .consumer-payment-list {
   margin-bottom: 12px;
@@ -9064,6 +9101,7 @@ button.cart-line-summary:focus-visible {
   align-items: end;
 }
 
+.admin-online-delivery-rules,
 .admin-online-payment-methods {
   display: grid;
   gap: 12px;

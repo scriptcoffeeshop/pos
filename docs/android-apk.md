@@ -129,6 +129,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 5. 嘗試用 API 或已開啟的舊頁送出被停用的付款方式，`POST /orders` 應回覆 409，不得寫入訂單。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認支付模組設定仍從 `online_ordering` runtime 還原。
 
+## 線上外送規則
+
+外送運費規則存在 `online_ordering` runtime，對照 iCHEF 外送服務的運費規則、外送門檻、滿額免運與預計車程設定。實際訂單外送費寫入 `orders.extra_fee_amount`，不是 APK 本機資料。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」的「外送規則」區塊。
+2. 設定外送費、外送最低金額、滿額免運與預計車程後儲存。
+3. 用消費者頁選外送，確認合計加入外送費，付款方式只顯示 LINE Pay、街口與線上刷卡。
+4. 未達外送最低金額時不得送單；達滿額免運時外送費應為 0。
+5. 嘗試用 API 或已開啟的舊頁送出外送取餐時付款或轉帳，`POST /orders` 應回覆 409，不得寫入訂單。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認外送規則仍從 `online_ordering` runtime 還原。
+
 ## 員工打卡
 
 員工帳號與識別碼由後台「權限」頁的 `access_control` runtime setting 管理，打卡紀錄寫入 Supabase `staff_time_clock_entries`，不是 APK 本機資料。實機測試建議：
@@ -198,6 +209,7 @@ rtk npm run apk:install:fresh
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測線上支付模組時，付款方式顯示、名稱與順序應由 `online_ordering.paymentMethods` 控制；停用付款方式後，前端不顯示且 `POST /orders` 應拒絕。
+- 測線上外送規則時，外送費、外送最低金額、滿額免運與預計車程應由 `online_ordering` runtime 控制；外送不得顯示取餐時付款或轉帳，`POST /orders` 仍必須依 runtime 重新計算 `extra_fee_amount`。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。
