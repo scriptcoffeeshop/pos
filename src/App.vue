@@ -1981,23 +1981,31 @@ const reservationViewModeOptions: Array<{ value: ReservationViewMode; label: str
 ]
 const reservationStatusOptions: Array<{ value: ReservationStatusFilter; label: string }> = [
   { value: 'all', label: '全部狀態' },
-  { value: 'booked', label: '已訂位' },
-  { value: 'seated', label: '已入座' },
+  { value: 'booked', label: '已預訂' },
+  { value: 'reminded', label: '已發送提醒' },
+  { value: 'confirmed', label: '已保留訂位' },
+  { value: 'seated', label: '已帶位' },
   { value: 'cancelled', label: '已取消' },
   { value: 'no_show', label: '未出席' },
 ]
 const reservationEditableStatusOptions: Array<{ value: ReservationStatus; label: string }> = [
-  { value: 'booked', label: '已訂位' },
-  { value: 'seated', label: '已入座' },
+  { value: 'booked', label: '已預訂' },
+  { value: 'reminded', label: '已發送提醒' },
+  { value: 'confirmed', label: '已保留訂位' },
+  { value: 'seated', label: '已帶位' },
   { value: 'cancelled', label: '已取消' },
   { value: 'no_show', label: '未出席' },
 ]
 const reservationStatusLabels: Record<ReservationStatus, string> = {
-  booked: '已訂位',
-  seated: '已入座',
+  booked: '已預訂',
+  reminded: '已發送提醒',
+  confirmed: '已保留訂位',
+  seated: '已帶位',
   cancelled: '已取消',
   no_show: '未出席',
 }
+const reservationAwaitingGuestStatuses: ReservationStatus[] = ['booked', 'reminded', 'confirmed']
+const reservationCapacityStatuses: ReservationStatus[] = [...reservationAwaitingGuestStatuses, 'seated']
 const reservationCheckInLeadMs = 2 * 60 * 60 * 1000
 const localDateInputValue = (date: Date): string => formatDateKey(date)
 const localDateFromKey = (dateKey: string): Date => {
@@ -3464,15 +3472,22 @@ const reservationWindowsOverlap = (first: PosReservation, second: PosReservation
   const secondWindow = reservationWindow(second)
   return firstWindow.start < secondWindow.end && secondWindow.start < firstWindow.end
 }
+const reservationAwaitingGuest = (reservation: PosReservation): boolean =>
+  reservationAwaitingGuestStatuses.includes(reservation.status)
+const reservationUsesCapacity = (reservation: PosReservation): boolean =>
+  reservationCapacityStatuses.includes(reservation.status)
 const activeReservableReservations = computed(() =>
-  posReservations.value.filter((reservation) => ['booked', 'seated'].includes(reservation.status)),
+  posReservations.value.filter(reservationUsesCapacity),
 )
 const reservationWarnings = (reservation: PosReservation): string[] => {
   const warnings: string[] = []
   const tables = reservationAssignedTables(reservation)
   const totalCapacity = tables.reduce((sum, table) => sum + table.capacity, 0)
-  if (reservation.status === 'booked' && reservationIsLate(reservation)) {
+  if (reservationAwaitingGuest(reservation) && reservationIsLate(reservation)) {
     warnings.push('遲到')
+  }
+  if (!reservationUsesCapacity(reservation)) {
+    return warnings
   }
   if (reservation.assignedTableIds.length === 0) {
     warnings.push('未排桌')
@@ -3501,20 +3516,20 @@ const reservationTone = (reservation: PosReservation): string => {
   if (warnings.length > 0) {
     return 'warning'
   }
-  if (reservation.status === 'seated') {
+  if (reservation.status === 'seated' || reservation.status === 'confirmed') {
     return 'success'
   }
   return 'neutral'
 }
 const reservationIsLate = (reservation: PosReservation): boolean => {
-  if (reservation.status !== 'booked') {
+  if (!reservationAwaitingGuest(reservation)) {
     return false
   }
   const holdMinutes = Math.max(0, engagementSettings.value.reservationWebsite.seatHoldMinutes || 0)
   return reservationTimestamp(reservation) + holdMinutes * 60 * 1000 < currentTime.value
 }
 const reservationCanCheckIn = (reservation: PosReservation): boolean =>
-  reservation.status === 'booked' &&
+  reservationAwaitingGuest(reservation) &&
   reservationTimestamp(reservation) - reservationCheckInLeadMs <= currentTime.value
 const visibleReservations = computed(() => {
   const start = reservationRange.value.start.getTime()
@@ -3545,13 +3560,13 @@ const reservationSummaryRows = computed(() => {
 })
 const todayReservationCount = computed(() => {
   const todayKey = formatDateKey(new Date(currentTime.value))
-  return posReservations.value.filter((reservation) => reservationDateKey(reservation) === todayKey && reservation.status === 'booked').length
+  return posReservations.value.filter((reservation) => reservationDateKey(reservation) === todayKey && reservationAwaitingGuest(reservation)).length
 })
 const lateReservationCount = computed(() => posReservations.value.filter(reservationIsLate).length)
 const nextReservationsByTableId = computed(() => {
   const nextMap = new Map<string, PosReservation>()
   const upcoming = posReservations.value
-    .filter((reservation) => reservation.status === 'booked' && reservationTimestamp(reservation) >= currentTime.value)
+    .filter((reservation) => reservationAwaitingGuest(reservation) && reservationTimestamp(reservation) >= currentTime.value)
     .sort((first, second) => reservationTimestamp(first) - reservationTimestamp(second))
   for (const reservation of upcoming) {
     for (const tableId of reservation.assignedTableIds) {
@@ -7504,13 +7519,31 @@ onBeforeUnmount(() => {
                               v-if="reservation.status === 'booked'"
                               class="secondary-button"
                               type="button"
+                              :disabled="reservationActionId === `${reservation.id}-reminded`"
+                              @click="setReservationStatusFromPos(reservation, 'reminded')"
+                            >
+                              發提醒
+                            </button>
+                            <button
+                              v-if="reservation.status === 'booked' || reservation.status === 'reminded'"
+                              class="secondary-button"
+                              type="button"
+                              :disabled="reservationActionId === `${reservation.id}-confirmed`"
+                              @click="setReservationStatusFromPos(reservation, 'confirmed')"
+                            >
+                              保留
+                            </button>
+                            <button
+                              v-if="reservationAwaitingGuest(reservation)"
+                              class="secondary-button"
+                              type="button"
                               :disabled="reservationActionId === `${reservation.id}-cancelled`"
                               @click="setReservationStatusFromPos(reservation, 'cancelled')"
                             >
                               取消
                             </button>
                             <button
-                              v-if="reservation.status === 'booked'"
+                              v-if="reservationAwaitingGuest(reservation)"
                               class="secondary-button"
                               type="button"
                               :disabled="reservationActionId === `${reservation.id}-no_show`"
