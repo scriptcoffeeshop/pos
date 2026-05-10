@@ -69,6 +69,7 @@ import type {
   PrintJob,
   PrintRuleSetting,
   PrintStationSetting,
+  RegisterCashAdjustmentKind,
   ServiceMode,
   WaitlineEntry,
 } from './types/pos'
@@ -680,6 +681,7 @@ const {
   counterDraftOrderId,
   counterDraftStartedAt,
   createProductForStation,
+  createRegisterCashAdjustmentForStation,
   couponCode,
   customer,
   customerHasNote,
@@ -3029,6 +3031,11 @@ const registerOpeningCash = ref(0)
 const registerClosingCash = ref(0)
 const registerNote = ref('')
 const forceCloseRegister = ref(false)
+const registerCashAdjustmentKind = ref<RegisterCashAdjustmentKind>('expense')
+const registerCashAdjustmentAmount = ref(0)
+const registerCashAdjustmentReason = ref('')
+const registerCashAdjustmentNote = ref('')
+const registerCashAdjustmentReasonPresets = ['備用金', '找零補入', '零用金支出', '食材採買', '外送平台現金', '其他']
 let claimClockTimer: number | null = null
 let backendEditTapTimer: number | null = null
 let toolboxBackendEditLongPressTimer: number | null = null
@@ -3139,6 +3146,10 @@ const registerStatusLabel = computed(() => {
 
   return `已關班 · ${formatOrderTime(registerSession.value.closedAt ?? registerSession.value.openedAt)}`
 })
+const registerCashAdjustmentNet = computed(() =>
+  (registerSession.value?.cashAdjustmentIncome ?? 0) - (registerSession.value?.cashAdjustmentExpense ?? 0),
+)
+const registerCashAdjustments = computed(() => registerSession.value?.cashAdjustments ?? [])
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   floor: `${activeDineInOrders.value.length} 桌內用 · ${floorLevels.value.length} 樓層`,
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
@@ -3302,6 +3313,9 @@ const registerVarianceClass = computed(() => {
 
   return registerVariance.value > 0 ? 'register-variance--over' : 'register-variance--short'
 })
+
+const registerCashAdjustmentClass = (kind: RegisterCashAdjustmentKind): string =>
+  kind === 'income' ? 'cash-adjustment-row--income' : 'cash-adjustment-row--expense'
 
 const statusClass = (status: OrderStatus): string => `status-chip--${status}`
 
@@ -5495,6 +5509,25 @@ const closeRegisterSessionAction = (): void => {
     registerNote.value.trim(),
     forceCloseRegister.value,
   )
+}
+
+const createRegisterCashAdjustmentAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('登記現金臨時收支')) {
+    return
+  }
+
+  const created = await createRegisterCashAdjustmentForStation(
+    registerCashAdjustmentKind.value,
+    registerCashAdjustmentAmount.value,
+    registerCashAdjustmentReason.value,
+    registerCashAdjustmentNote.value,
+  )
+
+  if (created) {
+    registerCashAdjustmentAmount.value = 0
+    registerCashAdjustmentReason.value = ''
+    registerCashAdjustmentNote.value = ''
+  }
 }
 
 watch(
@@ -7790,6 +7823,18 @@ onBeforeUnmount(() => {
                             <strong>{{ formatCurrency(registerSession.nonCashSales) }}</strong>
                           </article>
                           <article>
+                            <span>臨時收入</span>
+                            <strong>{{ formatCurrency(registerSession.cashAdjustmentIncome) }}</strong>
+                          </article>
+                          <article>
+                            <span>臨時支出</span>
+                            <strong>{{ formatCurrency(registerSession.cashAdjustmentExpense) }}</strong>
+                          </article>
+                          <article :class="registerCashAdjustmentNet >= 0 ? 'register-variance--over' : 'register-variance--short'">
+                            <span>臨時淨額</span>
+                            <strong>{{ formatCurrency(registerCashAdjustmentNet) }}</strong>
+                          </article>
+                          <article>
                             <span>待收</span>
                             <strong>{{ formatCurrency(registerSession.pendingTotal) }}</strong>
                           </article>
@@ -7817,6 +7862,109 @@ onBeforeUnmount(() => {
                             <span>現金差額</span>
                             <strong>{{ formatCurrency(registerVariance) }}</strong>
                           </article>
+                        </div>
+
+                        <div class="cash-adjustment-panel" aria-label="現金臨時收支">
+                          <div class="cash-adjustment-heading">
+                            <div>
+                              <span>現金臨時收支</span>
+                              <strong>{{ registerIsOpen ? '本班同步記錄' : '班別已關閉' }}</strong>
+                            </div>
+                            <small>最近 {{ registerCashAdjustments.length }} 筆</small>
+                          </div>
+
+                          <div class="segmented-control cash-adjustment-kind" aria-label="收支類型">
+                            <button
+                              class="segment-button"
+                              type="button"
+                              :class="{ 'segment-button--active': registerCashAdjustmentKind === 'income' }"
+                              :disabled="!registerIsOpen || isRegisterBusy"
+                              @click="registerCashAdjustmentKind = 'income'"
+                            >
+                              收入
+                            </button>
+                            <button
+                              class="segment-button"
+                              type="button"
+                              :class="{ 'segment-button--active': registerCashAdjustmentKind === 'expense' }"
+                              :disabled="!registerIsOpen || isRegisterBusy"
+                              @click="registerCashAdjustmentKind = 'expense'"
+                            >
+                              支出
+                            </button>
+                          </div>
+
+                          <div class="cash-adjustment-form">
+                            <label>
+                              金額
+                              <input
+                                v-model.number="registerCashAdjustmentAmount"
+                                type="number"
+                                min="1"
+                                step="1"
+                                inputmode="numeric"
+                                :disabled="!registerIsOpen || isRegisterBusy"
+                              />
+                            </label>
+                            <label>
+                              原因
+                              <input
+                                v-model="registerCashAdjustmentReason"
+                                type="text"
+                                placeholder="例：零用金支出"
+                                :disabled="!registerIsOpen || isRegisterBusy"
+                              />
+                            </label>
+                            <label class="wide-field">
+                              備註
+                              <input
+                                v-model="registerCashAdjustmentNote"
+                                type="text"
+                                placeholder="收據號、交接或採買明細"
+                                :disabled="!registerIsOpen || isRegisterBusy"
+                              />
+                            </label>
+                          </div>
+
+                          <div class="cash-adjustment-presets" aria-label="常用原因">
+                            <button
+                              v-for="reason in registerCashAdjustmentReasonPresets"
+                              :key="reason"
+                              type="button"
+                              :disabled="!registerIsOpen || isRegisterBusy"
+                              @click="registerCashAdjustmentReason = reason"
+                            >
+                              {{ reason }}
+                            </button>
+                          </div>
+
+                          <button
+                            class="register-action-button cash-adjustment-submit"
+                            type="button"
+                            :disabled="!registerIsOpen || isRegisterBusy"
+                            @click="createRegisterCashAdjustmentAction"
+                          >
+                            <WalletCards :size="18" aria-hidden="true" />
+                            {{ registerCashAdjustmentKind === 'income' ? '登記收入' : '登記支出' }}
+                          </button>
+
+                          <div class="cash-adjustment-list" aria-label="現金異動紀錄">
+                            <article
+                              v-for="adjustment in registerCashAdjustments"
+                              :key="adjustment.id"
+                              :class="registerCashAdjustmentClass(adjustment.kind)"
+                            >
+                              <div>
+                                <strong>{{ adjustment.reason }}</strong>
+                                <span>{{ formatOrderTime(adjustment.createdAt) }} · {{ adjustment.stationId || 'POS' }}</span>
+                                <small v-if="adjustment.note">{{ adjustment.note }}</small>
+                              </div>
+                              <b>{{ adjustment.kind === 'income' ? '+' : '-' }}{{ formatCurrency(adjustment.amount) }}</b>
+                            </article>
+                            <p v-if="registerCashAdjustments.length === 0" class="cash-adjustment-empty">
+                              本班尚無現金臨時收支
+                            </p>
+                          </div>
                         </div>
 
                         <div class="register-form-grid">

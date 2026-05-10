@@ -57,6 +57,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 4. 讓 APK 進背景或熄屏後送單，確認 Android foreground service 顯示背景接單常駐通知，並由 `線上/掃碼新單提醒` notification 提醒新單；logcat 應看到 `posting foreground service notification signature=...`，且通知遵守同一份共享狀態，而不是只看本機記憶體。
 5. 回前景時先觀察不應有舊單提示音或橫幅閃現；POS 應先重拉 `/online-order-reminders/state`，再決定是否恢復提醒。
 
+## 多平板班別現金臨時收支
+
+現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 連點工具箱 6 下進入後台編輯模式，在關帳頁確認已有開班；沒有開班時先填開班現金並開班。
+2. 在平板 A 的「現金臨時收支」登記一筆收入，例如找零補入，再登記一筆支出，例如食材採買。
+3. 確認平板 A 的預期現金、臨時收入、臨時支出、臨時淨額與最近紀錄立即更新。
+4. 確認平板 B 不用重整也會透過 `register_sessions` realtime invalidation 重拉 `/register/current`，看到同一批紀錄與預期現金。
+5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認同一班別仍能看到現金異動，且關班實點現金會用含臨時收支的預期現金計算差額。
+6. 到後台「操作稽核」刷新，確認可看到 `現金臨時收支` 事件與原因、類型、金額。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。
