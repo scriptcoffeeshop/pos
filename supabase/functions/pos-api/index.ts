@@ -11,6 +11,7 @@ type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | "refunded";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
+type RegisterCashAdjustmentKind = "income" | "expense";
 type PrintLabelMode = "receipt" | "label" | "both";
 type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
@@ -208,6 +209,14 @@ interface CloseRegisterInput {
   note?: string;
   stationId?: string;
   force?: boolean;
+}
+
+interface RegisterCashAdjustmentInput {
+  kind?: RegisterCashAdjustmentKind;
+  reason?: string;
+  amount?: number;
+  note?: string;
+  stationId?: string;
 }
 
 interface ProductUpdateInput {
@@ -1249,7 +1258,11 @@ api.post("/register/open", async (c) => {
     },
   });
 
-  return c.json({ session: data }, 201);
+  try {
+    return c.json({ session: await withRegisterAdjustmentSummary(data as RegisterSessionRow) }, 201);
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
 });
 
 api.post("/register/close", async (c) => {
@@ -1278,6 +1291,7 @@ api.post("/register/close", async (c) => {
   let summary: Awaited<ReturnType<typeof summarizeRegisterOrders>>;
   try {
     summary = await summarizeRegisterOrders(
+      openSession.session.id,
       openSession.session.opened_at,
       closedAt,
       openSession.session.opening_cash,
@@ -1347,7 +1361,102 @@ api.post("/register/close", async (c) => {
     },
   });
 
-  return c.json({ session: data });
+  try {
+    return c.json({ session: await withRegisterAdjustmentSummary(data as RegisterSessionRow) });
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
+});
+
+api.post("/register/cash-adjustments", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input: RegisterCashAdjustmentInput = await c.req.json<RegisterCashAdjustmentInput>().catch(() => ({}));
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const kind = input.kind === "income" || input.kind === "expense" ? input.kind : null;
+  if (!kind) {
+    return c.json({ error: "kind must be income or expense" }, 400);
+  }
+
+  const amount = readMoneyAmount(input.amount, "amount");
+  if (amount.error) {
+    return c.json({ error: amount.error }, 400);
+  }
+  if (amount.value <= 0) {
+    return c.json({ error: "amount must be greater than 0" }, 400);
+  }
+
+  const reason = sanitizeText(input.reason, "").slice(0, 120);
+  if (!reason) {
+    return c.json({ error: "reason is required" }, 400);
+  }
+
+  const openSession = await loadOpenRegisterSession();
+  if (openSession.error) {
+    return c.json({ error: openSession.error.message }, 500);
+  }
+
+  if (!openSession.session) {
+    return c.json({ error: "No open register session" }, 409);
+  }
+
+  try {
+    const currentSummary = await summarizeRegisterOrders(
+      openSession.session.id,
+      openSession.session.opened_at,
+      new Date(),
+      openSession.session.opening_cash,
+    );
+    const nextExpectedCash = currentSummary.expected_cash + (kind === "income" ? amount.value : -amount.value);
+    if (nextExpectedCash < 0) {
+      return c.json({ error: "cash expense cannot exceed expected cash" }, 400);
+    }
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
+
+  const note = sanitizeText(input.note, "").slice(0, 240);
+  const { data, error } = await supabase
+    .from("register_cash_adjustments")
+    .insert({
+      register_session_id: openSession.session.id,
+      kind,
+      reason,
+      amount: amount.value,
+      note,
+      station_id: stationId,
+    })
+    .select("id, register_session_id, kind, reason, amount, note, station_id, created_at")
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "register.cash_adjustment",
+    registerSessionId: openSession.session.id,
+    stationId,
+    metadata: {
+      adjustmentId: data.id,
+      kind,
+      reason,
+      amount: amount.value,
+      note,
+    },
+  });
+
+  try {
+    return c.json({
+      adjustment: data,
+      session: await withCurrentRegisterSummary(openSession.session),
+    }, 201);
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
 });
 
 api.get("/admin/products", async (c) => {
@@ -3006,6 +3115,8 @@ interface RegisterSessionRow {
   expected_cash: number;
   cash_sales: number;
   non_cash_sales: number;
+  cash_adjustment_income: number;
+  cash_adjustment_expense: number;
   pending_total: number;
   order_count: number;
   open_order_count: number;
@@ -3013,6 +3124,18 @@ interface RegisterSessionRow {
   failed_print_count: number;
   voided_order_count: number;
   note: string;
+  cash_adjustments?: RegisterCashAdjustmentRow[];
+}
+
+interface RegisterCashAdjustmentRow {
+  id: string;
+  register_session_id: string;
+  kind: RegisterCashAdjustmentKind;
+  reason: string;
+  amount: number;
+  note: string | null;
+  station_id: string | null;
+  created_at: string;
 }
 
 interface RegisterOrderSummaryRow {
@@ -3090,14 +3213,15 @@ const loadCurrentRegisterSession = async (): Promise<{
 
 const withCurrentRegisterSummary = async (session: RegisterSessionRow): Promise<RegisterSessionRow> => {
   if (session.status !== "open") {
-    return session;
+    return withRegisterAdjustmentSummary(session);
   }
 
-  const summary = await summarizeRegisterOrders(session.opened_at, new Date(), session.opening_cash);
-  return { ...session, ...summary };
+  const summary = await summarizeRegisterOrders(session.id, session.opened_at, new Date(), session.opening_cash);
+  return withRegisterAdjustmentSummary({ ...session, ...summary });
 };
 
 const summarizeRegisterOrders = async (
+  registerSessionId: string,
   openedAt: string,
   closedAt: Date,
   openingCash: number,
@@ -3106,6 +3230,8 @@ const summarizeRegisterOrders = async (
   | "expected_cash"
   | "cash_sales"
   | "non_cash_sales"
+  | "cash_adjustment_income"
+  | "cash_adjustment_expense"
   | "pending_total"
   | "order_count"
   | "open_order_count"
@@ -3180,9 +3306,76 @@ const summarizeRegisterOrders = async (
     },
   );
 
+  const adjustmentSummary = await summarizeRegisterCashAdjustments(registerSessionId);
   return {
     ...summary,
-    expected_cash: openingCash + summary.cash_sales,
+    ...adjustmentSummary,
+    expected_cash: openingCash + summary.cash_sales + adjustmentSummary.cash_adjustment_income -
+      adjustmentSummary.cash_adjustment_expense,
+  };
+};
+
+const loadRegisterCashAdjustments = async (
+  registerSessionId: string,
+): Promise<RegisterCashAdjustmentRow[]> => {
+  const { data, error } = await supabase
+    .from("register_cash_adjustments")
+    .select("id, register_session_id, kind, reason, amount, note, station_id, created_at")
+    .eq("register_session_id", registerSessionId)
+    .order("created_at", { ascending: false })
+    .limit(60);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []) as RegisterCashAdjustmentRow[];
+};
+
+const summarizeRegisterCashAdjustments = async (
+  registerSessionId: string,
+): Promise<Pick<RegisterSessionRow, "cash_adjustment_income" | "cash_adjustment_expense">> => {
+  const { data, error } = await supabase
+    .from("register_cash_adjustments")
+    .select("kind, amount")
+    .eq("register_session_id", registerSessionId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const summary = (data ?? []).reduce(
+    (current, adjustment) => {
+      const amount = Math.max(Number(adjustment.amount) || 0, 0);
+      if (adjustment.kind === "income") {
+        current.cash_adjustment_income += amount;
+      } else {
+        current.cash_adjustment_expense += amount;
+      }
+
+      return current;
+    },
+    {
+      cash_adjustment_income: 0,
+      cash_adjustment_expense: 0,
+    },
+  );
+
+  return summary;
+};
+
+const withRegisterAdjustmentSummary = async (
+  session: RegisterSessionRow,
+): Promise<RegisterSessionRow> => {
+  const [cashAdjustments, adjustmentSummary] = await Promise.all([
+    loadRegisterCashAdjustments(session.id),
+    summarizeRegisterCashAdjustments(session.id),
+  ]);
+
+  return {
+    ...session,
+    ...adjustmentSummary,
+    cash_adjustments: cashAdjustments,
   };
 };
 

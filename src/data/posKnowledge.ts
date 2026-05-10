@@ -126,6 +126,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'register-cash-adjustment',
+    category: 'register',
+    title: '現金臨時收支',
+    summary: '班別中途補找零、採買或零用金支出時，直接登記到目前開啟的班別並同步到所有平板。',
+    steps: [
+      '先確認班別為營業中，進入「關帳」工作區的班別面板。',
+      '在「現金臨時收支」選收入或支出，輸入金額、原因與必要備註。',
+      '使用常用原因可快速帶入備用金、找零補入、零用金支出或食材採買。',
+      '登記後預期現金會立即更新，另一台平板會透過 realtime 重新載入同一班別。',
+      '關班時實點現金會和含臨時收支的預期現金比對，後台稽核可追查每筆原因與金額。',
+    ],
+    keywords: ['現金臨時收支', '臨時收入', '臨時支出', '備用金', '零用金', '找零', '採買', '短溢'],
+    target: 'closeout',
+  },
+  {
     id: 'online-settings',
     category: 'online',
     title: '暫停線上點餐與預約設定',

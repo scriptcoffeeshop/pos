@@ -30,6 +30,8 @@ import type {
   PosPaymentEvent,
   PosReservation,
   PosStationHeartbeat,
+  RegisterCashAdjustment,
+  RegisterCashAdjustmentKind,
   RegisterSession,
   ReservationStatus,
   SupplyPeriodRule,
@@ -164,6 +166,8 @@ interface ApiRegisterSession {
   expected_cash: number
   cash_sales: number
   non_cash_sales: number
+  cash_adjustment_income?: number | null
+  cash_adjustment_expense?: number | null
   pending_total: number
   order_count: number
   open_order_count: number
@@ -171,10 +175,23 @@ interface ApiRegisterSession {
   failed_print_count: number
   voided_order_count: number
   note: string
+  cash_adjustments?: ApiRegisterCashAdjustment[] | null
+}
+
+interface ApiRegisterCashAdjustment {
+  id: string
+  register_session_id: string
+  kind: RegisterCashAdjustmentKind
+  reason: string
+  amount: number
+  note: string | null
+  station_id: string | null
+  created_at: string
 }
 
 interface RegisterSessionResponse {
   session: ApiRegisterSession | null
+  adjustment?: ApiRegisterCashAdjustment
 }
 
 interface ApiAuditEvent {
@@ -553,6 +570,19 @@ const normalizePrintJob = (printJob: ApiPrintJob): PrintJob => ({
   lastError: printJob.last_error,
 })
 
+const normalizeRegisterCashAdjustment = (
+  adjustment: ApiRegisterCashAdjustment,
+): RegisterCashAdjustment => ({
+  id: adjustment.id,
+  registerSessionId: adjustment.register_session_id,
+  kind: adjustment.kind,
+  reason: adjustment.reason,
+  amount: adjustment.amount,
+  note: adjustment.note ?? '',
+  stationId: adjustment.station_id ?? '',
+  createdAt: adjustment.created_at,
+})
+
 const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
   id: session.id,
   status: session.status,
@@ -563,6 +593,8 @@ const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession 
   expectedCash: session.expected_cash,
   cashSales: session.cash_sales,
   nonCashSales: session.non_cash_sales,
+  cashAdjustmentIncome: session.cash_adjustment_income ?? 0,
+  cashAdjustmentExpense: session.cash_adjustment_expense ?? 0,
   pendingTotal: session.pending_total,
   orderCount: session.order_count,
   openOrderCount: session.open_order_count,
@@ -570,6 +602,7 @@ const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession 
   failedPrintCount: session.failed_print_count,
   voidedOrderCount: session.voided_order_count,
   note: session.note,
+  cashAdjustments: (session.cash_adjustments ?? []).map(normalizeRegisterCashAdjustment),
 })
 
 const normalizeMetadata = (metadata: unknown): Record<string, unknown> => {
@@ -1799,6 +1832,27 @@ export const closeRegisterSession = async (
   const data = await request<RegisterSessionResponse>('/register/close', {
     method: 'POST',
     body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force }),
+  })
+
+  if (!data.session) {
+    throw new Error('Register session was not returned')
+  }
+
+  return normalizeRegisterSession(data.session)
+}
+
+export const createRegisterCashAdjustment = async (
+  kind: RegisterCashAdjustmentKind,
+  amount: number,
+  reason: string,
+  note = '',
+): Promise<RegisterSession> => {
+  const data = await request<RegisterSessionResponse>('/register/cash-adjustments', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({ kind, amount, reason, note, stationId: currentStationId() }),
   })
 
   if (!data.session) {

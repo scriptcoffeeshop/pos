@@ -17,6 +17,7 @@ import {
   createPrintJob,
   closeRegisterSession,
   createProduct,
+  createRegisterCashAdjustment,
   defaultEngagementSettings,
   defaultPosAppearanceSettings,
   defaultOnlineOrderingSettings,
@@ -79,6 +80,7 @@ import type {
   PrinterSettings,
   PrintStation,
   PrintStatus,
+  RegisterCashAdjustmentKind,
   RegisterSession,
   ServiceMode,
   CustomerEngagementSettings,
@@ -3220,6 +3222,52 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const createRegisterCashAdjustmentForStation = async (
+    kind: RegisterCashAdjustmentKind,
+    amountValue: number,
+    reason: string,
+    note: string,
+  ): Promise<boolean> => {
+    const amount = readRegisterCashAmount(amountValue)
+    if (amount === null || amount <= 0) {
+      registerMessage.value = '現金異動金額需為 1 以上整數'
+      return false
+    }
+
+    const normalizedReason = reason.trim()
+    if (!normalizedReason) {
+      registerMessage.value = '請輸入現金異動原因'
+      return false
+    }
+
+    if (!registerSession.value || registerSession.value.status !== 'open') {
+      registerMessage.value = '需先開班才能登記現金臨時收支'
+      return false
+    }
+
+    if (!isPosApiConfigured) {
+      registerMessage.value = '本機模式無法同步現金臨時收支'
+      return false
+    }
+
+    isRegisterBusy.value = true
+    registerMessage.value = kind === 'income' ? '登記臨時收入中' : '登記臨時支出中'
+
+    try {
+      const session = await createRegisterCashAdjustment(kind, amount, normalizedReason, note.trim())
+      applyRegisterSession(session)
+      registerMessage.value = `${kind === 'income' ? '臨時收入' : '臨時支出'}已登記 ${amount}`
+      setBackendStatus('connected', '現金異動已同步', `${stationClaimLabel} 已更新班別現金`)
+      return true
+    } catch (error) {
+      registerMessage.value = `現金異動失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '現金異動失敗', registerMessage.value)
+      return false
+    } finally {
+      isRegisterBusy.value = false
+    }
+  }
+
   const buildCounterOrderFromDraft = (now: Date): PosOrder => {
     const existingOrder = counterDraftOrderId.value
       ? orderQueue.value.find((order) => order.id === counterDraftOrderId.value)
@@ -3670,6 +3718,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     engagementSettings,
     extraFeeAmount,
     createProductForStation,
+    createRegisterCashAdjustmentForStation,
     decreaseLine,
     deleteOrderFromQueue,
     deleteProductForStation,

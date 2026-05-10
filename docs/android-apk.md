@@ -101,7 +101,8 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 
 - APK 目前是 debug 版，只用於平板測試，不用於正式上架。
 - APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應、單一品項暫停出單與列印站操作；消費者線上點餐維持 Web / GitHub Pages 入口，不出現在 APK 裡。
-- APK 會載入同一套門市 POS 與 Supabase `pos-api`，可測試訂單同步、多平板鎖定、收銀開關班、依後台規則拆分的 `print_jobs` 與 Android TCP socket 列印 POC。
+- APK 會載入同一套門市 POS 與 Supabase `pos-api`，可測試訂單同步、多平板鎖定、收銀開關班、現金臨時收支、依後台規則拆分的 `print_jobs` 與 Android TCP socket 列印 POC。
+- 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - APK 已包含 `LanPrinter` native plugin 與 `OnlineOrderNotifier` native plugin；瀏覽器版仍只能測 EZPL 預覽、`print_jobs` 建立與 Browser Notification fallback，實際 GODEX TCP 列印與可靠背景提醒要在 APK 內測。
 - 平板需要可連網，才能連到 Supabase。

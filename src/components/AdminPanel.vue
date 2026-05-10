@@ -187,6 +187,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
 const auditActionLabels: Record<string, string> = {
   'register.open': '開班',
   'register.close': '關班',
+  'register.cash_adjustment': '現金臨時收支',
   'product.update': '商品更新',
   'setting.update': '設定更新',
   'member.create': '建立會員',
@@ -1063,7 +1064,12 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
       ? `逾時 ${auditMetadataLabel(event, 'expiredAfterMinutes')} 分`
       : null,
     auditMoneyLabel(event, 'openingBalance') ? `開通 ${auditMoneyLabel(event, 'openingBalance')}` : null,
-    auditMoneyLabel(event, 'amount') ? `錢包 ${auditMoneyLabel(event, 'amount')}` : null,
+    event.action === 'register.cash_adjustment' && auditMoneyLabel(event, 'amount')
+      ? `金額 ${auditMoneyLabel(event, 'amount')}`
+      : null,
+    event.action !== 'register.cash_adjustment' && auditMoneyLabel(event, 'amount')
+      ? `錢包 ${auditMoneyLabel(event, 'amount')}`
+      : null,
     auditMoneyLabel(event, 'balanceAfter') ? `餘額 ${auditMoneyLabel(event, 'balanceAfter')}` : null,
     auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')
       ? `庫存 ${auditChangeLabel(event, 'inventoryBefore', 'inventoryAfter')}`
@@ -1088,6 +1094,8 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMoneyLabel(event, 'openingCash') ? `開班金 ${auditMoneyLabel(event, 'openingCash')}` : null,
     auditMoneyLabel(event, 'closingCash') ? `實點 ${auditMoneyLabel(event, 'closingCash')}` : null,
     auditMoneyLabel(event, 'expectedCash') ? `預期 ${auditMoneyLabel(event, 'expectedCash')}` : null,
+    auditMetadataLabel(event, 'reason') ? `原因 ${auditMetadataLabel(event, 'reason')}` : null,
+    auditMetadataLabel(event, 'kind') ? `類型 ${auditMetadataLabel(event, 'kind')}` : null,
     auditMetadataLabel(event, 'openOrderCount') ? `未交付 ${auditMetadataLabel(event, 'openOrderCount')}` : null,
     auditMetadataLabel(event, 'failedPaymentCount') ? `付款異常 ${auditMetadataLabel(event, 'failedPaymentCount')}` : null,
     auditMetadataLabel(event, 'failedPrintCount') ? `列印失敗 ${auditMetadataLabel(event, 'failedPrintCount')}` : null,
