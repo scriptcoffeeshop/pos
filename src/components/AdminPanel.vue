@@ -299,6 +299,11 @@ const emptyAccessControl = (): AccessControlSettings => ({
 
 const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   enabled: true,
+  serviceModeAvailability: {
+    'dine-in': true,
+    takeout: true,
+    delivery: true,
+  },
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
@@ -335,6 +340,10 @@ const cloneAccessControl = (settings: AccessControlSettings): AccessControlSetti
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
   ...defaultOnlineOrderingSettings(),
   ...settings,
+  serviceModeAvailability: {
+    ...defaultOnlineOrderingSettings().serviceModeAvailability,
+    ...settings.serviceModeAvailability,
+  },
   menuCategories: settings.menuCategories.map((category) => ({ ...category })),
   availableOptionChoices: (settings.availableOptionChoices ?? []).map((choice) => ({ ...choice })),
   menuOptionGroups: settings.menuOptionGroups.map((group) => ({
@@ -1563,6 +1572,11 @@ const saveOnlineOrdering = async (): Promise<void> => {
         notificationRepeatMode:
           onlineOrdering.value.notificationRepeatMode === 'once' ? 'once' : 'continuous',
         notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
+        serviceModeAvailability: {
+          'dine-in': onlineOrdering.value.serviceModeAvailability['dine-in'] !== false,
+          takeout: onlineOrdering.value.serviceModeAvailability.takeout !== false,
+          delivery: onlineOrdering.value.serviceModeAvailability.delivery !== false,
+        },
         checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 240),
         showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
         showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
@@ -2225,7 +2239,19 @@ const saveAccessControl = async (): Promise<void> => {
           <div class="admin-online-toggle-grid">
             <label class="toggle-row">
               <input v-model="onlineOrdering.enabled" type="checkbox" />
-              外帶外送開放接單
+              線上點餐總開關
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.serviceModeAvailability.takeout" type="checkbox" />
+              開放自取
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.serviceModeAvailability['dine-in']" type="checkbox" />
+              開放內用掃碼
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.serviceModeAvailability.delivery" type="checkbox" />
+              開放外送
             </label>
             <label class="toggle-row">
               <input v-model="onlineOrdering.allowScheduledOrders" type="checkbox" />

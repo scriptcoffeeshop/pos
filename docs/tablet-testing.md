@@ -69,6 +69,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認後台欄位開關、結帳說明與既有訂單統編/載具仍能還原。
 7. 測非 8 碼統編與超過 32 字元載具，確認前端、`pos-api` 與 DB constraint 都不接受。
 
+## 多平板線上服務方式開關
+
+自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`。測試時至少準備一個後台工作站與一個消費者頁：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」只關閉「開放外送」並儲存。
+2. 在平板 B 或消費者頁重新整理，確認外送按鈕 disabled，自取與內用掃碼仍可選。
+3. 送出自取訂單應成功；送出外送訂單應在前端顯示不開放。
+4. 用已開啟的舊頁或測試 API 繞過前端送出外送單，`POST /orders` 應回覆 disabled service mode 的 409，不得寫入 `orders`。
+5. 重新開啟外送並關閉自取，確認另一台平板不用清本機資料即可同步新狀態。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認三個服務方式開關仍從 Supabase runtime 還原。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

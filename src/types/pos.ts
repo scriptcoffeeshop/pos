@@ -269,8 +269,11 @@ export interface OnlineMenuCategory {
 
 export type OnlineNotificationRepeatMode = 'once' | 'continuous'
 
+export type OnlineServiceModeAvailability = Record<ServiceMode, boolean>
+
 export interface OnlineOrderingSettings {
   enabled: boolean
+  serviceModeAvailability: OnlineServiceModeAvailability
   allowScheduledOrders: boolean
   averagePrepMinutes: number
   unconfirmedReminderMinutes: number

@@ -108,6 +108,16 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認同一筆訂單仍能從 Supabase 載回統編與載具，欄位開關與結帳說明也仍從 runtime 還原。
 6. 輸入非 8 碼統編或超過 32 字元的載具時，消費者頁應先阻擋；若繞過前端，`pos-api` 與資料庫 constraint 也應拒絕。
 
+## 線上服務方式開關
+
+自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`，對照 iCHEF 可在 POS 或後台臨時調整營業狀態的流程。這不是 APK 本機開關，fresh reinstall 後仍應從 runtime 還原。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」分別關閉「開放自取」「開放內用掃碼」或「開放外送」其中一項並儲存。
+2. 用消費者頁重新整理，確認被關閉的服務方式按鈕 disabled，畫面顯示該方式目前不開放。
+3. 保持總開關開啟，只關閉外送時，自取仍可送單，外送不得送單。
+4. 嘗試用 API 或已開啟的舊頁面繞過前端送出 disabled service mode，`POST /orders` 應回覆 409。
+5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台服務方式開關仍從 `online_ordering` runtime 還原。
+
 ## 員工打卡
 
 員工帳號與識別碼由後台「權限」頁的 `access_control` runtime setting 管理，打卡紀錄寫入 Supabase `staff_time_clock_entries`，不是 APK 本機資料。實機測試建議：
@@ -175,6 +185,7 @@ rtk npm run apk:install:fresh
 - 測線上訂位容量時，需檢查同時段 booked/reminded/confirmed/seated 訂位與 assigned table，而不是只看總人數欄位；沒有 assigned table 的舊訂位會以人數保守占用容量。
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
+- 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。
