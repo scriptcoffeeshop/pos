@@ -4685,6 +4685,94 @@ button.cart-line-summary:focus-visible {
   font-weight: 950;
 }
 
+.queue-quick-dispatch-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.queue-quick-dispatch-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.queue-quick-dispatch-copy svg {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.queue-quick-dispatch-copy div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.queue-quick-dispatch-copy strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.queue-quick-dispatch-copy span,
+.queue-quick-dispatch-copy small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.queue-quick-dispatch-controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(230px, 1.1fr) auto minmax(150px, auto);
+  gap: 8px;
+  align-items: end;
+}
+
+.queue-quick-dispatch-controls label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.queue-quick-dispatch-controls select,
+.queue-quick-dispatch-controls input,
+.queue-quick-dispatch-controls > button {
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 900;
+}
+
+.queue-quick-dispatch-controls select,
+.queue-quick-dispatch-controls input {
+  width: 100%;
+  padding: 0 10px;
+}
+
+.queue-quick-dispatch-controls > button {
+  padding: 0 14px;
+}
+
+.queue-quick-dispatch-controls .primary-button {
+  display: inline-flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .queue-task-card--success {
   border-color: #a9d4ba;
   background: var(--success-soft);
@@ -9587,6 +9675,14 @@ button.cart-line-summary:focus-visible {
     flex-direction: column;
   }
 
+  .queue-quick-dispatch-card {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-quick-dispatch-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .online-reminder-list article {
     grid-template-columns: 1fr;
   }
@@ -10137,6 +10233,14 @@ button.cart-line-summary:focus-visible {
 
   .queue-task-strip {
     grid-template-columns: 1fr;
+  }
+
+  .queue-quick-dispatch-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-quick-dispatch-controls .primary-button {
+    width: 100%;
   }
 
   .queue-fulfillment-filter {
