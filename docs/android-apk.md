@@ -73,6 +73,17 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 4. 執行後確認訂單離開待處理佇列，另一台平板同步看到同樣結果。
 5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認已快速出店的訂單不會靠本機快取回到待處理佇列。
 
+## 候位提前點餐
+
+候位提前點餐對照 iCHEF「現場候位登記與提前點餐」流程。候位列的「提前點餐」會建立內用草稿單，並把草稿 `orderId` 寫回 `floor_plan.waitline`；品項存在 `orders.draft_lines`，入座時會把同一張訂單轉成指定樓層/桌位的內用單。這不是 APK 本機資料，fresh reinstall 後仍應從 Supabase runtime 與草稿單還原。
+
+1. 在 APK 桌位地圖新增一筆候位，填姓名、電話、人數與備註。
+2. 按候位列「提前點餐」，確認切到點餐頁且票券顧客資料帶入候位資訊。
+3. 加入至少一個品項後回桌位地圖，確認候位列顯示提前點餐單號、品項數與金額；另一台平板應同步看到同一候位預點餐狀態。
+4. 按「開啟點餐」續編同一張單，不應建立第二張候位草稿。
+5. 選擇空桌讓候位入座，確認訂單改成該桌內用單、點餐頁載入原品項，接著可出單或結帳。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認候位預點餐關聯、草稿品項與已入座的桌位訂單仍從 Supabase 還原。
+
 ## 線上/掃碼新單背景提醒
 
 APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：

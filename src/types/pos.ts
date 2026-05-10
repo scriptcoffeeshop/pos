@@ -356,6 +356,7 @@ export interface WaitlineEntry {
   partySize: number
   createdAt: string
   note: string
+  orderId?: string
 }
 
 export interface FloorPlanSettings {

@@ -409,6 +409,7 @@ interface WaitlineEntry {
   partySize: number;
   createdAt: string;
   note: string;
+  orderId?: string;
 }
 
 interface FloorPlanSettings {
@@ -6101,6 +6102,8 @@ const normalizeWaitlineEntries = (input: unknown): WaitlineEntry[] => {
       return [];
     }
 
+    const orderId = sanitizeText(waitline.orderId, "").slice(0, 80);
+
     return [{
       id: sanitizeText(waitline.id, `wait-${createdTime}`).slice(0, 80),
       name: sanitizeText(waitline.name, "候位客").slice(0, 40),
@@ -6109,6 +6112,7 @@ const normalizeWaitlineEntries = (input: unknown): WaitlineEntry[] => {
       partySize: Math.min(Math.max(Math.trunc(Number(waitline.partySize) || 1), 1), 20),
       createdAt,
       note: sanitizeText(waitline.note, "").slice(0, 120),
+      ...(orderId ? { orderId } : {}),
     }];
   }).slice(0, 60);
 };

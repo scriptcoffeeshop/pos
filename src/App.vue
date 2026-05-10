@@ -5053,6 +5053,75 @@ const markFloorTableServed = (state: FloorTableState): void => {
   void updateOrderStatus(state.order.id, 'served')
 }
 
+const waitlinePreorderOrder = (entry: WaitlineEntry): PosOrder | null =>
+  entry.orderId ? orderQueue.value.find((order) => order.id === entry.orderId) ?? null : null
+
+const waitlinePreorderSummary = (entry: WaitlineEntry): string => {
+  const order = waitlinePreorderOrder(entry)
+  if (!entry.orderId) {
+    return '尚未提前點餐'
+  }
+
+  if (!order) {
+    return `提前點餐 ${compactOrderId(entry.orderId)} 同步中`
+  }
+
+  if (order.lines.length === 0) {
+    return `提前點餐 ${compactOrderId(order.id)} · 尚未加入品項`
+  }
+
+  return `提前點餐 ${compactOrderId(order.id)} · ${order.lines.length} 項 · ${formatCurrency(order.subtotal)}`
+}
+
+const updateWaitlineEntryOrder = (entryId: string, orderId: string): void => {
+  waitlineEntries.value = waitlineEntries.value.map((entry) =>
+    entry.id === entryId ? { ...entry, orderId } : entry,
+  )
+}
+
+const startWaitlinePreorder = async (entry: WaitlineEntry): Promise<void> => {
+  if (entry.orderId) {
+    const order = waitlinePreorderOrder(entry)
+    if (!order) {
+      floorPlanSyncMessage.value = `${entry.name} 的提前點餐單尚未同步，請稍後重新整理`
+      return
+    }
+
+    const loaded = await loadCounterOrderForEditing(order.id)
+    if (loaded) {
+      floorPlanSyncMessage.value = `${entry.name} 提前點餐已載入`
+      setWorkspaceTab('order')
+    }
+    return
+  }
+
+  if (counterDraftOrderId.value) {
+    floorPlanSyncMessage.value = '目前已有編輯中的票券，請先完成或返回該票券'
+    setWorkspaceTab('order')
+    return
+  }
+
+  await startCounterDraft('dine-in')
+  const orderId = counterDraftOrderId.value
+  if (!orderId) {
+    floorPlanSyncMessage.value = '提前點餐建立失敗，請稍後再試'
+    return
+  }
+
+  customer.name = entry.name || '候位客'
+  customer.phone = entry.phone
+  customer.note = [
+    `候位 ${entry.name || entry.id}`,
+    `${entry.partySize} 人`,
+    entry.note,
+  ].filter(Boolean).join('、')
+  updateWaitlineEntryOrder(entry.id, orderId)
+  floorPlanSyncMessage.value = `${entry.name} 已建立提前點餐單 ${compactOrderId(orderId)}`
+  activeCartQuickEditor.value = null
+  closeOptionPanel()
+  setWorkspaceTab('order')
+}
+
 const updateWaitlineDraftPartySize = (delta: number): void => {
   waitlineDraft.value = {
     ...waitlineDraft.value,
@@ -5097,8 +5166,35 @@ const removeWaitlineEntry = (entryId: string): void => {
 }
 
 const seatWaitlineEntryAtTable = async (entry: WaitlineEntry, table: DiningTableDefinition): Promise<void> => {
+  const partySize = Math.min(table.capacity, entry.partySize)
+  if (entry.orderId) {
+    const order = waitlinePreorderOrder(entry)
+    if (!order) {
+      floorPlanSyncMessage.value = `${entry.name} 的提前點餐單尚未同步，請稍後重新整理`
+      return
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      floorPlanSyncMessage.value = `${entry.name} 的提前點餐單目前由其他平板處理`
+      return
+    }
+
+    await updateOrderFloorAssignmentForStation(entry.orderId, table.label, partySize, floorLabelForTable(table))
+    floorPartySizes.value = {
+      ...floorPartySizes.value,
+      [table.id]: partySize,
+    }
+    removeWaitlineEntry(entry.id)
+    const loaded = await loadCounterOrderForEditing(entry.orderId)
+    floorPlanSyncMessage.value = loaded
+      ? `${entry.name} 已入座 ${table.label}，提前點餐已載入`
+      : `${entry.name} 已入座 ${table.label}`
+    setWorkspaceTab(loaded ? 'order' : 'floor')
+    return
+  }
+
   removeWaitlineEntry(entry.id)
-  await startDineInTableOrder(table, { partySize: Math.min(table.capacity, entry.partySize), waitlineEntry: entry })
+  await startDineInTableOrder(table, { partySize, waitlineEntry: entry })
 }
 
 const openFloorNotificationTarget = (item: PosNotificationItem): void => {
@@ -5350,6 +5446,7 @@ const closeKnowledge = (): void => {
 }
 
 const knowledgeTargetLabels: Record<PosKnowledgeArticle['target'], string> = {
+  floor: '桌位地圖',
   order: '點餐',
   queue: '桌況',
   reservations: '訂位',
@@ -7313,8 +7410,16 @@ onBeforeUnmount(() => {
                                 <template v-if="entry.phone"> · {{ entry.phone }}</template>
                                 <template v-if="entry.note"> · {{ entry.note }}</template>
                               </span>
+                              <small class="waitline-preorder-status">{{ waitlinePreorderSummary(entry) }}</small>
                             </div>
                             <div class="waitline-actions">
+                              <button
+                                type="button"
+                                class="waitline-preorder-button"
+                                @click="startWaitlinePreorder(entry)"
+                              >
+                                {{ entry.orderId ? '開啟點餐' : '提前點餐' }}
+                              </button>
                               <button type="button" title="減少人數" @click="updateWaitlinePartySize(entry, -1)">
                                 <Minus :size="14" aria-hidden="true" />
                               </button>

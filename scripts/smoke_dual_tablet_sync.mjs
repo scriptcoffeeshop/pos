@@ -130,7 +130,7 @@ const createOrder = (orderNumber, overrides = {}) => {
     claimed_by: overrides.claimed_by ?? null,
     claimed_at: overrides.claimed_at ?? null,
     claim_expires_at: overrides.claim_expires_at ?? null,
-    draft_lines: [],
+    draft_lines: overrides.draft_lines ?? [],
     order_items: overrides.order_items ?? [
       {
         id: randomUUID(),
@@ -144,6 +144,41 @@ const createOrder = (orderNumber, overrides = {}) => {
     ],
     print_jobs: [],
   }
+}
+
+const draftLinesFromInput = (input) => (
+  Array.isArray(input.lines)
+    ? input.lines.map((line) => ({
+      product_id: line.productId ?? line.productSku,
+      product_sku: line.productSku,
+      name: line.name,
+      unit_price: Number(line.unitPrice) || 0,
+      quantity: Number(line.quantity) || 1,
+      options: Array.isArray(line.options) ? line.options : [],
+      print_paused: line.printPaused === true,
+    }))
+    : []
+)
+
+const applyDraftPayload = (order, input, stationId) => {
+  const draftLines = draftLinesFromInput(input)
+  order.source = 'counter'
+  order.service_mode = input.serviceMode ?? order.service_mode ?? 'takeout'
+  order.customer_name = input.customerName ?? order.customer_name ?? '現場客'
+  order.customer_phone = input.customerPhone ?? order.customer_phone ?? ''
+  order.delivery_address = input.deliveryAddress ?? order.delivery_address ?? ''
+  order.requested_fulfillment_at = input.requestedFulfillmentAt ?? null
+  order.note = input.note ?? order.note ?? ''
+  order.subtotal = Number(input.subtotal) || draftLines.reduce((total, line) => total + line.unit_price * line.quantity, 0)
+  order.payment_method = input.paymentMethod ?? order.payment_method ?? 'cash'
+  order.payment_status = input.paymentStatus ?? order.payment_status ?? 'pending'
+  order.status = 'new'
+  order.claimed_by = stationId
+  order.claimed_at = order.claimed_at ?? nowIso()
+  order.claim_expires_at = order.claim_expires_at ?? new Date(Date.now() + leaseSeconds * 1000).toISOString()
+  order.draft_lines = draftLines
+  order.order_items = []
+  return order
 }
 
 const createState = () => ({
@@ -329,6 +364,33 @@ const createMockApiServer = async () => {
       return
     }
 
+    if (path === '/orders/drafts' && req.method === 'POST') {
+      const input = await readJson(req)
+      const stationId = input.stationId ?? req.headers['x-pos-station-id'] ?? 'tablet-unknown'
+      const order = createOrder(input.orderNumber ?? `DRAFT-${String(state.orders.length + 1).padStart(3, '0')}`, {
+        id: randomUUID(),
+        source: 'counter',
+        service_mode: input.serviceMode ?? 'takeout',
+        customer_name: input.customerName ?? '現場客',
+        customer_phone: input.customerPhone ?? '',
+        delivery_address: input.deliveryAddress ?? '',
+        requested_fulfillment_at: input.requestedFulfillmentAt ?? null,
+        note: input.note ?? '',
+        subtotal: Number(input.subtotal) || 0,
+        payment_method: input.paymentMethod ?? 'cash',
+        payment_status: input.paymentStatus ?? 'pending',
+        status: 'new',
+        claimed_by: stationId,
+        claimed_at: nowIso(),
+        claim_expires_at: new Date(Date.now() + leaseSeconds * 1000).toISOString(),
+        draft_lines: draftLinesFromInput(input),
+        order_items: [],
+      })
+      state.orders.unshift(order)
+      sendJson(res, 201, { order })
+      return
+    }
+
     if (path === '/online-order-reminders/state' && req.method === 'GET') {
       const identifiers = (url.searchParams.get('orderIds') ?? '')
         .split(',')
@@ -377,6 +439,41 @@ const createMockApiServer = async () => {
     if (path === '/admin/settings/floor_plan' && req.method === 'PATCH') {
       state.floorPlan = await readJson(req)
       sendJson(res, 200, { setting: { key: 'floor_plan', value: state.floorPlan } })
+      return
+    }
+
+    const draftMatch = path.match(/^\/orders\/([^/]+)\/draft$/)
+    if (draftMatch && req.method === 'PATCH') {
+      const input = await readJson(req)
+      const order = resolveOrder(state, draftMatch[1])
+      if (!order) {
+        sendJson(res, 404, { error: 'Order not found' })
+        return
+      }
+
+      applyDraftPayload(order, input, input.stationId ?? req.headers['x-pos-station-id'] ?? 'tablet-unknown')
+      sendJson(res, 200, { order })
+      return
+    }
+
+    const floorMatch = path.match(/^\/orders\/([^/]+)\/floor$/)
+    if (floorMatch && req.method === 'PATCH') {
+      const input = await readJson(req)
+      const order = resolveOrder(state, floorMatch[1])
+      if (!order) {
+        sendJson(res, 404, { error: 'Order not found' })
+        return
+      }
+
+      order.service_mode = 'dine-in'
+      order.customer_name = input.tableLabel ? `${input.tableLabel} ${order.customer_name}` : order.customer_name
+      order.note = [
+        input.floorLabel ? `樓層 ${input.floorLabel}` : '',
+        input.tableLabel ? `桌位 ${input.tableLabel}` : '',
+        Number.isFinite(Number(input.partySize)) ? `${Math.trunc(Number(input.partySize))}人` : '',
+        order.note,
+      ].filter(Boolean).join('、')
+      sendJson(res, 200, { order })
       return
     }
 
@@ -630,6 +727,31 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await waitForState((snapshot) => snapshot.floorPlan.waitline.some((entry) => entry.name === waitlineName), 'A waitline persisted')
     await waitForText(tabletB.page, waitlineName)
     record('floor plan and waitline synced from tablet A to tablet B')
+
+    await tabletA.page.locator('.waitline-row').filter({ hasText: waitlineName })
+      .getByRole('button', { name: '提前點餐' })
+      .click()
+    await tabletA.page.getByRole('button', { name: /Bagel/ }).first().click()
+    const preorderSnapshot = await waitForState((snapshot) => {
+      const entry = snapshot.floorPlan.waitline.find((item) => item.name === waitlineName)
+      const order = entry?.orderId ? snapshot.orders.find((item) => item.order_number === entry.orderId) : null
+      return Boolean(order?.draft_lines?.length)
+    }, 'waitline preorder draft synced')
+    const preorderEntry = preorderSnapshot.floorPlan.waitline.find((entry) => entry.name === waitlineName)
+    const preorderOrderCount = preorderSnapshot.orders.filter((order) => order.order_number === preorderEntry.orderId).length
+    assert(preorderOrderCount === 1, 'Expected one waitline preorder draft, got ' + preorderOrderCount)
+    await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
+    await waitForText(tabletB.page, '尚未提前點餐', 1_000).catch(() => {})
+    await waitForText(tabletB.page, '1 項', 12_000)
+    await tabletA.page.locator('.waitline-row').filter({ hasText: waitlineName })
+      .getByRole('button', { name: '開啟點餐' })
+      .click()
+    await waitForState((snapshot) => (
+      snapshot.orders.filter((order) => order.order_number === preorderEntry.orderId).length === 1
+    ), 'waitline preorder reopened without duplicate draft')
+    record('waitline preorder order id synced and reopened without duplicate draft')
+
+    await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])
 
     const claimOrderNumber = 'WEB-CLAIM-001'

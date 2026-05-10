@@ -1,5 +1,5 @@
 export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations'
-export type PosKnowledgeTarget = 'order' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
+export type PosKnowledgeTarget = 'floor' | 'order' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
 
 export interface PosKnowledgeCategoryOption {
   value: PosKnowledgeCategory
@@ -97,6 +97,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     ],
     keywords: ['快速出店', '出店', '外帶', '外送', '已付款', '完成時間', '來源', '批次', 'iCHEF'],
     target: 'queue',
+  },
+  {
+    id: 'waitline-preorder',
+    category: 'orders',
+    title: '候位提前點餐與入座出單',
+    summary: '候位客可先建立內用草稿單，入座後直接轉到桌位並載回同一張點餐單。',
+    steps: [
+      '在桌位地圖按「新增候位」，輸入姓名、電話、人數與備註。',
+      '候位列按「提前點餐」會建立內用草稿單，帶入候位客資訊並切到點餐頁。',
+      '等候期間可加入商品、註記與暫停出單；草稿單與候位關聯會同步到 Supabase，不只存在本機。',
+      '回桌位地圖後，候位列會顯示提前點餐單號、品項數與金額，按「開啟點餐」可續編同一張單。',
+      '有空桌時選擇空桌並按候位的入座按鈕，系統會把同一張單轉成該桌內用單並載入點餐頁，接著可出單或結帳。',
+    ],
+    keywords: ['候位', '提前點餐', '預點餐', '入座', '桌位', '草稿單', '內用', 'iCHEF'],
+    target: 'floor',
   },
   {
     id: 'supply-batch',

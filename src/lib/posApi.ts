@@ -1604,6 +1604,8 @@ const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
       return []
     }
 
+    const orderId = typeof source.orderId === 'string' ? source.orderId.trim().slice(0, 80) : ''
+
     return [{
       id: typeof source.id === 'string' && source.id ? source.id.slice(0, 80) : `wait-${timestamp}`,
       name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 40) : '候位客',
@@ -1614,6 +1616,7 @@ const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
       partySize: Math.min(20, Math.max(1, Math.trunc(Number(source.partySize) || 1))),
       createdAt,
       note: typeof source.note === 'string' ? source.note.trim().slice(0, 120) : '',
+      ...(orderId ? { orderId } : {}),
     }]
   }).slice(0, 60)
 }
