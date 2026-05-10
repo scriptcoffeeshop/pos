@@ -55,6 +55,17 @@ const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
   { value: 'dine-in', label: '內用' },
   { value: 'delivery', label: '外送' },
 ]
+const serviceModeLabels = serviceModeOptions.reduce<Record<ServiceMode, string>>(
+  (labels, option) => {
+    labels[option.value] = option.label
+    return labels
+  },
+  {
+    'dine-in': '內用',
+    takeout: '自取',
+    delivery: '外送',
+  },
+)
 
 const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: 'line-pay', label: 'LINE Pay' },
@@ -190,12 +201,18 @@ const menuGroups = computed(() =>
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
-const canOrderOnline = computed(() => onlineOrdering.value.enabled)
-const onlineStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放接單' : '暫停接單'))
+const serviceModeOpen = (mode: ServiceMode): boolean => onlineOrdering.value.serviceModeAvailability[mode] !== false
+const currentServiceModeOpen = computed(() => serviceModeOpen(serviceMode.value))
+const canOrderOnline = computed(() => onlineOrdering.value.enabled && currentServiceModeOpen.value)
+const onlineStatusLabel = computed(() =>
+  onlineOrdering.value.enabled && currentServiceModeOpen.value ? '開放接單' : '暫停接單',
+)
 const onlineStatusDetail = computed(() =>
-  onlineOrdering.value.enabled
-    ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
-    : onlineOrdering.value.pauseMessage,
+  !onlineOrdering.value.enabled
+    ? onlineOrdering.value.pauseMessage
+    : currentServiceModeOpen.value
+      ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+      : `目前不開放${serviceModeLabels[serviceMode.value]}訂單`,
 )
 const requestedFulfillmentMinimum = computed(() => {
   const nextTime = new Date(Date.now() + Math.max(onlineOrdering.value.averagePrepMinutes, 0) * 60_000)
@@ -345,7 +362,7 @@ const addConfiguredLine = (item: MenuItem, options: string[], unitPrice: number)
 
 const addItem = (item: MenuItem): void => {
   if (!canOrderOnline.value) {
-    formError.value = onlineOrdering.value.pauseMessage
+    formError.value = onlineStatusDetail.value
     return
   }
 
@@ -494,7 +511,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
 
 const submitOnlineOrder = async (): Promise<void> => {
   if (!canOrderOnline.value) {
-    formError.value = onlineOrdering.value.pauseMessage
+    formError.value = onlineStatusDetail.value
     return
   }
 
@@ -618,6 +635,21 @@ watch(
       customer.requestedFulfillmentAt = ''
     }
   },
+)
+
+watch(
+  () => onlineOrdering.value.serviceModeAvailability,
+  () => {
+    if (qrTableLabel || serviceModeOpen(serviceMode.value)) {
+      return
+    }
+
+    const fallbackMode = serviceModeOptions.find((option) => serviceModeOpen(option.value))?.value
+    if (fallbackMode) {
+      serviceMode.value = fallbackMode
+    }
+  },
+  { deep: true },
 )
 </script>
 
@@ -783,6 +815,8 @@ watch(
           class="segment-button"
           :class="{ 'segment-button--active': serviceMode === mode.value }"
           type="button"
+          :disabled="!serviceModeOpen(mode.value)"
+          :title="serviceModeOpen(mode.value) ? mode.label : `目前不開放${mode.label}`"
           @click="serviceMode = mode.value"
         >
           {{ mode.label }}

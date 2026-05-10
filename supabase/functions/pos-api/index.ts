@@ -322,9 +322,11 @@ interface OnlineMenuCategory {
 
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
+type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
 
 interface OnlineOrderingSettings {
   enabled: boolean;
+  serviceModeAvailability: OnlineServiceModeAvailability;
   allowScheduledOrders: boolean;
   averagePrepMinutes: number;
   unconfirmedReminderMinutes: number;
@@ -668,6 +670,11 @@ const defaultAccessControl: AccessControlSettings = {
 
 const defaultOnlineOrdering: OnlineOrderingSettings = {
   enabled: true,
+  serviceModeAvailability: {
+    "dine-in": true,
+    takeout: true,
+    delivery: true,
+  },
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
@@ -2664,12 +2671,17 @@ api.post("/orders", async (c) => {
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
   if (orderSource === "online" || orderSource === "qr") {
-    const onlineOrdering = await loadSetting<OnlineOrderingSettings>(
+    const rawOnlineOrdering = await loadSetting<OnlineOrderingSettings>(
       "online_ordering",
       defaultOnlineOrdering,
     );
+    const onlineOrdering = normalizeOnlineOrderingForRuntime(rawOnlineOrdering);
     if (!onlineOrdering.enabled) {
       return c.json({ error: onlineOrdering.pauseMessage }, 409);
+    }
+    const serviceMode = input.serviceMode ?? "takeout";
+    if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
+      return c.json({ error: "Selected service mode is disabled" }, 409);
     }
     if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
       return c.json({ error: "Scheduled online orders are disabled" }, 409);
@@ -4273,6 +4285,18 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
 
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
+const normalizeOnlineServiceModeAvailability = (
+  input: unknown,
+): OnlineServiceModeAvailability => {
+  const availability = input && typeof input === "object" && !Array.isArray(input)
+    ? input as Partial<Record<ServiceMode, boolean>>
+    : {};
+
+  return serviceModes.reduce<OnlineServiceModeAvailability>((normalized, mode) => {
+    normalized[mode] = availability[mode] !== false;
+    return normalized;
+  }, { ...defaultOnlineOrdering.serviceModeAvailability });
+};
 const knownPermissions = [
   "manageProducts",
   "managePrinting",
@@ -5612,6 +5636,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
 
   return {
     enabled: settings.enabled !== false,
+    serviceModeAvailability: normalizeOnlineServiceModeAvailability(settings.serviceModeAvailability),
     allowScheduledOrders: settings.allowScheduledOrders !== false,
     averagePrepMinutes: Number.isInteger(averagePrepMinutes)
       ? Math.min(Math.max(averagePrepMinutes, 0), 180)
@@ -5913,6 +5938,7 @@ const validateOnlineOrdering = (input: unknown): {
   return {
     value: {
       enabled: Boolean(settings.enabled),
+      serviceModeAvailability: normalizeOnlineServiceModeAvailability(settings.serviceModeAvailability),
       allowScheduledOrders: Boolean(settings.allowScheduledOrders),
       averagePrepMinutes,
       unconfirmedReminderMinutes,

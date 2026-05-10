@@ -911,6 +911,11 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
 
 export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   enabled: true,
+  serviceModeAvailability: {
+    'dine-in': true,
+    takeout: true,
+    delivery: true,
+  },
   allowScheduledOrders: true,
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
@@ -934,6 +939,7 @@ const notificationRepeatModes = new Set<OnlineNotificationRepeatMode>(['once', '
 const reservationSpecialDateModes = new Set<ReservationSpecialDateMode>(['closed', 'custom-hours'])
 const reservationTimePattern = /^\d{2}:\d{2}$/
 const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
+const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
@@ -1230,6 +1236,13 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
 
   return {
     enabled: typeof settings.enabled === 'boolean' ? settings.enabled : defaults.enabled,
+    serviceModeAvailability:
+      settings.serviceModeAvailability && typeof settings.serviceModeAvailability === 'object'
+        ? serviceModes.reduce<OnlineOrderingSettings['serviceModeAvailability']>((availability, mode) => {
+          availability[mode] = (settings.serviceModeAvailability as Partial<Record<ServiceMode, boolean>>)[mode] !== false
+          return availability
+        }, { ...defaults.serviceModeAvailability })
+        : { ...defaults.serviceModeAvailability },
     allowScheduledOrders:
       typeof settings.allowScheduledOrders === 'boolean' ? settings.allowScheduledOrders : defaults.allowScheduledOrders,
     averagePrepMinutes: Number.isFinite(settings.averagePrepMinutes)

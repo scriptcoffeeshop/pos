@@ -172,6 +172,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-service-mode-availability',
+    category: 'online',
+    title: '線上服務方式開關',
+    summary: '後台可像 iCHEF 功能狀態一樣，分別暫停自取、內用掃碼或外送送單。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '保持線上點餐總開關開啟時，可分別調整「開放自取」「開放內用掃碼」與「開放外送」。',
+      '被關閉的服務方式會在消費者頁停用，並顯示目前不開放該方式訂單。',
+      '即使消費者用舊頁面或 API 嘗試送單，後端也會用 `online_ordering.serviceModeAvailability` 拒絕。',
+      '這些開關存在 runtime setting，換平板、重開 App 或 fresh reinstall 後仍會同步。',
+    ],
+    keywords: ['功能狀態', '營業狀態', '自取', '內用掃碼', '外送', '暫停接單', '線上點餐', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'reservation-blacklist',
     category: 'reservations',
     title: '線上訂位黑名單',
