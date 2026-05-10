@@ -144,6 +144,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'order-label-management',
+    category: 'orders',
+    title: '標籤管理與點餐標示',
+    summary: '工具箱「標籤管理」可維護店內常用服務標籤，點餐時快速標示並寫入訂單紀錄。',
+    steps: [
+      '開啟工具箱「標籤管理」，新增、改名、調整顏色或刪除訂單標籤。',
+      '儲存前需進入後台編輯模式；標籤會寫入 `engagement_settings.orderLabels` runtime setting。',
+      '回到點餐頁後，標籤列會使用同一份設定，按標籤可加入或取消目前訂單的標示。',
+      '訂單送出後標籤會寫入訂單欄位，POS 與後台紀錄都能追查，fresh reinstall 後仍從資料庫還原。',
+    ],
+    keywords: ['標籤', '標籤管理', '訂單標籤', '服務標籤', '備註', 'POS', '後台紀錄'],
+    target: 'order',
+  },
+  {
     id: 'waitline-preorder',
     category: 'orders',
     title: '候位提前點餐與入座出單',

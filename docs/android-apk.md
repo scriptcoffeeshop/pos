@@ -306,6 +306,7 @@ rtk npm run apk:install:fresh
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
 - 測付款拆單時，子單必須寫入 `orders.payment_splits`；另一台平板、App 重開與 fresh reinstall 都要看到同一子單數、未結張數、付款方式與已結狀態。
 - 測關帳員工識別碼時，`POST /register/close` 必須帶 `staffCode` 並由 `access_control.staffAccounts` 驗證啟用員工；操作員資料應只出現在 `pos_audit_events.register.close` metadata，不應保存在 APK localStorage。
+- 測工具箱標籤管理時，新增、改名、調整顏色或刪除標籤後必須寫入 `engagement_settings.orderLabels`；點餐頁標籤列與送出後的 `orders.order_labels` 應跟同一份設定一致，fresh reinstall 後不得靠本機快取顯示。
 - 測混合支付時，付款分配必須寫入 `orders.payment_breakdown`，交易明細張數必須寫入 `orders.transaction_receipt_count`；關帳付款方式金額要依分配後金額計算。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。

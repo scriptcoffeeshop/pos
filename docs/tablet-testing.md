@@ -185,6 +185,16 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 輸入啟用員工識別碼完成關班後，確認平板 B 透過 `register_sessions` realtime invalidation 重拉 `/register/current` 並看到 closed session。
 6. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認班別仍為已關班，且後台「操作稽核」的 `register.close` metadata 仍可追查操作員姓名、識別碼與角色。
 
+## 多平板標籤管理
+
+工具箱標籤管理走 `engagement_settings.orderLabels` runtime，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 平板 A 連點工具箱 6 下進入後台編輯模式，開啟工具箱「標籤管理」。
+2. 新增一個訂單標籤並調整顏色，儲存後確認平板 A 點餐頁標籤列立即出現。
+3. 平板 B 不重整時應透過 runtime settings realtime/fallback 重拉設定，點餐頁也看到同一標籤。
+4. 平板 B 建立訂單並勾選該標籤，送出後確認訂單明細顯示該標籤。
+5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認標籤仍從 `engagement_settings` 還原，既有訂單仍從 `orders.order_labels` 顯示勾選結果。
+
 ## 多平板員工打卡
 
 員工帳號與打卡紀錄走 `pos-api` 與 Supabase，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

@@ -8717,6 +8717,74 @@ button.cart-line-summary:focus-visible {
   font-weight: 950;
 }
 
+.label-management-panel {
+  gap: 12px;
+}
+
+.label-management-intro,
+.label-management-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.label-management-intro p,
+.label-management-message,
+.label-management-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.label-management-intro p {
+  max-width: 58ch;
+}
+
+.label-management-list {
+  display: grid;
+  gap: 10px;
+}
+
+.label-management-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.label-management-row input[type='text'] {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.label-management-row input[type='color'] {
+  width: 48px;
+  height: 44px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.label-management-row .icon-button {
+  width: 44px;
+  height: 44px;
+}
+
 .time-clock-form {
   display: grid;
   gap: 12px;
@@ -10866,8 +10934,15 @@ button.cart-line-summary:focus-visible {
   .cash-drawer-action-grid,
   .cash-drawer-history-grid,
   .cash-drawer-target,
-  .cash-drawer-history-row {
+  .cash-drawer-history-row,
+  .label-management-row {
     grid-template-columns: 1fr;
+  }
+
+  .label-management-intro,
+  .label-management-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .workspace--queue .order-row {
