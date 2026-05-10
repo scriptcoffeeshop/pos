@@ -210,6 +210,15 @@ rtk npm run apk:install:fresh
 3. 到後台「權限」刷新打卡紀錄，確認可看到員工、角色、站台與時間；到「操作稽核」確認 `員工打卡` 事件。
 4. 再跑一次 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台仍可讀到同一批打卡紀錄，代表資料來自資料庫而不是 local storage。
 
+## 目前營業概況與系統資訊
+
+工具箱的「目前營業概況」與「系統資訊」只讀取既有 POS API、訂單、班別、runtime 與工作站心跳狀態，不新增 APK 本機資料。實機測試建議：
+
+1. 開班後建立一張待收款單與一張已付款單，回工具箱開啟「目前營業概況」。
+2. 確認顯示餐期起點、未結帳金額、已結帳金額，以及內用/外帶/外送拆分。
+3. 開啟「系統資訊」，確認平台、POS API、工作站、線上接單、桌位圖、列印站、商品供應與班別都有值。
+4. 按「重新同步」後確認資料仍來自後端；再跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認面板可重新由 Supabase/API 狀態還原。
+
 ## 訂位黑名單
 
 訂位黑名單由後台「iCHEF 補齊」頁管理，資料寫入 Supabase `reservation_blacklist_entries`，不是 APK 本機資料。APK fresh reinstall 後應仍能從 `pos-api` 讀到同一份名單。

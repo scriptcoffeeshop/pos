@@ -703,6 +703,12 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await targetPage.locator('.toolbox-card').filter({ hasText: '桌位地圖' }).click()
     await targetPage.locator('.floor-section').waitFor({ state: 'visible', timeout: 8_000 })
   }
+  const closeToolboxPanel = async (targetPage) => {
+    const backOrClose = targetPage.locator('.utility-modal-header .icon-button').first()
+    await backOrClose.click()
+    await backOrClose.click()
+    await targetPage.locator('.utility-modal').waitFor({ state: 'hidden', timeout: 5_000 })
+  }
   const makeTablet = async (stationId) => {
     const consoleMessages = []
     const pageErrors = []
@@ -800,6 +806,20 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await waitForText(tabletB.page, '拆單 2 張', 12_000)
     await waitForText(tabletB.page, '混合支付 1 筆', 12_000)
     record('split bill and mixed payment state persisted and appeared on tablet B queue')
+
+    await tabletB.page.locator('.floating-toolbox-button').click()
+    await tabletB.page.locator('.toolbox-card').filter({ hasText: '目前營業概況' }).click()
+    await waitForText(tabletB.page, '未結帳金額', 8_000)
+    await waitForText(tabletB.page, '已結帳金額', 8_000)
+    await tabletB.page.locator('.current-sales-mode-list').getByText('內用').waitFor({ state: 'visible', timeout: 8_000 })
+    await closeToolboxPanel(tabletB.page)
+    await tabletB.page.locator('.floating-toolbox-button').click()
+    await tabletB.page.locator('.toolbox-card').filter({ hasText: '系統資訊' }).click()
+    await waitForText(tabletB.page, 'POS API', 8_000)
+    await waitForText(tabletB.page, '工作站', 8_000)
+    await waitForText(tabletB.page, '列印站', 8_000)
+    await closeToolboxPanel(tabletB.page)
+    record('current sales and system information toolbox panels rendered from synced runtime state')
 
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])
