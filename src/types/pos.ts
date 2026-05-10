@@ -386,8 +386,11 @@ export interface ReservationWebsiteSettings {
   maxPartySize: number
   slotMinutes: number
   durationMinutes: number
+  seatHoldMinutes: number
   leadMinutes: number
   bookingWindowDays: number
+  allowTableCombinations: boolean
+  onlineTableIds: string[]
   businessHours: ReservationBusinessHour[]
 }
 
@@ -459,6 +462,7 @@ export interface PosReservation {
   reservedAt: string
   status: ReservationStatus
   importantLabel: string
+  assignedTableIds: string[]
   preOrder: CartLine[]
   note: string
   createdAt: string

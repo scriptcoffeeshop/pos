@@ -28,6 +28,7 @@ import {
   createAdminReservation,
   createAdminReservationBlacklistEntry,
   defaultEngagementSettings,
+  defaultFloorPlanSettings,
   fetchAdminAuditEvents,
   fetchAdminCoupons,
   fetchAdminDailyReport,
@@ -50,6 +51,7 @@ import type {
   AdminPermission,
   CustomerEngagementSettings,
   DailySalesReport,
+  FloorPlanSettings,
   MemberCoupon,
   MenuCategory,
   MenuItem,
@@ -413,6 +415,7 @@ const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
 const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
+const floorPlan = ref<FloorPlanSettings>(defaultFloorPlanSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
@@ -1214,6 +1217,7 @@ const loadAdminData = async (): Promise<void> => {
     accessControl.value = cloneAccessControl(settings.accessControl)
     onlineOrdering.value = cloneOnlineOrdering(settings.onlineOrdering)
     engagementSettings.value = cloneEngagementSettings(settings.engagementSettings)
+    floorPlan.value = settings.floorPlan
     auditEvents.value = events
     paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
@@ -1596,6 +1600,24 @@ const addSupplyWindow = (): void => {
 const removeSupplyWindow = (windowId: string): void => {
   engagementSettings.value.supplyRules.defaultPeriods =
     engagementSettings.value.supplyRules.defaultPeriods.filter((period) => period.id !== windowId)
+}
+
+const isReservationTableOnline = (tableId: string): boolean =>
+  engagementSettings.value.reservationWebsite.onlineTableIds.length === 0 ||
+  engagementSettings.value.reservationWebsite.onlineTableIds.includes(tableId)
+
+const setReservationTableOnline = (tableId: string, event: Event): void => {
+  const enabled = (event.target as HTMLInputElement | null)?.checked === true
+  const currentIds = engagementSettings.value.reservationWebsite.onlineTableIds.length === 0
+    ? floorPlan.value.tables.map((table) => table.id)
+    : engagementSettings.value.reservationWebsite.onlineTableIds
+  const nextIds = new Set(currentIds)
+  if (enabled) {
+    nextIds.add(tableId)
+  } else {
+    nextIds.delete(tableId)
+  }
+  engagementSettings.value.reservationWebsite.onlineTableIds = [...nextIds]
 }
 
 const updateEngagementCustomerTypes = (event: Event): void => {
@@ -2500,7 +2522,7 @@ const saveAccessControl = async (): Promise<void> => {
               <span>{{ formatAuditTime(reservation.reservedAt) }} · {{ reservation.customerName }}</span>
               <strong>{{ reservation.partySize }} 人</strong>
               <small>
-                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '黑名單' : (reservation.importantLabel || reservation.status) }}
+                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '黑名單' : (reservation.assignedTableIds.length > 0 ? reservation.assignedTableIds.join(' / ') : (reservation.importantLabel || reservation.status)) }}
               </small>
               <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'seated')">入座</button>
               <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'cancelled')">取消</button>
@@ -2560,12 +2582,23 @@ const saveAccessControl = async (): Promise<void> => {
                 <input v-model.number="engagementSettings.reservationWebsite.durationMinutes" type="number" min="15" max="480" step="15" />
               </label>
               <label>
+                座位保留（分）
+                <input v-model.number="engagementSettings.reservationWebsite.seatHoldMinutes" type="number" min="0" max="30" step="5" />
+              </label>
+              <label>
                 最早提前（分）
                 <input v-model.number="engagementSettings.reservationWebsite.leadMinutes" type="number" min="1" max="1440" step="5" />
               </label>
               <label>
                 開放天數
                 <input v-model.number="engagementSettings.reservationWebsite.bookingWindowDays" type="number" min="1" max="60" />
+              </label>
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.reservationWebsite.allowTableCombinations" type="checkbox" />
+                人數超過單桌時允許併桌
               </label>
             </div>
 
@@ -2584,6 +2617,18 @@ const saveAccessControl = async (): Promise<void> => {
                 <input v-model="period.end" type="time" />
                 <span class="panel-note">{{ period.enabled ? '開放' : '關閉' }}</span>
               </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <strong>可線上訂位桌位</strong>
+              <label v-for="table in floorPlan.tables" :key="table.id" class="toggle-row">
+                <input
+                  :checked="isReservationTableOnline(table.id)"
+                  type="checkbox"
+                  @change="setReservationTableOnline(table.id, $event)"
+                />
+                {{ table.floorId }} · {{ table.label }} · {{ table.capacity }} 人
+              </label>
             </div>
           </section>
 
