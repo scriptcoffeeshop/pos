@@ -341,11 +341,11 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   showTaxIdField: false,
   showCarrierBarcodeField: false,
   paymentMethods: [
-    { id: 'line-pay', label: 'LINE Pay', enabled: true },
-    { id: 'jkopay', label: '街口', enabled: true },
-    { id: 'cash', label: '取餐時付款', enabled: true },
-    { id: 'card', label: '線上刷卡', enabled: false },
-    { id: 'transfer', label: '轉帳', enabled: false },
+    { id: 'line-pay', label: 'LINE Pay', enabled: true, opensCashDrawer: false },
+    { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
+    { id: 'cash', label: '取餐時付款', enabled: true, opensCashDrawer: true },
+    { id: 'card', label: '線上刷卡', enabled: false, opensCashDrawer: false },
+    { id: 'transfer', label: '轉帳', enabled: false, opensCashDrawer: false },
   ],
   deliveryFeeAmount: 60,
   deliveryMinimumSubtotal: 0,
@@ -1637,6 +1637,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
           id: method.id,
           label: method.label.trim().slice(0, 24) || method.id,
           enabled: Boolean(method.enabled),
+          opensCashDrawer: Boolean(method.opensCashDrawer),
         })),
         deliveryFeeAmount: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.deliveryFeeAmount) || 0), 0), 999_999),
         deliveryMinimumSubtotal: Math.min(
@@ -2539,6 +2540,10 @@ const saveAccessControl = async (): Promise<void> => {
                 <label class="toggle-row">
                   <input v-model="method.enabled" type="checkbox" />
                   啟用
+                </label>
+                <label class="toggle-row">
+                  <input v-model="method.opensCashDrawer" type="checkbox" />
+                  結帳開錢櫃
                 </label>
                 <label>
                   顯示名稱

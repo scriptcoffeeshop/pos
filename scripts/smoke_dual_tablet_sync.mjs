@@ -92,6 +92,13 @@ const onlineOrdering = {
   soundEnabled: false,
   notificationRepeatMode: 'once',
   notificationVolume: 0,
+  paymentMethods: [
+    { id: 'line-pay', label: 'LINE Pay', enabled: true, opensCashDrawer: false },
+    { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
+    { id: 'cash', label: '取餐時付款', enabled: true, opensCashDrawer: true },
+    { id: 'card', label: '線上刷卡', enabled: false, opensCashDrawer: false },
+    { id: 'transfer', label: '轉帳', enabled: false, opensCashDrawer: false },
+  ],
   pauseMessage: 'Online ordering is paused',
   menuCategories: [],
   availableOptionChoices: [],
@@ -545,6 +552,23 @@ const createMockApiServer = async () => {
       return
     }
 
+    const paymentMatch = path.match(/^\/orders\/([^/]+)\/payment$/)
+    if (paymentMatch && req.method === 'PATCH') {
+      const input = await readJson(req)
+      const order = resolveOrder(state, paymentMatch[1])
+      if (!order) {
+        sendJson(res, 404, { error: 'Order not found' })
+        return
+      }
+
+      order.payment_status = input.paymentStatus ?? 'paid'
+      order.claimed_by = input.stationId ?? req.headers['x-pos-station-id'] ?? order.claimed_by
+      order.claimed_at = order.claimed_at ?? nowIso()
+      order.claim_expires_at = order.claim_expires_at ?? new Date(Date.now() + leaseSeconds * 1000).toISOString()
+      sendJson(res, 200, { order })
+      return
+    }
+
     const claimMatch = path.match(/^\/orders\/([^/]+)\/claim$/)
     if (claimMatch && req.method === 'POST') {
       const input = await readJson(req)
@@ -892,6 +916,35 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await waitForText(tabletA.page, cashDrawerReason, 8_000)
     await closeToolboxPanel(tabletA.page)
     record('cash drawer open event persisted and loaded on another tablet')
+
+    const autoCashDrawerOrderNumber = 'AUTOCASH-001'
+    await control('/add-online-order', {
+      method: 'POST',
+      body: JSON.stringify({
+        orderNumber: autoCashDrawerOrderNumber,
+        source: 'counter',
+        customer_name: 'Auto Drawer',
+        payment_method: 'cash',
+        payment_status: 'pending',
+        status: 'ready',
+      }),
+    })
+    await openFloorWorkspaceFromToolbox(tabletA.page)
+    await openQueueWorkspace(tabletA.page)
+    await waitForText(tabletA.page, 'Auto Drawer', 12_000)
+    const autoCashDrawerRow = tabletA.page.locator('.order-row').filter({ hasText: 'Auto Drawer' }).first()
+    await autoCashDrawerRow.click()
+    await tabletA.page.waitForFunction(() => {
+      const button = document.querySelector('.active-order-payment-button')
+      return Boolean(button && !button.disabled)
+    })
+    await tabletA.page.locator('.active-order-payment-button').first().evaluate((button) => button.click())
+    await waitForState((snapshot) => snapshot.cashDrawerEvents.some((event) => (
+      event.reason === '結帳開啟 ' + autoCashDrawerOrderNumber &&
+      event.station_id === 'tablet-A111' &&
+      event.delivery_status === 'preview'
+    )), 'cash drawer payment switch opened drawer after cash checkout')
+    record('payment module cash drawer switch opened drawer after cash checkout')
 
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])

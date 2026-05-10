@@ -1025,11 +1025,11 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
 }
 
 const defaultOnlinePaymentMethods = (): OnlineOrderingSettings['paymentMethods'] => [
-  { id: 'line-pay', label: 'LINE Pay', enabled: true },
-  { id: 'jkopay', label: '街口', enabled: true },
-  { id: 'cash', label: '取餐時付款', enabled: true },
-  { id: 'card', label: '線上刷卡', enabled: false },
-  { id: 'transfer', label: '轉帳', enabled: false },
+  { id: 'line-pay', label: 'LINE Pay', enabled: true, opensCashDrawer: false },
+  { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
+  { id: 'cash', label: '取餐時付款', enabled: true, opensCashDrawer: true },
+  { id: 'card', label: '線上刷卡', enabled: false, opensCashDrawer: false },
+  { id: 'transfer', label: '轉帳', enabled: false, opensCashDrawer: false },
 ]
 
 const defaultScheduledOrderTimeWindows = (): OnlineOrderingSettings['scheduledOrderTimeWindows'] => [
@@ -1432,12 +1432,17 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
       }
 
       seenPaymentMethods.add(method.id)
+      const defaultMethod = defaults.paymentMethods.find((entry) => entry.id === method.id)
       return [{
         id: method.id,
         label: typeof method.label === 'string' && method.label.trim()
           ? method.label.trim().slice(0, 24)
-          : (defaults.paymentMethods.find((defaultMethod) => defaultMethod.id === method.id)?.label ?? method.id),
+          : (defaultMethod?.label ?? method.id),
         enabled: method.enabled !== false,
+        opensCashDrawer:
+          typeof method.opensCashDrawer === 'boolean'
+            ? method.opensCashDrawer
+            : (defaultMethod?.opensCashDrawer ?? method.id === 'cash'),
       }]
     })
     : defaults.paymentMethods.map((method) => ({ ...method }))
