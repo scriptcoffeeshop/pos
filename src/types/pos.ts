@@ -277,10 +277,22 @@ export interface OnlinePaymentMethodSetting {
   enabled: boolean
 }
 
+export interface OnlineScheduledOrderTimeWindow {
+  id: string
+  label: string
+  days: number[]
+  start: string
+  end: string
+  allDay: boolean
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
   allowScheduledOrders: boolean
+  scheduledOrderIntervalMinutes: number
+  scheduledOrderMaxDays: number
+  scheduledOrderTimeWindows: OnlineScheduledOrderTimeWindow[]
   averagePrepMinutes: number
   unconfirmedReminderMinutes: number
   acceptanceRequired: boolean

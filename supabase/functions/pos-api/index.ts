@@ -326,6 +326,15 @@ interface OnlinePaymentMethodSetting {
   enabled: boolean;
 }
 
+interface OnlineScheduledOrderTimeWindow {
+  id: string;
+  label: string;
+  days: number[];
+  start: string;
+  end: string;
+  allDay: boolean;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -334,6 +343,9 @@ interface OnlineOrderingSettings {
   enabled: boolean;
   serviceModeAvailability: OnlineServiceModeAvailability;
   allowScheduledOrders: boolean;
+  scheduledOrderIntervalMinutes: number;
+  scheduledOrderMaxDays: number;
+  scheduledOrderTimeWindows: OnlineScheduledOrderTimeWindow[];
   averagePrepMinutes: number;
   unconfirmedReminderMinutes: number;
   acceptanceRequired: boolean;
@@ -687,6 +699,17 @@ const defaultOnlinePaymentMethods = (): OnlinePaymentMethodSetting[] => [
   { id: "transfer", label: "轉帳", enabled: false },
 ];
 
+const defaultScheduledOrderTimeWindows = (): OnlineScheduledOrderTimeWindow[] => [
+  {
+    id: "daily",
+    label: "每日",
+    days: [1, 2, 3, 4, 5, 6, 0],
+    start: "00:00",
+    end: "23:59",
+    allDay: true,
+  },
+];
+
 const defaultOnlineOrdering: OnlineOrderingSettings = {
   enabled: true,
   serviceModeAvailability: {
@@ -695,6 +718,9 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     delivery: true,
   },
   allowScheduledOrders: true,
+  scheduledOrderIntervalMinutes: 15,
+  scheduledOrderMaxDays: 7,
+  scheduledOrderTimeWindows: defaultScheduledOrderTimeWindows(),
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
   acceptanceRequired: true,
@@ -2732,8 +2758,9 @@ api.post("/orders", async (c) => {
       }
       input.extraFeeAmount = calculateOnlineDeliveryFee(chargeableSubtotal, onlineOrdering);
     }
-    if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
-      return c.json({ error: "Scheduled online orders are disabled" }, 409);
+    const scheduleValidationError = validateOnlineRequestedFulfillmentAt(requestedFulfillmentAt, serviceMode, onlineOrdering);
+    if (scheduleValidationError) {
+      return c.json({ error: scheduleValidationError }, 409);
     }
   }
 
@@ -4336,6 +4363,7 @@ const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "transfer"];
 const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card"]);
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
+const onlineTimePattern = /^\d{2}:\d{2}$/;
 const onlineDeliveryChargeableAmount = (input: CreateOrderInput): number =>
   Math.max(
     0,
@@ -4348,6 +4376,78 @@ const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSe
     return 0;
   }
   return settings.deliveryFeeAmount;
+};
+const onlineOrderLeadMinutes = (serviceMode: ServiceMode, settings: OnlineOrderingSettings): number =>
+  settings.averagePrepMinutes + (serviceMode === "delivery" ? settings.deliveryTravelMinutes : 0);
+const onlineScheduledLocalParts = (requestedAt: string) => {
+  const requestedDate = new Date(requestedAt);
+  const localDate = new Date(requestedDate.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  return {
+    day: localDate.getUTCDay(),
+    minutes: localDate.getUTCHours() * 60 + localDate.getUTCMinutes(),
+  };
+};
+const onlineScheduledWindowMatches = (
+  requestedAt: string,
+  settings: OnlineOrderingSettings,
+): boolean => {
+  const windows = settings.scheduledOrderTimeWindows.length > 0
+    ? settings.scheduledOrderTimeWindows
+    : defaultScheduledOrderTimeWindows();
+  const interval = settings.scheduledOrderIntervalMinutes;
+  const { day, minutes } = onlineScheduledLocalParts(requestedAt);
+
+  return windows.some((window) => {
+    if (!window.days.includes(day)) {
+      return false;
+    }
+
+    const start = window.allDay ? 0 : timeToMinutes(window.start);
+    const end = window.allDay ? 23 * 60 + 59 : timeToMinutes(window.end);
+    const inRange = start <= end
+      ? minutes >= start && minutes <= end
+      : minutes >= start || minutes <= end;
+    if (!inRange) {
+      return false;
+    }
+
+    return ((minutes - start) % interval + interval) % interval === 0;
+  });
+};
+const validateOnlineRequestedFulfillmentAt = (
+  requestedFulfillmentAt: string | null,
+  serviceMode: ServiceMode,
+  settings: OnlineOrderingSettings,
+): string | null => {
+  if (!requestedFulfillmentAt) {
+    return null;
+  }
+
+  if (!settings.allowScheduledOrders) {
+    return "Scheduled online orders are disabled";
+  }
+
+  const requestedTime = new Date(requestedFulfillmentAt).getTime();
+  if (!Number.isFinite(requestedTime)) {
+    return "requestedFulfillmentAt must be a valid ISO datetime";
+  }
+
+  const now = Date.now();
+  const minTime = now + onlineOrderLeadMinutes(serviceMode, settings) * 60_000;
+  if (requestedTime < minTime - 60_000) {
+    return "Requested fulfillment time is too soon";
+  }
+
+  const maxTime = now + settings.scheduledOrderMaxDays * 24 * 60 * 60_000;
+  if (requestedTime > maxTime + 60_000) {
+    return "Requested fulfillment time exceeds the scheduled order range";
+  }
+
+  if (!onlineScheduledWindowMatches(requestedFulfillmentAt, settings)) {
+    return "Requested fulfillment time is outside scheduled order windows";
+  }
+
+  return null;
 };
 const normalizeOnlineServiceModeAvailability = (
   input: unknown,
@@ -4389,6 +4489,44 @@ const normalizeOnlinePaymentMethods = (input: unknown): OnlinePaymentMethodSetti
   });
 
   return normalized.length > 0 ? normalized : defaultOnlinePaymentMethods();
+};
+
+const normalizeScheduledOrderTimeWindows = (input: unknown): OnlineScheduledOrderTimeWindow[] => {
+  if (!Array.isArray(input)) {
+    return defaultScheduledOrderTimeWindows();
+  }
+
+  const seen = new Set<string>();
+  const windows = input.flatMap((entry, index): OnlineScheduledOrderTimeWindow[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const window = entry as Partial<OnlineScheduledOrderTimeWindow>;
+    const id = sanitizeText(window.id, `pickup-window-${index + 1}`).slice(0, 80);
+    if (!id || seen.has(id)) {
+      return [];
+    }
+
+    const days = Array.isArray(window.days)
+      ? [...new Set(window.days.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+      : [1, 2, 3, 4, 5, 6, 0];
+    if (days.length === 0) {
+      return [];
+    }
+
+    seen.add(id);
+    return [{
+      id,
+      label: sanitizeText(window.label, `取餐時段 ${index + 1}`).slice(0, 24),
+      days,
+      start: typeof window.start === "string" && onlineTimePattern.test(window.start) ? window.start : "00:00",
+      end: typeof window.end === "string" && onlineTimePattern.test(window.end) ? window.end : "23:59",
+      allDay: window.allDay === true,
+    }];
+  });
+
+  return windows.length > 0 ? windows.slice(0, 20) : defaultScheduledOrderTimeWindows();
 };
 const knownPermissions = [
   "manageProducts",
@@ -5731,6 +5869,19 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     enabled: settings.enabled !== false,
     serviceModeAvailability: normalizeOnlineServiceModeAvailability(settings.serviceModeAvailability),
     allowScheduledOrders: settings.allowScheduledOrders !== false,
+    scheduledOrderIntervalMinutes: clampIntegerRange(
+      settings.scheduledOrderIntervalMinutes,
+      defaultOnlineOrdering.scheduledOrderIntervalMinutes,
+      5,
+      120,
+    ),
+    scheduledOrderMaxDays: clampIntegerRange(
+      settings.scheduledOrderMaxDays,
+      defaultOnlineOrdering.scheduledOrderMaxDays,
+      1,
+      60,
+    ),
+    scheduledOrderTimeWindows: normalizeScheduledOrderTimeWindows(settings.scheduledOrderTimeWindows),
     averagePrepMinutes: Number.isInteger(averagePrepMinutes)
       ? Math.min(Math.max(averagePrepMinutes, 0), 180)
       : defaultOnlineOrdering.averagePrepMinutes,
@@ -6021,6 +6172,18 @@ const validateOnlineOrdering = (input: unknown): {
   const averagePrepMinutes = Number(settings.averagePrepMinutes);
   const unconfirmedReminderMinutes = Number(settings.unconfirmedReminderMinutes);
   const notificationVolume = Number(settings.notificationVolume ?? defaultOnlineOrdering.notificationVolume);
+  const scheduledOrderIntervalMinutes = clampIntegerRange(
+    settings.scheduledOrderIntervalMinutes,
+    defaultOnlineOrdering.scheduledOrderIntervalMinutes,
+    5,
+    120,
+  );
+  const scheduledOrderMaxDays = clampIntegerRange(
+    settings.scheduledOrderMaxDays,
+    defaultOnlineOrdering.scheduledOrderMaxDays,
+    1,
+    60,
+  );
   const deliveryFeeAmount = clampIntegerRange(settings.deliveryFeeAmount, defaultOnlineOrdering.deliveryFeeAmount, 0, 999_999);
   const deliveryMinimumSubtotal = clampIntegerRange(
     settings.deliveryMinimumSubtotal,
@@ -6077,6 +6240,9 @@ const validateOnlineOrdering = (input: unknown): {
       enabled: Boolean(settings.enabled),
       serviceModeAvailability: normalizeOnlineServiceModeAvailability(settings.serviceModeAvailability),
       allowScheduledOrders: Boolean(settings.allowScheduledOrders),
+      scheduledOrderIntervalMinutes,
+      scheduledOrderMaxDays,
+      scheduledOrderTimeWindows: normalizeScheduledOrderTimeWindows(settings.scheduledOrderTimeWindows),
       averagePrepMinutes,
       unconfirmedReminderMinutes,
       acceptanceRequired: settings.acceptanceRequired !== false,

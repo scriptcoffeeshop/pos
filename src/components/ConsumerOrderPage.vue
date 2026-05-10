@@ -117,6 +117,14 @@ const customer = reactive<CustomerDraft>({
 
 const normalizeTaxId = (value: string): string => value.replace(/\s/g, '').trim()
 const normalizeInvoiceCarrierBarcode = (value: string): string => value.replace(/\s/g, '').trim().toUpperCase()
+const timeToMinutes = (value: string): number => {
+  const [hours = 0, minutes = 0] = value.split(':').map(Number)
+  return Number.isInteger(hours) && Number.isInteger(minutes) ? hours * 60 + minutes : 0
+}
+const formatDatetimeLocal = (date: Date): string => {
+  const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
+  return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+}
 const invoiceFieldError = (): string | null => {
   const taxId = normalizeTaxId(customer.taxId)
   if (taxId && !/^[0-9]{8}$/.test(taxId)) {
@@ -205,6 +213,12 @@ const menuGroups = computed(() =>
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
+const scheduledOrderIntervalMinutes = computed(() =>
+  Math.min(Math.max(Math.trunc(onlineOrdering.value.scheduledOrderIntervalMinutes || 15), 5), 120),
+)
+const scheduledOrderMaxDays = computed(() =>
+  Math.min(Math.max(Math.trunc(onlineOrdering.value.scheduledOrderMaxDays || 1), 1), 60),
+)
 const deliveryMinimumSubtotal = computed(() => Math.max(0, Math.trunc(onlineOrdering.value.deliveryMinimumSubtotal || 0)))
 const deliveryMinimumMet = computed(() => serviceMode.value !== 'delivery' || cartTotal.value >= deliveryMinimumSubtotal.value)
 const deliveryFeeAmount = computed(() => {
@@ -266,9 +280,67 @@ const requestedFulfillmentMinimum = computed(() => {
     Math.max(onlineOrdering.value.averagePrepMinutes, 0) +
     (serviceMode.value === 'delivery' ? Math.max(onlineOrdering.value.deliveryTravelMinutes, 0) : 0)
   const nextTime = new Date(Date.now() + leadMinutes * 60_000)
-  const timezoneOffsetMs = nextTime.getTimezoneOffset() * 60 * 1000
-  return new Date(nextTime.getTime() - timezoneOffsetMs).toISOString().slice(0, 16)
+  return formatDatetimeLocal(nextTime)
 })
+const requestedFulfillmentMaximum = computed(() =>
+  formatDatetimeLocal(new Date(Date.now() + scheduledOrderMaxDays.value * 24 * 60 * 60_000)),
+)
+const requestedFulfillmentStepSeconds = computed(() => scheduledOrderIntervalMinutes.value * 60)
+const scheduledOrderWindowMatches = (date: Date): boolean => {
+  const windows = onlineOrdering.value.scheduledOrderTimeWindows
+  if (windows.length === 0) {
+    return true
+  }
+
+  const day = date.getDay()
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  return windows.some((timeWindow) => {
+    if (!timeWindow.days.includes(day)) {
+      return false
+    }
+
+    const start = timeWindow.allDay ? 0 : timeToMinutes(timeWindow.start)
+    const end = timeWindow.allDay ? 23 * 60 + 59 : timeToMinutes(timeWindow.end)
+    const inRange = start <= end
+      ? minutes >= start && minutes <= end
+      : minutes >= start || minutes <= end
+    if (!inRange) {
+      return false
+    }
+
+    return ((minutes - start) % scheduledOrderIntervalMinutes.value + scheduledOrderIntervalMinutes.value) %
+      scheduledOrderIntervalMinutes.value === 0
+  })
+}
+const requestedFulfillmentError = (): string | null => {
+  const value = customer.requestedFulfillmentAt.trim()
+  if (!value) {
+    return null
+  }
+
+  if (!onlineOrdering.value.allowScheduledOrders) {
+    return '目前未開放預約時間，請清除希望時間後再送出'
+  }
+
+  const requestedAt = new Date(value)
+  if (!Number.isFinite(requestedAt.getTime())) {
+    return '希望時間格式不正確'
+  }
+
+  if (requestedAt < new Date(requestedFulfillmentMinimum.value)) {
+    return '希望時間早於最早可取餐時間'
+  }
+
+  if (requestedAt > new Date(requestedFulfillmentMaximum.value)) {
+    return `希望時間不可超過 ${scheduledOrderMaxDays.value} 天`
+  }
+
+  if (!scheduledOrderWindowMatches(requestedAt)) {
+    return '希望時間不在可預約取餐時段內'
+  }
+
+  return null
+}
 const canSubmit = computed(() =>
   canOrderOnline.value &&
   cartLines.value.length > 0 &&
@@ -276,6 +348,7 @@ const canSubmit = computed(() =>
   customer.phone.trim().length > 0 &&
   paymentOptions.value.some((option) => option.value === paymentMethod.value) &&
   deliveryMinimumMet.value &&
+  requestedFulfillmentError() === null &&
   (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
   !isSubmitting.value,
 )
@@ -567,8 +640,9 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
-  if (!onlineOrdering.value.allowScheduledOrders && customer.requestedFulfillmentAt.trim()) {
-    formError.value = '目前未開放預約時間，請清除希望時間後再送出'
+  const scheduledOrderError = requestedFulfillmentError()
+  if (scheduledOrderError) {
+    formError.value = scheduledOrderError
     return
   }
 
@@ -933,7 +1007,10 @@ watch(
             type="datetime-local"
             :disabled="!onlineOrdering.allowScheduledOrders"
             :min="requestedFulfillmentMinimum"
+            :max="requestedFulfillmentMaximum"
+            :step="requestedFulfillmentStepSeconds"
           />
+          <small>{{ onlineOrdering.allowScheduledOrders ? `可預約 ${scheduledOrderMaxDays} 天內 · ${scheduledOrderIntervalMinutes} 分鐘間隔` : '目前不開放預約' }}</small>
         </label>
         <label v-if="requiresDeliveryAddress" class="wide-field">
           外送地址

@@ -917,6 +917,17 @@ const defaultOnlinePaymentMethods = (): OnlineOrderingSettings['paymentMethods']
   { id: 'transfer', label: '轉帳', enabled: false },
 ]
 
+const defaultScheduledOrderTimeWindows = (): OnlineOrderingSettings['scheduledOrderTimeWindows'] => [
+  {
+    id: 'daily',
+    label: '每日',
+    days: [1, 2, 3, 4, 5, 6, 0],
+    start: '00:00',
+    end: '23:59',
+    allDay: true,
+  },
+]
+
 export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   enabled: true,
   serviceModeAvailability: {
@@ -925,6 +936,9 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     delivery: true,
   },
   allowScheduledOrders: true,
+  scheduledOrderIntervalMinutes: 15,
+  scheduledOrderMaxDays: 7,
+  scheduledOrderTimeWindows: defaultScheduledOrderTimeWindows(),
   averagePrepMinutes: 20,
   unconfirmedReminderMinutes: 5,
   acceptanceRequired: true,
@@ -1100,6 +1114,44 @@ const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => 
     seenCategoryIds.add(id)
     return [{ id, label }]
   })
+}
+
+const normalizeScheduledOrderTimeWindows = (value: unknown): OnlineOrderingSettings['scheduledOrderTimeWindows'] => {
+  if (!Array.isArray(value)) {
+    return defaultScheduledOrderTimeWindows()
+  }
+
+  const seenWindowIds = new Set<string>()
+  const windows = value.flatMap((entry, index): OnlineOrderingSettings['scheduledOrderTimeWindows'] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const timeWindow = entry as Partial<OnlineOrderingSettings['scheduledOrderTimeWindows'][number]>
+    const id = sanitizeOnlineText(timeWindow.id, `pickup-window-${index + 1}`)
+    if (!id || seenWindowIds.has(id)) {
+      return []
+    }
+
+    const days = Array.isArray(timeWindow.days)
+      ? [...new Set(timeWindow.days.map((day) => normalizeNumber(day, -1)).filter((day) => day >= 0 && day <= 6))]
+      : [1, 2, 3, 4, 5, 6, 0]
+    if (days.length === 0) {
+      return []
+    }
+
+    seenWindowIds.add(id)
+    return [{
+      id,
+      label: sanitizeOnlineText(timeWindow.label, `取餐時段 ${index + 1}`),
+      days,
+      start: typeof timeWindow.start === 'string' && reservationTimePattern.test(timeWindow.start) ? timeWindow.start : '00:00',
+      end: typeof timeWindow.end === 'string' && reservationTimePattern.test(timeWindow.end) ? timeWindow.end : '23:59',
+      allDay: timeWindow.allDay === true,
+    }]
+  })
+
+  return windows.length > 0 ? windows.slice(0, 20) : defaultScheduledOrderTimeWindows()
 }
 
 const normalizeOnlineMenuOptionGroups = (value: unknown): OnlineMenuOptionGroup[] => {
@@ -1286,6 +1338,14 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
         : { ...defaults.serviceModeAvailability },
     allowScheduledOrders:
       typeof settings.allowScheduledOrders === 'boolean' ? settings.allowScheduledOrders : defaults.allowScheduledOrders,
+    scheduledOrderIntervalMinutes: clampRuntimeInteger(
+      settings.scheduledOrderIntervalMinutes,
+      defaults.scheduledOrderIntervalMinutes,
+      5,
+      120,
+    ),
+    scheduledOrderMaxDays: clampRuntimeInteger(settings.scheduledOrderMaxDays, defaults.scheduledOrderMaxDays, 1, 60),
+    scheduledOrderTimeWindows: normalizeScheduledOrderTimeWindows(settings.scheduledOrderTimeWindows),
     averagePrepMinutes: Number.isFinite(settings.averagePrepMinutes)
       ? Math.min(Math.max(Math.trunc(settings.averagePrepMinutes ?? defaults.averagePrepMinutes), 0), 180)
       : defaults.averagePrepMinutes,

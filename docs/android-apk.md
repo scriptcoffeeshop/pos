@@ -118,6 +118,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 4. 嘗試用 API 或已開啟的舊頁面繞過前端送出 disabled service mode，`POST /orders` 應回覆 409。
 5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台服務方式開關仍從 `online_ordering` runtime 還原。
 
+## 線上預約訂單
+
+預約訂單規則存在 `online_ordering` runtime，對照 iCHEF 預約訂單設定的取餐時間範圍、時間間隔與最長可預約天數。這不是 APK 本機設定，fresh reinstall 後仍應從 runtime 還原。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」開啟「允許顧客選希望時間」。
+2. 在「預約訂單」區塊設定取餐時間間隔、最長預約天數與可預約時段後儲存。
+3. 用消費者頁重新整理，確認希望時間欄位有最早、最晚與間隔限制；外送模式的最早時間應再加上預計車程。
+4. 選擇可預約時段內的時間送單應成功；選非開放時段、超過天數或不符合間隔的時間應被前端阻擋。
+5. 嘗試用 API 或已開啟的舊頁送出不合規 `requestedFulfillmentAt`，`POST /orders` 應回覆 409，不得寫入訂單。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認預約規則仍從 `online_ordering` runtime 還原。
+
 ## 線上支付模組
 
 支付模組存在 `online_ordering.paymentMethods`，對照 iCHEF 外帶/外送訂餐的支付模組設定。消費者頁付款方式顯示順序會跟隨後台排序，已停用方式不得送單。
@@ -208,6 +219,7 @@ rtk npm run apk:install:fresh
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
+- 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。
 - 測線上支付模組時，付款方式顯示、名稱與順序應由 `online_ordering.paymentMethods` 控制；停用付款方式後，前端不顯示且 `POST /orders` 應拒絕。
 - 測線上外送規則時，外送費、外送最低金額、滿額免運與預計車程應由 `online_ordering` runtime 控制；外送不得顯示取餐時付款或轉帳，`POST /orders` 仍必須依 runtime 重新計算 `extra_fee_amount`。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
