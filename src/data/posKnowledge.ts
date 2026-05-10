@@ -170,4 +170,19 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     keywords: ['訂位', '黑名單', 'No show', '手機', '後台', 'iCHEF', '訂位管理'],
     target: 'admin',
   },
+  {
+    id: 'public-reservation-website',
+    category: 'reservations',
+    title: '專屬線上訂位網站',
+    summary: '後台可開關消費者訂位頁，調整人數、開放天數、訂位間隔與每週開放時段。',
+    steps: [
+      '進入後台「iCHEF 補齊」頁，找到「專屬訂位網站 / 規則」。',
+      '設定餐廳名稱、電話、公告、人數上下限、訂位間隔、用餐時間、提前時間與開放天數。',
+      '逐日開關每週可預約時段，儲存後所有平板與消費者訂位頁會同步使用同一份 runtime 設定。',
+      '消費者從訂位頁送出的資料會寫入 Supabase `reservations`，門市可在同一個 iCHEF 補齊頁查看與改狀態。',
+      '黑名單手機會在公開訂位 API 被阻擋，重開 App 或換平板後也不會放行。',
+    ],
+    keywords: ['訂位網站', '線上訂位', '訂位間隔', '開放天數', '營業時間', '訂位規則', 'iCHEF'],
+    target: 'online',
+  },
 ]

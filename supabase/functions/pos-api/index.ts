@@ -422,6 +422,29 @@ interface SupplyRulesSettings {
   defaultWindows?: SupplyWindowRule[];
 }
 
+interface ReservationBusinessHour {
+  id: string;
+  day: number;
+  enabled: boolean;
+  start: string;
+  end: string;
+}
+
+interface ReservationWebsiteSettings {
+  enabled: boolean;
+  restaurantName: string;
+  phone: string;
+  address: string;
+  announcement: string;
+  minPartySize: number;
+  maxPartySize: number;
+  slotMinutes: number;
+  durationMinutes: number;
+  leadMinutes: number;
+  bookingWindowDays: number;
+  businessHours: ReservationBusinessHour[];
+}
+
 interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[];
   customerTypes: string[];
@@ -430,6 +453,7 @@ interface CustomerEngagementSettings {
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
   supplyRules: SupplyRulesSettings;
+  reservationWebsite: ReservationWebsiteSettings;
 }
 
 interface CreateCouponInput {
@@ -665,6 +689,15 @@ const defaultFloorPlan: FloorPlanSettings = {
   waitline: [],
 };
 
+const defaultReservationBusinessHours = (): ReservationBusinessHour[] =>
+  [1, 2, 3, 4, 5, 6, 0].map((day) => ({
+    id: `reservation-${day}`,
+    day,
+    enabled: day !== 0,
+    start: "09:00",
+    end: "20:00",
+  }));
+
 const defaultEngagementSettings: CustomerEngagementSettings = {
   orderLabels: [
     { id: "rush", label: "急單", color: "#b45309" },
@@ -693,6 +726,20 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     defaultPeriods: [
       { id: "all-day", label: "全天", days: [1, 2, 3, 4, 5, 6, 0], start: "08:00", end: "22:00" },
     ],
+  },
+  reservationWebsite: {
+    enabled: false,
+    restaurantName: "Script Coffee",
+    phone: "",
+    address: "",
+    announcement: "線上訂位送出後，門市會保留此筆訂位資訊。",
+    minPartySize: 1,
+    maxPartySize: 8,
+    slotMinutes: 30,
+    durationMinutes: 120,
+    leadMinutes: 30,
+    bookingWindowDays: 14,
+    businessHours: defaultReservationBusinessHours(),
   },
 };
 
@@ -2019,6 +2066,75 @@ api.get("/admin/reservations", async (c) => {
   }
 
   return c.json({ reservations: data });
+});
+
+api.post("/reservations", async (c) => {
+  const input = await c.req.json<ReservationInput>().catch((): ReservationInput => ({}));
+  if (!input.customerName?.trim()) {
+    return c.json({ error: "customerName is required" }, 400);
+  }
+  if (!input.customerPhone?.trim() || normalizeReservationBlacklistPhone(input.customerPhone).length < 4) {
+    return c.json({ error: "customerPhone is required" }, 400);
+  }
+
+  const engagementSettings = normalizeEngagementSettingsForRuntime(
+    await loadSetting<CustomerEngagementSettings>("engagement_settings", defaultEngagementSettings),
+  );
+  const reservationWebsite = engagementSettings.reservationWebsite;
+  const { payload, error: validationError } = validateReservationInput({
+    ...input,
+    status: "booked",
+    importantLabel: "",
+    preOrder: [],
+  }, true);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const reservationRuleError = validatePublicReservationRules(payload, reservationWebsite);
+  if (reservationRuleError) {
+    return c.json({ error: reservationRuleError }, 409);
+  }
+
+  const blacklistMatch = await findActiveReservationBlacklistEntry(String(payload.customer_phone ?? ""));
+  if (blacklistMatch.error) {
+    return c.json({ error: blacklistMatch.error.message }, 500);
+  }
+  if (blacklistMatch.data) {
+    await writeAuditEvent({
+      action: "reservation.public_blocked",
+      stationId: "consumer-web",
+      metadata: {
+        normalizedPhone: blacklistMatch.data.normalized_phone,
+        blacklistEntryId: blacklistMatch.data.id,
+        reservedAt: payload.reserved_at,
+        partySize: payload.party_size,
+      },
+    });
+    return c.json({ error: "此手機目前無法使用線上訂位，請改與門市聯繫" }, 409);
+  }
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .insert(payload)
+    .select(reservationSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "reservation.public_create",
+    stationId: "consumer-web",
+    metadata: {
+      reservationId: data.id,
+      partySize: data.party_size,
+      reservedAt: data.reserved_at,
+    },
+  });
+
+  return c.json({ reservation: data }, 201);
 });
 
 api.get("/admin/reservation-blacklist", async (c) => {
@@ -4581,6 +4697,88 @@ const validateReservationInput = (
   return { payload, error: null };
 };
 
+const timeToMinutes = (value: string): number => {
+  const [rawHours, rawMinutes] = value.split(":");
+  const hours = Number(rawHours);
+  const minutes = Number(rawMinutes);
+  return Number.isInteger(hours) && Number.isInteger(minutes) ? hours * 60 + minutes : 0;
+};
+
+const reservationLocalParts = (reservedAt: string) => {
+  const reservedDate = new Date(reservedAt);
+  const localDate = new Date(reservedDate.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  return {
+    day: localDate.getUTCDay(),
+    minutes: localDate.getUTCHours() * 60 + localDate.getUTCMinutes(),
+  };
+};
+
+const findMatchingReservationBusinessHour = (
+  reservedAt: string,
+  reservationWebsite: ReservationWebsiteSettings,
+): ReservationBusinessHour | null => {
+  const { day, minutes } = reservationLocalParts(reservedAt);
+
+  for (const period of reservationWebsite.businessHours) {
+    if (!period.enabled || period.day !== day) {
+      continue;
+    }
+
+    const start = timeToMinutes(period.start);
+    const end = timeToMinutes(period.end);
+    const isWithinPeriod = start <= end
+      ? minutes >= start && minutes <= end
+      : minutes >= start || minutes <= end;
+    if (!isWithinPeriod) {
+      continue;
+    }
+
+    const slotMinutes = Math.max(reservationWebsite.slotMinutes, 1);
+    const offset = start <= end || minutes >= start ? minutes - start : minutes + 24 * 60 - start;
+    if (offset % slotMinutes === 0) {
+      return period;
+    }
+  }
+
+  return null;
+};
+
+const validatePublicReservationRules = (
+  payload: Record<string, unknown>,
+  reservationWebsite: ReservationWebsiteSettings,
+): string | null => {
+  if (!reservationWebsite.enabled) {
+    return "線上訂位目前未開放";
+  }
+
+  const partySize = Number(payload.party_size ?? 0);
+  if (partySize < reservationWebsite.minPartySize || partySize > reservationWebsite.maxPartySize) {
+    return `訂位人數須介於 ${reservationWebsite.minPartySize} 到 ${reservationWebsite.maxPartySize} 人`;
+  }
+
+  const reservedAt = typeof payload.reserved_at === "string" ? payload.reserved_at : "";
+  const reservedDate = new Date(reservedAt);
+  if (Number.isNaN(reservedDate.getTime())) {
+    return "reservedAt must be a valid ISO datetime";
+  }
+
+  const now = Date.now();
+  const earliest = now + reservationWebsite.leadMinutes * 60_000;
+  const latest = now + reservationWebsite.bookingWindowDays * 24 * 60 * 60_000;
+  if (reservedDate.getTime() < earliest) {
+    return `最早可預約 ${reservationWebsite.leadMinutes} 分鐘後的時段`;
+  }
+  if (reservedDate.getTime() > latest) {
+    return `最遠只開放 ${reservationWebsite.bookingWindowDays} 天內訂位`;
+  }
+
+  if (!findMatchingReservationBusinessHour(reservedAt, reservationWebsite)) {
+    return "此時段未開放線上訂位";
+  }
+
+  return null;
+};
+
 const sanitizeIdentifier = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
@@ -4619,6 +4817,34 @@ const normalizeSupplyWindows = (input: unknown): SupplyWindowRule[] => {
     seenWindowIds.add(id);
     return [{ id, label, days, start, end }];
   }).slice(0, 20);
+};
+
+const normalizeReservationBusinessHours = (input: unknown): ReservationBusinessHour[] => {
+  const source = Array.isArray(input) ? input : defaultReservationBusinessHours();
+  const seenDays = new Set<number>();
+
+  return source.flatMap((entry, index): ReservationBusinessHour[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const period = entry as Partial<ReservationBusinessHour>;
+    const day = Number.isInteger(Number(period.day)) ? Math.trunc(Number(period.day)) : index;
+    if (day < 0 || day > 6 || seenDays.has(day)) {
+      return [];
+    }
+
+    const start = typeof period.start === "string" && /^\d{2}:\d{2}$/.test(period.start) ? period.start : "09:00";
+    const end = typeof period.end === "string" && /^\d{2}:\d{2}$/.test(period.end) ? period.end : "20:00";
+    seenDays.add(day);
+    return [{
+      id: sanitizeText(period.id, `reservation-${day}`).slice(0, 80),
+      day,
+      enabled: period.enabled !== false,
+      start,
+      end,
+    }];
+  }).slice(0, 7);
 };
 
 const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
@@ -5415,6 +5641,14 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.supplyRules
     : defaultEngagementSettings.supplyRules;
   const defaultPeriods = normalizeSupplyWindows(rawSupplyRules.defaultPeriods ?? rawSupplyRules.defaultWindows);
+  const rawReservationWebsite = settings.reservationWebsite && typeof settings.reservationWebsite === "object"
+    ? settings.reservationWebsite as Partial<ReservationWebsiteSettings>
+    : defaultEngagementSettings.reservationWebsite;
+  const minPartySize = Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.minPartySize) || defaultEngagementSettings.reservationWebsite.minPartySize), 1), 50);
+  const maxPartySize = Math.max(
+    minPartySize,
+    Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.maxPartySize) || defaultEngagementSettings.reservationWebsite.maxPartySize), 1), 50),
+  );
 
   return {
     orderLabels: orderLabels.length > 0 ? orderLabels : defaultEngagementSettings.orderLabels,
@@ -5427,6 +5661,20 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
       preOpenCheckEnabled: rawSupplyRules.preOpenCheckEnabled !== false,
       allowFutureOrdersAcrossDay: rawSupplyRules.allowFutureOrdersAcrossDay !== false,
       defaultPeriods: defaultPeriods.length > 0 ? defaultPeriods : defaultEngagementSettings.supplyRules.defaultPeriods,
+    },
+    reservationWebsite: {
+      enabled: rawReservationWebsite.enabled === true,
+      restaurantName: sanitizeText(rawReservationWebsite.restaurantName, defaultEngagementSettings.reservationWebsite.restaurantName).slice(0, 80),
+      phone: sanitizeText(rawReservationWebsite.phone, defaultEngagementSettings.reservationWebsite.phone).slice(0, 80),
+      address: sanitizeText(rawReservationWebsite.address, defaultEngagementSettings.reservationWebsite.address).slice(0, 120),
+      announcement: sanitizeText(rawReservationWebsite.announcement, defaultEngagementSettings.reservationWebsite.announcement).slice(0, 200),
+      minPartySize,
+      maxPartySize,
+      slotMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.slotMinutes) || defaultEngagementSettings.reservationWebsite.slotMinutes), 5), 240),
+      durationMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.durationMinutes) || defaultEngagementSettings.reservationWebsite.durationMinutes), 15), 480),
+      leadMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.leadMinutes) || defaultEngagementSettings.reservationWebsite.leadMinutes), 1), 1440),
+      bookingWindowDays: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.bookingWindowDays) || defaultEngagementSettings.reservationWebsite.bookingWindowDays), 1), 60),
+      businessHours: normalizeReservationBusinessHours(rawReservationWebsite.businessHours),
     },
   };
 };

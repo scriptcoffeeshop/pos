@@ -368,6 +368,29 @@ export interface SupplyRulesSettings {
   defaultPeriods: SupplyPeriodRule[]
 }
 
+export interface ReservationBusinessHour {
+  id: string
+  day: number
+  enabled: boolean
+  start: string
+  end: string
+}
+
+export interface ReservationWebsiteSettings {
+  enabled: boolean
+  restaurantName: string
+  phone: string
+  address: string
+  announcement: string
+  minPartySize: number
+  maxPartySize: number
+  slotMinutes: number
+  durationMinutes: number
+  leadMinutes: number
+  bookingWindowDays: number
+  businessHours: ReservationBusinessHour[]
+}
+
 export interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[]
   customerTypes: string[]
@@ -376,6 +399,7 @@ export interface CustomerEngagementSettings {
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]
   supplyRules: SupplyRulesSettings
+  reservationWebsite: ReservationWebsiteSettings
 }
 
 export interface PosAdminSettings {
