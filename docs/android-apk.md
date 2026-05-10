@@ -149,7 +149,8 @@ rtk npm run apk:install:fresh
 4. 將訂位依序改為「已發送提醒」與「已保留訂位」，確認狀態篩選、今日訂位數、遲到提醒與桌位容量判斷仍把這兩種狀態視為有效訂位。
 5. 製造同桌重疊或人數超過桌位容量的訂位，確認列表出現「桌位重疊」或「座位數不足」提醒。
 6. 將訂位時間調整到目前時間前後可測範圍，確認「帶位開單」會建立內用草稿單、帶入顧客資料與備註，且訂位狀態改為 `seated`。
-7. fresh reinstall APK 後重新進入「訂位管理」，確認訂位列表、修改後資訊、入座狀態與桌位圖下一組訂位標示仍從資料庫還原。
+7. 準備一筆已超過台北時間隔兩天凌晨 1 點門檻且仍為 `booked`、`reminded` 或 `confirmed` 的訂位，重新整理後應自動變成 `no_show`，且不再占用桌位容量。
+8. fresh reinstall APK 後重新進入「訂位管理」，確認訂位列表、修改後資訊、入座狀態、自動未出席狀態與桌位圖下一組訂位標示仍從資料庫還原。
 
 ## 測試重點
 
@@ -159,7 +160,7 @@ rtk npm run apk:install:fresh
 - 測訂位黑名單時，新增/解除名單與從訂位列切換都應透過 `/admin/reservation-blacklist` 寫入資料庫；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上訂位網站時，後台規則應透過 `/settings/runtime` 同步，公開送單應走 `/reservations`，黑名單手機不得只在前端阻擋。
 - 測線上訂位容量時，需檢查同時段 booked/reminded/confirmed/seated 訂位與 assigned table，而不是只看總人數欄位；沒有 assigned table 的舊訂位會以人數保守占用容量。
-- 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
+- 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。
