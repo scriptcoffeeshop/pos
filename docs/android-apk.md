@@ -97,6 +97,20 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 
 這一版的 APK 背景提醒已改用 foreground service 覆蓋按 Home、切到背景、螢幕熄滅與回前景補同步；若使用者從最近任務手動滑掉 App、強制停止 App 或系統終止整個程序，後續正式版仍建議再接 FCM push 才能提供被終止後仍必達的提醒。
 
+## 員工打卡
+
+員工帳號與識別碼由後台「權限」頁的 `access_control` runtime setting 管理，打卡紀錄寫入 Supabase `staff_time_clock_entries`，不是 APK 本機資料。實機測試建議：
+
+```bash
+rtk npm run apk:debug
+rtk npm run apk:install:fresh
+```
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「權限」新增或確認一位啟用員工與識別碼並儲存。
+2. 回 POS 工具箱，開啟「員工打卡」，輸入識別碼，確認第一次顯示上班、第二次顯示下班。
+3. 到後台「權限」刷新打卡紀錄，確認可看到員工、角色、站台與時間；到「操作稽核」確認 `員工打卡` 事件。
+4. 再跑一次 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台仍可讀到同一批打卡紀錄，代表資料來自資料庫而不是 local storage。
+
 ## 測試重點
 
 - APK 目前是 debug 版，只用於平板測試，不用於正式上架。

@@ -34,6 +34,7 @@ import type {
   RegisterCashAdjustmentKind,
   RegisterSession,
   ReservationStatus,
+  StaffTimeClockEntry,
   SupplyPeriodRule,
   WaitlineEntry,
   PrintJob,
@@ -314,12 +315,33 @@ interface ApiStationHeartbeat {
   created_at: string
 }
 
+interface ApiStaffTimeClockEntry {
+  id: string
+  staff_account_id: string
+  staff_code: string
+  staff_name: string
+  role_id: string
+  role_name: string
+  event_type: 'clock_in' | 'clock_out'
+  station_id: string | null
+  note: string | null
+  created_at: string
+}
+
 interface StationHeartbeatResponse {
   station: ApiStationHeartbeat
 }
 
 interface StationHeartbeatsResponse {
   stations: ApiStationHeartbeat[]
+}
+
+interface StaffTimeClockEntryResponse {
+  entry: ApiStaffTimeClockEntry
+}
+
+interface StaffTimeClockEntriesResponse {
+  entries: ApiStaffTimeClockEntry[]
 }
 
 interface ApiSettingRow {
@@ -701,6 +723,19 @@ const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHear
   createdAt: station.created_at,
 })
 
+const normalizeStaffTimeClockEntry = (entry: ApiStaffTimeClockEntry): StaffTimeClockEntry => ({
+  id: entry.id,
+  staffAccountId: entry.staff_account_id,
+  staffCode: entry.staff_code,
+  staffName: entry.staff_name,
+  roleId: entry.role_id,
+  roleName: entry.role_name,
+  eventType: entry.event_type === 'clock_in' ? 'clock-in' : 'clock-out',
+  stationId: entry.station_id ?? '',
+  note: entry.note ?? '',
+  createdAt: entry.created_at,
+})
+
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   id: product.id,
   sku: product.sku,
@@ -787,6 +822,32 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
 
   const settings = value as AccessControlSettings
   return Array.isArray(settings.roles)
+}
+
+const normalizeAccessControlSettings = (value: unknown): AccessControlSettings => {
+  if (!isAccessControlSettings(value)) {
+    return { roles: [], staffAccounts: [] }
+  }
+
+  const roles = value.roles.map((role) => ({ ...role, permissions: [...role.permissions] }))
+  const fallbackRole = roles[0]
+
+  return {
+    roles,
+    staffAccounts: Array.isArray(value.staffAccounts)
+      ? value.staffAccounts.map((staff) => ({ ...staff, active: staff.active !== false }))
+      : fallbackRole
+        ? [
+            {
+              id: 'owner',
+              name: '店主',
+              staffCode: '0000',
+              roleId: fallbackRole.id,
+              active: true,
+            },
+          ]
+        : [],
+  }
 }
 
 export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
@@ -1423,7 +1484,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
 
   return {
     printerSettings: normalizePrinterSettings(printerSettings),
-    accessControl: isAccessControlSettings(accessControl) ? accessControl : { roles: [] },
+    accessControl: normalizeAccessControlSettings(accessControl),
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
     posAppearance: normalizePosAppearanceSettings(posAppearance),
     floorPlan: normalizeFloorPlanSettings(floorPlan),
@@ -1556,6 +1617,14 @@ export const fetchAdminAuditEvents = async (limit = 50): Promise<PosAuditEvent[]
   const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`)
 
   return data.events.map(normalizeAuditEvent)
+}
+
+export const fetchAdminTimeClockEntries = async (limit = 80): Promise<StaffTimeClockEntry[]> => {
+  const rawLimit = Number.isFinite(limit) ? limit : 80
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 300)
+  const data = await request<StaffTimeClockEntriesResponse>(`/admin/time-clock?limit=${cappedLimit}`)
+
+  return data.entries.map(normalizeStaffTimeClockEntry)
 }
 
 export const fetchAdminPaymentEvents = async (
@@ -1732,6 +1801,21 @@ export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {
   })
 
   return normalizeStationHeartbeat(data.station)
+}
+
+export const createStaffTimeClockEntry = async (
+  staffCode: string,
+  note = '',
+): Promise<StaffTimeClockEntry> => {
+  const data = await request<StaffTimeClockEntryResponse>('/time-clock', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({ staffCode, note, stationId: currentStationId() }),
+  })
+
+  return normalizeStaffTimeClockEntry(data.entry)
 }
 
 export const updateAdminSetting = async <SettingValue>(

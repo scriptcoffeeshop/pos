@@ -7480,6 +7480,59 @@ button.cart-line-summary:focus-visible {
   gap: 8px;
 }
 
+.time-clock-form {
+  display: grid;
+  gap: 12px;
+}
+
+.time-clock-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.time-clock-form input {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.time-clock-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.time-clock-result {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.time-clock-result strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.time-clock-result span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
 .knowledge-modal {
   width: min(960px, 100%);
 }
@@ -8183,7 +8236,8 @@ button.cart-line-summary:focus-visible {
 .admin-member-row label,
 .admin-station-row label,
 .admin-rule-row label,
-.admin-role-row label {
+.admin-role-row label,
+.admin-inline-field {
   display: grid;
   gap: 6px;
   color: var(--muted);
@@ -8203,7 +8257,9 @@ button.cart-line-summary:focus-visible {
 .admin-station-row input,
 .admin-rule-row input,
 .admin-rule-row select,
-.admin-role-row input {
+.admin-role-row input,
+.admin-role-row select,
+.admin-inline-field input {
   min-height: 38px;
   min-width: 0;
   padding: 8px 10px;
@@ -8241,6 +8297,14 @@ button.cart-line-summary:focus-visible {
 .admin-tab-panel {
   display: grid;
   gap: 12px;
+}
+
+.admin-subheading {
+  margin-top: 6px;
+}
+
+.admin-inline-field {
+  min-width: 96px;
 }
 
 .admin-product-list {
@@ -8851,7 +8915,10 @@ button.cart-line-summary:focus-visible {
 .admin-station-row input:focus,
 .admin-rule-row input:focus,
 .admin-rule-row select:focus,
-.admin-role-row input:focus {
+.admin-role-row input:focus,
+.admin-role-row select:focus,
+.admin-inline-field input:focus,
+.time-clock-form input:focus {
   outline: 3px solid rgba(11, 107, 99, 0.24);
   outline-offset: 2px;
 }

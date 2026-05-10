@@ -214,8 +214,32 @@ export interface RoleSetting {
   permissions: AdminPermission[]
 }
 
+export interface StaffAccountSetting {
+  id: string
+  name: string
+  staffCode: string
+  roleId: string
+  active: boolean
+}
+
 export interface AccessControlSettings {
   roles: RoleSetting[]
+  staffAccounts: StaffAccountSetting[]
+}
+
+export type TimeClockEventType = 'clock-in' | 'clock-out'
+
+export interface StaffTimeClockEntry {
+  id: string
+  staffAccountId: string
+  staffCode: string
+  staffName: string
+  roleId: string
+  roleName: string
+  eventType: TimeClockEventType
+  stationId: string
+  note: string
+  createdAt: string
 }
 
 export interface OnlineMenuOptionChoice {

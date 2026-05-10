@@ -219,6 +219,12 @@ interface RegisterCashAdjustmentInput {
   stationId?: string;
 }
 
+interface StaffTimeClockInput {
+  staffCode?: string;
+  note?: string;
+  stationId?: string;
+}
+
 interface ProductUpdateInput {
   sku?: string;
   name?: string;
@@ -275,8 +281,17 @@ interface RoleSetting {
   permissions: string[];
 }
 
+interface StaffAccountSetting {
+  id: string;
+  name: string;
+  staffCode: string;
+  roleId: string;
+  active: boolean;
+}
+
 interface AccessControlSettings {
   roles: RoleSetting[];
+  staffAccounts: StaffAccountSetting[];
 }
 
 interface OnlineMenuOptionChoice {
@@ -480,6 +495,8 @@ const stationHeartbeatSelect =
   "station_id, station_label, platform, app_version, user_agent, last_seen_at, created_at";
 const onlineOrderReminderStateSelect =
   "order_id, order_number, status, snoozed_until, snoozed_by_station_id, seen_at, seen_by_station_id, last_action, created_at, updated_at";
+const staffTimeClockEntrySelect =
+  "id, staff_account_id, staff_code, staff_name, role_id, role_name, event_type, station_id, note, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
 const defaultPaymentExpiryMinutes = 20;
@@ -576,6 +593,15 @@ const defaultAccessControl: AccessControlSettings = {
         "voidOrders",
         "closeRegister",
       ],
+    },
+  ],
+  staffAccounts: [
+    {
+      id: "owner",
+      name: "店主",
+      staffCode: "0000",
+      roleId: "owner",
+      active: true,
     },
   ],
 };
@@ -1197,6 +1223,93 @@ api.post("/station/heartbeat", async (c) => {
   }
 
   return c.json({ station: data });
+});
+
+api.get("/admin/time-clock", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 80, 1), 300);
+  const { data, error } = await supabase
+    .from("staff_time_clock_entries")
+    .select(staffTimeClockEntrySelect)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ entries: data ?? [] });
+});
+
+api.post("/time-clock", async (c) => {
+  const input: StaffTimeClockInput = await c.req.json<StaffTimeClockInput>().catch(() => ({}));
+  const staffCode = normalizeStaffCode(input.staffCode);
+  if (!staffCode) {
+    return c.json({ error: "staffCode is required" }, 400);
+  }
+
+  const accessControl = await loadSetting<AccessControlSettings>("access_control", defaultAccessControl);
+  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
+  const staffAccount = normalizedAccessControl.staffAccounts.find((staff) =>
+    staff.active && staff.staffCode === staffCode
+  );
+  if (!staffAccount) {
+    return c.json({ error: "Staff account not found or inactive" }, 404);
+  }
+
+  const role = normalizedAccessControl.roles.find((entry) => entry.id === staffAccount.roleId);
+  const { data: latestEntry, error: latestError } = await supabase
+    .from("staff_time_clock_entries")
+    .select(staffTimeClockEntrySelect)
+    .eq("staff_account_id", staffAccount.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (latestError) {
+    return c.json({ error: latestError.message }, 500);
+  }
+
+  const eventType = (latestEntry as StaffTimeClockEntryRow | null)?.event_type === "clock_in"
+    ? "clock_out"
+    : "clock_in";
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const note = sanitizeText(input.note, "").slice(0, 240);
+  const { data, error } = await supabase
+    .from("staff_time_clock_entries")
+    .insert({
+      staff_account_id: staffAccount.id,
+      staff_code: staffAccount.staffCode,
+      staff_name: staffAccount.name,
+      role_id: role?.id ?? staffAccount.roleId,
+      role_name: role?.name ?? "",
+      event_type: eventType,
+      station_id: stationId,
+      note,
+    })
+    .select(staffTimeClockEntrySelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "employee.time_clock",
+    stationId,
+    metadata: {
+      staffAccountId: staffAccount.id,
+      staffName: staffAccount.name,
+      roleName: role?.name ?? "",
+      eventType,
+    },
+  });
+
+  return c.json({ entry: data }, 201);
 });
 
 api.get("/register/current", async (c) => {
@@ -3138,6 +3251,19 @@ interface RegisterCashAdjustmentRow {
   created_at: string;
 }
 
+interface StaffTimeClockEntryRow {
+  id: string;
+  staff_account_id: string;
+  staff_code: string;
+  staff_name: string;
+  role_id: string;
+  role_name: string;
+  event_type: "clock_in" | "clock_out";
+  station_id: string | null;
+  note: string | null;
+  created_at: string;
+}
+
 interface RegisterOrderSummaryRow {
   subtotal: number;
   payment_method: PaymentMethod;
@@ -4279,6 +4405,9 @@ const validateReservationInput = (
 const sanitizeIdentifier = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
+const normalizeStaffCode = (value: unknown): string =>
+  typeof value === "string" ? value.trim().replace(/\s+/g, "").slice(0, 32) : "";
+
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
@@ -4490,7 +4619,43 @@ const validateAccessControl = (input: unknown): {
     return { value: null, error: "at least one role is required" };
   }
 
-  return { value: { roles }, error: null };
+  const roleIds = new Set(roles.map((role) => role.id));
+  const defaultRoleId = roles[0]?.id ?? "owner";
+  const seenStaffCodes = new Set<string>();
+  const staffAccounts: StaffAccountSetting[] = Array.isArray(settings.staffAccounts)
+    ? settings.staffAccounts.flatMap((staff, index): StaffAccountSetting[] => {
+      if (!staff || typeof staff !== "object") {
+        return [];
+      }
+
+      const entry = staff as Partial<StaffAccountSetting>;
+      const id = sanitizeIdentifier(entry.id, `staff-${index + 1}`);
+      const name = sanitizeText(entry.name, `員工 ${index + 1}`).slice(0, 80);
+      const staffCode = normalizeStaffCode(entry.staffCode);
+      const requestedRoleId = sanitizeIdentifier(entry.roleId, "");
+      const roleId = roleIds.has(requestedRoleId) ? requestedRoleId : defaultRoleId;
+      if (!id || !name || !staffCode || seenStaffCodes.has(staffCode)) {
+        return [];
+      }
+      seenStaffCodes.add(staffCode);
+
+      return [{
+        id,
+        name,
+        staffCode,
+        roleId,
+        active: entry.active !== false,
+      }];
+    }).slice(0, 80)
+    : [{
+      id: "owner",
+      name: "店主",
+      staffCode: "0000",
+      roleId: defaultRoleId,
+      active: true,
+    }];
+
+  return { value: { roles, staffAccounts }, error: null };
 };
 
 const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] => {

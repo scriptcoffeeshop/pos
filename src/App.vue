@@ -46,7 +46,14 @@ import {
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
-import { defaultFloorPlanSettings, isPosApiConfigured, normalizeFloorPlanSettings, searchPosMembers, updateAdminSetting } from './lib/posApi'
+import {
+  createStaffTimeClockEntry,
+  defaultFloorPlanSettings,
+  isPosApiConfigured,
+  normalizeFloorPlanSettings,
+  searchPosMembers,
+  updateAdminSetting,
+} from './lib/posApi'
 import type {
   CartLine,
   FloorDisplayPreferences,
@@ -71,6 +78,7 @@ import type {
   PrintStationSetting,
   RegisterCashAdjustmentKind,
   ServiceMode,
+  StaffTimeClockEntry,
   WaitlineEntry,
 } from './types/pos'
 
@@ -88,8 +96,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance'
-type ToolboxPanel = 'home' | 'appearance'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -2733,6 +2741,11 @@ const waitlineDraft = ref({
 const activeFloorServiceView = ref<FloorServiceView>('dine-in')
 const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
+const timeClockStaffCode = ref('')
+const timeClockNote = ref('')
+const timeClockMessage = ref('輸入員工識別碼打卡')
+const isTimeClockSubmitting = ref(false)
+const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
 const floorMapRef = ref<HTMLElement | null>(null)
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
@@ -2757,6 +2770,28 @@ const appearancePreferenceSummary = computed(
   () =>
     `縮放 ${preferenceOffsetLabel(posUiPreferences.value.interfaceScale)} · 文字 ${preferenceOffsetLabel(posUiPreferences.value.textSize)} · 工具箱 ${Math.round(posUiPreferences.value.toolboxOpacity)}% · ${posUiPreferences.value.darkMode ? 'Dark' : 'Light'}`,
 )
+const toolboxPanelTitle = computed(() => {
+  if (activeToolboxPanel.value === 'appearance') {
+    return '外觀設定'
+  }
+
+  if (activeToolboxPanel.value === 'time-clock') {
+    return '員工打卡'
+  }
+
+  return '工具箱'
+})
+const toolboxPanelEyebrow = computed(() => {
+  if (activeToolboxPanel.value === 'appearance') {
+    return 'Display'
+  }
+
+  if (activeToolboxPanel.value === 'time-clock') {
+    return 'Time Clock'
+  }
+
+  return 'Toolbox'
+})
 const readLayoutViewportHeight = (): number => {
   const documentHeight = document.documentElement?.clientHeight ?? 0
   const visualHeight = globalThis.visualViewport?.height ?? 0
@@ -4724,6 +4759,35 @@ const runCloseoutPreflightAction = (item: CloseoutPreflightItem): void => {
   setWorkspaceTab('queue')
 }
 
+const submitTimeClockAction = async (): Promise<void> => {
+  const staffCode = timeClockStaffCode.value.trim()
+
+  if (!staffCode) {
+    timeClockMessage.value = '請輸入員工識別碼'
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    timeClockMessage.value = '本機模式無法同步打卡'
+    return
+  }
+
+  isTimeClockSubmitting.value = true
+  timeClockMessage.value = '打卡同步中'
+
+  try {
+    const entry = await createStaffTimeClockEntry(staffCode, timeClockNote.value.trim())
+    latestTimeClockEntry.value = entry
+    timeClockStaffCode.value = ''
+    timeClockNote.value = ''
+    timeClockMessage.value = `${entry.staffName} 已${entry.eventType === 'clock-in' ? '上班' : '下班'}打卡 · ${formatOrderTime(entry.createdAt)}`
+  } catch (error) {
+    timeClockMessage.value = `打卡失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isTimeClockSubmitting.value = false
+  }
+}
+
 const runToolboxAction = (action: ToolboxAction): void => {
   if (action === 'floor') {
     setWorkspaceTab('floor')
@@ -4760,6 +4824,11 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'appearance') {
     activeToolboxPanel.value = 'appearance'
+    return
+  }
+
+  if (action === 'time-clock') {
+    activeToolboxPanel.value = 'time-clock'
     return
   }
 
@@ -8655,14 +8724,14 @@ onBeforeUnmount(() => {
           <button
             class="icon-button"
             type="button"
-            :title="activeToolboxPanel === 'appearance' ? '返回工具箱' : '關閉工具箱'"
-            @click="activeToolboxPanel === 'appearance' ? showToolboxHome() : closeToolbox()"
+            :title="activeToolboxPanel === 'home' ? '關閉工具箱' : '返回工具箱'"
+            @click="activeToolboxPanel === 'home' ? closeToolbox() : showToolboxHome()"
           >
             <ChevronLeft :size="20" aria-hidden="true" />
           </button>
           <div>
-            <p class="eyebrow">{{ activeToolboxPanel === 'appearance' ? 'Display' : 'Toolbox' }}</p>
-            <h2 id="toolbox-title">{{ activeToolboxPanel === 'appearance' ? '外觀設定' : '工具箱' }}</h2>
+            <p class="eyebrow">{{ toolboxPanelEyebrow }}</p>
+            <h2 id="toolbox-title">{{ toolboxPanelTitle }}</h2>
           </div>
           <button
             v-if="activeToolboxPanel === 'home'"
@@ -8718,6 +8787,11 @@ onBeforeUnmount(() => {
             <strong>班別關帳</strong>
             <span>{{ workspaceTabSummaries.closeout }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('time-clock')">
+            <Clock3 :size="24" aria-hidden="true" />
+            <strong>員工打卡</strong>
+            <span>{{ latestTimeClockEntry ? `${latestTimeClockEntry.staffName} ${latestTimeClockEntry.eventType === 'clock-in' ? '上班' : '下班'}` : '識別碼上下班' }}</span>
+          </button>
           <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
             <Settings2 :size="24" aria-hidden="true" />
             <strong>後台</strong>
@@ -8735,7 +8809,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+        <section v-else-if="activeToolboxPanel === 'appearance'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <div class="preference-slider-list">
             <label class="preference-toggle">
               <input v-model="posUiPreferences.darkMode" type="checkbox" />
@@ -8805,6 +8879,34 @@ onBeforeUnmount(() => {
             <RefreshCw :size="18" aria-hidden="true" />
             重設
           </button>
+        </section>
+        <section v-else class="toolbox-detail-panel" aria-labelledby="toolbox-title">
+          <form class="time-clock-form" @submit.prevent="submitTimeClockAction">
+            <label>
+              員工識別碼
+              <input
+                v-model="timeClockStaffCode"
+                type="password"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="輸入後按打卡"
+              />
+            </label>
+            <label>
+              備註
+              <input v-model="timeClockNote" type="text" maxlength="120" placeholder="選填" />
+            </label>
+            <button class="primary-button" type="submit" :disabled="isTimeClockSubmitting">
+              <Clock3 :size="18" aria-hidden="true" />
+              {{ isTimeClockSubmitting ? '同步中' : '打卡' }}
+            </button>
+            <p class="time-clock-message" aria-live="polite">{{ timeClockMessage }}</p>
+          </form>
+          <article v-if="latestTimeClockEntry" class="time-clock-result">
+            <strong>{{ latestTimeClockEntry.staffName }}</strong>
+            <span>{{ latestTimeClockEntry.roleName || latestTimeClockEntry.roleId || '未指定角色' }}</span>
+            <span>{{ latestTimeClockEntry.eventType === 'clock-in' ? '上班' : '下班' }} · {{ formatOrderTime(latestTimeClockEntry.createdAt) }}</span>
+          </article>
         </section>
       </section>
     </div>
