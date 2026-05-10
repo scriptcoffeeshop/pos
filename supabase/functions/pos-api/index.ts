@@ -320,6 +320,12 @@ interface OnlineMenuCategory {
   label: string;
 }
 
+interface OnlinePaymentMethodSetting {
+  id: PaymentMethod;
+  label: string;
+  enabled: boolean;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -338,6 +344,7 @@ interface OnlineOrderingSettings {
   checkoutInstructions: string;
   showTaxIdField: boolean;
   showCarrierBarcodeField: boolean;
+  paymentMethods: OnlinePaymentMethodSetting[];
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -668,6 +675,14 @@ const defaultAccessControl: AccessControlSettings = {
   ],
 };
 
+const defaultOnlinePaymentMethods = (): OnlinePaymentMethodSetting[] => [
+  { id: "line-pay", label: "LINE Pay", enabled: true },
+  { id: "jkopay", label: "街口", enabled: true },
+  { id: "cash", label: "取餐時付款", enabled: true },
+  { id: "card", label: "線上刷卡", enabled: false },
+  { id: "transfer", label: "轉帳", enabled: false },
+];
+
 const defaultOnlineOrdering: OnlineOrderingSettings = {
   enabled: true,
   serviceModeAvailability: {
@@ -686,6 +701,7 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   checkoutInstructions: "",
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  paymentMethods: defaultOnlinePaymentMethods(),
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
   availableOptionChoices: [],
@@ -2683,6 +2699,13 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
     }
+    const paymentMethod = input.paymentMethod ?? "cash";
+    const paymentMethodEnabled = onlineOrdering.paymentMethods.some((method) =>
+      method.id === paymentMethod && method.enabled
+    );
+    if (!paymentMethodEnabled) {
+      return c.json({ error: "Selected payment method is disabled" }, 409);
+    }
     if (!onlineOrdering.allowScheduledOrders && requestedFulfillmentAt) {
       return c.json({ error: "Scheduled online orders are disabled" }, 409);
     }
@@ -4284,6 +4307,7 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
 };
 
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
+const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "transfer"];
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
 const normalizeOnlineServiceModeAvailability = (
   input: unknown,
@@ -4296,6 +4320,35 @@ const normalizeOnlineServiceModeAvailability = (
     normalized[mode] = availability[mode] !== false;
     return normalized;
   }, { ...defaultOnlineOrdering.serviceModeAvailability });
+};
+
+const normalizeOnlinePaymentMethods = (input: unknown): OnlinePaymentMethodSetting[] => {
+  if (!Array.isArray(input)) {
+    return defaultOnlinePaymentMethods();
+  }
+
+  const seen = new Set<PaymentMethod>();
+  const normalized = input.flatMap((entry): OnlinePaymentMethodSetting[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const method = entry as Partial<OnlinePaymentMethodSetting>;
+    if (!method.id || !paymentMethodIds.includes(method.id) || seen.has(method.id)) {
+      return [];
+    }
+
+    seen.add(method.id);
+    const fallbackLabel = defaultOnlinePaymentMethods().find((defaultMethod) => defaultMethod.id === method.id)
+      ?.label ?? method.id;
+    return [{
+      id: method.id,
+      label: sanitizeText(method.label, fallbackLabel).slice(0, 24),
+      enabled: method.enabled !== false,
+    }];
+  });
+
+  return normalized.length > 0 ? normalized : defaultOnlinePaymentMethods();
 };
 const knownPermissions = [
   "manageProducts",
@@ -5657,6 +5710,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     ).slice(0, 240),
     showTaxIdField: settings.showTaxIdField === true,
     showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
+    paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -5950,6 +6004,7 @@ const validateOnlineOrdering = (input: unknown): {
       checkoutInstructions,
       showTaxIdField: settings.showTaxIdField === true,
       showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
+      paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
       pauseMessage,
       menuCategories,
       availableOptionChoices,

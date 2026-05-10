@@ -80,6 +80,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 重新開啟外送並關閉自取，確認另一台平板不用清本機資料即可同步新狀態。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認三個服務方式開關仍從 Supabase runtime 還原。
 
+## 多平板線上支付模組
+
+線上支付方式存在 `online_ordering.paymentMethods`，顯示名稱、啟用狀態與順序都要跨平板同步：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」的「支付模組」區塊。
+2. 停用 LINE Pay、將「取餐時付款」改名，並移到列表第一個後儲存。
+3. 在平板 B 或消費者頁重新整理，確認付款方式不顯示 LINE Pay，且第一個付款方式名稱與平板 A 設定一致。
+4. 送出訂單後，POS 訂單中心應保存選到的付款方式；取餐時付款會維持待收款，供現場 POS 結帳。
+5. 用舊頁面或測試 API 繞過前端送出已停用付款方式，`POST /orders` 應回覆 disabled payment method 的 409，不得寫入 `orders`。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認支付模組設定仍從 Supabase runtime 還原。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

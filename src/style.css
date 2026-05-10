@@ -8566,6 +8566,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-row label,
 .admin-product-stock-grid label,
 .admin-online-settings-grid label,
+.admin-payment-method-row label,
 .admin-special-date-grid label,
 .admin-member-create label,
 .admin-member-row label,
@@ -8588,6 +8589,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-stock-grid input,
 .admin-online-settings-grid input,
 .admin-online-settings-grid textarea,
+.admin-payment-method-row input,
 .admin-special-date-grid input,
 .admin-special-date-grid select,
 .admin-member-create input,
@@ -9060,6 +9062,31 @@ button.cart-line-summary:focus-visible {
   grid-template-columns: 160px 160px minmax(260px, 1fr);
   gap: 9px;
   align-items: end;
+}
+
+.admin-online-payment-methods {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.admin-payment-method-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-payment-method-row {
+  display: grid;
+  grid-template-columns: minmax(116px, auto) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.admin-payment-method-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .admin-inline-warning {
