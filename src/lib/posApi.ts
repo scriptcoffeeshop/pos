@@ -7,6 +7,10 @@ import type {
   FloorDisplayPreferences,
   FloorPlanSettings,
   FloorTableSetting,
+  InventoryCategory,
+  InventoryItem,
+  InventoryRecord,
+  InventoryRecordAction,
   OrderSource,
   OrderStatus,
   PaymentAllocation,
@@ -224,6 +228,62 @@ interface ApiCashDrawerEvent {
 
 interface CashDrawerEventsResponse {
   events: ApiCashDrawerEvent[]
+}
+
+interface ApiInventoryCategory {
+  id: string
+  name: string
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface ApiInventoryItem {
+  id: string
+  category_id: string
+  name: string
+  unit: string
+  default_unit_cost: number
+  stock_quantity: number | string
+  low_stock_quantity: number | string | null
+  note: string | null
+  is_active: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+interface ApiInventoryRecord {
+  id: string
+  item_id: string
+  action: InventoryRecordAction
+  quantity: number | string
+  quantity_delta: number | string
+  quantity_after: number | string
+  unit_cost: number
+  total_cost: number
+  note: string | null
+  station_id: string | null
+  created_at: string
+}
+
+interface InventoryResponse {
+  categories: ApiInventoryCategory[]
+  items: ApiInventoryItem[]
+  records: ApiInventoryRecord[]
+}
+
+interface InventoryCategoryResponse {
+  category: ApiInventoryCategory
+}
+
+interface InventoryItemResponse {
+  item: ApiInventoryItem
+}
+
+interface InventoryRecordResponse {
+  record: ApiInventoryRecord
 }
 
 interface ApiAuditEvent {
@@ -502,6 +562,34 @@ export interface OnlineOrderReminderStateUpdateInput {
   snoozedUntil?: string
 }
 
+export interface InventoryCategoryInput {
+  name: string
+  sortOrder: number
+  isActive: boolean
+}
+
+export interface InventoryItemInput {
+  categoryId: string
+  name: string
+  unit: string
+  defaultUnitCost: number
+  stockQuantity: number
+  lowStockQuantity: number | null
+  note: string
+  isActive: boolean
+  sortOrder: number
+}
+
+export interface InventoryRecordInput {
+  itemId: string
+  action: InventoryRecordAction
+  quantity?: number
+  unitCost?: number
+  totalCost?: number
+  countedQuantity?: number
+  note?: string
+}
+
 interface ProductResponse {
   product: ApiProduct
 }
@@ -762,6 +850,49 @@ const normalizeCashDrawerEvent = (event: ApiCashDrawerEvent): CashDrawerEvent =>
   deliveryStatus: event.delivery_status ?? 'preview',
   errorMessage: event.error_message ?? '',
   createdAt: event.created_at,
+})
+
+const normalizeInventoryNumber = (value: number | string | null | undefined): number => {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? Math.round(numberValue * 1000) / 1000 : 0
+}
+
+const normalizeInventoryCategory = (category: ApiInventoryCategory): InventoryCategory => ({
+  id: category.id,
+  name: category.name,
+  sortOrder: category.sort_order,
+  isActive: category.is_active,
+  createdAt: category.created_at,
+  updatedAt: category.updated_at,
+})
+
+const normalizeInventoryItem = (item: ApiInventoryItem): InventoryItem => ({
+  id: item.id,
+  categoryId: item.category_id,
+  name: item.name,
+  unit: item.unit,
+  defaultUnitCost: item.default_unit_cost,
+  stockQuantity: normalizeInventoryNumber(item.stock_quantity),
+  lowStockQuantity: item.low_stock_quantity === null ? null : normalizeInventoryNumber(item.low_stock_quantity),
+  note: item.note ?? '',
+  isActive: item.is_active,
+  sortOrder: item.sort_order,
+  createdAt: item.created_at,
+  updatedAt: item.updated_at,
+})
+
+const normalizeInventoryRecord = (record: ApiInventoryRecord): InventoryRecord => ({
+  id: record.id,
+  itemId: record.item_id,
+  action: record.action,
+  quantity: normalizeInventoryNumber(record.quantity),
+  quantityDelta: normalizeInventoryNumber(record.quantity_delta),
+  quantityAfter: normalizeInventoryNumber(record.quantity_after),
+  unitCost: record.unit_cost,
+  totalCost: record.total_cost,
+  note: record.note ?? '',
+  stationId: record.station_id ?? '',
+  createdAt: record.created_at,
 })
 
 const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
@@ -2055,6 +2186,101 @@ export const deleteProduct = async (productId: string): Promise<MenuItem> => {
   })
 
   return normalizeProduct(data.product)
+}
+
+export const fetchAdminInventory = async (recordLimit = 80): Promise<{
+  categories: InventoryCategory[]
+  items: InventoryItem[]
+  records: InventoryRecord[]
+}> => {
+  const cappedLimit = Math.min(Math.max(Math.trunc(recordLimit), 1), 200)
+  const data = await request<InventoryResponse>(`/admin/inventory?recordLimit=${cappedLimit}`)
+  return {
+    categories: data.categories.map(normalizeInventoryCategory),
+    items: data.items.map(normalizeInventoryItem),
+    records: data.records.map(normalizeInventoryRecord),
+  }
+}
+
+export const createInventoryCategory = async (input: InventoryCategoryInput): Promise<InventoryCategory> => {
+  const data = await request<InventoryCategoryResponse>('/admin/inventory/categories', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryCategory(data.category)
+}
+
+export const updateInventoryCategory = async (
+  categoryId: string,
+  input: InventoryCategoryInput,
+): Promise<InventoryCategory> => {
+  const data = await request<InventoryCategoryResponse>(`/admin/inventory/categories/${categoryId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryCategory(data.category)
+}
+
+export const createInventoryItem = async (input: InventoryItemInput): Promise<InventoryItem> => {
+  const data = await request<InventoryItemResponse>('/admin/inventory/items', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryItem(data.item)
+}
+
+export const updateInventoryItem = async (
+  itemId: string,
+  input: InventoryItemInput,
+): Promise<InventoryItem> => {
+  const data = await request<InventoryItemResponse>(`/admin/inventory/items/${itemId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryItem(data.item)
+}
+
+export const createInventoryRecord = async (input: InventoryRecordInput): Promise<InventoryRecord> => {
+  const data = await request<InventoryRecordResponse>('/admin/inventory/records', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryRecord(data.record)
 }
 
 export const fetchAdminSettings = async (): Promise<PosAdminSettings> => {

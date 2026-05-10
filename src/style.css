@@ -8843,6 +8843,191 @@ button.cart-line-summary:focus-visible {
   white-space: nowrap;
 }
 
+.inventory-management-panel {
+  gap: 12px;
+}
+
+.inventory-management-toolbar,
+.inventory-create-grid,
+.inventory-operation-form {
+  display: grid;
+  gap: 10px;
+}
+
+.inventory-management-toolbar {
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.28fr) auto;
+  align-items: end;
+}
+
+.inventory-management-toolbar label,
+.inventory-operation-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.inventory-management-toolbar .search-box {
+  display: flex;
+  align-items: center;
+}
+
+.inventory-management-toolbar select,
+.inventory-create-card input,
+.inventory-create-card select,
+.inventory-operation-form input,
+.inventory-operation-form select {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.inventory-create-grid {
+  grid-template-columns: minmax(180px, 0.34fr) minmax(0, 1fr);
+}
+
+.inventory-create-card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.inventory-create-card--item {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
+.inventory-create-card strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.inventory-create-card--item strong {
+  grid-column: 1 / -1;
+}
+
+.inventory-management-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.48fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: min(430px, calc(var(--pos-stage-height) - 360px));
+}
+
+.inventory-list,
+.inventory-detail,
+.inventory-records {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  gap: 9px;
+}
+
+.inventory-list,
+.inventory-detail {
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.inventory-row,
+.inventory-record-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.inventory-row {
+  border-color: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inventory-row--active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.inventory-row div,
+.inventory-record-row div,
+.inventory-detail header div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.inventory-row strong,
+.inventory-record-row strong,
+.inventory-detail header strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 950;
+}
+
+.inventory-row span,
+.inventory-record-row span,
+.inventory-detail header span,
+.inventory-empty,
+.inventory-message {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.inventory-stock,
+.inventory-record-row b {
+  color: var(--primary-dark);
+  font-size: 0.9rem;
+  font-weight: 1000;
+  white-space: nowrap;
+}
+
+.inventory-stock--warning {
+  color: var(--amber);
+}
+
+.inventory-stock--danger {
+  color: var(--danger);
+}
+
+.inventory-detail header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inventory-operation-form {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(110px, 0.7fr) minmax(110px, 0.7fr) minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.inventory-message,
+.inventory-empty {
+  margin: 0;
+}
+
 .current-sales-header {
   display: flex;
   align-items: center;
@@ -11203,6 +11388,13 @@ button.cart-line-summary:focus-visible {
   .customer-management-sort,
   .customer-management-row,
   .customer-management-row dl,
+  .inventory-management-toolbar,
+  .inventory-create-grid,
+  .inventory-create-card--item,
+  .inventory-management-grid,
+  .inventory-operation-form,
+  .inventory-row,
+  .inventory-record-row,
   .cash-drawer-action-grid,
   .cash-drawer-history-grid,
   .cash-drawer-target,
@@ -11216,7 +11408,8 @@ button.cart-line-summary:focus-visible {
   .device-management-actions,
   .customer-management-toolbar,
   .customer-management-create,
-  .customer-management-actions {
+  .customer-management-actions,
+  .inventory-detail header {
     align-items: stretch;
     flex-direction: column;
   }

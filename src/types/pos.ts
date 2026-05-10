@@ -15,6 +15,7 @@ export type ReservationStatus = 'booked' | 'reminded' | 'confirmed' | 'seated' |
 export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-drawer' | 'ipad-qr-print'
 export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
 export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
+export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 
 export interface SupplyPeriodRule {
   id: string
@@ -174,6 +175,44 @@ export interface CashDrawerEvent {
   printerPort: number
   deliveryStatus: CashDrawerDeliveryStatus
   errorMessage: string
+  createdAt: string
+}
+
+export interface InventoryCategory {
+  id: string
+  name: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InventoryItem {
+  id: string
+  categoryId: string
+  name: string
+  unit: string
+  defaultUnitCost: number
+  stockQuantity: number
+  lowStockQuantity: number | null
+  note: string
+  isActive: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InventoryRecord {
+  id: string
+  itemId: string
+  action: InventoryRecordAction
+  quantity: number
+  quantityDelta: number
+  quantityAfter: number
+  unitCost: number
+  totalCost: number
+  note: string
+  stationId: string
   createdAt: string
 }
 
