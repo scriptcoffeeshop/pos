@@ -10,6 +10,7 @@ import type {
   OrderSource,
   OrderStatus,
   PaymentMethod,
+  PaymentSplit,
   PaymentStatus,
   PosAdminSettings,
   PosAuditEvent,
@@ -113,6 +114,7 @@ interface ApiOrder {
   discount_amount?: number | null
   points_redeemed?: number | null
   coupon_code?: string | null
+  payment_splits?: unknown
   member_points_earned?: number | null
   payment_method: PaymentMethod
   payment_status: PaymentStatus
@@ -553,6 +555,48 @@ const normalizeOptions = (options: unknown): string[] => {
     return []
   }
   return options.filter((option): option is string => typeof option === 'string')
+}
+
+export const normalizePaymentSplits = (splits: unknown): PaymentSplit[] => {
+  if (!Array.isArray(splits)) {
+    return []
+  }
+
+  return splits.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const split = entry as Partial<PaymentSplit>
+    const amount = Math.max(0, Math.trunc(Number(split.amount) || 0))
+    const paymentMethod: PaymentMethod = split.paymentMethod === 'card' ||
+      split.paymentMethod === 'line-pay' ||
+      split.paymentMethod === 'jkopay' ||
+      split.paymentMethod === 'transfer'
+      ? split.paymentMethod
+      : 'cash'
+    const paidAt = typeof split.paidAt === 'string' && Number.isFinite(new Date(split.paidAt).getTime())
+      ? split.paidAt
+      : null
+
+    const status: PaymentSplit['status'] = split.status === 'paid' ? 'paid' : 'open'
+
+    return [{
+      id: typeof split.id === 'string' && split.id.trim()
+        ? split.id.trim().slice(0, 80)
+        : `split-${index + 1}`,
+      label: typeof split.label === 'string' && split.label.trim()
+        ? split.label.trim().slice(0, 40)
+        : `子單 ${index + 1}`,
+      amount,
+      lineKeys: Array.isArray(split.lineKeys)
+        ? [...new Set(split.lineKeys.filter((lineKey): lineKey is string => typeof lineKey === 'string').map((lineKey) => lineKey.slice(0, 120)))].slice(0, 60)
+        : [],
+      paymentMethod,
+      status,
+      paidAt,
+    }]
+  }).slice(0, 12)
 }
 
 const readDraftLineString = (line: Record<string, unknown>, camelKey: string, snakeKey: string): string =>
@@ -1845,6 +1889,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     discountAmount: order.discount_amount ?? 0,
     pointsRedeemed: order.points_redeemed ?? 0,
     couponCode: order.coupon_code ?? '',
+    paymentSplits: normalizePaymentSplits(order.payment_splits),
     memberPointsEarned: order.member_points_earned ?? 0,
     paymentMethod: order.payment_method,
     paymentStatus: order.payment_status,
@@ -2344,6 +2389,15 @@ const orderPayload = (order: PosOrder) => ({
   discountAmount: order.discountAmount,
   pointsRedeemed: order.pointsRedeemed,
   couponCode: order.couponCode,
+  paymentSplits: order.paymentSplits.map((split) => ({
+    id: split.id,
+    label: split.label,
+    amount: split.amount,
+    lineKeys: split.lineKeys,
+    paymentMethod: split.paymentMethod,
+    status: split.status,
+    paidAt: split.paidAt,
+  })),
   memberPointsEarned: order.memberPointsEarned,
   paymentMethod: order.paymentMethod,
   paymentStatus: order.paymentStatus,

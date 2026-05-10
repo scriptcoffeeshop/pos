@@ -84,6 +84,18 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 5. 選擇空桌讓候位入座，確認訂單改成該桌內用單、點餐頁載入原品項，接著可出單或結帳。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認候位預點餐關聯、草稿品項與已入座的桌位訂單仍從 Supabase 還原。
 
+## 付款拆單
+
+付款拆單對照 iCHEF「拆單各付各或均分」流程。子單資料寫入 Supabase `orders.payment_splits`，不是 APK 本機資料；fresh reinstall 後應仍從訂單欄位還原。
+
+1. 在 APK 先建立一張櫃台草稿單，加入至少兩個品項。
+2. 按點餐頁「付款/拆單」進入付款頁，按「均分 2 張」，確認兩張子單金額合計等於訂單合計。
+3. 按「新增子單」與「重置」，確認可增加子單與回到未拆單狀態。
+4. 再建立兩張子單，於「商品各付各」把品項指派到不同子單；未指派品項應暫列第一張子單。
+5. 每張子單選不同付款方式，並將其中一張按「標記已結」，確認訂單中心顯示「拆單 N 張」摘要。
+6. 另一台平板或 Web POS 進入外帶/外送訂單中心，確認同一張單顯示相同子單數、未結張數與已結金額。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認拆單摘要、商品指派、付款方式與已結/未結狀態仍從 Supabase 還原。
+
 ## 線上/掃碼新單背景提醒
 
 APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：
@@ -238,6 +250,7 @@ rtk npm run apk:install:fresh
 - 測線上訂位網站時，後台規則應透過 `/settings/runtime` 同步，公開送單應走 `/reservations`；特殊訂位日必須由前端與 API 同時阻擋或開放，黑名單手機不得只在前端阻擋。
 - 測線上訂位容量時，需檢查同時段 booked/reminded/confirmed/seated 訂位與 assigned table，而不是只看總人數欄位；沒有 assigned table 的舊訂位會以人數保守占用容量。
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
+- 測付款拆單時，子單必須寫入 `orders.payment_splits`；另一台平板、App 重開與 fresh reinstall 都要看到同一子單數、未結張數、付款方式與已結狀態。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。

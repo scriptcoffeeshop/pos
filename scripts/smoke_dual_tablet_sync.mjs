@@ -122,6 +122,7 @@ const createOrder = (orderNumber, overrides = {}) => {
     discount_amount: 0,
     points_redeemed: 0,
     coupon_code: '',
+    payment_splits: overrides.payment_splits ?? overrides.paymentSplits ?? [],
     member_points_earned: 0,
     payment_method: overrides.payment_method ?? 'line-pay',
     payment_status: overrides.payment_status ?? 'paid',
@@ -170,6 +171,15 @@ const applyDraftPayload = (order, input, stationId) => {
   order.requested_fulfillment_at = input.requestedFulfillmentAt ?? null
   order.note = input.note ?? order.note ?? ''
   order.subtotal = Number(input.subtotal) || draftLines.reduce((total, line) => total + line.unit_price * line.quantity, 0)
+  order.order_labels = Array.isArray(input.orderLabels) ? input.orderLabels : []
+  order.service_fee_rate = Number(input.serviceFeeRate) || 0
+  order.service_fee_amount = Number(input.serviceFeeAmount) || 0
+  order.extra_fee_amount = Number(input.extraFeeAmount) || 0
+  order.discount_amount = Number(input.discountAmount) || 0
+  order.points_redeemed = Number(input.pointsRedeemed) || 0
+  order.coupon_code = input.couponCode ?? ''
+  order.payment_splits = Array.isArray(input.paymentSplits) ? input.paymentSplits : []
+  order.member_points_earned = Number(input.memberPointsEarned) || 0
   order.payment_method = input.paymentMethod ?? order.payment_method ?? 'cash'
   order.payment_status = input.paymentStatus ?? order.payment_status ?? 'pending'
   order.status = 'new'
@@ -377,6 +387,15 @@ const createMockApiServer = async () => {
         requested_fulfillment_at: input.requestedFulfillmentAt ?? null,
         note: input.note ?? '',
         subtotal: Number(input.subtotal) || 0,
+        order_labels: Array.isArray(input.orderLabels) ? input.orderLabels : [],
+        service_fee_rate: Number(input.serviceFeeRate) || 0,
+        service_fee_amount: Number(input.serviceFeeAmount) || 0,
+        extra_fee_amount: Number(input.extraFeeAmount) || 0,
+        discount_amount: Number(input.discountAmount) || 0,
+        points_redeemed: Number(input.pointsRedeemed) || 0,
+        coupon_code: input.couponCode ?? '',
+        payment_splits: Array.isArray(input.paymentSplits) ? input.paymentSplits : [],
+        member_points_earned: Number(input.memberPointsEarned) || 0,
         payment_method: input.paymentMethod ?? 'cash',
         payment_status: input.paymentStatus ?? 'pending',
         status: 'new',
@@ -746,10 +765,27 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await tabletA.page.locator('.waitline-row').filter({ hasText: waitlineName })
       .getByRole('button', { name: '開啟點餐' })
       .click()
+    await tabletA.page.locator('.workspace--order').waitFor({ state: 'visible', timeout: 8_000 })
     await waitForState((snapshot) => (
       snapshot.orders.filter((order) => order.order_number === preorderEntry.orderId).length === 1
     ), 'waitline preorder reopened without duplicate draft')
     record('waitline preorder order id synced and reopened without duplicate draft')
+
+    await tabletA.page.getByRole('button', { name: '付款/拆單' }).click()
+    await tabletA.page.locator('.payment-split-panel').waitFor({ state: 'visible', timeout: 8_000 })
+    await tabletA.page.getByRole('button', { name: '均分 2 張' }).click()
+    await tabletA.page.locator('.payment-split-card').first().getByRole('button', { name: '標記已結' }).click()
+    await waitForState((snapshot) => {
+      const order = snapshot.orders.find((entry) => entry.order_number === preorderEntry.orderId)
+      return (
+        Array.isArray(order?.payment_splits) &&
+        order.payment_splits.length === 2 &&
+        order.payment_splits.some((split) => split.status === 'paid')
+      )
+    }, 'split bill draft persisted')
+    await openQueueWorkspace(tabletB.page)
+    await waitForText(tabletB.page, '拆單 2 張', 12_000)
+    record('split bill state persisted and appeared on tablet B queue')
 
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])

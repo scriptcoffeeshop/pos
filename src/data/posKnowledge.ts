@@ -1,5 +1,5 @@
 export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations'
-export type PosKnowledgeTarget = 'floor' | 'order' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
+export type PosKnowledgeTarget = 'floor' | 'order' | 'payment' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
 
 export interface PosKnowledgeCategoryOption {
   value: PosKnowledgeCategory
@@ -68,6 +68,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     ],
     keywords: ['收款', '入帳', '作廢', '退款', '付款逾期', '交易流水'],
     target: 'queue',
+  },
+  {
+    id: 'split-bills',
+    category: 'payments',
+    title: '拆單各付各與均分',
+    summary: '付款頁可建立多張子單，支援均分金額、商品各付各、不同付款方式與已結/未結追蹤。',
+    steps: [
+      '在點餐頁確認商品後按「付款/拆單」進入付款頁。',
+      '按「均分 2 張」會依訂單合計平均建立子單；按「新增子單」會再新增一張並重算金額。',
+      '若顧客要各付各，於商品各付各區把品項指派到子單；尚未指派的品項會暫列在第一張子單。',
+      '每張子單可選不同付款方式，收完款後按「標記已結」，需要更正時可改回未結。',
+      '子單資料寫入訂單的資料庫欄位，另一台平板與 App 重開後會還原，不只存在本機。',
+    ],
+    keywords: ['拆單', '分帳', '各付各', '均分', '子單', '付款方式', '已結', '未結', 'iCHEF'],
+    target: 'payment',
   },
   {
     id: 'fulfillment-alerts',
