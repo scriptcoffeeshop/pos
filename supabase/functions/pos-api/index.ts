@@ -35,6 +35,7 @@ interface OrderLineInput {
   unitPrice: number;
   quantity: number;
   options?: unknown[];
+  printPaused?: boolean;
 }
 
 interface CreateOrderInput {
@@ -2193,6 +2194,7 @@ api.post("/orders", async (c) => {
       unitPrice: line.unitPrice,
       quantity: line.quantity,
       options: line.options ?? [],
+      printPaused: line.printPaused === true,
     })),
   });
 
@@ -2410,6 +2412,7 @@ api.post("/orders/:id/finalize", async (c) => {
       unitPrice: line.unitPrice,
       quantity: line.quantity,
       options: line.options ?? [],
+      printPaused: line.printPaused === true,
     })),
   });
 
@@ -3595,6 +3598,7 @@ const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
       unitPrice,
       quantity,
       options: Array.isArray(line.options) ? line.options.filter((option) => typeof option === "string").slice(0, 12) : [],
+      printPaused: line.printPaused === true,
     };
     if (productId) {
       normalizedLine.productId = productId;

@@ -743,6 +743,7 @@ const {
   stationHeartbeatMessage,
   togglingProductId,
   toggleCustomerNote,
+  toggleLinePrintPaused,
   toggleOrderLabel,
   updateConfiguredLine,
   openRegisterSessionForStation,
@@ -5991,7 +5992,12 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="cart-lines" aria-live="polite">
-                    <article v-for="line in cartLines" :key="line.itemId" class="cart-line">
+                    <article
+                      v-for="line in cartLines"
+                      :key="line.itemId"
+                      class="cart-line"
+                      :class="{ 'cart-line--print-paused': line.printPaused }"
+                    >
                       <button
                         v-if="lineRequiresOptions(line)"
                         class="cart-line-summary"
@@ -6041,6 +6047,17 @@ onBeforeUnmount(() => {
                           <Plus :size="16" aria-hidden="true" />
                         </button>
                       </div>
+                      <button
+                        class="cart-line-print-toggle"
+                        :class="{ 'cart-line-print-toggle--paused': line.printPaused }"
+                        type="button"
+                        :aria-pressed="line.printPaused === true"
+                        :title="line.printPaused ? '恢復出單' : '暫停出單'"
+                        @click.stop="toggleLinePrintPaused(line.itemId)"
+                      >
+                        <Printer :size="17" aria-hidden="true" />
+                        <span>{{ line.printPaused ? '暫停' : '出單' }}</span>
+                      </button>
                       <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
                     </article>
 

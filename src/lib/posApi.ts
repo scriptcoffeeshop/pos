@@ -73,6 +73,7 @@ interface ApiOrderItem {
   unit_price: number
   quantity: number
   options: unknown
+  print_paused?: boolean | null
 }
 
 interface ApiPrintJob {
@@ -513,6 +514,10 @@ const normalizeDraftLines = (lines: unknown): CartLine[] => {
     }
     if (productId) {
       cartLine.productId = productId
+    }
+    const printPaused = line.printPaused ?? line.print_paused
+    if (typeof printPaused === 'boolean') {
+      cartLine.printPaused = printPaused
     }
     return [cartLine]
   })
@@ -1436,6 +1441,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
           unitPrice: line.unit_price,
           quantity: line.quantity,
           options: normalizeOptions(line.options),
+          printPaused: line.print_paused === true,
         }
 
         return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
@@ -1831,6 +1837,7 @@ const orderPayload = (order: PosOrder) => ({
     unitPrice: line.unitPrice,
     quantity: line.quantity,
     options: line.options,
+    printPaused: line.printPaused === true,
   })),
 })
 

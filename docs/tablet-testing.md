@@ -45,7 +45,7 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 ## APK 測試
 
-若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。debug APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應與 Android TCP socket 列印 POC；消費者線上點餐不會出現在 APK 裡。
+若要用 Android App 形式測試，請看 [Android APK 測試流程](android-apk.md)。debug APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應、單一品項暫停出單與 Android TCP socket 列印 POC；消費者線上點餐不會出現在 APK 裡。
 
 ## 多平板線上新單提醒
 
@@ -60,6 +60,8 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。
+
+逐筆暫停出單測試：在購物車加入至少兩個品項，將其中一個品項切成「暫停」，確認結帳金額仍包含該品項，但出單 preview、`print_jobs` payload 與 APK TCP 列印只包含未暫停的品項。若先建櫃台草稿再換另一台平板或 fresh reinstall，該品項的暫停狀態也應從 Supabase 草稿恢復。
 
 ## 後台編輯模式
 
