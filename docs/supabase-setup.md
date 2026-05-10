@@ -29,7 +29,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 ## 初始 schema 草案
 
 - `products`：商品、自訂文字分類、售價、上架狀態、POS/線上/掃碼可見性、備餐站、標籤列印設定與可售商品庫存。
-- `inventory_categories` / `inventory_items` / `inventory_records`：iCHEF 式庫存管理來源，保存庫存類別、原料/包材品項、目前存量、安全庫存與進貨/退貨/消耗/報廢/盤點紀錄。
+- `inventory_categories` / `inventory_items` / `inventory_records` / `inventory_consumption_rules`：iCHEF 式庫存管理來源，保存庫存類別、原料/包材品項、目前存量、安全庫存、進貨/退貨/消耗/報廢/盤點紀錄，以及商品/註記自動消耗庫存規則。
 - `pos_settings`：出單機/印單規則、角色權限與線上點餐 runtime 等後台設定。
 - `orders`：訂單主檔、來源、服務方式、希望取餐/送達時間、外送地址、付款狀態、製作狀態，以及櫃台未出單草稿用的 `draft_lines`。
 - `order_items`：訂單品項、數量、單價、客製選項。
@@ -57,6 +57,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外送出單規則補強：`20260428193000_add_delivery_print_rule.sql`
 - 商品庫存控管：`20260429110000_add_product_inventory_controls.sql`
 - 庫存管理：`20260511235500_add_inventory_management.sql`
+- 自動消耗庫存：`20260511235900_add_inventory_auto_consumption.sql`
 - 多平板訂單鎖定：`20260429123000_add_order_claim_lease.sql`
 - 收銀班別：`20260429133000_add_register_sessions.sql`
 - 訂單作廢狀態：`20260429135000_add_voided_order_status.sql`
@@ -113,7 +114,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 標籤管理走 `engagement_settings.orderLabels`；工具箱儲存標籤時呼叫 `PATCH /admin/settings/engagement_settings`，點餐頁使用同一組標籤，送單後以 `orders.order_labels` 保存該訂單實際勾選的標籤。
 - 裝置管理面板不新增資料表；出單機讀 `printer_settings.stations`，刷卡/掃碼/錢櫃外設讀 `engagement_settings.hardwareDevices`，未印出單據讀目前訂單的 `print_jobs`，取消未印出單據沿用 `DELETE /print-jobs/:id`。
 - 顧客資訊管理面板不新增資料表；搜尋與列表走 `GET /admin/members`，新增走 `POST /admin/members`，顧客類型讀 `engagement_settings.customerTypes` 與既有會員資料，最近消費時間以會員 `ledger` 最新紀錄推算。
-- 庫存管理面板新增資料表；類別與品項走 `POST/PATCH /admin/inventory/categories`、`POST/PATCH /admin/inventory/items`，五種操作走 `POST /admin/inventory/records` 並呼叫 `apply_inventory_record()`。進貨會增加存量，退貨/消耗/報廢會扣存量，盤點會改成實際清點值並保存盤差；所有資料都在 Supabase，fresh reinstall 後重新登入仍能載入。
+- 庫存管理面板新增資料表；類別與品項走 `POST/PATCH /admin/inventory/categories`、`POST/PATCH /admin/inventory/items`，五種操作走 `POST /admin/inventory/records` 並呼叫 `apply_inventory_record()`。進貨會增加存量，退貨/消耗/報廢會扣存量，盤點會改成實際清點值並保存盤差；後台商品菜單另以 `POST/PATCH /admin/inventory/consumption-rules` 設定商品或註記自動消耗，正式建單/出單會套用規則寫入 `inventory_records.consumption`，暫停出單的明細不扣自動消耗庫存。所有資料都在 Supabase，fresh reinstall 後重新登入仍能載入。
 - POS 工作台會每 30 秒送 `POST /station/heartbeat`，後台 `GET /admin/stations` 用來排查多平板在線與鎖單問題。
 - 櫃台新增外帶/外送時會先寫入 `POST /orders/drafts`，後續編輯用 `PATCH /orders/:id/draft` 更新 `orders.draft_lines`，所以空單與未結帳品項能跨平板追溯；正式結帳/出單用 `POST /orders/:id/finalize`，後端以 `finalize_pos_order()` 在同一個 transaction 寫入希望取餐/送達時間、外送地址、正式品項並扣 `products.inventory_count`。若沒有草稿仍可走 `POST /orders` 與 `create_pos_order()`。若庫存不足，整筆 rollback，前端會移除暫存單並把品項還回購物車。若有符合 runtime 出單規則的啟用自動列印站，會依服務方式、品項分類、指定品項、貼紙/收據/copies 拆分多筆 `POST /print-jobs`，未被規則納入的品項不會列印。
 - 平板處理遠端訂單時會先寫入 claim lease；claim 只允許未鎖定、本機持有或已逾時的進行中訂單，已交付/失敗/作廢單不可再接手。`PATCH /orders/:id/status`、`PATCH /orders/:id/payment` 與 `POST /print-jobs` 都會帶 station id，後端拒絕未持有 lease 或被其他平板持有的寫入。

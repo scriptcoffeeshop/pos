@@ -217,14 +217,16 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 ## 多平板庫存管理
 
-工具箱庫存管理走 Supabase `inventory_categories` / `inventory_items` / `inventory_records` 與 `apply_inventory_record()`，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+工具箱庫存管理走 Supabase `inventory_categories` / `inventory_items` / `inventory_records` / `inventory_consumption_rules`、`apply_inventory_record()` 與正式建單時的自動消耗流程，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
 
 1. 平板 A 連點工具箱 6 下進入後台編輯模式，開啟工具箱「庫存管理」。
 2. 新增庫存類別與庫存品項，設定目前存量與安全庫存。
 3. 平板 B 開啟同一面板，確認透過 `/admin/inventory` 讀到同一類別與品項。
 4. 平板 A 對該品項建立進貨或盤點紀錄，確認平板 B 在收到 `inventory_management` realtime event 或按刷新後看到相同操作紀錄與最新存量。
 5. 平板 B 對該品項建立消耗或報廢紀錄，確認平板 A 重新整理後看到同一筆紀錄與扣減後存量。
-6. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認庫存類別、品項、低庫存狀態與最近操作紀錄仍從 Supabase 還原。
+6. 在 Web 後台「商品菜單」新增商品/註記自動消耗規則，平板 A 建立正式訂單，確認平板 B 的庫存面板收到 `inventory_management` 後看到 `consumption` 紀錄與新存量。
+7. 對同商品建立一筆暫停出單明細，確認暫停出單不會新增自動消耗紀錄。
+8. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認庫存類別、品項、低庫存狀態、自動消耗規則與最近操作紀錄仍從 Supabase 還原。
 
 ## 多平板員工打卡
 
