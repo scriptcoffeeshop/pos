@@ -3731,6 +3731,14 @@ button.cart-line-summary:focus-visible {
   min-height: 0;
 }
 
+.reservation-side-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .reservation-main-panel,
 .reservation-form-panel {
   border: 1px solid var(--line);
@@ -3762,7 +3770,8 @@ button.cart-line-summary:focus-visible {
 
 .reservation-toolbar input,
 .reservation-toolbar select,
-.reservation-form-grid input {
+.reservation-form-grid input,
+.reservation-form-grid select {
   min-height: 42px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -3837,6 +3846,11 @@ button.cart-line-summary:focus-visible {
   opacity: 0.72;
 }
 
+.reservation-row--selected {
+  outline: 3px solid rgba(15, 118, 110, 0.22);
+  border-color: var(--primary-dark);
+}
+
 .reservation-row-time {
   display: grid;
   align-content: center;
@@ -3909,10 +3923,35 @@ button.cart-line-summary:focus-visible {
   padding: 14px;
 }
 
+.reservation-form-panel--edit {
+  border-color: var(--primary-dark);
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.08), var(--surface) 42%);
+}
+
 .reservation-form-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 9px;
+}
+
+.reservation-time-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reservation-time-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .reservation-party-stepper {
