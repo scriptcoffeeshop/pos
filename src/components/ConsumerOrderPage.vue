@@ -67,10 +67,12 @@ const serviceModeLabels = serviceModeOptions.reduce<Record<ServiceMode, string>>
   },
 )
 
-const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
+const fallbackPaymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: 'line-pay', label: 'LINE Pay' },
   { value: 'jkopay', label: '街口' },
-  { value: 'cash', label: '現場付款' },
+  { value: 'cash', label: '取餐時付款' },
+  { value: 'card', label: '線上刷卡' },
+  { value: 'transfer', label: '轉帳' },
 ]
 const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
 const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
@@ -203,15 +205,31 @@ const cartTotal = computed(() => cartLines.value.reduce((total, line) => total +
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
 const serviceModeOpen = (mode: ServiceMode): boolean => onlineOrdering.value.serviceModeAvailability[mode] !== false
 const currentServiceModeOpen = computed(() => serviceModeOpen(serviceMode.value))
-const canOrderOnline = computed(() => onlineOrdering.value.enabled && currentServiceModeOpen.value)
+const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(() => {
+  const configuredMethods = onlineOrdering.value.paymentMethods
+  if (configuredMethods.length === 0) {
+    return fallbackPaymentOptions
+  }
+
+  return configuredMethods
+    .filter((method) => method.enabled)
+    .map((method) => ({
+      value: method.id,
+      label: method.label.trim() || (fallbackPaymentOptions.find((fallback) => fallback.value === method.id)?.label ?? method.id),
+    }))
+})
+const hasPaymentOptions = computed(() => paymentOptions.value.length > 0)
+const canOrderOnline = computed(() => onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value)
 const onlineStatusLabel = computed(() =>
-  onlineOrdering.value.enabled && currentServiceModeOpen.value ? '開放接單' : '暫停接單',
+  onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value ? '開放接單' : '暫停接單',
 )
 const onlineStatusDetail = computed(() =>
   !onlineOrdering.value.enabled
     ? onlineOrdering.value.pauseMessage
     : currentServiceModeOpen.value
-      ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+      ? hasPaymentOptions.value
+        ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+        : '目前沒有開放付款方式'
       : `目前不開放${serviceModeLabels[serviceMode.value]}訂單`,
 )
 const requestedFulfillmentMinimum = computed(() => {
@@ -224,6 +242,7 @@ const canSubmit = computed(() =>
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
+  paymentOptions.value.some((option) => option.value === paymentMethod.value) &&
   (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
   !isSubmitting.value,
 )
@@ -520,6 +539,11 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
+  if (!paymentOptions.value.some((option) => option.value === paymentMethod.value)) {
+    formError.value = '目前不開放這個付款方式'
+    return
+  }
+
   if (!canSubmit.value) {
     formError.value = requiresDeliveryAddress.value
       ? '請填寫姓名、電話、外送地址並加入品項'
@@ -650,6 +674,16 @@ watch(
     }
   },
   { deep: true },
+)
+
+watch(
+  paymentOptions,
+  (options) => {
+    if (!options.some((option) => option.value === paymentMethod.value)) {
+      paymentMethod.value = options[0]?.value ?? 'cash'
+    }
+  },
+  { immediate: true },
 )
 </script>
 
@@ -875,6 +909,7 @@ watch(
           <CreditCard :size="18" aria-hidden="true" />
           {{ payment.label }}
         </button>
+        <span v-if="paymentOptions.length === 0" class="panel-note">目前沒有開放付款方式</span>
       </div>
 
       <p v-if="formError" class="consumer-form-error">{{ formError }}</p>

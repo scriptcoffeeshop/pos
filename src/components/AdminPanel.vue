@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import {
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   CalendarDays,
   Download,
@@ -315,6 +317,13 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   checkoutInstructions: '',
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  paymentMethods: [
+    { id: 'line-pay', label: 'LINE Pay', enabled: true },
+    { id: 'jkopay', label: '街口', enabled: true },
+    { id: 'cash', label: '取餐時付款', enabled: true },
+    { id: 'card', label: '線上刷卡', enabled: false },
+    { id: 'transfer', label: '轉帳', enabled: false },
+  ],
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -344,6 +353,7 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...defaultOnlineOrderingSettings().serviceModeAvailability,
     ...settings.serviceModeAvailability,
   },
+  paymentMethods: (settings.paymentMethods ?? defaultOnlineOrderingSettings().paymentMethods).map((method) => ({ ...method })),
   menuCategories: settings.menuCategories.map((category) => ({ ...category })),
   availableOptionChoices: (settings.availableOptionChoices ?? []).map((choice) => ({ ...choice })),
   menuOptionGroups: settings.menuOptionGroups.map((group) => ({
@@ -1580,6 +1590,11 @@ const saveOnlineOrdering = async (): Promise<void> => {
         checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 240),
         showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
         showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
+        paymentMethods: onlineOrdering.value.paymentMethods.map((method) => ({
+          id: method.id,
+          label: method.label.trim().slice(0, 24) || method.id,
+          enabled: Boolean(method.enabled),
+        })),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -1597,6 +1612,26 @@ const saveOnlineOrdering = async (): Promise<void> => {
     savingSettingKey.value = null
   }
 }
+
+const moveOnlinePaymentMethod = (methodId: string, direction: -1 | 1): void => {
+  const methods = [...onlineOrdering.value.paymentMethods]
+  const index = methods.findIndex((method) => method.id === methodId)
+  const nextIndex = index + direction
+  if (index < 0 || nextIndex < 0 || nextIndex >= methods.length) {
+    return
+  }
+
+  const [method] = methods.splice(index, 1)
+  if (!method) {
+    return
+  }
+
+  methods.splice(nextIndex, 0, method)
+  onlineOrdering.value.paymentMethods = methods
+}
+
+const onlinePaymentMethodPosition = (methodId: string): number =>
+  onlineOrdering.value.paymentMethods.findIndex((method) => method.id === methodId)
 
 const addOrderLabel = (): void => {
   engagementSettings.value.orderLabels.push({
@@ -2313,6 +2348,52 @@ const saveAccessControl = async (): Promise<void> => {
                 placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
               />
             </label>
+          </div>
+
+          <div class="admin-online-payment-methods" aria-label="線上支付模組">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Payment modules</p>
+                <h3>支付模組</h3>
+              </div>
+              <span class="panel-note">顯示順序依列表排序</span>
+            </div>
+            <div class="admin-payment-method-list">
+              <article
+                v-for="method in onlineOrdering.paymentMethods"
+                :key="method.id"
+                class="admin-payment-method-row"
+              >
+                <label class="toggle-row">
+                  <input v-model="method.enabled" type="checkbox" />
+                  啟用
+                </label>
+                <label>
+                  顯示名稱
+                  <input v-model="method.label" type="text" maxlength="24" />
+                </label>
+                <div class="admin-payment-method-actions" aria-label="支付方式排序">
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="往上"
+                    :disabled="onlinePaymentMethodPosition(method.id) <= 0"
+                    @click="moveOnlinePaymentMethod(method.id, -1)"
+                  >
+                    <ArrowUp :size="18" aria-hidden="true" />
+                  </button>
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="往下"
+                    :disabled="onlinePaymentMethodPosition(method.id) >= onlineOrdering.paymentMethods.length - 1"
+                    @click="moveOnlinePaymentMethod(method.id, 1)"
+                  >
+                    <ArrowDown :size="18" aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            </div>
           </div>
         </section>
       </section>

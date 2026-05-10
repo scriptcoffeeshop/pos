@@ -187,6 +187,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-payment-modules',
+    category: 'online',
+    title: '線上支付模組設定',
+    summary: '後台可管理取餐時付款、LINE Pay、街口、線上刷卡與轉帳的顯示名稱、啟用狀態與順序。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「支付模組」區塊開關付款方式，必要時修改消費者看到的顯示名稱。',
+      '用上/下箭頭調整排序；消費者頁付款方式會照同一順序顯示。',
+      '取餐時付款送單後會維持待收款，讓門市在 POS 現場完成結帳。',
+      '停用付款方式後，消費者頁不再顯示；舊頁面或 API 繞過前端送出時也會被後端拒絕。',
+    ],
+    keywords: ['支付模組', '付款方式', '取餐時付款', 'LINE Pay', '街口', '線上刷卡', '轉帳', '排序', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'reservation-blacklist',
     category: 'reservations',
     title: '線上訂位黑名單',

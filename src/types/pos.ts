@@ -271,6 +271,12 @@ export type OnlineNotificationRepeatMode = 'once' | 'continuous'
 
 export type OnlineServiceModeAvailability = Record<ServiceMode, boolean>
 
+export interface OnlinePaymentMethodSetting {
+  id: PaymentMethod
+  label: string
+  enabled: boolean
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -285,6 +291,7 @@ export interface OnlineOrderingSettings {
   checkoutInstructions: string
   showTaxIdField: boolean
   showCarrierBarcodeField: boolean
+  paymentMethods: OnlinePaymentMethodSetting[]
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

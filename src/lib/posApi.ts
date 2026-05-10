@@ -909,6 +909,14 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
   }
 }
 
+const defaultOnlinePaymentMethods = (): OnlineOrderingSettings['paymentMethods'] => [
+  { id: 'line-pay', label: 'LINE Pay', enabled: true },
+  { id: 'jkopay', label: '街口', enabled: true },
+  { id: 'cash', label: '取餐時付款', enabled: true },
+  { id: 'card', label: '線上刷卡', enabled: false },
+  { id: 'transfer', label: '轉帳', enabled: false },
+]
+
 export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   enabled: true,
   serviceModeAvailability: {
@@ -927,6 +935,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   checkoutInstructions: '',
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  paymentMethods: defaultOnlinePaymentMethods(),
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -940,6 +949,7 @@ const reservationSpecialDateModes = new Set<ReservationSpecialDateMode>(['closed
 const reservationTimePattern = /^\d{2}:\d{2}$/
 const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
+const paymentMethodIds: PaymentMethod[] = ['line-pay', 'jkopay', 'cash', 'card', 'transfer']
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
@@ -1233,6 +1243,28 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
   const notificationRepeatMode = notificationRepeatModes.has(settings.notificationRepeatMode as OnlineNotificationRepeatMode)
     ? (settings.notificationRepeatMode as OnlineNotificationRepeatMode)
     : defaults.notificationRepeatMode
+  const seenPaymentMethods = new Set<PaymentMethod>()
+  const paymentMethods = Array.isArray(settings.paymentMethods)
+    ? settings.paymentMethods.flatMap((entry): OnlineOrderingSettings['paymentMethods'] => {
+      if (!entry || typeof entry !== 'object') {
+        return []
+      }
+
+      const method = entry as Partial<OnlineOrderingSettings['paymentMethods'][number]>
+      if (!method.id || !paymentMethodIds.includes(method.id) || seenPaymentMethods.has(method.id)) {
+        return []
+      }
+
+      seenPaymentMethods.add(method.id)
+      return [{
+        id: method.id,
+        label: typeof method.label === 'string' && method.label.trim()
+          ? method.label.trim().slice(0, 24)
+          : (defaults.paymentMethods.find((defaultMethod) => defaultMethod.id === method.id)?.label ?? method.id),
+        enabled: method.enabled !== false,
+      }]
+    })
+    : defaults.paymentMethods.map((method) => ({ ...method }))
 
   return {
     enabled: typeof settings.enabled === 'boolean' ? settings.enabled : defaults.enabled,
@@ -1272,6 +1304,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
       typeof settings.showCarrierBarcodeField === 'boolean'
         ? settings.showCarrierBarcodeField
         : defaults.showCarrierBarcodeField,
+    paymentMethods: paymentMethods.length > 0 ? paymentMethods : defaults.paymentMethods.map((method) => ({ ...method })),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)
