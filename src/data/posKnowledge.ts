@@ -70,6 +70,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'transaction-lookup-void',
+    category: 'payments',
+    title: '交易查詢與作廢',
+    summary: '工具箱可依收據、載具、桌號或訂單號碼查詢交易，並預覽交易明細後補印、作廢或退款。',
+    steps: [
+      '開啟工具箱並點「交易查詢與作廢」。',
+      '選擇發票/收據號碼、載具/捐贈碼、桌號或訂單號碼，再輸入關鍵字篩選交易。',
+      '點交易列會載入右側交易預覽，包含付款狀態、桌號、統編/載具、品項與金額。',
+      '需要重新給顧客時按「補印交易明細」，會走既有列印站與 print job 紀錄。',
+      '待收款且未完成的單可作廢；已付款或已授權的單可退款，兩者都需先進入後台編輯模式並寫回 POS API。',
+    ],
+    keywords: ['交易查詢', '作廢', '退款', '補印', '交易明細', '收據', '載具', '桌號', '訂單號碼', 'iCHEF'],
+    target: 'queue',
+  },
+  {
     id: 'split-bills',
     category: 'payments',
     title: '拆單各付各與均分',
