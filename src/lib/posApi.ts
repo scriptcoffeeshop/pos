@@ -7,6 +7,8 @@ import type {
   FloorDisplayPreferences,
   FloorPlanSettings,
   FloorTableSetting,
+  InventoryConsumptionRule,
+  InventoryConsumptionSubject,
   InventoryCategory,
   InventoryItem,
   InventoryRecord,
@@ -268,10 +270,24 @@ interface ApiInventoryRecord {
   created_at: string
 }
 
+interface ApiInventoryConsumptionRule {
+  id: string
+  subject_type: InventoryConsumptionSubject
+  product_id: string | null
+  option_label: string | null
+  item_id: string
+  quantity: number | string
+  is_active: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 interface InventoryResponse {
   categories: ApiInventoryCategory[]
   items: ApiInventoryItem[]
   records: ApiInventoryRecord[]
+  consumptionRules?: ApiInventoryConsumptionRule[]
 }
 
 interface InventoryCategoryResponse {
@@ -284,6 +300,10 @@ interface InventoryItemResponse {
 
 interface InventoryRecordResponse {
   record: ApiInventoryRecord
+}
+
+interface InventoryConsumptionRuleResponse {
+  rule: ApiInventoryConsumptionRule
 }
 
 interface ApiAuditEvent {
@@ -590,6 +610,16 @@ export interface InventoryRecordInput {
   note?: string
 }
 
+export interface InventoryConsumptionRuleInput {
+  subjectType: InventoryConsumptionSubject
+  productId?: string | null
+  optionLabel?: string
+  itemId: string
+  quantity: number
+  isActive?: boolean
+  sortOrder?: number
+}
+
 interface ProductResponse {
   product: ApiProduct
 }
@@ -893,6 +923,21 @@ const normalizeInventoryRecord = (record: ApiInventoryRecord): InventoryRecord =
   note: record.note ?? '',
   stationId: record.station_id ?? '',
   createdAt: record.created_at,
+})
+
+const normalizeInventoryConsumptionRule = (
+  rule: ApiInventoryConsumptionRule,
+): InventoryConsumptionRule => ({
+  id: rule.id,
+  subjectType: rule.subject_type,
+  productId: rule.product_id,
+  optionLabel: rule.option_label ?? '',
+  itemId: rule.item_id,
+  quantity: normalizeInventoryNumber(rule.quantity),
+  isActive: rule.is_active,
+  sortOrder: rule.sort_order,
+  createdAt: rule.created_at,
+  updatedAt: rule.updated_at,
 })
 
 const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
@@ -2192,6 +2237,7 @@ export const fetchAdminInventory = async (recordLimit = 80): Promise<{
   categories: InventoryCategory[]
   items: InventoryItem[]
   records: InventoryRecord[]
+  consumptionRules: InventoryConsumptionRule[]
 }> => {
   const cappedLimit = Math.min(Math.max(Math.trunc(recordLimit), 1), 200)
   const data = await request<InventoryResponse>(`/admin/inventory?recordLimit=${cappedLimit}`)
@@ -2199,6 +2245,7 @@ export const fetchAdminInventory = async (recordLimit = 80): Promise<{
     categories: data.categories.map(normalizeInventoryCategory),
     items: data.items.map(normalizeInventoryItem),
     records: data.records.map(normalizeInventoryRecord),
+    consumptionRules: (data.consumptionRules ?? []).map(normalizeInventoryConsumptionRule),
   }
 }
 
@@ -2281,6 +2328,41 @@ export const createInventoryRecord = async (input: InventoryRecordInput): Promis
   })
 
   return normalizeInventoryRecord(data.record)
+}
+
+export const createInventoryConsumptionRule = async (
+  input: InventoryConsumptionRuleInput,
+): Promise<InventoryConsumptionRule> => {
+  const data = await request<InventoryConsumptionRuleResponse>('/admin/inventory/consumption-rules', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryConsumptionRule(data.rule)
+}
+
+export const updateInventoryConsumptionRule = async (
+  ruleId: string,
+  input: Partial<InventoryConsumptionRuleInput>,
+): Promise<InventoryConsumptionRule> => {
+  const data = await request<InventoryConsumptionRuleResponse>(`/admin/inventory/consumption-rules/${ruleId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeInventoryConsumptionRule(data.rule)
 }
 
 export const fetchAdminSettings = async (): Promise<PosAdminSettings> => {

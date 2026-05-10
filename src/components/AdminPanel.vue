@@ -29,11 +29,13 @@ import {
   createAdminCoupon,
   createAdminReservation,
   createAdminReservationBlacklistEntry,
+  createInventoryConsumptionRule,
   defaultEngagementSettings,
   defaultFloorPlanSettings,
   fetchAdminAuditEvents,
   fetchAdminCoupons,
   fetchAdminDailyReport,
+  fetchAdminInventory,
   fetchAdminMembers,
   fetchAdminPaymentEvents,
   fetchAdminReservationBlacklist,
@@ -43,9 +45,11 @@ import {
   fetchAdminStations,
   fetchAdminTimeClockEntries,
   type ProductUpdateInput,
+  type InventoryConsumptionRuleInput,
   updateAdminSetting,
   updateAdminReservationBlacklistEntry,
   updateAdminReservation,
+  updateInventoryConsumptionRule,
   updateProduct,
 } from '../lib/posApi'
 import type {
@@ -54,6 +58,8 @@ import type {
   CustomerEngagementSettings,
   DailySalesReport,
   FloorPlanSettings,
+  InventoryConsumptionRule,
+  InventoryItem,
   MemberCoupon,
   MenuCategory,
   MenuItem,
@@ -119,6 +125,15 @@ interface ReservationBlacklistDraft {
 interface WalletAdjustmentDraft {
   amount: number
   note: string
+}
+
+interface InventoryConsumptionDraft {
+  itemId: string
+  quantity: number
+}
+
+interface OptionConsumptionDraft extends InventoryConsumptionDraft {
+  optionLabel: string
 }
 
 type AdminTab =
@@ -212,6 +227,9 @@ const auditActionLabels: Record<string, string> = {
   'employee.time_clock': '員工打卡',
   'product.update': '商品更新',
   'setting.update': '設定更新',
+  'inventory.consumption_rule.create': '庫存消耗規則',
+  'inventory.consumption_rule.update': '庫存消耗規則',
+  'inventory.record.consumption': '庫存消耗',
   'member.create': '建立會員',
   'member.wallet.adjust': '錢包調整',
   'order.create': '建立訂單',
@@ -436,6 +454,14 @@ const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
 const productDrafts = ref<ProductDraft[]>([])
+const inventoryItems = ref<InventoryItem[]>([])
+const inventoryConsumptionRules = ref<InventoryConsumptionRule[]>([])
+const productConsumptionDrafts = ref<Record<string, InventoryConsumptionDraft>>({})
+const optionConsumptionDraft = ref<OptionConsumptionDraft>({
+  optionLabel: '',
+  itemId: '',
+  quantity: 1,
+})
 const members = ref<PosMember[]>([])
 const coupons = ref<MemberCoupon[]>([])
 const reservations = ref<PosReservation[]>([])
@@ -534,6 +560,58 @@ const activeReservationCount = computed(() =>
 const activeReservationBlacklistCount = computed(() =>
   reservationBlacklist.value.filter((entry) => entry.isActive).length,
 )
+const activeInventoryItems = computed(() => inventoryItems.value.filter((item) => item.isActive))
+const activeInventoryConsumptionRuleCount = computed(() =>
+  inventoryConsumptionRules.value.filter((rule) => rule.isActive).length,
+)
+const optionChoiceDisplayLabel = (choice: { label: string; priceDelta?: number }): string =>
+  choice.priceDelta && choice.priceDelta > 0 ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label
+const inventoryOptionLabels = computed(() =>
+  [...new Set(onlineOrdering.value.availableOptionChoices.map(optionChoiceDisplayLabel).filter(Boolean))],
+)
+const inventoryItemName = (itemId: string): string =>
+  inventoryItems.value.find((item) => item.id === itemId)?.name ?? '未知庫存品項'
+const activeConsumptionRules = (rules: InventoryConsumptionRule[]): InventoryConsumptionRule[] =>
+  rules
+    .filter((rule) => rule.isActive)
+    .sort((first, second) => first.sortOrder - second.sortOrder || first.createdAt.localeCompare(second.createdAt))
+const productConsumptionRules = (productId: string): InventoryConsumptionRule[] =>
+  activeConsumptionRules(
+    inventoryConsumptionRules.value.filter((rule) => rule.subjectType === 'product' && rule.productId === productId),
+  )
+const optionConsumptionRules = computed(() =>
+  activeConsumptionRules(inventoryConsumptionRules.value.filter((rule) => rule.subjectType === 'option')),
+)
+const ensureProductConsumptionDraft = (productId: string): InventoryConsumptionDraft => {
+  const existing = productConsumptionDrafts.value[productId]
+  if (existing) {
+    return existing
+  }
+
+  const draft = {
+    itemId: activeInventoryItems.value[0]?.id ?? '',
+    quantity: 1,
+  }
+  productConsumptionDrafts.value = {
+    ...productConsumptionDrafts.value,
+    [productId]: draft,
+  }
+  return draft
+}
+const resetConsumptionDraftDefaults = (): void => {
+  const fallbackItemId = activeInventoryItems.value[0]?.id ?? ''
+  productConsumptionDrafts.value = Object.fromEntries(
+    productDrafts.value.map((product) => [
+      product.id,
+      productConsumptionDrafts.value[product.id] ?? { itemId: fallbackItemId, quantity: 1 },
+    ]),
+  )
+  optionConsumptionDraft.value = {
+    optionLabel: inventoryOptionLabels.value[0] ?? '',
+    itemId: fallbackItemId,
+    quantity: 1,
+  }
+}
 const normalizeReservationPhoneKey = (phone: string): string => phone.replace(/[\s\-().]/g, '').trim()
 const findReservationBlacklistEntry = (phone: string): ReservationBlacklistEntry | null => {
   const phoneKey = normalizeReservationPhoneKey(phone)
@@ -1262,6 +1340,7 @@ const loadAdminData = async (): Promise<void> => {
       reservationRows,
       blacklistRows,
       timeClockRows,
+      inventory,
     ] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
@@ -1274,8 +1353,11 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminReservations(),
       fetchAdminReservationBlacklist(),
       fetchAdminTimeClockEntries(timeClockLimit.value),
+      fetchAdminInventory(120),
     ])
     productDrafts.value = products.map(toDraft)
+    inventoryItems.value = inventory.items
+    inventoryConsumptionRules.value = inventory.consumptionRules
     members.value = memberRows
     dailyReport.value = report
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
@@ -1290,7 +1372,8 @@ const loadAdminData = async (): Promise<void> => {
     reservations.value = reservationRows
     reservationBlacklist.value = blacklistRows
     timeClockEntries.value = timeClockRows
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    resetConsumptionDraftDefaults()
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1487,6 +1570,127 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '商品更新失敗'
   } finally {
     savingProductId.value = null
+  }
+}
+
+const upsertLocalConsumptionRule = (rule: InventoryConsumptionRule): void => {
+  inventoryConsumptionRules.value = [
+    rule,
+    ...inventoryConsumptionRules.value.filter((entry) => entry.id !== rule.id),
+  ].sort((first, second) => first.sortOrder - second.sortOrder || first.createdAt.localeCompare(second.createdAt))
+}
+
+const createConsumptionRule = async (input: InventoryConsumptionRuleInput, successMessage: string): Promise<void> => {
+  savingSettingKey.value = 'inventory_consumption'
+  adminMessage.value = '儲存庫存自動消耗規則'
+
+  try {
+    const rule = await createInventoryConsumptionRule(input)
+    upsertLocalConsumptionRule(rule)
+    adminMessage.value = successMessage
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '庫存自動消耗規則建立失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const addProductConsumptionRule = async (product: ProductDraft): Promise<void> => {
+  const draft = ensureProductConsumptionDraft(product.id)
+  if (!draft.itemId) {
+    adminMessage.value = '請先建立庫存品項'
+    return
+  }
+  if (!Number.isFinite(Number(draft.quantity)) || Number(draft.quantity) <= 0) {
+    adminMessage.value = '消耗量必須大於 0'
+    return
+  }
+
+  await createConsumptionRule(
+    {
+      subjectType: 'product',
+      productId: product.id,
+      itemId: draft.itemId,
+      quantity: Number(draft.quantity),
+      sortOrder: productConsumptionRules(product.id).length,
+      isActive: true,
+    },
+    `${product.name} 已加入自動消耗 ${inventoryItemName(draft.itemId)}`,
+  )
+  productConsumptionDrafts.value = {
+    ...productConsumptionDrafts.value,
+    [product.id]: { itemId: activeInventoryItems.value[0]?.id ?? '', quantity: 1 },
+  }
+}
+
+const addOptionConsumptionRule = async (): Promise<void> => {
+  const draft = optionConsumptionDraft.value
+  if (!draft.optionLabel) {
+    adminMessage.value = '請選擇註記'
+    return
+  }
+  if (!draft.itemId) {
+    adminMessage.value = '請先建立庫存品項'
+    return
+  }
+  if (!Number.isFinite(Number(draft.quantity)) || Number(draft.quantity) <= 0) {
+    adminMessage.value = '消耗量必須大於 0'
+    return
+  }
+
+  await createConsumptionRule(
+    {
+      subjectType: 'option',
+      optionLabel: draft.optionLabel,
+      itemId: draft.itemId,
+      quantity: Number(draft.quantity),
+      sortOrder: optionConsumptionRules.value.length,
+      isActive: true,
+    },
+    `${draft.optionLabel} 已加入自動消耗 ${inventoryItemName(draft.itemId)}`,
+  )
+  optionConsumptionDraft.value = {
+    optionLabel: inventoryOptionLabels.value[0] ?? '',
+    itemId: activeInventoryItems.value[0]?.id ?? '',
+    quantity: 1,
+  }
+}
+
+const saveConsumptionRule = async (rule: InventoryConsumptionRule): Promise<void> => {
+  savingSettingKey.value = `inventory_consumption:${rule.id}`
+  adminMessage.value = '更新庫存自動消耗規則'
+
+  try {
+    const savedRule = await updateInventoryConsumptionRule(rule.id, {
+      subjectType: rule.subjectType,
+      productId: rule.productId,
+      optionLabel: rule.optionLabel,
+      itemId: rule.itemId,
+      quantity: Number(rule.quantity),
+      isActive: rule.isActive,
+      sortOrder: Number(rule.sortOrder),
+    })
+    upsertLocalConsumptionRule(savedRule)
+    adminMessage.value = '庫存自動消耗規則已更新'
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '庫存自動消耗規則更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const deactivateConsumptionRule = async (rule: InventoryConsumptionRule): Promise<void> => {
+  savingSettingKey.value = `inventory_consumption:${rule.id}`
+  adminMessage.value = '停用庫存自動消耗規則'
+
+  try {
+    const savedRule = await updateInventoryConsumptionRule(rule.id, { isActive: false })
+    upsertLocalConsumptionRule(savedRule)
+    adminMessage.value = '庫存自動消耗規則已停用'
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '庫存自動消耗規則停用失敗'
+  } finally {
+    savingSettingKey.value = null
   }
 }
 
@@ -2100,6 +2304,10 @@ const saveAccessControl = async (): Promise<void> => {
         <strong>{{ lowStockProducts }}</strong>
       </article>
       <article>
+        <span>自動消耗</span>
+        <strong>{{ activeInventoryConsumptionRuleCount }}</strong>
+      </article>
+      <article>
         <span>會員</span>
         <strong>{{ memberCount }}</strong>
       </article>
@@ -2277,6 +2485,51 @@ const saveAccessControl = async (): Promise<void> => {
               </label>
             </div>
 
+            <details class="inventory-consumption-card">
+              <summary>
+                <span>自動消耗庫存</span>
+                <small>{{ productConsumptionRules(product.id).length }} 條</small>
+              </summary>
+
+              <div class="inventory-consumption-form">
+                <label>
+                  庫存品項
+                  <select v-model="ensureProductConsumptionDraft(product.id).itemId">
+                    <option value="">選擇庫存品項</option>
+                    <option v-for="item in activeInventoryItems" :key="item.id" :value="item.id">
+                      {{ item.name }} · {{ item.stockQuantity }} {{ item.unit }}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  每份消耗
+                  <input v-model.number="ensureProductConsumptionDraft(product.id).quantity" type="number" min="0.001" step="0.001" />
+                </label>
+                <button
+                  type="button"
+                  :disabled="activeInventoryItems.length === 0 || savingSettingKey === 'inventory_consumption'"
+                  @click="addProductConsumptionRule(product)"
+                >
+                  新增規則
+                </button>
+              </div>
+
+              <div class="inventory-consumption-list">
+                <article v-for="rule in productConsumptionRules(product.id)" :key="rule.id" class="inventory-consumption-row">
+                  <span>{{ inventoryItemName(rule.itemId) }}</span>
+                  <label>
+                    數量
+                    <input v-model.number="rule.quantity" type="number" min="0.001" step="0.001" />
+                  </label>
+                  <button type="button" @click="saveConsumptionRule(rule)">儲存</button>
+                  <button type="button" @click="deactivateConsumptionRule(rule)">停用</button>
+                </article>
+                <span v-if="productConsumptionRules(product.id).length === 0" class="panel-note">
+                  尚未設定；商品正式建單後不會扣新庫存品項。
+                </span>
+              </div>
+            </details>
+
             <div class="admin-toggle-grid" aria-label="商品顯示與列印">
               <label class="toggle-row admin-availability">
                 <input v-model="product.available" type="checkbox" />
@@ -2309,6 +2562,62 @@ const saveAccessControl = async (): Promise<void> => {
             <span>沒有符合條件的商品</span>
           </div>
         </div>
+
+        <section class="inventory-consumption-card inventory-consumption-card--global" aria-label="註記自動消耗庫存">
+          <div class="panel-heading admin-subheading">
+            <div>
+              <p class="eyebrow">Inventory</p>
+              <h3>註記自動消耗</h3>
+              <span class="panel-note">對齊 iCHEF 單一註記消耗庫存；例如換燕麥奶、加糖漿。</span>
+            </div>
+          </div>
+
+          <div class="inventory-consumption-form inventory-consumption-form--option">
+            <label>
+              註記
+              <select v-model="optionConsumptionDraft.optionLabel">
+                <option value="">選擇註記</option>
+                <option v-for="optionLabel in inventoryOptionLabels" :key="optionLabel" :value="optionLabel">
+                  {{ optionLabel }}
+                </option>
+              </select>
+            </label>
+            <label>
+              庫存品項
+              <select v-model="optionConsumptionDraft.itemId">
+                <option value="">選擇庫存品項</option>
+                <option v-for="item in activeInventoryItems" :key="item.id" :value="item.id">
+                  {{ item.name }} · {{ item.stockQuantity }} {{ item.unit }}
+                </option>
+              </select>
+            </label>
+            <label>
+              每次消耗
+              <input v-model.number="optionConsumptionDraft.quantity" type="number" min="0.001" step="0.001" />
+            </label>
+            <button
+              type="button"
+              :disabled="activeInventoryItems.length === 0 || inventoryOptionLabels.length === 0 || savingSettingKey === 'inventory_consumption'"
+              @click="addOptionConsumptionRule"
+            >
+              新增註記規則
+            </button>
+          </div>
+
+          <div class="inventory-consumption-list">
+            <article v-for="rule in optionConsumptionRules" :key="rule.id" class="inventory-consumption-row">
+              <span>{{ rule.optionLabel }}</span>
+              <span>{{ inventoryItemName(rule.itemId) }}</span>
+              <label>
+                數量
+                <input v-model.number="rule.quantity" type="number" min="0.001" step="0.001" />
+              </label>
+              <button type="button" @click="saveConsumptionRule(rule)">儲存</button>
+              <button type="button" @click="deactivateConsumptionRule(rule)">停用</button>
+            </article>
+            <span v-if="optionConsumptionRules.length === 0" class="panel-note">尚未設定註記消耗規則。</span>
+          </div>
+        </section>
       </section>
 
       <section v-else-if="activeAdminTab === 'online'" class="admin-tab-panel" aria-label="線上點餐設定">

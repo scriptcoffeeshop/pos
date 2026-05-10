@@ -24,6 +24,7 @@ type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
 type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
 type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
+type InventoryConsumptionSubject = "product" | "option";
 
 const awaitingGuestReservationStatuses: ReservationStatus[] = ["booked", "reminded", "confirmed"];
 const taipeiTimeZoneOffsetMs = 8 * 60 * 60 * 1000;
@@ -289,6 +290,17 @@ interface InventoryRecordInput {
   totalCost?: number;
   countedQuantity?: number;
   note?: string;
+  stationId?: string;
+}
+
+interface InventoryConsumptionRuleInput {
+  subjectType?: InventoryConsumptionSubject;
+  productId?: string | null;
+  optionLabel?: string;
+  itemId?: string;
+  quantity?: number;
+  isActive?: boolean;
+  sortOrder?: number;
   stationId?: string;
 }
 
@@ -646,6 +658,8 @@ const inventoryItemSelect =
   "id, category_id, name, unit, default_unit_cost, stock_quantity, low_stock_quantity, note, is_active, sort_order, created_at, updated_at";
 const inventoryRecordSelect =
   "id, item_id, action, quantity, quantity_delta, quantity_after, unit_cost, total_cost, note, station_id, created_at";
+const inventoryConsumptionRuleSelect =
+  "id, subject_type, product_id, option_label, item_id, quantity, is_active, sort_order, created_at, updated_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
@@ -2229,7 +2243,7 @@ api.get("/admin/inventory", async (c) => {
   const rawRecordLimit = Number(c.req.query("recordLimit") ?? "80");
   const recordLimit = Number.isFinite(rawRecordLimit) ? Math.min(Math.max(Math.trunc(rawRecordLimit), 1), 200) : 80;
 
-  const [categoriesResult, itemsResult, recordsResult] = await Promise.all([
+  const [categoriesResult, itemsResult, recordsResult, consumptionRulesResult] = await Promise.all([
     supabase
       .from("inventory_categories")
       .select(inventoryCategorySelect)
@@ -2245,6 +2259,12 @@ api.get("/admin/inventory", async (c) => {
       .select(inventoryRecordSelect)
       .order("created_at", { ascending: false })
       .limit(recordLimit),
+    supabase
+      .from("inventory_consumption_rules")
+      .select(inventoryConsumptionRuleSelect)
+      .order("subject_type", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true }),
   ]);
 
   if (categoriesResult.error) {
@@ -2256,11 +2276,15 @@ api.get("/admin/inventory", async (c) => {
   if (recordsResult.error) {
     return c.json({ error: recordsResult.error.message }, 500);
   }
+  if (consumptionRulesResult.error) {
+    return c.json({ error: consumptionRulesResult.error.message }, 500);
+  }
 
   return c.json({
     categories: categoriesResult.data ?? [],
     items: itemsResult.data ?? [],
     records: recordsResult.data ?? [],
+    consumptionRules: consumptionRulesResult.data ?? [],
   });
 });
 
@@ -2492,6 +2516,101 @@ api.post("/admin/inventory/records", async (c) => {
   });
 
   return c.json({ record: data }, 201);
+});
+
+api.post("/admin/inventory/consumption-rules", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<InventoryConsumptionRuleInput>().catch(() => ({} as InventoryConsumptionRuleInput));
+  const { payload, error: validationError } = validateInventoryConsumptionRuleInput(input);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_consumption_rules")
+    .insert(payload)
+    .select(inventoryConsumptionRuleSelect)
+    .single();
+
+  if (error) {
+    const status = error.code === "23505" ? 409 : 500;
+    return c.json({ error: error.message }, status);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.consumption_rule.create",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      ruleId: data.id,
+      subjectType: data.subject_type,
+      productId: data.product_id,
+      optionLabel: data.option_label,
+      itemId: data.item_id,
+      quantity: data.quantity,
+    },
+  });
+
+  return c.json({ rule: data }, 201);
+});
+
+api.patch("/admin/inventory/consumption-rules/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const ruleId = c.req.param("id");
+  const input = await c.req.json<InventoryConsumptionRuleInput>().catch(() => ({} as InventoryConsumptionRuleInput));
+  const { data: previousRule, error: previousError } = await supabase
+    .from("inventory_consumption_rules")
+    .select(inventoryConsumptionRuleSelect)
+    .eq("id", ruleId)
+    .maybeSingle();
+
+  if (previousError) {
+    return c.json({ error: previousError.message }, 500);
+  }
+  if (!previousRule) {
+    return c.json({ error: "Inventory consumption rule not found" }, 404);
+  }
+
+  const { payload, error: validationError } = validateInventoryConsumptionRuleInput(input, previousRule);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_consumption_rules")
+    .update(payload)
+    .eq("id", ruleId)
+    .select(inventoryConsumptionRuleSelect)
+    .single();
+
+  if (error) {
+    const status = error.code === "23505" ? 409 : 500;
+    return c.json({ error: error.message }, status);
+  }
+
+  await writeAuditEvent({
+    action: "inventory.consumption_rule.update",
+    stationId: sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id")),
+    metadata: {
+      ruleId,
+      subjectType: data.subject_type,
+      productId: data.product_id,
+      optionLabel: data.option_label,
+      itemId: data.item_id,
+      quantityBefore: previousRule.quantity,
+      quantityAfter: data.quantity,
+      isActive: data.is_active,
+    },
+  });
+
+  return c.json({ rule: data });
 });
 
 api.get("/admin/members", async (c) => {
@@ -5363,9 +5482,13 @@ const validateProductUpdateInput = (
 };
 
 const inventoryActions: InventoryRecordAction[] = ["purchase", "return", "consumption", "scrapped", "count"];
+const inventoryConsumptionSubjects: InventoryConsumptionSubject[] = ["product", "option"];
 
 const isInventoryRecordAction = (value: unknown): value is InventoryRecordAction =>
   typeof value === "string" && inventoryActions.includes(value as InventoryRecordAction);
+
+const isInventoryConsumptionSubject = (value: unknown): value is InventoryConsumptionSubject =>
+  typeof value === "string" && inventoryConsumptionSubjects.includes(value as InventoryConsumptionSubject);
 
 const sanitizeInventoryQuantity = (value: unknown, fallback = 0): number => {
   const quantity = Number(value);
@@ -5470,6 +5593,72 @@ const validateInventoryItemInput = (
       stock_quantity: stockQuantity,
       low_stock_quantity: lowStockQuantity,
       note: sanitizeText(input.note, fallback?.note ?? "").slice(0, 240),
+      is_active: typeof input.isActive === "boolean" ? input.isActive : (fallback?.is_active ?? true),
+      sort_order: sortOrder,
+    },
+    error: null,
+  };
+};
+
+const validateInventoryConsumptionRuleInput = (
+  input: InventoryConsumptionRuleInput,
+  fallback?: {
+    subject_type?: InventoryConsumptionSubject;
+    product_id?: string | null;
+    option_label?: string | null;
+    item_id?: string;
+    quantity?: number | string;
+    is_active?: boolean;
+    sort_order?: number;
+  },
+): {
+  payload: Record<string, unknown>;
+  error: string | null;
+} => {
+  const subjectType = isInventoryConsumptionSubject(input.subjectType)
+    ? input.subjectType
+    : fallback?.subject_type;
+  if (!subjectType) {
+    return { payload: {}, error: "subjectType is required" };
+  }
+
+  const productId = subjectType === "product"
+    ? (normalizeUuid(input.productId) ?? fallback?.product_id ?? "")
+    : null;
+  const optionLabel = subjectType === "option"
+    ? sanitizeText(input.optionLabel, fallback?.option_label ?? "").slice(0, 120)
+    : "";
+
+  if (subjectType === "product" && !productId) {
+    return { payload: {}, error: "productId is required" };
+  }
+  if (subjectType === "option" && !optionLabel) {
+    return { payload: {}, error: "optionLabel is required" };
+  }
+
+  const itemId = normalizeUuid(input.itemId) ?? fallback?.item_id ?? "";
+  if (!itemId) {
+    return { payload: {}, error: "itemId is required" };
+  }
+
+  const quantity = input.quantity === undefined
+    ? sanitizeInventoryQuantity(fallback?.quantity, Number.NaN)
+    : sanitizeInventoryQuantity(input.quantity, Number.NaN);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return { payload: {}, error: "quantity must be greater than 0" };
+  }
+
+  const sortOrder = Number.isInteger(input.sortOrder)
+    ? Math.trunc(input.sortOrder ?? 0)
+    : (fallback?.sort_order ?? 0);
+
+  return {
+    payload: {
+      subject_type: subjectType,
+      product_id: productId || null,
+      option_label: optionLabel,
+      item_id: itemId,
+      quantity,
       is_active: typeof input.isActive === "boolean" ? input.isActive : (fallback?.is_active ?? true),
       sort_order: sortOrder,
     },

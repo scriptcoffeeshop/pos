@@ -16,6 +16,7 @@ export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-draw
 export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
 export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
+export type InventoryConsumptionSubject = 'product' | 'option'
 
 export interface SupplyPeriodRule {
   id: string
@@ -214,6 +215,19 @@ export interface InventoryRecord {
   note: string
   stationId: string
   createdAt: string
+}
+
+export interface InventoryConsumptionRule {
+  id: string
+  subjectType: InventoryConsumptionSubject
+  productId: string | null
+  optionLabel: string
+  itemId: string
+  quantity: number
+  isActive: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface RegisterSession {

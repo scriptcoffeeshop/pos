@@ -10037,6 +10037,8 @@ button.cart-line-summary:focus-visible {
 .admin-limit-field,
 .admin-product-row label,
 .admin-product-stock-grid label,
+.inventory-consumption-form label,
+.inventory-consumption-row label,
 .admin-online-settings-grid label,
 .admin-payment-method-row label,
 .admin-schedule-window-row label,
@@ -10060,6 +10062,10 @@ button.cart-line-summary:focus-visible {
 .admin-product-row input,
 .admin-product-row select,
 .admin-product-stock-grid input,
+.inventory-consumption-form input,
+.inventory-consumption-form select,
+.inventory-consumption-row input,
+.inventory-consumption-row select,
 .admin-online-settings-grid input,
 .admin-online-settings-grid textarea,
 .admin-payment-method-row input,
@@ -10198,6 +10204,73 @@ button.cart-line-summary:focus-visible {
 .admin-product-stock-grid {
   grid-template-columns: minmax(118px, 0.7fr) minmax(118px, 0.7fr) minmax(180px, 1fr);
   align-items: end;
+}
+
+.inventory-consumption-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.inventory-consumption-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.inventory-consumption-card summary small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.inventory-consumption-card--global {
+  margin-top: 6px;
+}
+
+.inventory-consumption-form,
+.inventory-consumption-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.42fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.inventory-consumption-form--option {
+  grid-template-columns: minmax(160px, 0.9fr) minmax(180px, 1fr) minmax(100px, 0.42fr) auto;
+}
+
+.inventory-consumption-list {
+  display: grid;
+  gap: 7px;
+}
+
+.inventory-consumption-row {
+  grid-template-columns: minmax(140px, 1fr) minmax(96px, 0.44fr) auto auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.inventory-consumption-card--global .inventory-consumption-row {
+  grid-template-columns: minmax(140px, 0.85fr) minmax(140px, 1fr) minmax(96px, 0.44fr) auto auto;
+}
+
+.inventory-consumption-row > span {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .color-input-row {
@@ -11362,6 +11435,10 @@ button.cart-line-summary:focus-visible {
   .admin-access-grid,
   .admin-product-edit-grid,
   .admin-product-stock-grid,
+  .inventory-consumption-form,
+  .inventory-consumption-form--option,
+  .inventory-consumption-row,
+  .inventory-consumption-card--global .inventory-consumption-row,
   .admin-member-create-grid,
   .admin-member-adjust-grid,
   .admin-section-grid,

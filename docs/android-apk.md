@@ -92,7 +92,9 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 2. 新增一個庫存類別與一個庫存品項，設定單位、預設單價、目前存量與安全庫存。
 3. 對同一品項依序建立進貨、消耗、報廢與盤點紀錄，確認畫面存量依操作後數量更新。
 4. 另一台平板或 Web POS 開啟同一面板，確認可讀到相同類別、品項、最近紀錄與操作後存量。
-5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認庫存資料仍從 Supabase 還原，且不依賴 fresh reinstall 前的本機記憶體。
+5. 在後台「商品菜單」替商品或註記新增自動消耗規則，建立正式訂單後確認 `inventory_records` 出現 `consumption` 紀錄且庫存品項扣量。
+6. 將同一訂單明細切換「暫停出單」再正式建單，確認暫停出單的品項不扣自動消耗庫存。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認庫存資料與自動消耗規則仍從 Supabase 還原，且不依賴 fresh reinstall 前的本機記憶體。
 
 ## 付款拆單
 
