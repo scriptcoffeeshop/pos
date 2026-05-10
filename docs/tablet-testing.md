@@ -68,6 +68,15 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認同一班別仍能看到現金異動，且關班實點現金會用含臨時收支的預期現金計算差額。
 6. 到後台「操作稽核」刷新，確認可看到 `現金臨時收支` 事件與原因、類型、金額。
 
+## 多平板員工打卡
+
+員工帳號與打卡紀錄走 `pos-api` 與 Supabase，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「權限」新增一位啟用員工、設定識別碼與角色並儲存。
+2. 在平板 A 的工具箱開啟「員工打卡」，輸入識別碼，確認顯示上班打卡。
+3. 在平板 B 到後台「權限」刷新打卡紀錄，確認看到同一筆上班紀錄；再從平板 B 用同一識別碼打卡，確認變成下班。
+4. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認後台仍能讀到同一批 `staff_time_clock_entries`，且操作稽核可看到 `員工打卡`。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。

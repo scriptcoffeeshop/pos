@@ -36,6 +36,7 @@ import {
   fetchAdminReservations,
   fetchAdminSettings,
   fetchAdminStations,
+  fetchAdminTimeClockEntries,
   type ProductUpdateInput,
   updateAdminSetting,
   updateAdminReservation,
@@ -61,6 +62,8 @@ import type {
   RoleSetting,
   ServiceMode,
   ReservationStatus,
+  StaffAccountSetting,
+  StaffTimeClockEntry,
 } from '../types/pos'
 
 interface ProductDraft extends MenuItem {
@@ -188,6 +191,7 @@ const auditActionLabels: Record<string, string> = {
   'register.open': '開班',
   'register.close': '關班',
   'register.cash_adjustment': '現金臨時收支',
+  'employee.time_clock': '員工打卡',
   'product.update': '商品更新',
   'setting.update': '設定更新',
   'member.create': '建立會員',
@@ -265,6 +269,7 @@ const emptyPrinterSettings = (): PrinterSettings => ({
 
 const emptyAccessControl = (): AccessControlSettings => ({
   roles: [],
+  staffAccounts: [],
 })
 
 const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
@@ -296,6 +301,7 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
 
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
+  staffAccounts: (settings.staffAccounts ?? []).map((staff) => ({ ...staff })),
 })
 
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
@@ -379,8 +385,10 @@ const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSett
 const auditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
+const timeClockEntries = ref<StaffTimeClockEntry[]>([])
 const auditLimit = ref(50)
 const paymentEventLimit = ref(50)
+const timeClockLimit = ref(80)
 const paymentProviderFilter = ref('all')
 const paymentEventStatusFilter = ref<PaymentEventStatusFilter>('all')
 const auditActionFilter = ref('all')
@@ -395,6 +403,7 @@ const isReportLoading = ref(false)
 const isStationLoading = ref(false)
 const isIchefLoading = ref(false)
 const isOperationLoading = ref(false)
+const isTimeClockLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
@@ -412,6 +421,7 @@ const lowStockProducts = computed(() =>
 )
 const printRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const roleCount = computed(() => accessControl.value.roles.length)
+const activeStaffCount = computed(() => accessControl.value.staffAccounts.filter((staff) => staff.active).length)
 const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
 const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
 const auditEventCount = computed(() => auditEvents.value.length)
@@ -749,6 +759,12 @@ const stationStatusLabel = (station: PosStationHeartbeat): string =>
 
 const stationStatusClass = (station: PosStationHeartbeat): string =>
   isStationOnline(station.lastSeenAt) ? 'status-pill--success' : 'status-pill--danger'
+
+const timeClockEventLabel = (entry: StaffTimeClockEntry): string =>
+  entry.eventType === 'clock-in' ? '上班' : '下班'
+
+const timeClockEventClass = (entry: StaffTimeClockEntry): string =>
+  entry.eventType === 'clock-in' ? 'status-pill--success' : 'status-pill--neutral'
 
 const reportBreakdownLabel = (key: string): string => {
   const labels: Record<string, string> = {
@@ -1096,6 +1112,9 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
     auditMoneyLabel(event, 'expectedCash') ? `預期 ${auditMoneyLabel(event, 'expectedCash')}` : null,
     auditMetadataLabel(event, 'reason') ? `原因 ${auditMetadataLabel(event, 'reason')}` : null,
     auditMetadataLabel(event, 'kind') ? `類型 ${auditMetadataLabel(event, 'kind')}` : null,
+    auditMetadataLabel(event, 'staffName') ? `員工 ${auditMetadataLabel(event, 'staffName')}` : null,
+    auditMetadataLabel(event, 'roleName') ? `角色 ${auditMetadataLabel(event, 'roleName')}` : null,
+    auditMetadataLabel(event, 'eventType') ? `打卡 ${auditMetadataLabel(event, 'eventType')}` : null,
     auditMetadataLabel(event, 'openOrderCount') ? `未交付 ${auditMetadataLabel(event, 'openOrderCount')}` : null,
     auditMetadataLabel(event, 'failedPaymentCount') ? `付款異常 ${auditMetadataLabel(event, 'failedPaymentCount')}` : null,
     auditMetadataLabel(event, 'failedPrintCount') ? `列印失敗 ${auditMetadataLabel(event, 'failedPrintCount')}` : null,
@@ -1113,7 +1132,7 @@ const loadAdminData = async (): Promise<void> => {
   adminMessage.value = '讀取後台資料中'
 
   try {
-    const [products, memberRows, report, settings, events, paymentRows, stations, couponRows, reservationRows] = await Promise.all([
+    const [products, memberRows, report, settings, events, paymentRows, stations, couponRows, reservationRows, timeClockRows] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
       fetchAdminDailyReport(reportDate.value),
@@ -1123,6 +1142,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminStations(),
       fetchAdminCoupons(),
       fetchAdminReservations(),
+      fetchAdminTimeClockEntries(timeClockLimit.value),
     ])
     productDrafts.value = products.map(toDraft)
     members.value = memberRows
@@ -1136,7 +1156,8 @@ const loadAdminData = async (): Promise<void> => {
     stationHeartbeats.value = stations
     coupons.value = couponRows
     reservations.value = reservationRows
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    timeClockEntries.value = timeClockRows
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1183,6 +1204,20 @@ const loadStationHeartbeats = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '平板在線狀態讀取失敗'
   } finally {
     isStationLoading.value = false
+  }
+}
+
+const loadTimeClockEntries = async (): Promise<void> => {
+  isTimeClockLoading.value = true
+  adminMessage.value = '讀取員工打卡紀錄中'
+
+  try {
+    timeClockEntries.value = await fetchAdminTimeClockEntries(timeClockLimit.value)
+    adminMessage.value = `已載入 ${timeClockEntries.value.length} 筆員工打卡紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '員工打卡紀錄讀取失敗'
+  } finally {
+    isTimeClockLoading.value = false
   }
 }
 
@@ -1620,8 +1655,29 @@ const removeRole = (roleId: string): void => {
     return
   }
 
+  const fallbackRoleId = accessControl.value.roles.find((role) => role.id !== roleId)?.id ?? ''
   accessControl.value.roles = accessControl.value.roles.filter((role) => role.id !== roleId)
+  accessControl.value.staffAccounts = accessControl.value.staffAccounts.map((staff) =>
+    staff.roleId === roleId ? { ...staff, roleId: fallbackRoleId } : staff,
+  )
 }
+
+const addStaffAccount = (): void => {
+  accessControl.value.staffAccounts.push({
+    id: buildId('staff'),
+    name: '新員工',
+    staffCode: String(1000 + accessControl.value.staffAccounts.length),
+    roleId: accessControl.value.roles[0]?.id ?? 'owner',
+    active: true,
+  })
+}
+
+const removeStaffAccount = (staffId: string): void => {
+  accessControl.value.staffAccounts = accessControl.value.staffAccounts.filter((staff) => staff.id !== staffId)
+}
+
+const staffRoleName = (staff: StaffAccountSetting): string =>
+  accessControl.value.roles.find((role) => role.id === staff.roleId)?.name ?? '未指定角色'
 
 const hasPermission = (role: RoleSetting, permission: AdminPermission): boolean => role.permissions.includes(permission)
 
@@ -2954,10 +3010,13 @@ const saveAccessControl = async (): Promise<void> => {
         <div class="panel-heading">
           <div>
             <p class="eyebrow">Access</p>
-            <h2>角色權限</h2>
-            <span class="panel-note">先建立操作權限模型，之後接員工帳號與操作記錄</span>
+            <h2>角色權限與員工</h2>
+            <span class="panel-note">員工識別碼可在工具箱打卡，上下班紀錄會寫入雲端</span>
           </div>
           <div class="admin-action-row">
+            <button class="icon-button" type="button" title="新增員工" @click="addStaffAccount">
+              <UserPlus :size="18" aria-hidden="true" />
+            </button>
             <button class="icon-button" type="button" title="新增角色" @click="addRole">
               <Plus :size="18" aria-hidden="true" />
             </button>
@@ -3001,6 +3060,92 @@ const saveAccessControl = async (): Promise<void> => {
               </label>
             </div>
           </article>
+        </div>
+
+        <div class="panel-heading admin-subheading">
+          <div>
+            <p class="eyebrow">Staff</p>
+            <h3>員工識別碼</h3>
+            <span class="panel-note">{{ activeStaffCount }} 位啟用 · 供工具箱打卡與後續權限驗證使用</span>
+          </div>
+        </div>
+
+        <div class="admin-role-list">
+          <article v-for="staff in accessControl.staffAccounts" :key="staff.id" class="admin-role-row">
+            <div class="admin-role-header">
+              <UserPlus :size="20" aria-hidden="true" />
+              <label>
+                員工名稱
+                <input v-model="staff.name" type="text" />
+              </label>
+              <label>
+                識別碼
+                <input v-model="staff.staffCode" type="text" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label>
+                角色
+                <select v-model="staff.roleId">
+                  <option v-for="role in accessControl.roles" :key="role.id" :value="role.id">
+                    {{ role.name }}
+                  </option>
+                </select>
+              </label>
+              <label class="toggle-row">
+                <input v-model="staff.active" type="checkbox" />
+                啟用
+              </label>
+              <button class="icon-button" type="button" title="刪除員工" @click="removeStaffAccount(staff.id)">
+                <Trash2 :size="16" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="admin-audit-meta">
+              <span>{{ staffRoleName(staff) }}</span>
+              <span>{{ staff.active ? '可打卡' : '已停用' }}</span>
+            </div>
+          </article>
+          <div v-if="accessControl.staffAccounts.length === 0" class="empty-state">
+            <UserPlus :size="24" aria-hidden="true" />
+            <span>尚未建立員工識別碼</span>
+          </div>
+        </div>
+
+        <div class="panel-heading admin-subheading">
+          <div>
+            <p class="eyebrow">Time Clock</p>
+            <h3>打卡紀錄</h3>
+            <span class="panel-note">最近 {{ timeClockEntries.length }} 筆上下班紀錄</span>
+          </div>
+          <div class="admin-action-row">
+            <label class="admin-inline-field">
+              筆數
+              <input v-model.number="timeClockLimit" type="number" min="1" max="300" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isTimeClockLoading" @click="loadTimeClockEntries">
+              <RefreshCw :size="16" aria-hidden="true" />
+              {{ isTimeClockLoading ? '讀取中' : '刷新打卡' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-audit-list">
+          <article v-for="entry in timeClockEntries" :key="entry.id" class="admin-audit-row">
+            <div class="admin-row-header">
+              <div class="admin-audit-primary">
+                <strong>{{ entry.staffName }}</strong>
+                <span>{{ entry.roleName || entry.roleId || '未指定角色' }}</span>
+              </div>
+              <time :datetime="entry.createdAt">{{ formatAuditTime(entry.createdAt) }}</time>
+            </div>
+            <div class="admin-audit-meta">
+              <span class="status-pill" :class="timeClockEventClass(entry)">{{ timeClockEventLabel(entry) }}</span>
+              <span>{{ entry.stationId || '未標記平板' }}</span>
+              <span v-if="entry.note">{{ entry.note }}</span>
+            </div>
+          </article>
+          <div v-if="timeClockEntries.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無員工打卡紀錄</span>
+          </div>
         </div>
       </section>
     </section>
