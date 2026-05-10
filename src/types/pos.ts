@@ -376,6 +376,18 @@ export interface ReservationBusinessHour {
   end: string
 }
 
+export type ReservationSpecialDateMode = 'closed' | 'custom-hours'
+
+export interface ReservationSpecialDateRule {
+  id: string
+  label: string
+  startDate: string
+  endDate: string
+  mode: ReservationSpecialDateMode
+  start: string
+  end: string
+}
+
 export interface ReservationWebsiteSettings {
   enabled: boolean
   restaurantName: string
@@ -392,6 +404,7 @@ export interface ReservationWebsiteSettings {
   allowTableCombinations: boolean
   onlineTableIds: string[]
   businessHours: ReservationBusinessHour[]
+  specialDates: ReservationSpecialDateRule[]
 }
 
 export interface CustomerEngagementSettings {
