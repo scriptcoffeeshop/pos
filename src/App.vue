@@ -29,6 +29,7 @@ import {
   Settings2,
   ShoppingBag,
   ShoppingCart,
+  Tags,
   WalletCards,
   Trash2,
   UsersRound,
@@ -75,6 +76,8 @@ import type {
   PaymentMethod,
   PaymentSplit,
   PaymentStatus,
+  CustomerEngagementSettings,
+  OrderLabelSetting,
   PosAppearanceSettings,
   PosMember,
   PosOrder,
@@ -106,8 +109,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -826,6 +829,12 @@ const crmMessage = ref('輸入電話或姓名可查會員')
 
 const selectedOrderLabelSettings = computed(() =>
   engagementSettings.value.orderLabels.filter((label) => orderLabels.value.includes(label.id)),
+)
+const labelManagementSummary = computed(() =>
+  `${engagementSettings.value.orderLabels.length} 個訂單標籤`,
+)
+const labelManagementHasChanges = computed(() =>
+  JSON.stringify(labelManagementDrafts.value) !== JSON.stringify(engagementSettings.value.orderLabels),
 )
 
 const activeCoupon = computed(() =>
@@ -3205,6 +3214,9 @@ const timeClockNote = ref('')
 const timeClockMessage = ref('輸入員工識別碼打卡')
 const isTimeClockSubmitting = ref(false)
 const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
+const labelManagementDrafts = ref<OrderLabelSetting[]>([])
+const labelManagementMessage = ref('訂單標籤會同步到點餐頁與後台紀錄')
+const isLabelManagementSaving = ref(false)
 const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
 const transactionSearchTerm = ref('')
 const selectedTransactionOrderId = ref<string | null>(null)
@@ -3261,6 +3273,10 @@ const toolboxPanelTitle = computed(() => {
     return '錢櫃管理'
   }
 
+  if (activeToolboxPanel.value === 'label-management') {
+    return '標籤管理'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3286,6 +3302,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'cash-drawer') {
     return 'Cash Drawer'
+  }
+
+  if (activeToolboxPanel.value === 'label-management') {
+    return 'Order Labels'
   }
 
   return 'Toolbox'
@@ -6199,6 +6219,111 @@ const runCloseoutPreflightAction = (item: CloseoutPreflightItem): void => {
   setWorkspaceTab('queue')
 }
 
+const labelManagementColorPalette = ['#0f766e', '#b45309', '#b91c1c', '#1d4ed8', '#6d28d9', '#475569']
+const cloneOrderLabelSettings = (labels: OrderLabelSetting[]): OrderLabelSetting[] =>
+  labels.map((label) => ({ ...label }))
+
+const syncLabelManagementDrafts = (): void => {
+  labelManagementDrafts.value = cloneOrderLabelSettings(engagementSettings.value.orderLabels)
+  labelManagementMessage.value = '訂單標籤會同步到點餐頁與後台紀錄'
+}
+
+const createLabelManagementId = (label: string): string => {
+  const base = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28)
+  const suffix = (globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36))
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(0, 8)
+    .toLowerCase()
+  return `${base || 'label'}-${suffix}`
+}
+
+const addLabelManagementDraft = (): void => {
+  const nextIndex = labelManagementDrafts.value.length
+  labelManagementDrafts.value = [
+    ...labelManagementDrafts.value,
+    {
+      id: createLabelManagementId(`label-${nextIndex + 1}`),
+      label: `標籤 ${nextIndex + 1}`,
+      color: labelManagementColorPalette[nextIndex % labelManagementColorPalette.length] ?? '#0f766e',
+    },
+  ]
+}
+
+const updateLabelManagementDraft = (
+  labelId: string,
+  patch: Partial<Pick<OrderLabelSetting, 'label' | 'color'>>,
+): void => {
+  labelManagementDrafts.value = labelManagementDrafts.value.map((label) =>
+    label.id === labelId ? { ...label, ...patch } : label,
+  )
+}
+
+const deleteLabelManagementDraft = (labelId: string): void => {
+  labelManagementDrafts.value = labelManagementDrafts.value.filter((label) => label.id !== labelId)
+}
+
+const normalizeLabelManagementDrafts = (): OrderLabelSetting[] => {
+  const seenIds = new Set<string>()
+  return labelManagementDrafts.value.flatMap((label, index) => {
+    const text = label.label.trim().slice(0, 24)
+    if (!text) {
+      return []
+    }
+
+    let id = label.id.trim() || createLabelManagementId(text)
+    while (seenIds.has(id)) {
+      id = `${id}-${index + 1}`
+    }
+    seenIds.add(id)
+
+    return [{
+      id,
+      label: text,
+      color: /^#[0-9a-fA-F]{6}$/.test(label.color) ? label.color : '#0f766e',
+    }]
+  }).slice(0, 24)
+}
+
+const saveLabelManagementDrafts = async (): Promise<void> => {
+  if (!requireBackendEditMode('儲存標籤管理')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    labelManagementMessage.value = '本機模式無法同步標籤管理'
+    return
+  }
+
+  const orderLabels = normalizeLabelManagementDrafts()
+  if (orderLabels.length === 0) {
+    labelManagementMessage.value = '至少保留 1 個訂單標籤'
+    return
+  }
+
+  isLabelManagementSaving.value = true
+  labelManagementMessage.value = '儲存標籤中'
+
+  try {
+    const nextSettings: CustomerEngagementSettings = {
+      ...engagementSettings.value,
+      orderLabels,
+    }
+    const savedSettings = await updateAdminSetting<CustomerEngagementSettings>('engagement_settings', nextSettings)
+    engagementSettings.value = savedSettings
+    labelManagementDrafts.value = cloneOrderLabelSettings(savedSettings.orderLabels)
+    labelManagementMessage.value = `已儲存 ${savedSettings.orderLabels.length} 個訂單標籤`
+  } catch (error) {
+    labelManagementMessage.value = `儲存失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isLabelManagementSaving.value = false
+  }
+}
+
 const submitTimeClockAction = async (): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
@@ -6294,6 +6419,12 @@ const runToolboxAction = (action: ToolboxAction): void => {
   if (action === 'cash-drawer') {
     activeToolboxPanel.value = 'cash-drawer'
     void loadCashDrawerEvents()
+    return
+  }
+
+  if (action === 'label-management') {
+    syncLabelManagementDrafts()
+    activeToolboxPanel.value = 'label-management'
     return
   }
 
@@ -10882,6 +11013,11 @@ onBeforeUnmount(() => {
             <strong>目前營業概況</strong>
             <span>{{ currentSalesSummary }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('label-management')">
+            <Tags :size="24" aria-hidden="true" />
+            <strong>標籤管理</strong>
+            <span>{{ labelManagementSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('time-clock')">
             <Clock3 :size="24" aria-hidden="true" />
             <strong>員工打卡</strong>
@@ -11281,6 +11417,47 @@ onBeforeUnmount(() => {
             <RefreshCw :size="18" aria-hidden="true" />
             重新同步
           </button>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'label-management'" class="toolbox-detail-panel label-management-panel" aria-labelledby="toolbox-title">
+          <div class="label-management-intro">
+            <p>將店內常用服務新增為標籤，點餐時可快速標示。訂單標籤僅顯示於 POS 與後台紀錄。</p>
+            <button class="secondary-button" type="button" @click="addLabelManagementDraft">
+              <Plus :size="18" aria-hidden="true" />
+              新增
+            </button>
+          </div>
+          <div class="label-management-list">
+            <article v-for="label in labelManagementDrafts" :key="label.id" class="label-management-row">
+              <input
+                :value="label.label"
+                type="text"
+                maxlength="24"
+                placeholder="訂單標籤"
+                @input="updateLabelManagementDraft(label.id, { label: ($event.target as HTMLInputElement).value })"
+              />
+              <input
+                :value="label.color"
+                type="color"
+                aria-label="標籤顏色"
+                @input="updateLabelManagementDraft(label.id, { color: ($event.target as HTMLInputElement).value })"
+              />
+              <button class="icon-button" type="button" aria-label="刪除標籤" @click="deleteLabelManagementDraft(label.id)">
+                <Trash2 :size="18" aria-hidden="true" />
+              </button>
+            </article>
+            <p v-if="labelManagementDrafts.length === 0" class="label-management-empty">尚未設定訂單標籤</p>
+          </div>
+          <div class="label-management-actions">
+            <button class="primary-button" type="button" :disabled="isLabelManagementSaving || !labelManagementHasChanges" @click="saveLabelManagementDrafts">
+              <Check :size="18" aria-hidden="true" />
+              {{ isLabelManagementSaving ? '儲存中' : '儲存' }}
+            </button>
+            <button class="secondary-button" type="button" :disabled="isLabelManagementSaving" @click="syncLabelManagementDrafts">
+              <RefreshCw :size="18" aria-hidden="true" />
+              還原
+            </button>
+          </div>
+          <p class="label-management-message" aria-live="polite">{{ labelManagementMessage }}</p>
         </section>
         <section v-else-if="activeToolboxPanel === 'time-clock'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <form class="time-clock-form" @submit.prevent="submitTimeClockAction">
