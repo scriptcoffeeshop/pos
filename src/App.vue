@@ -52,8 +52,10 @@ import {
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import {
   createAdminReservation,
+  createAdminMember,
   createStaffTimeClockEntry,
   defaultFloorPlanSettings,
+  fetchAdminMembers,
   fetchAdminReservations,
   isPosApiConfigured,
   normalizeFloorPlanSettings,
@@ -109,14 +111,15 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
 type TransactionSearchCriterion = 'receipt' | 'carrier' | 'table' | 'order'
+type CustomerManagementSortMode = 'consumed' | 'created'
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
@@ -835,6 +838,50 @@ const labelManagementSummary = computed(() =>
 )
 const labelManagementHasChanges = computed(() =>
   JSON.stringify(labelManagementDrafts.value) !== JSON.stringify(engagementSettings.value.orderLabels),
+)
+const customerManagementTypes = computed(() => {
+  const configuredTypes = engagementSettings.value.customerTypes.length > 0
+    ? engagementSettings.value.customerTypes
+    : ['一般顧客']
+  return [...new Set([
+    ...configuredTypes,
+    ...customerManagementMembers.value.map((member) => member.customerType).filter(Boolean),
+  ])]
+})
+const filteredCustomerManagementMembers = computed(() => {
+  const keyword = customerManagementSearchTerm.value.trim().toLowerCase()
+  const typeFilter = customerManagementTypeFilter.value
+  const latestLedgerTime = (member: PosMember): number =>
+    member.ledger.reduce((latest, entry) => Math.max(latest, new Date(entry.createdAt).getTime()), 0)
+      || new Date(member.updatedAt).getTime()
+
+  return customerManagementMembers.value
+    .filter((member) => {
+      if (typeFilter !== 'all' && member.customerType !== typeFilter) {
+        return false
+      }
+
+      if (!keyword) {
+        return true
+      }
+
+      return [
+        member.displayName,
+        member.phone,
+        member.lineUserId ?? '',
+        member.customerType,
+      ].some((value) => value.toLowerCase().includes(keyword))
+    })
+    .sort((left, right) => {
+      if (customerManagementSortMode.value === 'created') {
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      }
+
+      return latestLedgerTime(right) - latestLedgerTime(left)
+    })
+})
+const customerManagementSummary = computed(() =>
+  `${customerManagementMembers.value.length} 位顧客 · ${customerManagementTypes.value.length} 類型`,
 )
 
 const activeCoupon = computed(() =>
@@ -3220,6 +3267,20 @@ const isLabelManagementSaving = ref(false)
 const deviceManagementMessage = ref('裝置狀態會由列印站、外設與 print jobs 重建')
 const isDeviceManagementRefreshing = ref(false)
 const isDeviceManagementCancelling = ref(false)
+const customerManagementMembers = ref<PosMember[]>([])
+const customerManagementSearchTerm = ref('')
+const customerManagementTypeFilter = ref('all')
+const customerManagementSortMode = ref<CustomerManagementSortMode>('consumed')
+const customerManagementMessage = ref('進入後台編輯模式後可讀取與新增顧客資訊')
+const isCustomerManagementLoading = ref(false)
+const isCustomerManagementCreating = ref(false)
+const customerManagementDraft = ref({
+  displayName: '',
+  phone: '',
+  customerType: '一般顧客',
+  pointsBalance: 0,
+  openingBalance: 0,
+})
 const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
 const transactionSearchTerm = ref('')
 const selectedTransactionOrderId = ref<string | null>(null)
@@ -3284,6 +3345,10 @@ const toolboxPanelTitle = computed(() => {
     return '裝置管理'
   }
 
+  if (activeToolboxPanel.value === 'customer-management') {
+    return '顧客資訊'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3317,6 +3382,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'device-management') {
     return 'Devices'
+  }
+
+  if (activeToolboxPanel.value === 'customer-management') {
+    return 'Customers'
   }
 
   return 'Toolbox'
@@ -6405,6 +6474,82 @@ const cancelAllUnprintedPrintJobsAction = async (): Promise<void> => {
   }
 }
 
+const latestCustomerActivityLabel = (member: PosMember): string => {
+  const latestLedgerEntry = [...member.ledger].sort(
+    (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+  )[0]
+  return latestLedgerEntry ? formatOrderTime(latestLedgerEntry.createdAt) : formatOrderTime(member.updatedAt)
+}
+
+const loadCustomerManagementMembers = async (): Promise<void> => {
+  if (!requireBackendEditMode('讀取顧客資訊')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    customerManagementMessage.value = '本機模式無法同步顧客資訊'
+    return
+  }
+
+  isCustomerManagementLoading.value = true
+  customerManagementMessage.value = '載入顧客資訊中'
+
+  try {
+    customerManagementMembers.value = await fetchAdminMembers(80, customerManagementSearchTerm.value)
+    customerManagementMessage.value = `已載入 ${customerManagementMembers.value.length} 位顧客`
+  } catch (error) {
+    customerManagementMessage.value = `載入失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isCustomerManagementLoading.value = false
+  }
+}
+
+const createCustomerManagementMember = async (): Promise<void> => {
+  if (!requireBackendEditMode('新增顧客資訊')) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    customerManagementMessage.value = '本機模式無法新增顧客資訊'
+    return
+  }
+
+  const displayName = customerManagementDraft.value.displayName.trim()
+  const phone = customerManagementDraft.value.phone.trim()
+  if (!displayName && !phone) {
+    customerManagementMessage.value = '請輸入姓名或電話'
+    return
+  }
+
+  isCustomerManagementCreating.value = true
+  customerManagementMessage.value = '新增顧客中'
+
+  try {
+    const member = await createAdminMember({
+      lineUserId: '',
+      displayName: displayName || phone,
+      phone,
+      customerType: customerManagementDraft.value.customerType.trim() || '一般顧客',
+      pointsBalance: Math.max(0, Math.trunc(customerManagementDraft.value.pointsBalance || 0)),
+      openingBalance: Math.max(0, Math.trunc(customerManagementDraft.value.openingBalance || 0)),
+      note: 'POS 顧客資訊管理新增',
+    })
+    customerManagementMembers.value = [member, ...customerManagementMembers.value.filter((entry) => entry.id !== member.id)]
+    customerManagementDraft.value = {
+      displayName: '',
+      phone: '',
+      customerType: customerManagementDraft.value.customerType,
+      pointsBalance: 0,
+      openingBalance: 0,
+    }
+    customerManagementMessage.value = `已新增 ${member.displayName}`
+  } catch (error) {
+    customerManagementMessage.value = `新增失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isCustomerManagementCreating.value = false
+  }
+}
+
 const submitTimeClockAction = async (): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
@@ -6511,6 +6656,14 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'device-management') {
     activeToolboxPanel.value = 'device-management'
+    return
+  }
+
+  if (action === 'customer-management') {
+    activeToolboxPanel.value = 'customer-management'
+    if (backendEditModeEnabled.value && customerManagementMembers.value.length === 0) {
+      void loadCustomerManagementMembers()
+    }
     return
   }
 
@@ -11099,6 +11252,11 @@ onBeforeUnmount(() => {
             <strong>裝置管理</strong>
             <span>{{ deviceManagementSummary }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('customer-management')">
+            <UsersRound :size="24" aria-hidden="true" />
+            <strong>顧客資訊管理</strong>
+            <span>{{ customerManagementSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('current-sales')">
             <LayoutDashboard :size="24" aria-hidden="true" />
             <strong>目前營業概況</strong>
@@ -11530,6 +11688,81 @@ onBeforeUnmount(() => {
           </div>
           <p class="device-management-message" aria-live="polite">{{ deviceManagementMessage }}</p>
           <small class="device-management-host-id">主機 App ID：{{ stationClaimLabel }}</small>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'customer-management'" class="toolbox-detail-panel customer-management-panel" aria-labelledby="toolbox-title">
+          <div class="customer-management-toolbar">
+            <label class="search-box">
+              <Search :size="18" aria-hidden="true" />
+              <input v-model="customerManagementSearchTerm" type="search" placeholder="搜尋顧客" @keyup.enter="loadCustomerManagementMembers" />
+            </label>
+            <label>
+              顧客類型
+              <select v-model="customerManagementTypeFilter">
+                <option value="all">全部</option>
+                <option v-for="type in customerManagementTypes" :key="type" :value="type">{{ type }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="customer-management-sort" role="group" aria-label="顧客排序">
+            <button
+              type="button"
+              :class="{ active: customerManagementSortMode === 'consumed' }"
+              @click="customerManagementSortMode = 'consumed'"
+            >
+              顯示消費時間排序
+            </button>
+            <button
+              type="button"
+              :class="{ active: customerManagementSortMode === 'created' }"
+              @click="customerManagementSortMode = 'created'"
+            >
+              顯示建立時間排序
+            </button>
+          </div>
+          <form class="customer-management-create" @submit.prevent="createCustomerManagementMember">
+            <input v-model="customerManagementDraft.displayName" type="text" placeholder="姓名 / 稱呼" />
+            <input v-model="customerManagementDraft.phone" type="tel" placeholder="電話" />
+            <select v-model="customerManagementDraft.customerType">
+              <option v-for="type in customerManagementTypes" :key="type" :value="type">{{ type }}</option>
+            </select>
+            <input v-model.number="customerManagementDraft.pointsBalance" type="number" min="0" step="1" inputmode="numeric" placeholder="點數" />
+            <button class="secondary-button" type="submit" :disabled="isCustomerManagementCreating">
+              <Plus :size="18" aria-hidden="true" />
+              {{ isCustomerManagementCreating ? '新增中' : '新增顧客資訊' }}
+            </button>
+          </form>
+          <div class="customer-management-actions">
+            <button class="primary-button" type="button" :disabled="isCustomerManagementLoading" @click="loadCustomerManagementMembers">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isCustomerManagementLoading ? '讀取中' : '刷新顧客' }}
+            </button>
+            <p aria-live="polite">{{ customerManagementMessage }}</p>
+          </div>
+          <div class="customer-management-list">
+            <article v-for="member in filteredCustomerManagementMembers" :key="member.id" class="customer-management-row">
+              <div>
+                <strong>{{ member.displayName || member.phone || member.lineUserId || '未命名顧客' }}</strong>
+                <span>{{ member.phone || '未留電話' }} · {{ member.customerType }}</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>點數</dt>
+                  <dd>{{ member.pointsBalance }}</dd>
+                </div>
+                <div>
+                  <dt>錢包</dt>
+                  <dd>{{ formatCurrency(member.walletBalance) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ customerManagementSortMode === 'created' ? '建立' : '最近' }}</dt>
+                  <dd>{{ customerManagementSortMode === 'created' ? formatOrderTime(member.createdAt) : latestCustomerActivityLabel(member) }}</dd>
+                </div>
+              </dl>
+            </article>
+            <p v-if="filteredCustomerManagementMembers.length === 0" class="customer-management-empty">
+              尚無顧客資料，或目前篩選沒有結果
+            </p>
+          </div>
         </section>
         <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <header class="current-sales-header">
