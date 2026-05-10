@@ -21,6 +21,9 @@ type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
 type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
 
+const awaitingGuestReservationStatuses: ReservationStatus[] = ["booked", "reminded", "confirmed"];
+const taipeiTimeZoneOffsetMs = 8 * 60 * 60 * 1000;
+
 interface SupplyWindowRule {
   id: string;
   label: string;
@@ -2056,6 +2059,11 @@ api.get("/admin/reservations", async (c) => {
   }
 
   const now = new Date();
+  const autoNoShow = await expireStaleNoShowReservations(now);
+  if (autoNoShow.error) {
+    return c.json({ error: autoNoShow.error }, 500);
+  }
+
   const from = normalizeRequestedFulfillmentAt(c.req.query("from")) ??
     new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
   const to = normalizeRequestedFulfillmentAt(c.req.query("to")) ??
@@ -4016,6 +4024,53 @@ const writeAuditEvent = async (event: AuditEventInput): Promise<void> => {
   }
 };
 
+const autoNoShowCutoffFor = (now: Date): Date => {
+  const taipeiNow = new Date(now.getTime() + taipeiTimeZoneOffsetMs);
+  const automationLocalDay = new Date(Date.UTC(
+    taipeiNow.getUTCFullYear(),
+    taipeiNow.getUTCMonth(),
+    taipeiNow.getUTCDate(),
+  ));
+  if (taipeiNow.getUTCHours() < 1) {
+    automationLocalDay.setUTCDate(automationLocalDay.getUTCDate() - 1);
+  }
+
+  const cutoffLocalMidnight = new Date(automationLocalDay);
+  cutoffLocalMidnight.setUTCDate(cutoffLocalMidnight.getUTCDate() - 1);
+  return new Date(cutoffLocalMidnight.getTime() - taipeiTimeZoneOffsetMs);
+};
+
+const expireStaleNoShowReservations = async (
+  now = new Date(),
+): Promise<{ count: number; error: string | null }> => {
+  const cutoff = autoNoShowCutoffFor(now);
+  const { data, error } = await supabase
+    .from("reservations")
+    .update({ status: "no_show" })
+    .in("status", awaitingGuestReservationStatuses)
+    .lt("reserved_at", cutoff.toISOString())
+    .select("id, reserved_at");
+
+  if (error) {
+    return { count: 0, error: error.message };
+  }
+
+  const expiredReservations = data ?? [];
+  if (expiredReservations.length > 0) {
+    await writeAuditEvent({
+      action: "reservation.auto_no_show",
+      stationId: "pos-api",
+      metadata: {
+        count: expiredReservations.length,
+        cutoff: cutoff.toISOString(),
+        reservationIds: expiredReservations.slice(0, 50).map((reservation) => reservation.id),
+      },
+    });
+  }
+
+  return { count: expiredReservations.length, error: null };
+};
+
 const requireOrderClaim = async (c: Context, orderId: string, stationId: string): Promise<Response | null> => {
   const { data, error } = await loadOrder(orderId);
   if (error) {
@@ -4839,6 +4894,11 @@ const assignReservationTables = async (
   reservationWebsite: ReservationWebsiteSettings,
   floorPlan: FloorPlanSettings,
 ): Promise<{ tableIds: string[]; error: string | null }> => {
+  const autoNoShow = await expireStaleNoShowReservations();
+  if (autoNoShow.error) {
+    return { tableIds: [], error: autoNoShow.error };
+  }
+
   const reservedAt = typeof payload.reserved_at === "string" ? payload.reserved_at : "";
   const partySize = Number(payload.party_size ?? 0);
   const tables = onlineReservableTables(floorPlan, reservationWebsite);
