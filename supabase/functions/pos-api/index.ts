@@ -454,6 +454,15 @@ interface ReservationInput {
   stationId?: string;
 }
 
+interface ReservationBlacklistInput {
+  phone?: string;
+  customerName?: string;
+  reason?: string;
+  note?: string;
+  isActive?: boolean;
+  stationId?: string;
+}
+
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -485,6 +494,8 @@ const memberCouponSelect =
   "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, created_at, updated_at";
 const reservationSelect =
   "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, pre_order, note, created_at, updated_at";
+const reservationBlacklistSelect =
+  "id, phone, normalized_phone, customer_name, reason, note, is_active, created_at, updated_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const auditEventSelect =
@@ -2010,6 +2021,100 @@ api.get("/admin/reservations", async (c) => {
   return c.json({ reservations: data });
 });
 
+api.get("/admin/reservation-blacklist", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { data, error } = await supabase
+    .from("reservation_blacklist_entries")
+    .select(reservationBlacklistSelect)
+    .order("is_active", { ascending: false })
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ entries: data });
+});
+
+api.post("/admin/reservation-blacklist", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ReservationBlacklistInput>().catch((): ReservationBlacklistInput => ({}));
+  const { payload, error: validationError } = validateReservationBlacklistInput(input, true);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("reservation_blacklist_entries")
+    .upsert(payload, { onConflict: "normalized_phone" })
+    .select(reservationBlacklistSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "reservation_blacklist.upsert",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      entryId: data.id,
+      normalizedPhone: data.normalized_phone,
+      isActive: data.is_active,
+    },
+  });
+
+  return c.json({ entry: data }, 201);
+});
+
+api.patch("/admin/reservation-blacklist/:id", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<ReservationBlacklistInput>().catch((): ReservationBlacklistInput => ({}));
+  const { payload, error: validationError } = validateReservationBlacklistInput(input, false);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
+  }
+  if (Object.keys(payload).length === 0) {
+    return c.json({ error: "No reservation blacklist fields to update" }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("reservation_blacklist_entries")
+    .update(payload)
+    .eq("id", c.req.param("id"))
+    .select(reservationBlacklistSelect)
+    .single();
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "reservation_blacklist.update",
+    stationId: sanitizeStationId(c.req.header("x-pos-station-id") ?? input.stationId),
+    metadata: {
+      entryId: data.id,
+      normalizedPhone: data.normalized_phone,
+      isActive: data.is_active,
+    },
+  });
+
+  return c.json({ entry: data });
+});
+
 api.post("/admin/reservations", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -2020,6 +2125,14 @@ api.post("/admin/reservations", async (c) => {
   const { payload, error: validationError } = validateReservationInput(input, true);
   if (validationError) {
     return c.json({ error: validationError }, 400);
+  }
+
+  const blacklistMatch = await findActiveReservationBlacklistEntry(String(payload.customer_phone ?? ""));
+  if (blacklistMatch.error) {
+    return c.json({ error: blacklistMatch.error.message }, 500);
+  }
+  if (blacklistMatch.data && !payload.important_label) {
+    payload.important_label = "黑名單";
   }
 
   const { data, error } = await supabase
@@ -2040,6 +2153,7 @@ api.post("/admin/reservations", async (c) => {
       customerName: data.customer_name,
       partySize: data.party_size,
       reservedAt: data.reserved_at,
+      blacklistEntryId: blacklistMatch.data?.id ?? null,
     },
   });
 
@@ -4336,6 +4450,71 @@ const validateCouponInput = (
 };
 
 const normalizeReservationPreOrder = (value: unknown): OrderLineInput[] => normalizeDraftOrderLines(value);
+
+const normalizeReservationBlacklistPhone = (value: unknown): string =>
+  sanitizeText(value, "").replace(/[\s\-().]/g, "").slice(0, 40);
+
+const validateReservationBlacklistInput = (
+  input: ReservationBlacklistInput,
+  requirePhone: boolean,
+): {
+  payload: Record<string, unknown>;
+  normalizedPhone: string;
+  error: string | null;
+} => {
+  const payload: Record<string, unknown> = {};
+  const normalizedPhone = input.phone !== undefined
+    ? normalizeReservationBlacklistPhone(input.phone)
+    : "";
+
+  if (input.phone !== undefined) {
+    if (normalizedPhone.length < 4) {
+      return { payload, normalizedPhone, error: "phone must contain at least 4 digits or symbols" };
+    }
+    payload.phone = sanitizeText(input.phone, "").slice(0, 40);
+    payload.normalized_phone = normalizedPhone;
+  } else if (requirePhone) {
+    return { payload, normalizedPhone, error: "phone is required" };
+  }
+
+  if (input.customerName !== undefined) {
+    payload.customer_name = sanitizeText(input.customerName, "").slice(0, 120);
+  } else if (requirePhone) {
+    payload.customer_name = "";
+  }
+
+  if (input.reason !== undefined) {
+    payload.reason = sanitizeText(input.reason, "").slice(0, 120);
+  } else if (requirePhone) {
+    payload.reason = "線上訂位黑名單";
+  }
+
+  if (input.note !== undefined) {
+    payload.note = sanitizeText(input.note, "").slice(0, 500);
+  } else if (requirePhone) {
+    payload.note = "";
+  }
+
+  if (input.isActive !== undefined || requirePhone) {
+    payload.is_active = input.isActive !== false;
+  }
+
+  return { payload, normalizedPhone, error: null };
+};
+
+const findActiveReservationBlacklistEntry = async (phone: string) => {
+  const normalizedPhone = normalizeReservationBlacklistPhone(phone);
+  if (normalizedPhone.length < 4) {
+    return { data: null, error: null };
+  }
+
+  return await supabase
+    .from("reservation_blacklist_entries")
+    .select(reservationBlacklistSelect)
+    .eq("normalized_phone", normalizedPhone)
+    .eq("is_active", true)
+    .maybeSingle();
+};
 
 const validateReservationInput = (
   input: ReservationInput,

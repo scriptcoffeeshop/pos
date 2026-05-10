@@ -26,12 +26,14 @@ import {
   createAdminMember,
   createAdminCoupon,
   createAdminReservation,
+  createAdminReservationBlacklistEntry,
   defaultEngagementSettings,
   fetchAdminAuditEvents,
   fetchAdminCoupons,
   fetchAdminDailyReport,
   fetchAdminMembers,
   fetchAdminPaymentEvents,
+  fetchAdminReservationBlacklist,
   fetchAdminProducts,
   fetchAdminReservations,
   fetchAdminSettings,
@@ -39,6 +41,7 @@ import {
   fetchAdminTimeClockEntries,
   type ProductUpdateInput,
   updateAdminSetting,
+  updateAdminReservationBlacklistEntry,
   updateAdminReservation,
   updateProduct,
 } from '../lib/posApi'
@@ -56,6 +59,7 @@ import type {
   PosMember,
   PosPaymentEvent,
   PosReservation,
+  ReservationBlacklistEntry,
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
@@ -96,6 +100,13 @@ interface ReservationDraft {
   partySize: number
   reservedAt: string
   importantLabel: string
+  note: string
+}
+
+interface ReservationBlacklistDraft {
+  phone: string
+  customerName: string
+  reason: string
   note: string
 }
 
@@ -349,6 +360,7 @@ const productDrafts = ref<ProductDraft[]>([])
 const members = ref<PosMember[]>([])
 const coupons = ref<MemberCoupon[]>([])
 const reservations = ref<PosReservation[]>([])
+const reservationBlacklist = ref<ReservationBlacklistEntry[]>([])
 const memberSearchTerm = ref('')
 const newMember = ref<MemberDraft>({
   lineUserId: '',
@@ -375,6 +387,13 @@ const newReservation = ref<ReservationDraft>({
   importantLabel: '',
   note: '',
 })
+const newBlacklistEntry = ref<ReservationBlacklistDraft>({
+  phone: '',
+  customerName: '',
+  reason: '線上訂位黑名單',
+  note: '',
+})
+const pendingBlacklistedReservationPhone = ref('')
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
 const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
@@ -431,6 +450,25 @@ const memberCount = computed(() => members.value.length)
 const couponCount = computed(() => coupons.value.length)
 const activeReservationCount = computed(() =>
   reservations.value.filter((reservation) => reservation.status === 'booked').length,
+)
+const activeReservationBlacklistCount = computed(() =>
+  reservationBlacklist.value.filter((entry) => entry.isActive).length,
+)
+const normalizeReservationPhoneKey = (phone: string): string => phone.replace(/[\s\-().]/g, '').trim()
+const findReservationBlacklistEntry = (phone: string): ReservationBlacklistEntry | null => {
+  const phoneKey = normalizeReservationPhoneKey(phone)
+  if (!phoneKey) {
+    return null
+  }
+
+  return reservationBlacklist.value.find((entry) => entry.normalizedPhone === phoneKey) ?? null
+}
+const findActiveReservationBlacklistEntry = (phone: string): ReservationBlacklistEntry | null => {
+  const entry = findReservationBlacklistEntry(phone)
+  return entry?.isActive ? entry : null
+}
+const reservationDraftBlacklistEntry = computed(() =>
+  findActiveReservationBlacklistEntry(newReservation.value.customerPhone),
 )
 const walletBalanceTotal = computed(() => members.value.reduce((total, member) => total + member.walletBalance, 0))
 const reportPeakHour = computed(() => {
@@ -1132,7 +1170,19 @@ const loadAdminData = async (): Promise<void> => {
   adminMessage.value = '讀取後台資料中'
 
   try {
-    const [products, memberRows, report, settings, events, paymentRows, stations, couponRows, reservationRows, timeClockRows] = await Promise.all([
+    const [
+      products,
+      memberRows,
+      report,
+      settings,
+      events,
+      paymentRows,
+      stations,
+      couponRows,
+      reservationRows,
+      blacklistRows,
+      timeClockRows,
+    ] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
       fetchAdminDailyReport(reportDate.value),
@@ -1142,6 +1192,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminStations(),
       fetchAdminCoupons(),
       fetchAdminReservations(),
+      fetchAdminReservationBlacklist(),
       fetchAdminTimeClockEntries(timeClockLimit.value),
     ])
     productDrafts.value = products.map(toDraft)
@@ -1156,8 +1207,9 @@ const loadAdminData = async (): Promise<void> => {
     stationHeartbeats.value = stations
     coupons.value = couponRows
     reservations.value = reservationRows
+    reservationBlacklist.value = blacklistRows
     timeClockEntries.value = timeClockRows
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1592,6 +1644,14 @@ const addCoupon = async (): Promise<void> => {
 }
 
 const addReservation = async (): Promise<void> => {
+  const blacklistEntry = reservationDraftBlacklistEntry.value
+  const phoneKey = normalizeReservationPhoneKey(newReservation.value.customerPhone)
+  if (blacklistEntry && pendingBlacklistedReservationPhone.value !== phoneKey) {
+    pendingBlacklistedReservationPhone.value = phoneKey
+    adminMessage.value = `${newReservation.value.customerPhone} 在訂位黑名單中：${blacklistEntry.reason || blacklistEntry.note || '請確認是否仍要建立訂位'}。若仍要建立，請再次按建立訂位。`
+    return
+  }
+
   isIchefLoading.value = true
   adminMessage.value = '建立訂位中'
 
@@ -1617,11 +1677,94 @@ const addReservation = async (): Promise<void> => {
       importantLabel: '',
       note: '',
     }
+    pendingBlacklistedReservationPhone.value = ''
     adminMessage.value = `${reservation.customerName} 訂位已建立`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '訂位建立失敗'
   } finally {
     isIchefLoading.value = false
+  }
+}
+
+const addReservationBlacklistEntry = async (): Promise<void> => {
+  savingSettingKey.value = 'reservation_blacklist'
+  adminMessage.value = '新增訂位黑名單中'
+
+  try {
+    const entry = await createAdminReservationBlacklistEntry({
+      phone: newBlacklistEntry.value.phone.trim(),
+      customerName: newBlacklistEntry.value.customerName.trim(),
+      reason: newBlacklistEntry.value.reason.trim() || '線上訂位黑名單',
+      note: newBlacklistEntry.value.note.trim(),
+      isActive: true,
+    })
+    reservationBlacklist.value = [
+      entry,
+      ...reservationBlacklist.value.filter((candidate) => candidate.id !== entry.id),
+    ]
+    newBlacklistEntry.value = {
+      phone: '',
+      customerName: '',
+      reason: '線上訂位黑名單',
+      note: '',
+    }
+    adminMessage.value = `${entry.phone} 已加入訂位黑名單`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '訂位黑名單新增失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const replaceReservationBlacklistEntry = (entry: ReservationBlacklistEntry): void => {
+  reservationBlacklist.value = [
+    entry,
+    ...reservationBlacklist.value.filter((candidate) => candidate.id !== entry.id),
+  ].sort((first, second) => Number(second.isActive) - Number(first.isActive))
+}
+
+const setReservationBlacklistStatus = async (
+  entry: ReservationBlacklistEntry,
+  isActive: boolean,
+): Promise<void> => {
+  savingSettingKey.value = `reservation_blacklist_${entry.id}`
+  adminMessage.value = isActive ? '恢復訂位黑名單中' : '解除訂位黑名單中'
+
+  try {
+    const saved = await updateAdminReservationBlacklistEntry(entry.id, { isActive })
+    replaceReservationBlacklistEntry(saved)
+    adminMessage.value = `${saved.phone} 已${saved.isActive ? '列入' : '解除'}訂位黑名單`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '訂位黑名單更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const toggleReservationBlacklistForReservation = async (reservation: PosReservation): Promise<void> => {
+  const existing = findReservationBlacklistEntry(reservation.customerPhone)
+  if (existing) {
+    await setReservationBlacklistStatus(existing, !existing.isActive)
+    return
+  }
+
+  savingSettingKey.value = `reservation_blacklist_reservation_${reservation.id}`
+  adminMessage.value = '從訂位加入黑名單中'
+
+  try {
+    const entry = await createAdminReservationBlacklistEntry({
+      phone: reservation.customerPhone,
+      customerName: reservation.customerName,
+      reason: reservation.importantLabel || '訂位細節加入',
+      note: reservation.note,
+      isActive: true,
+    })
+    replaceReservationBlacklistEntry(entry)
+    adminMessage.value = `${reservation.customerName} 已加入訂位黑名單`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '訂位黑名單新增失敗'
+  } finally {
+    savingSettingKey.value = null
   }
 }
 
@@ -2311,6 +2454,9 @@ const saveAccessControl = async (): Promise<void> => {
                 電話
                 <input v-model="newReservation.customerPhone" type="tel" />
               </label>
+              <p v-if="reservationDraftBlacklistEntry" class="admin-inline-warning wide-field">
+                此手機在訂位黑名單中：{{ reservationDraftBlacklistEntry.reason || reservationDraftBlacklistEntry.note || '請確認是否仍要提供訂位' }}。再次按建立訂位可覆蓋。
+              </p>
               <label>
                 人數
                 <input v-model.number="newReservation.partySize" type="number" min="1" max="50" />
@@ -2333,13 +2479,66 @@ const saveAccessControl = async (): Promise<void> => {
               </button>
             </div>
 
-            <article v-for="reservation in reservations.slice(0, 8)" :key="reservation.id" class="admin-report-row">
+            <article
+              v-for="reservation in reservations.slice(0, 8)"
+              :key="reservation.id"
+              class="admin-report-row"
+              :class="{ 'admin-report-row-warning': Boolean(findActiveReservationBlacklistEntry(reservation.customerPhone)) }"
+            >
               <span>{{ formatAuditTime(reservation.reservedAt) }} · {{ reservation.customerName }}</span>
               <strong>{{ reservation.partySize }} 人</strong>
-              <small>{{ reservation.importantLabel || reservation.status }}</small>
+              <small>
+                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '黑名單' : (reservation.importantLabel || reservation.status) }}
+              </small>
               <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'seated')">入座</button>
               <button class="secondary-button" type="button" @click="setReservationStatus(reservation, 'cancelled')">取消</button>
+              <button class="secondary-button" type="button" @click="toggleReservationBlacklistForReservation(reservation)">
+                {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '解除黑名單' : '加入黑名單' }}
+              </button>
             </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Blacklist</p>
+                <h3>線上訂位黑名單</h3>
+              </div>
+              <strong>{{ activeReservationBlacklistCount }} 筆啟用</strong>
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                手機號碼
+                <input v-model="newBlacklistEntry.phone" type="tel" placeholder="0912345678" />
+              </label>
+              <label>
+                姓名 / 稱呼
+                <input v-model="newBlacklistEntry.customerName" type="text" placeholder="可留空" />
+              </label>
+              <label>
+                原因
+                <input v-model="newBlacklistEntry.reason" type="text" placeholder="No show / 惡意訂位" />
+              </label>
+              <label class="wide-field">
+                店內備註
+                <input v-model="newBlacklistEntry.note" type="text" placeholder="僅店內判斷使用" />
+              </label>
+              <button class="primary-button" type="button" :disabled="savingSettingKey === 'reservation_blacklist'" @click="addReservationBlacklistEntry">
+                <UserPlus :size="18" aria-hidden="true" />
+                新增黑名單
+              </button>
+            </div>
+
+            <article v-for="entry in reservationBlacklist.slice(0, 10)" :key="entry.id" class="admin-report-row">
+              <span>{{ entry.phone }} · {{ entry.customerName || '未填姓名' }}</span>
+              <strong>{{ entry.isActive ? '啟用' : '已解除' }}</strong>
+              <small>{{ entry.reason || entry.note || '線上訂位黑名單' }}</small>
+              <button class="secondary-button" type="button" @click="setReservationBlacklistStatus(entry, !entry.isActive)">
+                {{ entry.isActive ? '解除' : '恢復' }}
+              </button>
+            </article>
+            <p v-if="reservationBlacklist.length === 0" class="panel-note">尚無訂位黑名單</p>
           </section>
 
           <section class="admin-subpanel">

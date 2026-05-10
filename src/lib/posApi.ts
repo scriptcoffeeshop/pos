@@ -29,6 +29,7 @@ import type {
   PosOrder,
   PosPaymentEvent,
   PosReservation,
+  ReservationBlacklistEntry,
   PosStationHeartbeat,
   RegisterCashAdjustment,
   RegisterCashAdjustmentKind,
@@ -273,6 +274,18 @@ interface ApiReservation {
   updated_at: string
 }
 
+interface ApiReservationBlacklistEntry {
+  id: string
+  phone: string
+  normalized_phone: string
+  customer_name: string
+  reason: string
+  note: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 interface AuditEventsResponse {
   events: ApiAuditEvent[]
 }
@@ -303,6 +316,14 @@ interface ReservationsResponse {
 
 interface ReservationResponse {
   reservation: ApiReservation
+}
+
+interface ReservationBlacklistResponse {
+  entries: ApiReservationBlacklistEntry[]
+}
+
+interface ReservationBlacklistEntryResponse {
+  entry: ApiReservationBlacklistEntry
 }
 
 interface ApiStationHeartbeat {
@@ -425,6 +446,14 @@ export interface ReservationInput {
   importantLabel: string
   preOrder: CartLine[]
   note: string
+}
+
+export interface ReservationBlacklistInput {
+  phone: string
+  customerName?: string
+  reason?: string
+  note?: string
+  isActive?: boolean
 }
 
 export interface OnlineOrderReminderStateUpdateInput {
@@ -711,6 +740,18 @@ const normalizeReservation = (reservation: ApiReservation): PosReservation => ({
   note: reservation.note,
   createdAt: reservation.created_at,
   updatedAt: reservation.updated_at,
+})
+
+const normalizeReservationBlacklistEntry = (entry: ApiReservationBlacklistEntry): ReservationBlacklistEntry => ({
+  id: entry.id,
+  phone: entry.phone,
+  normalizedPhone: entry.normalized_phone,
+  customerName: entry.customer_name,
+  reason: entry.reason,
+  note: entry.note,
+  isActive: entry.is_active,
+  createdAt: entry.created_at,
+  updatedAt: entry.updated_at,
 })
 
 const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHeartbeat => ({
@@ -1740,6 +1781,46 @@ export const updateAdminReservation = async (
   })
 
   return normalizeReservation(data.reservation)
+}
+
+export const fetchAdminReservationBlacklist = async (): Promise<ReservationBlacklistEntry[]> => {
+  const data = await request<ReservationBlacklistResponse>('/admin/reservation-blacklist')
+  return data.entries.map(normalizeReservationBlacklistEntry)
+}
+
+export const createAdminReservationBlacklistEntry = async (
+  input: ReservationBlacklistInput,
+): Promise<ReservationBlacklistEntry> => {
+  const data = await request<ReservationBlacklistEntryResponse>('/admin/reservation-blacklist', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeReservationBlacklistEntry(data.entry)
+}
+
+export const updateAdminReservationBlacklistEntry = async (
+  entryId: string,
+  input: Partial<ReservationBlacklistInput>,
+): Promise<ReservationBlacklistEntry> => {
+  const data = await request<ReservationBlacklistEntryResponse>(`/admin/reservation-blacklist/${entryId}`, {
+    method: 'PATCH',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return normalizeReservationBlacklistEntry(data.entry)
 }
 
 export const fetchAdminDailyReport = async (date: string): Promise<DailySalesReport> => {

@@ -8649,6 +8649,11 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-raised);
 }
 
+.admin-report-row-warning {
+  border-color: #f59e0b;
+  background: #fff7ed;
+}
+
 .admin-report-row span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8710,6 +8715,17 @@ button.cart-line-summary:focus-visible {
   grid-template-columns: 160px 160px minmax(260px, 1fr);
   gap: 9px;
   align-items: end;
+}
+
+.admin-inline-warning {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius);
+  background: #fff7ed;
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .admin-operations-toolbar {
