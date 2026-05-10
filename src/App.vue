@@ -38,6 +38,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminPanel from './components/AdminPanel.vue'
 import ConsumerOrderPage from './components/ConsumerOrderPage.vue'
+import ConsumerReservationPage from './components/ConsumerReservationPage.vue'
 import { usePosSession } from './composables/usePosSession'
 import { categoryLabels } from './data/menu'
 import {
@@ -83,7 +84,7 @@ import type {
   WaitlineEntry,
 } from './types/pos'
 
-type AppView = 'pos' | 'admin' | 'online'
+type AppView = 'pos' | 'admin' | 'online' | 'reservation'
 type WorkspaceTab = 'floor' | 'order' | 'details' | 'payment' | 'queue' | 'printing' | 'closeout'
 type CartQuickEditor = 'customer' | 'service' | 'payment' | null
 type FloorServiceView = 'dine-in' | 'takeout-delivery'
@@ -350,13 +351,13 @@ const readInitialView = (): AppView => {
     return 'pos'
   }
 
-  if (isConsumerDomain) {
-    return 'online'
-  }
-
   const params = new URLSearchParams(globalThis.location?.search ?? '')
   const view = params.get('view') ?? params.get('mode')
   const hash = globalThis.location?.hash.replace(/^#\/?/, '')
+
+  if (isConsumerDomain) {
+    return view === 'reservation' || hash === 'reservation' ? 'reservation' : 'online'
+  }
 
   if (view === 'admin' || hash === 'admin') {
     return 'admin'
@@ -364,6 +365,10 @@ const readInitialView = (): AppView => {
 
   if (view === 'order' || view === 'online' || hash === 'order' || hash === 'online') {
     return 'online'
+  }
+
+  if (view === 'reservation' || hash === 'reservation') {
+    return 'reservation'
   }
 
   return 'pos'
@@ -3148,11 +3153,14 @@ const ticketDisplayTotal = computed(() => {
   return cartTotal.value + (activeOptionItem.value ? pendingOptionLineTotal.value : 0)
 })
 const activeWorkspaceTitle = computed(() => workspaceTabLabels[activeWorkspaceTab.value])
-const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online')
+const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online' && activeView.value !== 'reservation')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
 const pageTitle = computed(() => {
   if (activeView.value === 'online') {
     return '線上點餐'
+  }
+  if (activeView.value === 'reservation') {
+    return '線上訂位'
   }
 
   return isNativeApp ? '平板工作站' : '門市 POS'
@@ -3160,6 +3168,9 @@ const pageTitle = computed(() => {
 const pageSubtitle = computed(() => {
   if (activeView.value === 'online') {
     return '線上菜單 · 自取訂單 · 門市接單'
+  }
+  if (activeView.value === 'reservation') {
+    return '專屬訂位網站 · 訂位規則 · 門市控場'
   }
 
   return isNativeApp ? '櫃台點餐 · 線上接單 · 商品暫停 · LAN 出單' : '櫃台點餐 · 線上訂單 · LAN 列印'
@@ -5774,7 +5785,7 @@ onBeforeUnmount(() => {
   <main
     class="pos-shell"
     :class="{
-      'pos-shell--consumer': activeView === 'online',
+      'pos-shell--consumer': activeView === 'online' || activeView === 'reservation',
       'pos-shell--workspace': activeView === 'pos',
       'pos-shell--dark': activeView === 'pos' && posUiPreferences.darkMode,
     }"
@@ -5860,6 +5871,7 @@ onBeforeUnmount(() => {
     </header>
 
     <ConsumerOrderPage v-if="activeView === 'online'" />
+    <ConsumerReservationPage v-else-if="activeView === 'reservation'" />
 
     <div
       v-else-if="activeView === 'pos'"

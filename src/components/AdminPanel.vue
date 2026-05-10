@@ -170,6 +170,7 @@ const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'food', label: categoryLabels.food ?? '輕食' },
   { value: 'retail', label: categoryLabels.retail ?? '零售' },
 ]
+const reservationWeekdayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
 
 const menuCategoryOptions = categoryOptions.filter((category): category is { value: MenuCategory; label: string } =>
   category.value !== 'all',
@@ -334,19 +335,30 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
   noteSupplyStatuses: { ...settings.noteSupplyStatuses },
 })
 
-const cloneEngagementSettings = (settings: CustomerEngagementSettings): CustomerEngagementSettings => ({
-  ...defaultEngagementSettings(),
-  ...settings,
-  orderLabels: settings.orderLabels.map((label) => ({ ...label })),
-  customerTypes: [...settings.customerTypes],
-  recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
-  translations: settings.translations.map((translation) => ({ ...translation })),
-  hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
-  supplyRules: {
-    ...settings.supplyRules,
-    defaultPeriods: settings.supplyRules.defaultPeriods.map((period) => ({ ...period, days: [...period.days] })),
-  },
-})
+const cloneEngagementSettings = (settings: CustomerEngagementSettings): CustomerEngagementSettings => {
+  const defaults = defaultEngagementSettings()
+  const reservationWebsite = settings.reservationWebsite ?? defaults.reservationWebsite
+  const reservationBusinessHours = reservationWebsite.businessHours ?? defaults.reservationWebsite.businessHours
+
+  return {
+    ...defaults,
+    ...settings,
+    orderLabels: settings.orderLabels.map((label) => ({ ...label })),
+    customerTypes: [...settings.customerTypes],
+    recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
+    translations: settings.translations.map((translation) => ({ ...translation })),
+    hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
+    supplyRules: {
+      ...settings.supplyRules,
+      defaultPeriods: settings.supplyRules.defaultPeriods.map((period) => ({ ...period, days: [...period.days] })),
+    },
+    reservationWebsite: {
+      ...defaults.reservationWebsite,
+      ...reservationWebsite,
+      businessHours: reservationBusinessHours.map((period) => ({ ...period })),
+    },
+  }
+}
 
 const toDateInput = (date = new Date()): string => {
   const timezoneOffsetMs = date.getTimezoneOffset() * 60 * 1000
@@ -2496,6 +2508,83 @@ const saveAccessControl = async (): Promise<void> => {
                 {{ findActiveReservationBlacklistEntry(reservation.customerPhone) ? '解除黑名單' : '加入黑名單' }}
               </button>
             </article>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Reservation Website</p>
+                <h3>專屬訂位網站 / 規則</h3>
+              </div>
+              <CalendarDays :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.reservationWebsite.enabled" type="checkbox" />
+                開放消費者線上訂位
+              </label>
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                餐廳名稱
+                <input v-model="engagementSettings.reservationWebsite.restaurantName" type="text" />
+              </label>
+              <label>
+                門市電話
+                <input v-model="engagementSettings.reservationWebsite.phone" type="tel" />
+              </label>
+              <label class="wide-field">
+                地址
+                <input v-model="engagementSettings.reservationWebsite.address" type="text" />
+              </label>
+              <label class="wide-field">
+                訂位公告
+                <input v-model="engagementSettings.reservationWebsite.announcement" type="text" />
+              </label>
+              <label>
+                最少人數
+                <input v-model.number="engagementSettings.reservationWebsite.minPartySize" type="number" min="1" max="50" />
+              </label>
+              <label>
+                最多人數
+                <input v-model.number="engagementSettings.reservationWebsite.maxPartySize" type="number" min="1" max="50" />
+              </label>
+              <label>
+                訂位間隔（分）
+                <input v-model.number="engagementSettings.reservationWebsite.slotMinutes" type="number" min="5" max="240" step="5" />
+              </label>
+              <label>
+                用餐時間（分）
+                <input v-model.number="engagementSettings.reservationWebsite.durationMinutes" type="number" min="15" max="480" step="15" />
+              </label>
+              <label>
+                最早提前（分）
+                <input v-model.number="engagementSettings.reservationWebsite.leadMinutes" type="number" min="1" max="1440" step="5" />
+              </label>
+              <label>
+                開放天數
+                <input v-model.number="engagementSettings.reservationWebsite.bookingWindowDays" type="number" min="1" max="60" />
+              </label>
+            </div>
+
+            <div class="admin-rule-scope">
+              <strong>每週開放時段</strong>
+              <article
+                v-for="period in engagementSettings.reservationWebsite.businessHours"
+                :key="period.id"
+                class="admin-rule-grid"
+              >
+                <label class="toggle-row">
+                  <input v-model="period.enabled" type="checkbox" />
+                  {{ reservationWeekdayLabels[period.day] }}
+                </label>
+                <input v-model="period.start" type="time" />
+                <input v-model="period.end" type="time" />
+                <span class="panel-note">{{ period.enabled ? '開放' : '關閉' }}</span>
+              </article>
+            </div>
           </section>
 
           <section class="admin-subpanel">

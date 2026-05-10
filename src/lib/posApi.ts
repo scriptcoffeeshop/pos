@@ -29,6 +29,7 @@ import type {
   PosOrder,
   PosPaymentEvent,
   PosReservation,
+  ReservationBusinessHour,
   ReservationBlacklistEntry,
   PosStationHeartbeat,
   RegisterCashAdjustment,
@@ -445,6 +446,14 @@ export interface ReservationInput {
   status: ReservationStatus
   importantLabel: string
   preOrder: CartLine[]
+  note: string
+}
+
+export interface PublicReservationInput {
+  customerName: string
+  customerPhone: string
+  partySize: number
+  reservedAt: string
   note: string
 }
 
@@ -950,6 +959,44 @@ const normalizeSupplyWindows = (value: unknown): SupplyPeriodRule[] => {
   }).slice(0, 20)
 }
 
+const defaultReservationBusinessHours = (): ReservationBusinessHour[] =>
+  [1, 2, 3, 4, 5, 6, 0].map((day) => ({
+    id: `reservation-${day}`,
+    day,
+    enabled: day !== 0,
+    start: '09:00',
+    end: '20:00',
+  }))
+
+const normalizeReservationBusinessHours = (value: unknown): ReservationBusinessHour[] => {
+  const source = Array.isArray(value) ? value : defaultReservationBusinessHours()
+  const seenDays = new Set<number>()
+
+  return source.flatMap((entry, index): ReservationBusinessHour[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const period = entry as Partial<ReservationBusinessHour>
+    const day = normalizeNumber(period.day, index)
+    if (day < 0 || day > 6 || seenDays.has(day)) {
+      return []
+    }
+
+    const start = typeof period.start === 'string' && /^\d{2}:\d{2}$/.test(period.start) ? period.start : '09:00'
+    const end = typeof period.end === 'string' && /^\d{2}:\d{2}$/.test(period.end) ? period.end : '20:00'
+    seenDays.add(day)
+
+    return [{
+      id: sanitizeOnlineText(period.id, `reservation-${day}`),
+      day,
+      enabled: period.enabled !== false,
+      start,
+      end,
+    }]
+  }).slice(0, 7)
+}
+
 const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
   if (!Array.isArray(value)) {
     return []
@@ -1434,6 +1481,20 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
       { id: 'all-day', label: '全天', days: [1, 2, 3, 4, 5, 6, 0], start: '08:00', end: '22:00' },
     ],
   },
+  reservationWebsite: {
+    enabled: false,
+    restaurantName: 'Script Coffee',
+    phone: '',
+    address: '',
+    announcement: '線上訂位送出後，門市會保留此筆訂位資訊。',
+    minPartySize: 1,
+    maxPartySize: 8,
+    slotMinutes: 30,
+    durationMinutes: 120,
+    leadMinutes: 30,
+    bookingWindowDays: 14,
+    businessHours: defaultReservationBusinessHours(),
+  },
 })
 
 export const normalizeEngagementSettings = (value: unknown): CustomerEngagementSettings => {
@@ -1497,6 +1558,18 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     : defaults.supplyRules
   const rawSupplyPeriods = (rawSupplyRules as { defaultPeriods?: unknown; defaultWindows?: unknown }).defaultPeriods ??
     (rawSupplyRules as { defaultWindows?: unknown }).defaultWindows
+  const rawReservationWebsite = settings.reservationWebsite && typeof settings.reservationWebsite === 'object'
+    ? settings.reservationWebsite
+    : defaults.reservationWebsite
+  const reservationWebsite = rawReservationWebsite as Partial<CustomerEngagementSettings['reservationWebsite']>
+  const reservationMinPartySize = Math.min(
+    Math.max(normalizeNumber(reservationWebsite.minPartySize, defaults.reservationWebsite.minPartySize), 1),
+    50,
+  )
+  const reservationMaxPartySize = Math.max(
+    reservationMinPartySize,
+    Math.min(Math.max(normalizeNumber(reservationWebsite.maxPartySize, defaults.reservationWebsite.maxPartySize), 1), 50),
+  )
 
   return {
     orderLabels: orderLabels.length > 0 ? orderLabels : defaults.orderLabels,
@@ -1511,6 +1584,20 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       defaultPeriods: normalizeSupplyWindows(rawSupplyPeriods).length > 0
         ? normalizeSupplyWindows(rawSupplyPeriods)
         : defaults.supplyRules.defaultPeriods,
+    },
+    reservationWebsite: {
+      enabled: reservationWebsite.enabled === true,
+      restaurantName: sanitizeOnlineText(reservationWebsite.restaurantName, defaults.reservationWebsite.restaurantName),
+      phone: sanitizeOnlineText(reservationWebsite.phone, defaults.reservationWebsite.phone),
+      address: sanitizeOnlineText(reservationWebsite.address, defaults.reservationWebsite.address),
+      announcement: sanitizeOnlineText(reservationWebsite.announcement, defaults.reservationWebsite.announcement),
+      minPartySize: reservationMinPartySize,
+      maxPartySize: reservationMaxPartySize,
+      slotMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.slotMinutes, defaults.reservationWebsite.slotMinutes), 5), 240),
+      durationMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.durationMinutes, defaults.reservationWebsite.durationMinutes), 15), 480),
+      leadMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.leadMinutes, defaults.reservationWebsite.leadMinutes), 1), 1440),
+      bookingWindowDays: Math.min(Math.max(normalizeNumber(reservationWebsite.bookingWindowDays, defaults.reservationWebsite.bookingWindowDays), 1), 60),
+      businessHours: normalizeReservationBusinessHours(reservationWebsite.businessHours),
     },
   }
 }
@@ -1760,6 +1847,15 @@ export const createAdminReservation = async (input: ReservationInput): Promise<P
       ...input,
       stationId: currentStationId(),
     }),
+  })
+
+  return normalizeReservation(data.reservation)
+}
+
+export const createPublicReservation = async (input: PublicReservationInput): Promise<PosReservation> => {
+  const data = await request<ReservationResponse>('/reservations', {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 
   return normalizeReservation(data.reservation)
