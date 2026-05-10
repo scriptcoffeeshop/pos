@@ -936,6 +936,10 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   showTaxIdField: false,
   showCarrierBarcodeField: false,
   paymentMethods: defaultOnlinePaymentMethods(),
+  deliveryFeeAmount: 60,
+  deliveryMinimumSubtotal: 0,
+  freeDeliveryThreshold: 0,
+  deliveryTravelMinutes: 20,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -960,6 +964,11 @@ const sanitizeColor = (value: unknown, fallback = '#0f766e'): string =>
 const normalizeNumber = (value: unknown, fallback = 0): number => {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? Math.trunc(numberValue) : fallback
+}
+
+const clampRuntimeInteger = (value: unknown, fallback: number, min: number, max: number): number => {
+  const numberValue = normalizeNumber(value, fallback)
+  return Math.min(Math.max(numberValue, min), max)
 }
 
 const normalizeSupplyWindows = (value: unknown): SupplyPeriodRule[] => {
@@ -1305,6 +1314,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
         ? settings.showCarrierBarcodeField
         : defaults.showCarrierBarcodeField,
     paymentMethods: paymentMethods.length > 0 ? paymentMethods : defaults.paymentMethods.map((method) => ({ ...method })),
+    deliveryFeeAmount: clampRuntimeInteger(settings.deliveryFeeAmount, defaults.deliveryFeeAmount, 0, 999_999),
+    deliveryMinimumSubtotal: clampRuntimeInteger(settings.deliveryMinimumSubtotal, defaults.deliveryMinimumSubtotal, 0, 999_999),
+    freeDeliveryThreshold: clampRuntimeInteger(settings.freeDeliveryThreshold, defaults.freeDeliveryThreshold, 0, 999_999),
+    deliveryTravelMinutes: clampRuntimeInteger(settings.deliveryTravelMinutes, defaults.deliveryTravelMinutes, 0, 180),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)
