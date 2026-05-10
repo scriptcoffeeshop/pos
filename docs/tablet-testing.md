@@ -109,6 +109,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 若存在舊訂位沒有 assigned table，測試時應把該筆 party size 視為保守占用容量，避免升級後短時間內超收。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認 assigned table 仍從 Supabase 還原。
 
+## POS 訂位管理同步
+
+平板 POS 工具箱的「訂位管理」與後台訂位列表共用 `/admin/reservations`；資料不應只存在 localStorage：
+
+1. 平板 A 開啟工具箱 > 訂位管理，切換日/週/月與狀態篩選，確認區間同步成功。
+2. 平板 A 新增一筆訂位並勾選桌位；平板 B 開啟同一區間後應看到同一筆訂位、桌號與狀態。
+3. 平板 B 將該訂位改為取消或未出席；平板 A 重新整理後應看到同步狀態。
+4. 建立同桌同時段或座位不足的測試資料，確認 POS 訂位管理出現「桌位重疊」或「座位數不足」提示。
+5. 將可入座的訂位按「帶位開單」，確認 POS 進入內用點餐草稿，顧客姓名、電話、訂位人數、備註與保留桌位被帶入，且另一台平板看到訂位狀態為 `seated`。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認訂位狀態、桌位安排與桌位圖下一組訂位時間仍從 Supabase 還原。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。
