@@ -269,6 +269,7 @@ interface ApiReservation {
   reserved_at: string
   status: ReservationStatus
   important_label: string
+  assigned_table_ids?: string[] | null
   pre_order: unknown
   note: string
   created_at: string
@@ -445,6 +446,7 @@ export interface ReservationInput {
   reservedAt: string
   status: ReservationStatus
   importantLabel: string
+  assignedTableIds?: string[]
   preOrder: CartLine[]
   note: string
 }
@@ -745,6 +747,9 @@ const normalizeReservation = (reservation: ApiReservation): PosReservation => ({
   reservedAt: reservation.reserved_at,
   status: reservation.status,
   importantLabel: reservation.important_label,
+  assignedTableIds: Array.isArray(reservation.assigned_table_ids)
+    ? reservation.assigned_table_ids.filter((tableId): tableId is string => typeof tableId === 'string')
+    : [],
   preOrder: normalizeDraftLines(reservation.pre_order),
   note: reservation.note,
   createdAt: reservation.created_at,
@@ -1491,8 +1496,11 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     maxPartySize: 8,
     slotMinutes: 30,
     durationMinutes: 120,
+    seatHoldMinutes: 15,
     leadMinutes: 30,
     bookingWindowDays: 14,
+    allowTableCombinations: true,
+    onlineTableIds: [],
     businessHours: defaultReservationBusinessHours(),
   },
 })
@@ -1595,8 +1603,13 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       maxPartySize: reservationMaxPartySize,
       slotMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.slotMinutes, defaults.reservationWebsite.slotMinutes), 5), 240),
       durationMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.durationMinutes, defaults.reservationWebsite.durationMinutes), 15), 480),
+      seatHoldMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.seatHoldMinutes, defaults.reservationWebsite.seatHoldMinutes), 0), 30),
       leadMinutes: Math.min(Math.max(normalizeNumber(reservationWebsite.leadMinutes, defaults.reservationWebsite.leadMinutes), 1), 1440),
       bookingWindowDays: Math.min(Math.max(normalizeNumber(reservationWebsite.bookingWindowDays, defaults.reservationWebsite.bookingWindowDays), 1), 60),
+      allowTableCombinations: reservationWebsite.allowTableCombinations !== false,
+      onlineTableIds: Array.isArray(reservationWebsite.onlineTableIds)
+        ? [...new Set(reservationWebsite.onlineTableIds.map((tableId) => sanitizeOnlineText(tableId).toUpperCase()).filter(Boolean))].slice(0, 80)
+        : defaults.reservationWebsite.onlineTableIds,
       businessHours: normalizeReservationBusinessHours(reservationWebsite.businessHours),
     },
   }

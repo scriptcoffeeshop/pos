@@ -440,8 +440,11 @@ interface ReservationWebsiteSettings {
   maxPartySize: number;
   slotMinutes: number;
   durationMinutes: number;
+  seatHoldMinutes: number;
   leadMinutes: number;
   bookingWindowDays: number;
+  allowTableCombinations: boolean;
+  onlineTableIds: string[];
   businessHours: ReservationBusinessHour[];
 }
 
@@ -473,6 +476,7 @@ interface ReservationInput {
   reservedAt?: string;
   status?: ReservationStatus;
   importantLabel?: string;
+  assignedTableIds?: string[];
   preOrder?: unknown;
   note?: string;
   stationId?: string;
@@ -517,7 +521,7 @@ const transactionLedgerSelect =
 const memberCouponSelect =
   "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, created_at, updated_at";
 const reservationSelect =
-  "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, pre_order, note, created_at, updated_at";
+  "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, note, created_at, updated_at";
 const reservationBlacklistSelect =
   "id, phone, normalized_phone, customer_name, reason, note, is_active, created_at, updated_at";
 const registerSessionSelect =
@@ -737,8 +741,11 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     maxPartySize: 8,
     slotMinutes: 30,
     durationMinutes: 120,
+    seatHoldMinutes: 15,
     leadMinutes: 30,
     bookingWindowDays: 14,
+    allowTableCombinations: true,
+    onlineTableIds: [],
     businessHours: defaultReservationBusinessHours(),
   },
 };
@@ -2080,6 +2087,9 @@ api.post("/reservations", async (c) => {
   const engagementSettings = normalizeEngagementSettingsForRuntime(
     await loadSetting<CustomerEngagementSettings>("engagement_settings", defaultEngagementSettings),
   );
+  const floorPlan = normalizeFloorPlanForRuntime(
+    await loadSetting<FloorPlanSettings>("floor_plan", defaultFloorPlan),
+  );
   const reservationWebsite = engagementSettings.reservationWebsite;
   const { payload, error: validationError } = validateReservationInput({
     ...input,
@@ -2095,6 +2105,12 @@ api.post("/reservations", async (c) => {
   if (reservationRuleError) {
     return c.json({ error: reservationRuleError }, 409);
   }
+
+  const tableAssignment = await assignReservationTables(payload, reservationWebsite, floorPlan);
+  if (tableAssignment.error) {
+    return c.json({ error: tableAssignment.error }, 409);
+  }
+  payload.assigned_table_ids = tableAssignment.tableIds;
 
   const blacklistMatch = await findActiveReservationBlacklistEntry(String(payload.customer_phone ?? ""));
   if (blacklistMatch.error) {
@@ -2131,6 +2147,7 @@ api.post("/reservations", async (c) => {
       reservationId: data.id,
       partySize: data.party_size,
       reservedAt: data.reserved_at,
+      assignedTableIds: data.assigned_table_ids,
     },
   });
 
@@ -4684,6 +4701,14 @@ const validateReservationInput = (
     payload.important_label = "";
   }
 
+  if (input.assignedTableIds !== undefined) {
+    payload.assigned_table_ids = Array.isArray(input.assignedTableIds)
+      ? [...new Set(input.assignedTableIds.map((tableId) => sanitizeText(tableId, "").toUpperCase().slice(0, 12)).filter(Boolean))].slice(0, 12)
+      : [];
+  } else if (requireReservedAt) {
+    payload.assigned_table_ids = [];
+  }
+
   if (input.preOrder !== undefined || requireReservedAt) {
     payload.pre_order = normalizeReservationPreOrder(input.preOrder ?? []);
   }
@@ -4777,6 +4802,133 @@ const validatePublicReservationRules = (
   }
 
   return null;
+};
+
+const reservationWindowFor = (
+  reservedAt: string,
+  reservationWebsite: ReservationWebsiteSettings,
+): { start: Date; end: Date } => {
+  const start = new Date(reservedAt);
+  const durationMs = (Math.max(reservationWebsite.durationMinutes, 15) + Math.max(reservationWebsite.seatHoldMinutes, 0)) * 60_000;
+  return { start, end: new Date(start.getTime() + durationMs) };
+};
+
+const reservationWindowsOverlap = (
+  firstStart: Date,
+  firstEnd: Date,
+  secondStart: Date,
+  secondEnd: Date,
+): boolean => firstStart < secondEnd && secondStart < firstEnd;
+
+const onlineReservableTables = (
+  floorPlan: FloorPlanSettings,
+  reservationWebsite: ReservationWebsiteSettings,
+): FloorTableSetting[] => {
+  const allowedIds = new Set(reservationWebsite.onlineTableIds.map((tableId) => tableId.toUpperCase()));
+  return floorPlan.tables
+    .filter((table) => allowedIds.size === 0 || allowedIds.has(table.id))
+    .sort((first, second) =>
+      first.floorId.localeCompare(second.floorId) ||
+      first.label.localeCompare(second.label, "zh-Hant", { numeric: true }) ||
+      first.id.localeCompare(second.id),
+    );
+};
+
+const assignReservationTables = async (
+  payload: Record<string, unknown>,
+  reservationWebsite: ReservationWebsiteSettings,
+  floorPlan: FloorPlanSettings,
+): Promise<{ tableIds: string[]; error: string | null }> => {
+  const reservedAt = typeof payload.reserved_at === "string" ? payload.reserved_at : "";
+  const partySize = Number(payload.party_size ?? 0);
+  const tables = onlineReservableTables(floorPlan, reservationWebsite);
+  if (tables.length === 0) {
+    return { tableIds: [], error: "目前沒有開放線上訂位的桌位" };
+  }
+
+  const requestedWindow = reservationWindowFor(reservedAt, reservationWebsite);
+  const queryFrom = new Date(requestedWindow.start.getTime() - Math.max(reservationWebsite.durationMinutes, 15) * 60_000).toISOString();
+  const queryTo = requestedWindow.end.toISOString();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select("id, party_size, reserved_at, status, assigned_table_ids")
+    .in("status", ["booked", "seated"])
+    .gte("reserved_at", queryFrom)
+    .lt("reserved_at", queryTo)
+    .limit(500);
+
+  if (error) {
+    return { tableIds: [], error: error.message };
+  }
+
+  const occupiedTableIds = new Set<string>();
+  let legacyOccupiedPeople = 0;
+  for (const reservation of data ?? []) {
+    const existingReservedAt = typeof reservation.reserved_at === "string" ? reservation.reserved_at : "";
+    const existingWindow = reservationWindowFor(existingReservedAt, reservationWebsite);
+    if (!reservationWindowsOverlap(requestedWindow.start, requestedWindow.end, existingWindow.start, existingWindow.end)) {
+      continue;
+    }
+
+    const assignedTableIds = Array.isArray(reservation.assigned_table_ids)
+      ? reservation.assigned_table_ids.filter((tableId): tableId is string => typeof tableId === "string")
+      : [];
+    if (assignedTableIds.length > 0) {
+      assignedTableIds.forEach((tableId) => occupiedTableIds.add(tableId.toUpperCase()));
+    } else {
+      legacyOccupiedPeople += Math.max(Number(reservation.party_size) || 0, 0);
+    }
+  }
+
+  const freeTables = tables.filter((table) => !occupiedTableIds.has(table.id));
+  const legacyReservedTableIds = new Set<string>();
+  let coveredLegacyPeople = 0;
+  for (const table of [...freeTables].sort((first, second) => first.capacity - second.capacity || first.id.localeCompare(second.id))) {
+    if (coveredLegacyPeople >= legacyOccupiedPeople) {
+      break;
+    }
+    legacyReservedTableIds.add(table.id);
+    coveredLegacyPeople += table.capacity;
+  }
+
+  const candidateTables = freeTables.filter((table) => !legacyReservedTableIds.has(table.id));
+  const singleTable = [...candidateTables]
+    .filter((table) => table.capacity >= partySize)
+    .sort((first, second) => first.capacity - second.capacity || first.id.localeCompare(second.id))[0];
+  if (singleTable) {
+    return { tableIds: [singleTable.id], error: null };
+  }
+
+  if (!reservationWebsite.allowTableCombinations) {
+    return { tableIds: [], error: "此人數目前沒有可用桌位" };
+  }
+
+  let best: FloorTableSetting[] = [];
+  const sortedCandidates = [...candidateTables].sort((first, second) => first.capacity - second.capacity || first.id.localeCompare(second.id));
+  const search = (startIndex: number, selected: FloorTableSetting[], capacity: number): void => {
+    if (capacity >= partySize) {
+      if (
+        best.length === 0 ||
+        selected.length < best.length ||
+        (selected.length === best.length && capacity < best.reduce((total, table) => total + table.capacity, 0))
+      ) {
+        best = [...selected];
+      }
+      return;
+    }
+    if (selected.length >= 4) {
+      return;
+    }
+
+    for (let index = startIndex; index < sortedCandidates.length; index += 1) {
+      search(index + 1, [...selected, sortedCandidates[index]], capacity + sortedCandidates[index].capacity);
+    }
+  };
+
+  search(0, [], 0);
+  return best.length > 0
+    ? { tableIds: best.map((table) => table.id), error: null }
+    : { tableIds: [], error: "此人數目前沒有足夠可組合桌位" };
 };
 
 const sanitizeIdentifier = (value: unknown, fallback: string): string =>
@@ -5649,6 +5801,16 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     minPartySize,
     Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.maxPartySize) || defaultEngagementSettings.reservationWebsite.maxPartySize), 1), 50),
   );
+  const rawSeatHoldMinutes = Number(rawReservationWebsite.seatHoldMinutes);
+  const seatHoldMinutes = Math.min(
+    Math.max(
+      Number.isFinite(rawSeatHoldMinutes)
+        ? Math.trunc(rawSeatHoldMinutes)
+        : defaultEngagementSettings.reservationWebsite.seatHoldMinutes,
+      0,
+    ),
+    30,
+  );
 
   return {
     orderLabels: orderLabels.length > 0 ? orderLabels : defaultEngagementSettings.orderLabels,
@@ -5672,8 +5834,13 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
       maxPartySize,
       slotMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.slotMinutes) || defaultEngagementSettings.reservationWebsite.slotMinutes), 5), 240),
       durationMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.durationMinutes) || defaultEngagementSettings.reservationWebsite.durationMinutes), 15), 480),
+      seatHoldMinutes,
       leadMinutes: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.leadMinutes) || defaultEngagementSettings.reservationWebsite.leadMinutes), 1), 1440),
       bookingWindowDays: Math.min(Math.max(Math.trunc(Number(rawReservationWebsite.bookingWindowDays) || defaultEngagementSettings.reservationWebsite.bookingWindowDays), 1), 60),
+      allowTableCombinations: rawReservationWebsite.allowTableCombinations !== false,
+      onlineTableIds: Array.isArray(rawReservationWebsite.onlineTableIds)
+        ? [...new Set(rawReservationWebsite.onlineTableIds.map((tableId) => sanitizeText(tableId, "").toUpperCase().slice(0, 12)).filter(Boolean))].slice(0, 80)
+        : defaultEngagementSettings.reservationWebsite.onlineTableIds,
       businessHours: normalizeReservationBusinessHours(rawReservationWebsite.businessHours),
     },
   };

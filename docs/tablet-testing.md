@@ -98,6 +98,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 將該手機加入訂位黑名單後，在公開訂位頁再次送出，確認被 `/reservations` 阻擋且不新增資料。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認規則、訂位與黑名單仍從 Supabase 還原。
 
+## 線上訂位桌位容量
+
+訂位容量使用 `floor_plan`、`reservationWebsite.onlineTableIds` 與 `reservations.assigned_table_ids`，不使用 localStorage：
+
+1. 在平板 A 到「iCHEF 補齊」勾選可線上訂位桌位，設定用餐時間、座位保留時間與併桌開關後儲存。
+2. 在平板 B 或瀏覽器開 `?view=reservation`，送出一筆可容納人數的訂位，確認成功訊息顯示保留桌號。
+3. 回平板 A 後台刷新訂位列表，確認同一筆訂位顯示 assigned table。
+4. 用同一時段重複送出訂位直到可用桌位不足，確認公開 API 阻擋並且不新增資料。
+5. 若存在舊訂位沒有 assigned table，測試時應把該筆 party size 視為保守占用容量，避免升級後短時間內超收。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認 assigned table 仍從 Supabase 還原。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。

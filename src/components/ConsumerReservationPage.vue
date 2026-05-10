@@ -112,7 +112,7 @@ const matchingBusinessHour = (date: Date): ReservationBusinessHour | null => {
 
 const selectedTimeMessage = computed(() => {
   if (!reservationDraft.reservedAt) {
-    return `每 ${reservationWebsite.value.slotMinutes} 分鐘一格 · 用餐 ${reservationWebsite.value.durationMinutes} 分鐘`
+    return `每 ${reservationWebsite.value.slotMinutes} 分鐘一格 · 用餐 ${reservationWebsite.value.durationMinutes} 分鐘 · 保留 ${reservationWebsite.value.seatHoldMinutes} 分鐘`
   }
 
   const reservedDate = new Date(reservationDraft.reservedAt)
@@ -294,7 +294,7 @@ onMounted(() => {
         <CheckCircle2 :size="22" aria-hidden="true" />
         <div>
           <strong>{{ lastReservation.customerName }} · {{ lastReservation.partySize }} 人</strong>
-          <span>{{ new Date(lastReservation.reservedAt).toLocaleString('zh-TW') }} · 門市可於訂位管理查看</span>
+          <span>{{ new Date(lastReservation.reservedAt).toLocaleString('zh-TW') }} · {{ lastReservation.assignedTableIds.length > 0 ? `保留 ${lastReservation.assignedTableIds.join(' / ')}` : '門市可於訂位管理查看' }}</span>
         </div>
       </article>
     </section>
