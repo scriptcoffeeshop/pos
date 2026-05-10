@@ -84,11 +84,12 @@ const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {
 }
 
 const linesForMode = (lines: CartLine[], mode: PrintableMode): CartLine[] => {
+  const activeLines = lines.filter((line) => line.printPaused !== true)
   if (mode === 'receipt') {
-    return lines
+    return activeLines
   }
 
-  return lines.filter((line) => line.printLabel !== false)
+  return activeLines.filter((line) => line.printLabel !== false)
 }
 
 const buildReceiptPayload = (
@@ -187,6 +188,10 @@ const buildSkippedReason = (settings: PrinterSettings, order: PosOrder): string 
 
   if (!hasModeRule) {
     return '沒有符合目前服務方式的啟用出單規則'
+  }
+
+  if (order.lines.length > 0 && order.lines.every((line) => line.printPaused === true)) {
+    return '此訂單品項皆已暫停出單'
   }
 
   return '出單規則沒有符合此訂單品項或貼紙設定'

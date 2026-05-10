@@ -237,6 +237,10 @@ const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
     nextLine.printLabel = entry.printLabel
   }
 
+  if (typeof entry.printPaused === 'boolean') {
+    nextLine.printPaused = entry.printPaused
+  }
+
   return nextLine
 }
 
@@ -2500,11 +2504,26 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    cartLines.value = cartLines.value.map((line) =>
-      line.itemId === lineItemId
-        ? createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey)
-        : line,
-    )
+    cartLines.value = cartLines.value.map((line) => {
+      if (line.itemId !== lineItemId) {
+        return line
+      }
+
+      const nextLine = createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey)
+      if (currentLine.printPaused) {
+        nextLine.printPaused = true
+      }
+      return nextLine
+    })
+  }
+
+  const toggleLinePrintPaused = (itemId: string): void => {
+    const line = cartLines.value.find((entry) => entry.itemId === itemId)
+    if (!line) {
+      return
+    }
+
+    line.printPaused = !line.printPaused
   }
 
   const increaseLine = (itemId: string): void => {
@@ -3712,6 +3731,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationHeartbeatMessage,
     togglingProductId,
     toggleCustomerNote,
+    toggleLinePrintPaused,
     toggleOrderLabel,
     applyCustomerMember,
     couponCode,

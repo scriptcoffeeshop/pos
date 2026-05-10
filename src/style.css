@@ -1105,7 +1105,7 @@ button:disabled {
 }
 
 .pos-main-surface--ordering .cart-line {
-  grid-template-columns: minmax(0, 1fr) 108px 70px;
+  grid-template-columns: minmax(0, 1fr) 108px 58px 70px;
   min-height: 60px;
   gap: 8px;
   padding: 7px 9px;
@@ -1151,6 +1151,10 @@ button:disabled {
 .pos-main-surface--ordering .cart-line strong {
   font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
+}
+
+.pos-main-surface--ordering .cart-line-print-toggle {
+  min-height: 44px;
 }
 
 .pos-main-surface--ordering .cart-line .quantity-stepper {
@@ -3328,13 +3332,18 @@ h3 {
 
 .cart-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px 84px;
+  grid-template-columns: minmax(0, 1fr) 120px 66px 84px;
   gap: 10px;
   align-items: center;
   padding: 11px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-muted);
+}
+
+.cart-line--print-paused {
+  border-color: rgba(190, 88, 72, 0.45);
+  background: rgba(190, 88, 72, 0.08);
 }
 
 .cart-line-summary {
@@ -3370,6 +3379,34 @@ button.cart-line-summary:focus-visible {
 .cart-line strong {
   text-align: right;
   white-space: nowrap;
+}
+
+.cart-line-print-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 58px;
+  min-height: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cart-line-print-toggle--paused {
+  border-color: rgba(190, 88, 72, 0.48);
+  background: rgba(190, 88, 72, 0.13);
+  color: #9b2f23;
+}
+
+.cart-line-print-toggle:focus-visible {
+  outline: 3px solid rgba(138, 180, 248, 0.55);
+  outline-offset: 3px;
 }
 
 .quantity-stepper {

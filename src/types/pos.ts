@@ -53,6 +53,7 @@ export interface CartLine {
   options: string[]
   prepStation?: string
   printLabel?: boolean
+  printPaused?: boolean
 }
 
 export interface CustomerDraft {
