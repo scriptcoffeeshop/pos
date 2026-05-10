@@ -3566,6 +3566,7 @@ const customerNameInput = ref<HTMLInputElement | null>(null)
 const registerOpeningCash = ref(0)
 const registerClosingCash = ref(0)
 const registerNote = ref('')
+const registerStaffCode = ref('')
 const forceCloseRegister = ref(false)
 const registerCashAdjustmentKind = ref<RegisterCashAdjustmentKind>('expense')
 const registerCashAdjustmentAmount = ref(0)
@@ -7044,6 +7045,7 @@ const closeRegisterSessionAction = (): void => {
     registerClosingCash.value,
     registerNote.value.trim(),
     forceCloseRegister.value,
+    registerStaffCode.value,
   )
 }
 
@@ -7095,6 +7097,8 @@ watch(
     if (session?.status === 'open') {
       registerClosingCash.value = session.expectedCash
       forceCloseRegister.value = false
+    } else {
+      registerStaffCode.value = ''
     }
   },
   { immediate: true },
@@ -10070,6 +10074,16 @@ onBeforeUnmount(() => {
                           <label v-else>
                             實點現金
                             <input v-model.number="registerClosingCash" type="number" min="0" step="1" inputmode="numeric" />
+                          </label>
+                          <label v-if="registerIsOpen">
+                            員工識別碼
+                            <input
+                              v-model="registerStaffCode"
+                              type="password"
+                              inputmode="numeric"
+                              autocomplete="off"
+                              placeholder="關帳操作員"
+                            />
                           </label>
                           <label class="wide-field">
                             備註

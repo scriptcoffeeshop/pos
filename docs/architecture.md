@@ -28,7 +28,7 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 - 訂單主檔保存 `requested_fulfillment_at`、`delivery_address` 與櫃台草稿 `draft_lines`，讓外送地址、希望取餐/送達時間與未出單購物車能跨平板追溯，而不是只混在備註或 localStorage 裡。
 - 訂單保存 `claimed_by`、`claimed_at`、`claim_expires_at` 作為多平板 claim lease；POS 改狀態或建立 `print_jobs` 前必須持有有效 lease，避免兩台平板同時出單或處理同一張訂單。
 - 平板工作站每 30 秒 upsert `pos_station_heartbeats`，後台可查最後在線時間，輔助排查 claim lease 佔用與門市設備狀態。
-- 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需前端後台編輯模式，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。有未交付、付款異常或列印失敗時，關班必須送 `force=true`。
+- 收銀班別保存在 `register_sessions`；POS 可讀目前班別摘要，開班/關班需前端後台編輯模式，關班時由 Edge Function 依班別時間彙總現金、非現金、待收款、單數、未交付、付款異常、列印失敗與作廢單，並排除 `failed` / `voided` 訂單的銷售額。有未交付、付款異常或列印失敗時，關班必須送 `force=true`。關班也必須送 `staffCode`，由 `access_control.staffAccounts` 驗證啟用員工後把操作員寫入操作稽核，不使用平板本機狀態判定操作者。
 - 營運日報由 `pos-api` 以 service role 讀取當日 `orders`、`order_items` 與 `print_jobs` 即時計算，不另建快照表；目前依台灣日界線彙總實收、待收、退款、異常、付款方式、來源、服務方式、時段與熱門商品。
 - `pos_audit_events` 保存 POS 關鍵操作事件；建單、claim、釋放、狀態更新、收款、付款逾期、退款、作廢、商品/設定異動、會員建立、錢包調整、開班與關班都由 Edge Function 以 service role 寫入。商品稽核會附上庫存、低庫存門檻、售價、上下架與暫停供應的前後值/差額，後台透過 `/admin/audit-events` 讀取，前端不能直接改。
 - 金流 webhook 先落在 provider-neutral 契約：`payment_events(provider, event_id)` 保證冪等，`record_pos_payment_event()` 在同一個 transaction 內決定是否更新訂單付款狀態、釋放 claim lease 與寫入交易流水；後台以 `/admin/payment-events` 顯示最近回呼、重送與未套用原因。
@@ -59,4 +59,4 @@ POS 會使用獨立 Supabase 專案，不沿用咖啡訂購專案的資料庫；
 7. POS 依 `pos_settings.printer_settings` 的服務方式、品項分類、指定品項、貼紙/收據模式與份數建立列印計畫；未被規則納入的品項不列印。消費者頁依 `pos_settings.online_ordering` 顯示接單狀態、平均備餐時間與預約欄位。
 8. 瀏覽器版建立雲端 `print_jobs` 並顯示 EZPL 預覽；Android APK 逐筆透過 LAN 對 GODEX DT2X 送出列印 payload。
 9. 列印成功或失敗後回寫列印任務狀態。
-10. POS 依目前 `register_sessions` 彙整開班後訂單，提供預期現金、現金銷售、非現金、待收款、單數、未交付、付款異常、列印失敗、作廢與現金差額，關班時把彙總值寫回 Supabase。
+10. POS 依目前 `register_sessions` 彙整開班後訂單，提供預期現金、現金銷售、非現金、待收款、單數、未交付、付款異常、列印失敗、作廢與現金差額，關班時必須帶啟用員工的 `staffCode`，把彙總值與操作員稽核寫回 Supabase。

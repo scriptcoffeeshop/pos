@@ -2413,10 +2413,11 @@ export const closeRegisterSession = async (
   closingCash: number,
   note = '',
   force = false,
+  staffCode = '',
 ): Promise<RegisterSession> => {
   const data = await request<RegisterSessionResponse>('/register/close', {
     method: 'POST',
-    body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force }),
+    body: JSON.stringify({ closingCash, note, stationId: currentStationId(), force, staffCode }),
   })
 
   if (!data.session) {

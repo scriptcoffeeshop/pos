@@ -174,6 +174,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認同一班別仍能看到現金異動，且關班實點現金會用含臨時收支的預期現金計算差額。
 6. 到後台「操作稽核」刷新，確認可看到 `現金臨時收支` 事件與原因、類型、金額。
 
+## 多平板關帳員工識別碼
+
+關帳員工識別碼走 `access_control` runtime 與 `pos-api` 驗證，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 在後台「權限」確認至少一個啟用員工，並記下其員工識別碼。
+2. 平板 A 連點工具箱 6 下進入後台編輯模式並開班。
+3. 不輸入員工識別碼時按關班，確認前端提示「請輸入員工識別碼」且平板 B 仍看到班別 open。
+4. 輸入不存在或已停用的識別碼，確認關班失敗且 `/register/current` 仍回傳同一個 open session。
+5. 輸入啟用員工識別碼完成關班後，確認平板 B 透過 `register_sessions` realtime invalidation 重拉 `/register/current` 並看到 closed session。
+6. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認班別仍為已關班，且後台「操作稽核」的 `register.close` metadata 仍可追查操作員姓名、識別碼與角色。
+
 ## 多平板員工打卡
 
 員工帳號與打卡紀錄走 `pos-api` 與 Supabase，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
