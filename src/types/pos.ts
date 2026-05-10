@@ -441,6 +441,18 @@ export interface PosReservation {
   updatedAt: string
 }
 
+export interface ReservationBlacklistEntry {
+  id: string
+  phone: string
+  normalizedPhone: string
+  customerName: string
+  reason: string
+  note: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface ReportBreakdownRow {
   key: string
   count: number

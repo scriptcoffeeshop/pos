@@ -111,11 +111,21 @@ rtk npm run apk:install:fresh
 3. 到後台「權限」刷新打卡紀錄，確認可看到員工、角色、站台與時間；到「操作稽核」確認 `員工打卡` 事件。
 4. 再跑一次 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台仍可讀到同一批打卡紀錄，代表資料來自資料庫而不是 local storage。
 
+## 訂位黑名單
+
+訂位黑名單由後台「iCHEF 補齊」頁管理，資料寫入 Supabase `reservation_blacklist_entries`，不是 APK 本機資料。APK fresh reinstall 後應仍能從 `pos-api` 讀到同一份名單。
+
+1. 連點工具箱 6 下進入後台編輯模式，到「iCHEF 補齊」新增一筆手機號碼黑名單。
+2. 用同一支手機新增訂位，確認畫面先顯示黑名單原因；再次按建立才會覆蓋建立訂位。
+3. 從訂位列表按「解除黑名單」與「加入黑名單」，確認專屬黑名單列表同步變更。
+4. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，回到後台確認黑名單仍存在，新增訂位仍會提示。
+
 ## 測試重點
 
 - APK 目前是 debug 版，只用於平板測試，不用於正式上架。
 - APK 是門市平板工作站，只顯示櫃台點餐、線上訂單接單、立即出單、商品暫停供應、單一品項暫停出單與列印站操作；消費者線上點餐維持 Web / GitHub Pages 入口，不出現在 APK 裡。
 - APK 會載入同一套門市 POS 與 Supabase `pos-api`，可測試訂單同步、多平板鎖定、收銀開關班、現金臨時收支、依後台規則拆分的 `print_jobs` 與 Android TCP socket 列印 POC。
+- 測訂位黑名單時，新增/解除名單與從訂位列切換都應透過 `/admin/reservation-blacklist` 寫入資料庫；fresh reinstall 後不得靠本機快取才能顯示。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。

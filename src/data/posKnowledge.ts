@@ -1,4 +1,4 @@
-export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register'
+export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations'
 export type PosKnowledgeTarget = 'order' | 'queue' | 'printing' | 'closeout' | 'admin' | 'online'
 
 export interface PosKnowledgeCategoryOption {
@@ -23,6 +23,7 @@ export const posKnowledgeCategories: PosKnowledgeCategoryOption[] = [
   { value: 'supply', label: '供應' },
   { value: 'printing', label: '列印' },
   { value: 'register', label: '班別' },
+  { value: 'reservations', label: '訂位' },
 ]
 
 export const posKnowledgeArticles: PosKnowledgeArticle[] = [
@@ -153,6 +154,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
       'POS 每 20 秒同步一次 runtime 設定，平板回到前景也會補同步。',
     ],
     keywords: ['線上設定', '暫停接單', '預約', '備餐時間', '提示音', 'runtime'],
+    target: 'admin',
+  },
+  {
+    id: 'reservation-blacklist',
+    category: 'reservations',
+    title: '線上訂位黑名單',
+    summary: '後台 iCHEF 補齊頁可用手機號碼管理訂位黑名單，建立訂位時會提示員工二次確認。',
+    steps: [
+      '進入後台「iCHEF 補齊」頁，找到「線上訂位黑名單」。',
+      '輸入手機號碼、稱呼、原因與店內備註後新增，資料會寫入 Supabase 並同步到其他平板。',
+      '從訂位列表可直接把該訂位電話加入或解除黑名單。',
+      '新增訂位時若手機在黑名單中，系統會先顯示提示；確認仍要提供訂位時再次按建立即可覆蓋。',
+    ],
+    keywords: ['訂位', '黑名單', 'No show', '手機', '後台', 'iCHEF', '訂位管理'],
     target: 'admin',
   },
 ]

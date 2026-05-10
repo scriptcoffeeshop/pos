@@ -77,6 +77,16 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 3. 在平板 B 到後台「權限」刷新打卡紀錄，確認看到同一筆上班紀錄；再從平板 B 用同一識別碼打卡，確認變成下班。
 4. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認後台仍能讀到同一批 `staff_time_clock_entries`，且操作稽核可看到 `員工打卡`。
 
+## 多平板訂位黑名單
+
+線上訂位黑名單走 `pos-api` 與 Supabase `reservation_blacklist_entries`，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到「iCHEF 補齊」新增一筆手機號碼黑名單。
+2. 在平板 B 重新載入後台資料，確認黑名單列表有同一筆資料。
+3. 在任一平板用同一手機新增訂位，確認第一次按建立只顯示黑名單提示，第二次才允許覆蓋建立。
+4. 從訂位列表按「解除黑名單」或「加入黑名單」，確認另一台重新載入後看到同步結果。
+5. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認黑名單仍存在且建立訂位仍會提示。
+
 ## 列印測試邊界
 
 瀏覽器版 POS 可以測試 EZPL 預覽與 Supabase `print_jobs` 建立，但不能直接用瀏覽器對 GODEX DT2X 開 TCP socket。實機區網列印要用 Capacitor Android APK；APK 會在平板內透過 `LanPrinter` native plugin 連到後台設定的出單機 IP 與 port。
