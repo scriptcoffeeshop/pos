@@ -63,6 +63,16 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 
 曾遇過的白屏原因是舊 APK 內的 Web assets 使用 `/pos/assets/...` 絕對路徑，Capacitor 會在 `https://localhost/pos/assets/...` 找檔案而失敗。新版 build 應使用 `./assets/...` 相對路徑；若看到 `Unable to open asset URL`，請重新下載最新版 artifact，並用 fresh install 重新安裝。
 
+## 外帶/外送快速出店
+
+外帶/外送快速出店對照 iCHEF 工具箱的訂單快速出店流程：POS 會依來源與完成時間篩選已付款且到點的外帶/外送訂單，執行時逐筆呼叫 `PATCH /orders/:id/status` 更新為 `served`。這不是 APK 本機資料，fresh reinstall 後仍以 Supabase 訂單狀態為準。
+
+1. 在 APK 建立或載入數張外帶/外送單，包含已付款、待收款、不同來源與不同取餐/送達時間。
+2. 連點工具箱 6 下進入後台編輯模式，回到外帶/外送頁設定快速出店來源與完成時間。
+3. 確認「出店 N 張」只計入已付款、外帶/外送、未出店、未作廢且完成時間符合的訂單；被另一台平板 claim 的單會顯示為略過。
+4. 執行後確認訂單離開待處理佇列，另一台平板同步看到同樣結果。
+5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認已快速出店的訂單不會靠本機快取回到待處理佇列。
+
 ## 線上/掃碼新單背景提醒
 
 APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：
@@ -222,6 +232,7 @@ rtk npm run apk:install:fresh
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。
 - 測線上支付模組時，付款方式顯示、名稱與順序應由 `online_ordering.paymentMethods` 控制；停用付款方式後，前端不顯示且 `POST /orders` 應拒絕。
 - 測線上外送規則時，外送費、外送最低金額、滿額免運與預計車程應由 `online_ordering` runtime 控制；外送不得顯示取餐時付款或轉帳，`POST /orders` 仍必須依 runtime 重新計算 `extra_fee_amount`。
+- 測外帶/外送快速出店時，來源與完成時間篩選只應批次更新已付款且到點的外帶/外送單；狀態必須透過 `/orders/:id/status` 寫成 `served`，fresh reinstall 後不得回到待處理佇列。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。

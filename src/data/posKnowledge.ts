@@ -84,6 +84,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'queue-quick-dispatch',
+    category: 'orders',
+    title: '外帶/外送快速出店',
+    summary: '外帶/外送累積過多時，可依來源與完成時間批次將已付款且到點的訂單出店。',
+    steps: [
+      '進入「外帶 / 外送」佇列，查看快速出店區塊的符合條件張數。',
+      '用「來源」篩選櫃台、線上或掃碼訂單，再設定「完成時間」；沒有指定取餐/送達時間的單會用下單時間比對。',
+      '連點工具箱 6 下進入後台編輯模式後，按「出店 N 張」開始批次處理。',
+      '批次會只處理已付款、外帶/外送、未出店、未作廢且未被其他平板鎖定的訂單。',
+      '完成後訂單狀態會寫入資料庫為已出店，其他平板與重開 App 後都不會再顯示在待處理佇列。',
+    ],
+    keywords: ['快速出店', '出店', '外帶', '外送', '已付款', '完成時間', '來源', '批次', 'iCHEF'],
+    target: 'queue',
+  },
+  {
     id: 'supply-batch',
     category: 'supply',
     title: '暫停/恢復商品供應',

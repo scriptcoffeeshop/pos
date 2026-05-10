@@ -2198,6 +2198,26 @@ const visibleQueueOrders = computed(() => {
     orderMatchesQueueFulfillment(order),
   ))
 })
+const quickDispatchCutoffTimestamp = computed(() => {
+  const timestamp = new Date(quickDispatchCutoffInput.value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : currentTime.value
+})
+const quickDispatchEligibleOrders = computed(() =>
+  orderQueue.value.filter((order) =>
+    (order.mode === 'takeout' || order.mode === 'delivery') &&
+    orderIsOpenForFulfillment(order) &&
+    !onlineOrderRequiresAcceptance(order) &&
+    order.paymentStatus === 'paid' &&
+    (quickDispatchSourceFilter.value === 'all' || order.source === quickDispatchSourceFilter.value) &&
+    orderFulfillmentTime(order) <= quickDispatchCutoffTimestamp.value,
+  ),
+)
+const quickDispatchBlockedCount = computed(() =>
+  quickDispatchEligibleOrders.value.filter((order) => orderClaimedByOtherStation(order)).length,
+)
+const quickDispatchAvailableOrders = computed(() =>
+  quickDispatchEligibleOrders.value.filter((order) => !orderClaimedByOtherStation(order)),
+)
 const queueFulfillmentFilterOptions = computed(() => {
   const baseOrders = queueBaseOrders.value
   return queueFulfillmentFilterValues.map((value) => ({
@@ -3107,6 +3127,9 @@ const queueSourceFilter = ref<QueueSourceFilter>(savedQueueView.sourceFilter)
 const queueFulfillmentFilter = ref<QueueFulfillmentFilter>(savedQueueView.fulfillmentFilter)
 const queueSortMode = ref<QueueSortMode>(savedQueueView.sortMode)
 const queueSearchTerm = ref(savedQueueView.searchTerm)
+const quickDispatchSourceFilter = ref<QueueSourceFilter>('all')
+const quickDispatchCutoffInput = ref(localDateTimeInputValue(new Date()))
+const quickDispatching = ref(false)
 const expandedOrderId = ref<string | null>(null)
 const swipeState = ref<SwipeState | null>(null)
 const openSwipeKey = ref<string | null>(null)
@@ -4258,6 +4281,50 @@ const orderSwipeCompleteAction = (order: PosOrder): void => {
       : order.status === 'ready' ? 'served' : 'ready'
   void updateOrderStatus(order.id, nextStatus)
   openSwipeKey.value = null
+}
+
+const setQuickDispatchCutoffNow = (): void => {
+  quickDispatchCutoffInput.value = localDateTimeInputValue(new Date(currentTime.value))
+}
+
+const runQuickDispatch = async (): Promise<void> => {
+  if (quickDispatching.value) {
+    return
+  }
+
+  if (!requireBackendEditMode('快速出店')) {
+    queueActionMessage.value = '快速出店需先進入後台編輯模式'
+    return
+  }
+
+  const orders = [...quickDispatchAvailableOrders.value]
+  if (orders.length === 0) {
+    queueActionMessage.value = quickDispatchBlockedCount.value > 0
+      ? `快速出店無可處理訂單，${quickDispatchBlockedCount.value} 張由其他平板處理中`
+      : '目前沒有符合快速出店條件的訂單'
+    return
+  }
+
+  quickDispatching.value = true
+  queueActionMessage.value = `快速出店處理中：${orders.length} 張`
+  let processed = 0
+
+  try {
+    for (const order of orders) {
+      await updateOrderStatus(order.id, 'served')
+      processed += 1
+    }
+
+    queueFilter.value = 'active'
+    queueActionMessage.value =
+      `快速出店完成 ${processed} 張${quickDispatchBlockedCount.value > 0 ? `，略過鎖定 ${quickDispatchBlockedCount.value} 張` : ''}`
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知錯誤'
+    queueActionMessage.value = `快速出店已完成 ${processed} 張，後續中止：${message}`
+  } finally {
+    quickDispatching.value = false
+    openSwipeKey.value = null
+  }
 }
 
 const printJobDeleteDisabled = (row: PrintJobRow): boolean =>
@@ -8107,6 +8174,45 @@ onBeforeUnmount(() => {
                       <small>{{ action.detail }}</small>
                       <em>{{ action.actionLabel }}</em>
                     </button>
+                  </section>
+
+                  <section class="queue-quick-dispatch-card" aria-label="外帶外送快速出店">
+                    <div class="queue-quick-dispatch-copy">
+                      <ShoppingBag :size="22" aria-hidden="true" />
+                      <div>
+                        <strong>快速出店</strong>
+                        <span>已付款且到點的外帶/外送 {{ quickDispatchEligibleOrders.length }} 張</span>
+                        <small v-if="quickDispatchBlockedCount > 0">
+                          {{ quickDispatchBlockedCount }} 張由其他平板處理中
+                        </small>
+                      </div>
+                    </div>
+                    <div class="queue-quick-dispatch-controls">
+                      <label>
+                        <span>來源</span>
+                        <select v-model="quickDispatchSourceFilter">
+                          <option v-for="filter in queueSourceFilterOptions" :key="filter.value" :value="filter.value">
+                            {{ filter.label }}
+                          </option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>完成時間</span>
+                        <input v-model="quickDispatchCutoffInput" type="datetime-local" />
+                      </label>
+                      <button type="button" @click="setQuickDispatchCutoffNow">
+                        現在
+                      </button>
+                      <button
+                        class="primary-button"
+                        type="button"
+                        :disabled="quickDispatching || quickDispatchAvailableOrders.length === 0"
+                        @click="runQuickDispatch"
+                      >
+                        <CheckCircle2 :size="18" aria-hidden="true" />
+                        {{ quickDispatching ? '出店中' : `出店 ${quickDispatchAvailableOrders.length} 張` }}
+                      </button>
+                    </div>
                   </section>
 
                   <div class="queue-tools">
