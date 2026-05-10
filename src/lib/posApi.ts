@@ -101,6 +101,8 @@ interface ApiOrder {
   customer_phone: string
   delivery_address?: string | null
   requested_fulfillment_at?: string | null
+  tax_id?: string | null
+  invoice_carrier_barcode?: string | null
   member_id?: string | null
   note: string
   subtotal: number
@@ -917,6 +919,9 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   soundEnabled: true,
   notificationRepeatMode: 'continuous',
   notificationVolume: 80,
+  checkoutInstructions: '',
+  showTaxIdField: false,
+  showCarrierBarcodeField: false,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1244,6 +1249,16 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     notificationVolume: Number.isFinite(settings.notificationVolume)
       ? Math.min(Math.max(Math.trunc(settings.notificationVolume ?? defaults.notificationVolume), 0), 100)
       : defaults.notificationVolume,
+    checkoutInstructions:
+      typeof settings.checkoutInstructions === 'string'
+        ? settings.checkoutInstructions.trim().slice(0, 240)
+        : defaults.checkoutInstructions,
+    showTaxIdField:
+      typeof settings.showTaxIdField === 'boolean' ? settings.showTaxIdField : defaults.showTaxIdField,
+    showCarrierBarcodeField:
+      typeof settings.showCarrierBarcodeField === 'boolean'
+        ? settings.showCarrierBarcodeField
+        : defaults.showCarrierBarcodeField,
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)
@@ -1696,6 +1711,8 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     customerPhone: order.customer_phone,
     deliveryAddress: order.delivery_address ?? '',
     requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
+    taxId: order.tax_id ?? '',
+    invoiceCarrierBarcode: order.invoice_carrier_barcode ?? '',
     memberId: order.member_id ?? null,
     note: order.note,
     subtotal: order.subtotal,
@@ -2193,6 +2210,8 @@ const orderPayload = (order: PosOrder) => ({
   customerPhone: order.customerPhone,
   deliveryAddress: order.deliveryAddress,
   requestedFulfillmentAt: order.requestedFulfillmentAt,
+  taxId: order.taxId,
+  invoiceCarrierBarcode: order.invoiceCarrierBarcode,
   memberId: order.memberId,
   note: order.note,
   subtotal: order.subtotal,

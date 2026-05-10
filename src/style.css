@@ -8346,6 +8346,18 @@ button.cart-line-summary:focus-visible {
   margin-bottom: 12px;
 }
 
+.consumer-checkout-instructions {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
 .consumer-customer-grid {
   margin-bottom: 12px;
 }
@@ -8569,6 +8581,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-row select,
 .admin-product-stock-grid input,
 .admin-online-settings-grid input,
+.admin-online-settings-grid textarea,
 .admin-special-date-grid input,
 .admin-special-date-grid select,
 .admin-member-create input,
@@ -9252,6 +9265,7 @@ button.cart-line-summary:focus-visible {
 .admin-product-row input:focus,
 .admin-product-row select:focus,
 .admin-online-settings-grid input:focus,
+.admin-online-settings-grid textarea:focus,
 .admin-member-create input:focus,
 .admin-member-row input:focus,
 .admin-station-row input:focus,

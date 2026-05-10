@@ -94,8 +94,25 @@ const customer = reactive<CustomerDraft>({
   availableCoupons: [],
   deliveryAddress: '',
   requestedFulfillmentAt: '',
+  taxId: '',
+  invoiceCarrierBarcode: '',
   note: '',
 })
+
+const normalizeTaxId = (value: string): string => value.replace(/\s/g, '').trim()
+const normalizeInvoiceCarrierBarcode = (value: string): string => value.replace(/\s/g, '').trim().toUpperCase()
+const invoiceFieldError = (): string | null => {
+  const taxId = normalizeTaxId(customer.taxId)
+  if (taxId && !/^[0-9]{8}$/.test(taxId)) {
+    return '統一編號需為 8 碼數字'
+  }
+
+  if (normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode).length > 32) {
+    return '載具條碼最多 32 字元'
+  }
+
+  return null
+}
 
 const onlineFallbackMenu = (): MenuItem[] =>
   menuItems
@@ -493,6 +510,12 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
+  const invoiceError = invoiceFieldError()
+  if (invoiceError) {
+    formError.value = invoiceError
+    return
+  }
+
   if (!isPosApiConfigured) {
     formError.value = '線上點餐尚未連線，請稍後再試'
     return
@@ -510,6 +533,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     customerPhone: customer.phone.trim(),
     deliveryAddress: serviceMode.value === 'delivery' ? customer.deliveryAddress.trim() : '',
     requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
+    taxId: normalizeTaxId(customer.taxId),
+    invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
     memberId: null,
     note: [qrTableLabel ? `桌位 ${qrTableLabel}` : '', customer.note.trim()].filter(Boolean).join(' · '),
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -539,6 +564,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     clearCart()
     customer.deliveryAddress = ''
     customer.requestedFulfillmentAt = ''
+    customer.taxId = ''
+    customer.invoiceCarrierBarcode = ''
     customer.note = ''
   } catch (error) {
     formError.value = error instanceof Error ? error.message : '訂單送出失敗'
@@ -762,6 +789,10 @@ watch(
         </button>
       </div>
 
+      <p v-if="onlineOrdering.checkoutInstructions" class="consumer-checkout-instructions">
+        {{ onlineOrdering.checkoutInstructions }}
+      </p>
+
       <div class="customer-grid consumer-customer-grid">
         <label>
           姓名
@@ -783,6 +814,14 @@ watch(
         <label v-if="requiresDeliveryAddress" class="wide-field">
           外送地址
           <input v-model="customer.deliveryAddress" type="text" autocomplete="street-address" placeholder="外送地址" />
+        </label>
+        <label v-if="onlineOrdering.showTaxIdField">
+          統一編號
+          <input v-model="customer.taxId" type="text" inputmode="numeric" maxlength="8" placeholder="8 碼數字" />
+        </label>
+        <label v-if="onlineOrdering.showCarrierBarcodeField">
+          載具條碼
+          <input v-model="customer.invoiceCarrierBarcode" type="text" maxlength="32" placeholder="/ABC1234" />
         </label>
         <label class="wide-field">
           備註

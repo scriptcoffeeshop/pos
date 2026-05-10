@@ -57,6 +57,18 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 4. 讓 APK 進背景或熄屏後送單，確認 Android foreground service 顯示背景接單常駐通知，並由 `線上/掃碼新單提醒` notification 提醒新單；logcat 應看到 `posting foreground service notification signature=...`，且通知遵守同一份共享狀態，而不是只看本機記憶體。
 5. 回前景時先觀察不應有舊單提示音或橫幅閃現；POS 應先重拉 `/online-order-reminders/state`，再決定是否恢復提醒。
 
+## 多平板線上結帳統編與載具
+
+線上結帳說明、統一編號與載具條碼欄位由 `online_ordering` runtime 控制，送出的資料保存到 `orders.tax_id` 與 `orders.invoice_carrier_barcode`。測試時至少準備一個後台工作站與一個消費者頁：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」開啟統一編號與載具條碼欄位，並填入結帳說明後儲存。
+2. 在平板 B 或消費者頁重新整理線上點餐，確認結帳區出現同一段說明與兩個欄位。
+3. 送出一張線上單，填入 8 碼統編與載具條碼；在平板 A 的待接單提醒中按「查看訂單內容」，確認顯示同一份資料。
+4. 接單後在另一台平板的訂單中心展開同一張單，確認統編與載具從 Supabase 同步顯示。
+5. 列印顧客聯或收據，確認 payload 帶出 `TAX ID` 與 `CARRIER`；若出單機規則不包含該單，至少確認瀏覽器 preview 或 `print_jobs` payload。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認後台欄位開關、結帳說明與既有訂單統編/載具仍能還原。
+7. 測非 8 碼統編與超過 32 字元載具，確認前端、`pos-api` 與 DB constraint 都不接受。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

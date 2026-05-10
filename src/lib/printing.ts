@@ -64,6 +64,20 @@ const fulfillmentLinesForOrder = (order: PosOrder): string[] => {
   return fulfillmentLines
 }
 
+const invoiceLinesForOrder = (order: PosOrder): string[] => {
+  const invoiceLines: string[] = []
+
+  if (order.taxId) {
+    invoiceLines.push(`TAX ID ${order.taxId}`)
+  }
+
+  if (order.invoiceCarrierBarcode) {
+    invoiceLines.push(`CARRIER ${order.invoiceCarrierBarcode}`)
+  }
+
+  return invoiceLines
+}
+
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
   const ruleCategories = rule.categories ?? []
   const ruleItemIds = rule.itemIds ?? []
@@ -111,6 +125,7 @@ const buildReceiptPayload = (
   const footerLines = [
     `TOTAL ${formatCurrency(lineTotal(lines))}`,
     ...fulfillmentLinesForOrder(order),
+    ...invoiceLinesForOrder(order),
     `NOTE ${note}`,
   ]
 

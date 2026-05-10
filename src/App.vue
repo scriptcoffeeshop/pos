@@ -7753,6 +7753,14 @@ onBeforeUnmount(() => {
                       電話
                       <input v-model="customer.phone" type="tel" autocomplete="tel" />
                     </label>
+                    <label v-if="onlineOrderingSettings.showTaxIdField || customer.taxId">
+                      統一編號
+                      <input v-model="customer.taxId" type="text" inputmode="numeric" maxlength="8" placeholder="8 碼數字" />
+                    </label>
+                    <label v-if="onlineOrderingSettings.showCarrierBarcodeField || customer.invoiceCarrierBarcode">
+                      載具條碼
+                      <input v-model="customer.invoiceCarrierBarcode" type="text" maxlength="32" placeholder="/ABC1234" />
+                    </label>
                     <label>
                       顧客類型
                       <select v-model="customer.customerType">
@@ -8365,6 +8373,14 @@ onBeforeUnmount(() => {
                               <strong>{{ sourceLabels[order.source] }}</strong>
                               <span>電話</span>
                               <strong>{{ order.customerPhone || '未留' }}</strong>
+                              <template v-if="order.taxId">
+                                <span>統編</span>
+                                <strong>{{ order.taxId }}</strong>
+                              </template>
+                              <template v-if="order.invoiceCarrierBarcode">
+                                <span>載具</span>
+                                <strong>{{ order.invoiceCarrierBarcode }}</strong>
+                              </template>
                               <span>付款</span>
                               <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
                               <span>履約</span>
@@ -9115,6 +9131,14 @@ onBeforeUnmount(() => {
               <article v-if="onlineReminderDetailOrder.deliveryAddress" class="online-order-detail-address">
                 <span>地址</span>
                 <strong>{{ onlineReminderDetailOrder.deliveryAddress }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.taxId">
+                <span>統一編號</span>
+                <strong>{{ onlineReminderDetailOrder.taxId }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.invoiceCarrierBarcode">
+                <span>載具條碼</span>
+                <strong>{{ onlineReminderDetailOrder.invoiceCarrierBarcode }}</strong>
               </article>
             </div>
 

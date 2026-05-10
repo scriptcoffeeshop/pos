@@ -157,6 +157,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-checkout-invoice-fields',
+    category: 'online',
+    title: '線上結帳統編與載具欄位',
+    summary: '後台可對照 iCHEF 外帶/外送結帳流程，控制結帳說明、統一編號與載具條碼欄位。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '開啟「結帳顯示統一編號」或「結帳顯示載具條碼」，需要提示消費者時填寫結帳說明。',
+      '消費者頁送單時，統一編號需為 8 碼數字，載具條碼最多 32 字元。',
+      '訂單建立後，POS 訂單明細、線上新單提醒、收據與顧客聯會讀取同一份資料。',
+      '欄位開關存在 `online_ordering` runtime，統編與載具存在 `orders`，換平板或 fresh reinstall 後仍會還原。',
+    ],
+    keywords: ['統一編號', '統編', '載具', '手機條碼', '結帳說明', '線上點餐', '外帶', '外送', 'iCHEF', '發票'],
+    target: 'admin',
+  },
+  {
     id: 'reservation-blacklist',
     category: 'reservations',
     title: '線上訂位黑名單',

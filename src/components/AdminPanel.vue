@@ -307,6 +307,9 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   soundEnabled: true,
   notificationRepeatMode: 'continuous',
   notificationVolume: 80,
+  checkoutInstructions: '',
+  showTaxIdField: false,
+  showCarrierBarcodeField: false,
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1560,6 +1563,9 @@ const saveOnlineOrdering = async (): Promise<void> => {
         notificationRepeatMode:
           onlineOrdering.value.notificationRepeatMode === 'once' ? 'once' : 'continuous',
         notificationVolume: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.notificationVolume) || 0), 0), 100),
+        checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 240),
+        showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
+        showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -2237,6 +2243,14 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.acceptWithoutPrinting" type="checkbox" />
               接單時不自動出單
             </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.showTaxIdField" type="checkbox" />
+              結帳顯示統一編號
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.showCarrierBarcodeField" type="checkbox" />
+              結帳顯示載具條碼
+            </label>
           </div>
 
           <div class="admin-online-settings-grid">
@@ -2263,6 +2277,15 @@ const saveAccessControl = async (): Promise<void> => {
             <label class="wide-field">
               暫停接單提示
               <input v-model="onlineOrdering.pauseMessage" type="text" maxlength="120" />
+            </label>
+            <label class="wide-field">
+              結帳說明
+              <textarea
+                v-model="onlineOrdering.checkoutInstructions"
+                rows="3"
+                maxlength="240"
+                placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
+              />
             </label>
           </div>
         </section>
