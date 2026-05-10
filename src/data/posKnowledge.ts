@@ -218,6 +218,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'cash-drawer-management',
+    category: 'register',
+    title: '錢櫃管理',
+    summary: '工具箱可瀏覽錢櫃開啟紀錄或送出開錢櫃指令，所有紀錄寫入 POS API 並跨平板同步。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟工具箱的「錢櫃管理」。',
+      '確認錢櫃裝置與目標列印站；Android 平板會用既有 LAN printer plugin 送出 ESC/POS 錢櫃脈衝。',
+      '輸入開啟原因後按「開啟錢櫃並記錄」，瀏覽器工作站會保留預覽紀錄，不會誤送硬體指令。',
+      '開啟紀錄寫入 pos_audit_events，另一台平板開啟同頁或收到 realtime 後會看到同一份紀錄。',
+      '需要登記補找零或採買支出時，從同頁前往臨時收支，金額會一起納入關班預期現金。',
+    ],
+    keywords: ['錢櫃', '開錢櫃', '收銀機', '臨時收支', 'pos_audit_events', 'ESC/POS', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'current-sales-overview',
     category: 'register',
     title: '目前營業概況',

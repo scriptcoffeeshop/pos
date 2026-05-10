@@ -106,8 +106,8 @@ type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | '
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
-type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions'
+type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer'
+type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -720,6 +720,7 @@ const {
   activeOnlineReminderOrders,
   backendStatus,
   applyCustomerMember,
+  cashDrawerEvents,
   cartItemSubtotal,
   cartLines,
   cartQuantity,
@@ -752,6 +753,7 @@ const {
   isRegisterBusy,
   lastPrintPreview,
   menuCatalog,
+  loadCashDrawerEvents,
   loadCounterOrderForEditing,
   loadRegisterSession,
   markOnlineOrderRemindersSeen,
@@ -764,6 +766,7 @@ const {
   onlineOrderReminder,
   onlineOrderingSettings,
   orderLabels,
+  openCashDrawerForStation,
   paymentBreakdown,
   paymentMethod,
   paymentSplits,
@@ -3206,6 +3209,9 @@ const transactionSearchCriterion = ref<TransactionSearchCriterion>('receipt')
 const transactionSearchTerm = ref('')
 const selectedTransactionOrderId = ref<string | null>(null)
 const transactionLookupMessage = ref('可用收據、載具、桌號或訂單號碼查詢交易')
+const cashDrawerReason = ref('手動開啟錢櫃')
+const cashDrawerActionMessage = ref('可瀏覽錢櫃開啟紀錄或打開錢櫃')
+const isCashDrawerOpening = ref(false)
 const floorMapRef = ref<HTMLElement | null>(null)
 const posStableViewportHeight = ref(0)
 const isApplyingRemoteAppearanceSettings = ref(false)
@@ -3251,6 +3257,10 @@ const toolboxPanelTitle = computed(() => {
     return '交易查詢與作廢'
   }
 
+  if (activeToolboxPanel.value === 'cash-drawer') {
+    return '錢櫃管理'
+  }
+
   return '工具箱'
 })
 const toolboxPanelEyebrow = computed(() => {
@@ -3272,6 +3282,10 @@ const toolboxPanelEyebrow = computed(() => {
 
   if (activeToolboxPanel.value === 'transactions') {
     return 'Transactions'
+  }
+
+  if (activeToolboxPanel.value === 'cash-drawer') {
+    return 'Cash Drawer'
   }
 
   return 'Toolbox'
@@ -3678,6 +3692,37 @@ const registerCashAdjustmentNet = computed(() =>
   (registerSession.value?.cashAdjustmentIncome ?? 0) - (registerSession.value?.cashAdjustmentExpense ?? 0),
 )
 const registerCashAdjustments = computed(() => registerSession.value?.cashAdjustments ?? [])
+const cashDrawerDevices = computed(() =>
+  engagementSettings.value.hardwareDevices.filter((device) => device.kind === 'cash-drawer'),
+)
+const activeCashDrawerDevice = computed(() =>
+  cashDrawerDevices.value.find((device) => device.enabled) ?? cashDrawerDevices.value[0] ?? null,
+)
+const cashDrawerTargetStation = computed<PrintStationSetting | null>(() => {
+  const targetStationId = activeCashDrawerDevice.value?.targetStationId ?? ''
+  return printerSettings.value.stations.find((station) => station.id === targetStationId)
+    ?? printerSettings.value.stations.find((station) => station.enabled)
+    ?? null
+})
+const cashDrawerRecentEvents = computed(() => cashDrawerEvents.value.slice(0, 8))
+const cashDrawerRecentAdjustments = computed(() => registerCashAdjustments.value.slice(0, 5))
+const cashDrawerSummary = computed(() => {
+  const latestEvent = cashDrawerEvents.value[0]
+  return latestEvent
+    ? `${cashDrawerEvents.value.length} 筆開啟紀錄 · 最近 ${formatOrderTime(latestEvent.createdAt)}`
+    : `${cashDrawerDevices.value.length} 個錢櫃裝置 · 尚無開啟紀錄`
+})
+const cashDrawerDeliveryLabel = (status: 'sent' | 'preview' | 'failed'): string => {
+  if (status === 'sent') {
+    return '已送出'
+  }
+
+  if (status === 'failed') {
+    return '硬體失敗'
+  }
+
+  return '預覽記錄'
+}
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   floor: `${activeDineInOrders.value.length} 桌內用 · ${floorLevels.value.length} 樓層`,
   order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
@@ -6200,6 +6245,12 @@ const runToolboxAction = (action: ToolboxAction): void => {
     return
   }
 
+  if (action === 'cash-drawer') {
+    activeToolboxPanel.value = 'cash-drawer'
+    void loadCashDrawerEvents()
+    return
+  }
+
   if (action === 'sync') {
     void refreshBackendData()
   }
@@ -6967,6 +7018,29 @@ const createRegisterCashAdjustmentAction = async (): Promise<void> => {
     registerCashAdjustmentAmount.value = 0
     registerCashAdjustmentReason.value = ''
     registerCashAdjustmentNote.value = ''
+  }
+}
+
+const openCashDrawerAction = async (): Promise<void> => {
+  if (!requireBackendEditMode('開啟錢櫃')) {
+    cashDrawerActionMessage.value = '開啟錢櫃需先進入後台編輯模式'
+    return
+  }
+
+  isCashDrawerOpening.value = true
+  cashDrawerActionMessage.value = '錢櫃開啟中'
+
+  try {
+    const event = await openCashDrawerForStation({
+      reason: cashDrawerReason.value.trim() || '手動開啟錢櫃',
+      deviceId: activeCashDrawerDevice.value?.id ?? '',
+      targetStationId: cashDrawerTargetStation.value?.id ?? activeCashDrawerDevice.value?.targetStationId ?? '',
+    })
+    cashDrawerActionMessage.value = `${cashDrawerDeliveryLabel(event.deliveryStatus)} · ${formatOrderTime(event.createdAt)}`
+  } catch (error) {
+    cashDrawerActionMessage.value = `錢櫃開啟失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isCashDrawerOpening.value = false
   }
 }
 
@@ -10739,6 +10813,11 @@ onBeforeUnmount(() => {
             <strong>班別關帳</strong>
             <span>{{ workspaceTabSummaries.closeout }}</span>
           </button>
+          <button type="button" class="toolbox-card" @click="runToolboxAction('cash-drawer')">
+            <WalletCards :size="24" aria-hidden="true" />
+            <strong>錢櫃管理</strong>
+            <span>{{ cashDrawerSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('current-sales')">
             <LayoutDashboard :size="24" aria-hidden="true" />
             <strong>目前營業概況</strong>
@@ -10971,6 +11050,116 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </article>
+          </div>
+        </section>
+        <section v-else-if="activeToolboxPanel === 'cash-drawer'" class="toolbox-detail-panel cash-drawer-panel" aria-labelledby="toolbox-title">
+          <div class="cash-drawer-action-grid">
+            <article class="cash-drawer-action">
+              <header>
+                <WalletCards :size="20" aria-hidden="true" />
+                <div>
+                  <strong>錢櫃</strong>
+                  <span>瀏覽錢櫃開啟記錄或打開錢櫃</span>
+                </div>
+              </header>
+              <label>
+                開啟原因
+                <input
+                  v-model="cashDrawerReason"
+                  type="text"
+                  maxlength="120"
+                  autocomplete="off"
+                  placeholder="手動開啟錢櫃"
+                />
+              </label>
+              <dl class="cash-drawer-target">
+                <div>
+                  <dt>裝置</dt>
+                  <dd>{{ activeCashDrawerDevice?.name ?? '未設定錢櫃裝置' }}</dd>
+                </div>
+                <div>
+                  <dt>列印站</dt>
+                  <dd>{{ cashDrawerTargetStation ? `${cashDrawerTargetStation.name} · ${cashDrawerTargetStation.host}:${cashDrawerTargetStation.port}` : '使用預設列印站' }}</dd>
+                </div>
+              </dl>
+              <button
+                class="primary-button"
+                type="button"
+                :disabled="isCashDrawerOpening"
+                @click="openCashDrawerAction"
+              >
+                <WalletCards :size="18" aria-hidden="true" />
+                {{ isCashDrawerOpening ? '開啟中' : '開啟錢櫃並記錄' }}
+              </button>
+              <p class="cash-drawer-message" aria-live="polite">{{ cashDrawerActionMessage }}</p>
+            </article>
+
+            <article class="cash-drawer-action">
+              <header>
+                <ReceiptText :size="20" aria-hidden="true" />
+                <div>
+                  <strong>臨時收支</strong>
+                  <span>新增現金臨時收支紀錄並瀏覽本班內容</span>
+                </div>
+              </header>
+              <dl class="cash-drawer-target">
+                <div>
+                  <dt>收入</dt>
+                  <dd>{{ formatCurrency(registerSession?.cashAdjustmentIncome ?? 0) }}</dd>
+                </div>
+                <div>
+                  <dt>支出</dt>
+                  <dd>{{ formatCurrency(registerSession?.cashAdjustmentExpense ?? 0) }}</dd>
+                </div>
+              </dl>
+              <button class="secondary-button" type="button" @click="runToolboxAction('closeout')">
+                <WalletCards :size="18" aria-hidden="true" />
+                前往臨時收支
+              </button>
+            </article>
+          </div>
+
+          <div class="cash-drawer-history-grid">
+            <section aria-label="錢櫃開啟記錄">
+              <header>
+                <strong>錢櫃開啟記錄</strong>
+                <button class="icon-button" type="button" title="重新載入錢櫃紀錄" @click="loadCashDrawerEvents">
+                  <RefreshCw :size="16" aria-hidden="true" />
+                </button>
+              </header>
+              <article
+                v-for="event in cashDrawerRecentEvents"
+                :key="event.id"
+                class="cash-drawer-history-row"
+              >
+                <div>
+                  <strong>{{ event.reason || '手動開啟錢櫃' }}</strong>
+                  <span>{{ formatOrderTime(event.createdAt) }} · {{ event.stationId || '未知工作站' }}</span>
+                </div>
+                <span>{{ cashDrawerDeliveryLabel(event.deliveryStatus) }}</span>
+              </article>
+              <p v-if="cashDrawerRecentEvents.length === 0" class="cash-drawer-empty">尚無錢櫃開啟記錄</p>
+            </section>
+
+            <section aria-label="臨時收支記錄">
+              <header>
+                <strong>本班臨時收支</strong>
+                <span>{{ cashDrawerRecentAdjustments.length }} 筆</span>
+              </header>
+              <article
+                v-for="adjustment in cashDrawerRecentAdjustments"
+                :key="adjustment.id"
+                class="cash-drawer-history-row"
+                :class="registerCashAdjustmentClass(adjustment.kind)"
+              >
+                <div>
+                  <strong>{{ adjustment.reason }}</strong>
+                  <span>{{ formatOrderTime(adjustment.createdAt) }} · {{ adjustment.kind === 'income' ? '收入' : '支出' }}</span>
+                </div>
+                <span>{{ formatCurrency(adjustment.amount) }}</span>
+              </article>
+              <p v-if="cashDrawerRecentAdjustments.length === 0" class="cash-drawer-empty">本班尚無臨時收支</p>
+            </section>
           </div>
         </section>
         <section v-else-if="activeToolboxPanel === 'current-sales'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">

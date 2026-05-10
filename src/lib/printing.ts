@@ -352,6 +352,8 @@ export const buildCustomerReceiptPayload = (order: PosOrder, station: PrintStati
 export const buildTransactionDetailPayload = (order: PosOrder, station: PrintStation): string =>
   buildReceiptPayload(order, station, order.lines, '交易明細', 'Script Coffee 交易明細')
 
+export const buildCashDrawerPulsePayload = (): string => '\x1bp\x00\x19\xfa'
+
 export const buildPrinterHealthcheckPayload = (station: PrintStation, testedAt = new Date()): string =>
   [
     '^Q60,3',

@@ -201,6 +201,7 @@ const createState = () => ({
   floorPlan: initialFloorPlan(),
   orders: [],
   reminderStates: new Map(),
+  cashDrawerEvents: [],
   stations: new Map(),
 })
 
@@ -269,6 +270,7 @@ const createMockApiServer = async () => {
         floorPlan: state.floorPlan,
         orders: state.orders,
         reminderStates: [...state.reminderStates.values()],
+        cashDrawerEvents: state.cashDrawerEvents,
       })
       return
     }
@@ -329,7 +331,20 @@ const createMockApiServer = async () => {
 
     if (path === '/settings/runtime' && req.method === 'GET') {
       sendJson(res, 200, {
-        printerSettings: { stations: [], rules: [] },
+        printerSettings: {
+          stations: [
+            {
+              id: 'counter',
+              name: 'Counter Printer',
+              host: '127.0.0.1',
+              port: 9100,
+              protocol: 'ESC/POS over TCP',
+              enabled: true,
+              autoPrint: true,
+            },
+          ],
+          rules: [],
+        },
         onlineOrdering,
         posAppearance: {
           interfaceScale: 0,
@@ -345,7 +360,9 @@ const createMockApiServer = async () => {
           defaultServiceFeeRate: 0,
           recommendations: [],
           translations: [],
-          hardwareDevices: [],
+          hardwareDevices: [
+            { id: 'drawer-main', kind: 'cash-drawer', name: 'Main Cash Drawer', enabled: true, targetStationId: 'counter' },
+          ],
         },
       })
       return
@@ -370,6 +387,32 @@ const createMockApiServer = async () => {
       }
       state.stations.set(stationId, station)
       sendJson(res, 200, { station })
+      return
+    }
+
+    if (path === '/cash-drawer/events' && req.method === 'GET') {
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 60) || 60, 1), 120)
+      sendJson(res, 200, { events: state.cashDrawerEvents.slice(0, limit) })
+      return
+    }
+
+    if (path === '/cash-drawer/open' && req.method === 'POST') {
+      const input = await readJson(req)
+      const event = {
+        id: randomUUID(),
+        station_id: input.stationId ?? req.headers['x-pos-station-id'] ?? '',
+        register_session_id: null,
+        reason: input.reason ?? '手動開啟錢櫃',
+        device_id: input.deviceId ?? '',
+        target_station_id: input.targetStationId ?? '',
+        printer_host: input.printerHost ?? '',
+        printer_port: Number(input.printerPort) || 0,
+        delivery_status: input.deliveryStatus ?? 'preview',
+        error_message: input.errorMessage ?? '',
+        created_at: nowIso(),
+      }
+      state.cashDrawerEvents.unshift(event)
+      sendJson(res, 201, { event })
       return
     }
 
@@ -830,6 +873,25 @@ const runBrowserSmoke = async ({ appUrl, controlUrl }) => {
     await tabletB.page.locator('.transaction-preview-details').getByText('付款').waitFor({ state: 'visible', timeout: 8_000 })
     await closeToolboxPanel(tabletB.page)
     record('transaction lookup toolbox panel found synced order and rendered receipt preview')
+
+    const cashDrawerReason = 'Smoke open drawer'
+    await tabletB.page.locator('.floating-toolbox-button').click()
+    await tabletB.page.locator('.toolbox-card').filter({ hasText: '錢櫃管理' }).click()
+    await waitForText(tabletB.page, '開啟錢櫃並記錄', 8_000)
+    await tabletB.page.locator('.cash-drawer-action').filter({ hasText: '開啟原因' }).getByRole('textbox').fill(cashDrawerReason)
+    await tabletB.page.getByRole('button', { name: '開啟錢櫃並記錄' }).click()
+    await waitForState((snapshot) => snapshot.cashDrawerEvents.some((event) => (
+      event.reason === cashDrawerReason &&
+      event.station_id === 'tablet-B222' &&
+      event.delivery_status === 'preview'
+    )), 'cash drawer open event persisted')
+    await waitForText(tabletB.page, cashDrawerReason, 8_000)
+    await closeToolboxPanel(tabletB.page)
+    await tabletA.page.locator('.floating-toolbox-button').click()
+    await tabletA.page.locator('.toolbox-card').filter({ hasText: '錢櫃管理' }).click()
+    await waitForText(tabletA.page, cashDrawerReason, 8_000)
+    await closeToolboxPanel(tabletA.page)
+    record('cash drawer open event persisted and loaded on another tablet')
 
     await Promise.all([openFloorWorkspaceFromToolbox(tabletA.page), openFloorWorkspaceFromToolbox(tabletB.page)])
     await Promise.all([openQueueWorkspace(tabletA.page), openQueueWorkspace(tabletB.page)])
