@@ -4,6 +4,7 @@ Script Coffee POS 是門市平板點餐、線上訂單中樞與 GODEX DT2X 區�
 
 ## 初版範圍
 
+- App 套用新設定檔：2026-05-12 以 Safari / Computer Use 參照 iCHEF 官方「App 套用新設定檔」知識庫，確認後台可先調整設定，POS 端只有選擇「套用新設定檔登入」時才更新。Script Coffee POS 會為每台平板保存已套用的 runtime 設定檔快照；偵測到後台 `runtime_settings` 有新版本時，訂單、班別與心跳仍照常同步，但商品/線上/列印/桌況/權限等 runtime 設定會先標示「新設定檔」並保留目前套用版本，操作員可在 topbar 或工具箱按「套用新設定檔」後一次套用最新設定。
 - 線上新單通知：對照 iCHEF POS「線上點餐功能設定」的每台 iPad 訂單通知，POS 桌位地圖右側新增「線上通知設定」。每台平板可獨立開關接收通知、提示音、服務方式與內用桌位範圍；未指定桌位時接收所有內用桌位。設定保存於 `online_ordering.notificationRouting`，前景提醒、Web 背景通知與 Android `OnlineOrderNotifier` / `OnlineOrderPollingService` 都會套用同一份 runtime，舊 runtime 由 `20260512163000_add_online_notification_routing_settings.sql` 補上預設空設定。
 - 線上僅菜單瀏覽模式：2026-05-12 以 Safari / Computer Use 觀察 iCHEF 後台「內用掃碼點餐」功能狀態，確認可切換為「無點餐功能，僅菜單瀏覽」。Script Coffee POS 以既有 `online_ordering.enabled=false` 對應此狀態，不新增 migration；後台線上點餐設定改以「功能狀態 / 僅菜單瀏覽」呈現，消費者線上/掃碼頁仍載入菜單與店家資訊，但送出按鈕會顯示「僅菜單瀏覽」且前端與 `pos-api` 都阻擋送單。
 - 線上接單與接受但不出單：2026-05-12 以 Safari / Computer Use 進入 iCHEF 網頁版後台「雲端餐廳 > 內用掃碼點餐」，確認接單選項可讓接單畫面選擇「接受但不出單」。本專案沿用既有 `online_ordering.acceptWithoutPrinting` runtime 欄位；後台勾選「接單時可接受但不出單」後，線上/掃碼待接單清單、訂單內容彈窗與浮動提醒會同時提供「接單並出單」與「接受不出單」。接單並出單會先鎖定訂單再執行 `printOrder(order.id, 'order')`，接受不出單只會鎖定並寫入 shared reminder state，不新增資料庫 migration。
