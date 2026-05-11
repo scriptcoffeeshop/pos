@@ -18,6 +18,7 @@ export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'reject
 export type OnlineDineInCheckoutMode = 'prepaid' | 'postpaid'
 export type OnlineItemCommentMode = 'hidden' | 'shown'
 export type OnlineOrderCommentMode = 'hidden' | 'optional' | 'required'
+export type OnlineTableQrTheme = 'black' | 'green' | 'orange' | 'yellow' | 'purple'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
@@ -478,6 +479,12 @@ export interface OnlineCommentFieldSettings {
   orderNotePlaceholder: string
 }
 
+export interface OnlineTableQrCodeSettings {
+  theme: OnlineTableQrTheme
+  logoText: string
+  logoDataUrl: string
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -508,6 +515,7 @@ export interface OnlineOrderingSettings {
   dineInTimeLimit: OnlineDineInTimeLimitSettings
   dineInCheckout: OnlineDineInCheckoutSettings
   commentFields: OnlineCommentFieldSettings
+  tableQrCode: OnlineTableQrCodeSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

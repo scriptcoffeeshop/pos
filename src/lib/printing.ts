@@ -379,6 +379,11 @@ const orderQrUrl = (order: PosOrder): string => {
   }
 
   if (order.note) {
+    const floorMatch = order.note.match(/樓層\s*([^、，,]+)/i)
+    if (floorMatch?.[1]) {
+      params.set('floor', floorMatch[1].trim())
+    }
+
     const tableMatch = order.note.match(/桌位\s*([A-Z0-9-]+)/i)
     if (tableMatch?.[1]) {
       params.set('table', tableMatch[1])

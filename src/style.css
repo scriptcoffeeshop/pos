@@ -10513,6 +10513,7 @@ button.cart-line-summary:focus-visible {
 .admin-discount-grid select,
 .admin-discount-time-grid input,
 .admin-online-settings-grid input,
+.admin-online-settings-grid select,
 .admin-online-settings-grid textarea,
 .admin-payment-method-row input,
 .admin-schedule-window-row input,
@@ -11091,6 +11092,65 @@ button.cart-line-summary:focus-visible {
   margin-top: 16px;
 }
 
+.admin-table-qr-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-table-qr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.admin-table-qr-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.admin-table-qr-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.admin-table-qr-row div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-table-qr-row strong,
+.admin-table-qr-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-table-qr-row strong {
+  color: var(--ink);
+}
+
+.admin-table-qr-row span,
+.admin-inline-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
 .admin-discount-list {
   display: grid;
   gap: 10px;
@@ -11450,6 +11510,7 @@ button.cart-line-summary:focus-visible {
 .admin-discount-grid select:focus,
 .admin-discount-time-grid input:focus,
 .admin-online-settings-grid input:focus,
+.admin-online-settings-grid select:focus,
 .admin-online-settings-grid textarea:focus,
 .admin-schedule-window-row input:focus,
 .admin-time-limit-rule-row input:focus,
@@ -12014,6 +12075,7 @@ button.cart-line-summary:focus-visible {
   .admin-online-settings-grid,
   .admin-schedule-window-row,
   .admin-time-limit-rule-row,
+  .admin-table-qr-row,
   .admin-operation-summary,
   .admin-operation-row,
   .admin-station-grid,
@@ -12049,6 +12111,7 @@ button.cart-line-summary:focus-visible {
 
   .label-management-intro,
   .label-management-actions,
+  .admin-table-qr-actions,
   .device-management-actions,
   .customer-management-toolbar,
   .customer-management-create,

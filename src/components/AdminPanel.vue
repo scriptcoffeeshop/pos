@@ -30,6 +30,11 @@ import {
 } from '../lib/dineInTimeLimit'
 import { formatCurrency } from '../lib/formatters'
 import {
+  downloadTableQrCardsHtml,
+  tableQrThemeOptions,
+  type TableQrCardSource,
+} from '../lib/tableQrCards'
+import {
   adjustMemberWallet,
   createAdminMember,
   createAdminCoupon,
@@ -413,6 +418,11 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     stationId: '',
     logoText: 'Script Coffee',
   },
+  tableQrCode: {
+    theme: 'black',
+    logoText: 'Script Coffee',
+    logoDataUrl: '',
+  },
   dineInTimeLimit: defaultDineInTimeLimitSettings(),
   dineInCheckout: {
     mode: 'postpaid',
@@ -464,6 +474,21 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...defaultOnlineOrderingSettings().sessionQrCode,
     ...(settings.sessionQrCode ?? {}),
   },
+  tableQrCode: {
+    ...defaultOnlineOrderingSettings().tableQrCode,
+    ...(settings.tableQrCode ?? {}),
+    theme: tableQrThemeOptions.some((option) => option.value === settings.tableQrCode?.theme)
+      ? settings.tableQrCode.theme
+      : defaultOnlineOrderingSettings().tableQrCode.theme,
+    logoText:
+      typeof settings.tableQrCode?.logoText === 'string' && settings.tableQrCode.logoText.trim().length > 0
+        ? settings.tableQrCode.logoText.trim().slice(0, 40)
+        : defaultOnlineOrderingSettings().tableQrCode.logoText,
+    logoDataUrl:
+      typeof settings.tableQrCode?.logoDataUrl === 'string' && settings.tableQrCode.logoDataUrl.startsWith('data:image/')
+        ? settings.tableQrCode.logoDataUrl.slice(0, 120_000)
+        : '',
+  },
   dineInTimeLimit: normalizeDineInTimeLimitSettings(
     settings.dineInTimeLimit,
     defaultOnlineOrderingSettings().dineInTimeLimit,
@@ -498,6 +523,18 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
   productOptionAssignments: Object.entries(settings.productOptionAssignments).reduce<Record<string, string[]>>(
     (assignments, [productId, groupIds]) => {
       assignments[productId] = [...groupIds]
+      return assignments
+    },
+    {},
+  ),
+  comboProductAssignments: Object.entries(settings.comboProductAssignments ?? {}).reduce<
+    OnlineOrderingSettings['comboProductAssignments']
+  >(
+    (assignments, [productId, groups]) => {
+      assignments[productId] = groups.map((group) => ({
+        ...group,
+        choices: group.choices.map((choice) => ({ ...choice })),
+      }))
       return assignments
     },
     {},
@@ -639,6 +676,7 @@ const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
+const tableQrDownloadMessage = ref('')
 
 const visibleProducts = computed(() => productDrafts.value.filter((product) => product.available && product.posVisible).length)
 const onlineProducts = computed(() => productDrafts.value.filter((product) => product.onlineVisible || product.qrVisible).length)
@@ -809,6 +847,33 @@ const stationOptions = computed(() => {
 
 const stationNameForId = (stationId: string): string =>
   stationOptions.value.find((station) => station.id === stationId)?.name ?? '目前出單機'
+
+const tableQrThemeLabel = computed(() =>
+  tableQrThemeOptions.find((option) => option.value === onlineOrdering.value.tableQrCode.theme)?.label ?? '經典黑色',
+)
+const tableQrFloorIndex = computed(() =>
+  new Map(floorPlan.value.floors.map((floor, index) => [floor.id, index])),
+)
+const tableQrFloorById = computed(() =>
+  new Map(floorPlan.value.floors.map((floor) => [floor.id, floor])),
+)
+const tableQrCardSources = computed<TableQrCardSource[]>(() =>
+  floorPlan.value.tables
+    .map((table) => ({
+      table,
+      floor: tableQrFloorById.value.get(table.floorId) ?? null,
+    }))
+    .sort((first, second) => {
+      const firstFloorIndex = tableQrFloorIndex.value.get(first.table.floorId) ?? Number.MAX_SAFE_INTEGER
+      const secondFloorIndex = tableQrFloorIndex.value.get(second.table.floorId) ?? Number.MAX_SAFE_INTEGER
+      return (
+        firstFloorIndex - secondFloorIndex ||
+        first.table.y - second.table.y ||
+        first.table.x - second.table.x ||
+        first.table.label.localeCompare(second.table.label, 'zh-TW')
+      )
+    }),
+)
 
 const activePrintRuleCategoryIds = ref<Record<string, MenuCategory>>({})
 const activePrintRuleCountCategoryIds = ref<Record<string, MenuCategory>>({})
@@ -2267,6 +2332,73 @@ const savePrinterSettings = async (): Promise<void> => {
   }
 }
 
+const downloadTableQrCards = async (tableId?: string): Promise<void> => {
+  const sources = tableId
+    ? tableQrCardSources.value.filter((source) => source.table.id === tableId)
+    : tableQrCardSources.value
+
+  if (sources.length === 0) {
+    tableQrDownloadMessage.value = '尚未建立桌位，請先在桌位地圖新增桌位。'
+    return
+  }
+
+  const firstSource = sources[0]
+  tableQrDownloadMessage.value = sources.length === 1
+    ? `正在產生 ${firstSource?.table.label ?? '單桌'} 桌卡`
+    : `正在產生 ${sources.length} 張桌卡`
+
+  try {
+    await downloadTableQrCardsHtml(sources, onlineOrdering.value)
+    tableQrDownloadMessage.value = sources.length === 1
+      ? `${firstSource?.table.label ?? '單桌'} 桌卡已產生`
+      : `${sources.length} 張桌卡已產生`
+  } catch (error) {
+    tableQrDownloadMessage.value = error instanceof Error ? error.message : '桌卡產生失敗'
+  }
+}
+
+const clearTableQrLogo = (): void => {
+  onlineOrdering.value.tableQrCode.logoDataUrl = ''
+  tableQrDownloadMessage.value = '桌卡 Logo 已清除'
+}
+
+const handleTableQrLogoUpload = (event: Event): void => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) {
+    return
+  }
+
+  if (!['image/jpeg', 'image/png'].includes(file.type)) {
+    tableQrDownloadMessage.value = '請上傳 JPG 或 PNG 圖檔。'
+    input.value = ''
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    const result = typeof reader.result === 'string' ? reader.result : ''
+    if (!result.startsWith('data:image/')) {
+      tableQrDownloadMessage.value = 'Logo 圖檔讀取失敗，請重新選擇 JPG 或 PNG。'
+      input.value = ''
+      return
+    }
+
+    if (result.length > 120_000) {
+      tableQrDownloadMessage.value = 'Logo 圖檔過大，請使用 90x90px 左右的 JPG 或 PNG。'
+      input.value = ''
+      return
+    }
+
+    onlineOrdering.value.tableQrCode.logoDataUrl = result
+    tableQrDownloadMessage.value = '桌卡 Logo 已載入，儲存線上設定後會同步到其他平板。'
+  }
+  reader.onerror = () => {
+    tableQrDownloadMessage.value = 'Logo 圖檔讀取失敗，請重新選擇 JPG 或 PNG。'
+  }
+  reader.readAsDataURL(file)
+}
+
 const saveOnlineOrdering = async (): Promise<void> => {
   savingSettingKey.value = 'online_ordering'
   adminMessage.value = '儲存線上點餐設定'
@@ -2325,6 +2457,17 @@ const saveOnlineOrdering = async (): Promise<void> => {
             onlineOrdering.value.sessionQrCode.logoText.trim().slice(0, 40) ||
             defaultOnlineOrderingSettings().sessionQrCode.logoText,
         },
+        tableQrCode: {
+          theme: tableQrThemeOptions.some((option) => option.value === onlineOrdering.value.tableQrCode.theme)
+            ? onlineOrdering.value.tableQrCode.theme
+            : defaultOnlineOrderingSettings().tableQrCode.theme,
+          logoText:
+            onlineOrdering.value.tableQrCode.logoText.trim().slice(0, 40) ||
+            defaultOnlineOrderingSettings().tableQrCode.logoText,
+          logoDataUrl: onlineOrdering.value.tableQrCode.logoDataUrl.startsWith('data:image/')
+            ? onlineOrdering.value.tableQrCode.logoDataUrl.slice(0, 120_000)
+            : '',
+        },
         dineInTimeLimit: normalizeDineInTimeLimitSettings({
           enabled: Boolean(onlineOrdering.value.dineInTimeLimit.enabled),
           mealMinutes: onlineOrdering.value.dineInTimeLimit.mealMinutes,
@@ -2349,6 +2492,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
         menuOptionGroups: onlineOrdering.value.menuOptionGroups,
         productOptionAssignments: onlineOrdering.value.productOptionAssignments,
+        comboProductAssignments: onlineOrdering.value.comboProductAssignments,
         noteSupplyStatuses: onlineOrdering.value.noteSupplyStatuses,
       },
     )
@@ -3341,6 +3485,11 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ stationNameForId(onlineOrdering.sessionQrCode.stationId) }}</small>
           </article>
           <article>
+            <span>桌位 QR Code</span>
+            <strong>{{ tableQrThemeLabel }}</strong>
+            <small>{{ tableQrCardSources.length }} 張桌卡</small>
+          </article>
+          <article>
             <span>用餐限時</span>
             <strong>{{ onlineOrdering.dineInTimeLimit.enabled ? `${onlineOrdering.dineInTimeLimit.mealMinutes} 分` : '未啟用' }}</strong>
             <small>最後加點 {{ onlineOrdering.dineInTimeLimit.lastOrderBeforeEndMinutes }} 分鐘前</small>
@@ -3494,6 +3643,24 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.sessionQrCode.logoText" type="text" maxlength="40" />
             </label>
             <label>
+              桌卡顏色
+              <select v-model="onlineOrdering.tableQrCode.theme">
+                <option v-for="theme in tableQrThemeOptions" :key="theme.value" :value="theme.value">
+                  {{ theme.label }}
+                </option>
+              </select>
+              <small>對照 iCHEF 桌卡樣式：黑、綠、橘、黃、紫。</small>
+            </label>
+            <label>
+              桌卡 Logo 文字
+              <input v-model="onlineOrdering.tableQrCode.logoText" type="text" maxlength="40" />
+            </label>
+            <label class="wide-field">
+              桌卡 Logo 圖檔
+              <input type="file" accept="image/png,image/jpeg" @change="handleTableQrLogoUpload" />
+              <small>{{ onlineOrdering.tableQrCode.logoDataUrl ? '已上傳 Logo 圖檔，會優先顯示於桌卡。' : '可上傳約 90x90px 的 JPG 或 PNG；未上傳時使用 Logo 文字。' }}</small>
+            </label>
+            <label>
               用餐限時分鐘
               <input v-model.number="onlineOrdering.dineInTimeLimit.mealMinutes" type="number" min="0" max="720" step="5" />
             </label>
@@ -3508,6 +3675,49 @@ const saveAccessControl = async (): Promise<void> => {
               />
               <small>用餐結束前 n 分鐘；0 代表同用餐結束</small>
             </label>
+          </div>
+
+          <div class="admin-table-qr-panel" aria-label="桌位 QR Code 下載">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Table QR Code</p>
+                <h3>桌位 QR Code 桌卡</h3>
+                <span class="panel-note">依目前樓層與桌位產生可列印 A4 桌卡；先結/後結會套用不同操作步驟。</span>
+              </div>
+              <div class="admin-table-qr-actions">
+                <button
+                  v-if="onlineOrdering.tableQrCode.logoDataUrl"
+                  class="utility-button"
+                  type="button"
+                  @click="clearTableQrLogo"
+                >
+                  清除 Logo
+                </button>
+                <button
+                  class="utility-button"
+                  type="button"
+                  :disabled="tableQrCardSources.length === 0"
+                  @click="downloadTableQrCards()"
+                >
+                  <Download :size="16" aria-hidden="true" />
+                  下載全部
+                </button>
+              </div>
+            </div>
+            <p v-if="tableQrDownloadMessage" class="admin-inline-note">{{ tableQrDownloadMessage }}</p>
+            <div v-if="tableQrCardSources.length" class="admin-table-qr-list">
+              <article v-for="source in tableQrCardSources" :key="source.table.id" class="admin-table-qr-row">
+                <div>
+                  <strong>{{ source.floor?.label ? `${source.floor.label} · ${source.table.label}` : source.table.label }}</strong>
+                  <span>{{ source.table.capacity }} 人 · {{ source.table.width }}% 寬 · {{ source.table.x }}%, {{ source.table.y }}%</span>
+                </div>
+                <button class="utility-button" type="button" @click="downloadTableQrCards(source.table.id)">
+                  <Download :size="16" aria-hidden="true" />
+                  下載
+                </button>
+              </article>
+            </div>
+            <p v-else class="panel-note">尚未建立桌位，請先到桌位地圖後台編輯模式新增桌位。</p>
           </div>
 
           <div class="admin-online-schedule-rules" aria-label="用餐與點餐限時">

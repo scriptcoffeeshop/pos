@@ -1393,6 +1393,11 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     orderNote: 'optional',
     orderNotePlaceholder: '甜度、冰量或其他需求',
   },
+  tableQrCode: {
+    theme: 'black',
+    logoText: 'Script Coffee',
+    logoDataUrl: '',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1508,6 +1513,37 @@ const normalizeCommentFieldSettings = (
       typeof settings.orderNotePlaceholder === 'string' && settings.orderNotePlaceholder.trim().length > 0
         ? settings.orderNotePlaceholder.trim().slice(0, 80)
         : defaults.orderNotePlaceholder,
+  }
+}
+
+const normalizeTableQrCodeSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().tableQrCode,
+): OnlineOrderingSettings['tableQrCode'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['tableQrCode']>
+  const theme =
+    settings.theme === 'black' ||
+    settings.theme === 'green' ||
+    settings.theme === 'orange' ||
+    settings.theme === 'yellow' ||
+    settings.theme === 'purple'
+      ? settings.theme
+      : defaults.theme
+
+  return {
+    theme,
+    logoText:
+      typeof settings.logoText === 'string' && settings.logoText.trim().length > 0
+        ? settings.logoText.trim().slice(0, 40)
+        : defaults.logoText,
+    logoDataUrl:
+      typeof settings.logoDataUrl === 'string' && settings.logoDataUrl.startsWith('data:image/')
+        ? settings.logoDataUrl.slice(0, 120_000)
+        : '',
   }
 }
 
@@ -1968,6 +2004,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit, defaults.dineInTimeLimit),
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout, defaults.dineInCheckout),
     commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
+    tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode, defaults.tableQrCode),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

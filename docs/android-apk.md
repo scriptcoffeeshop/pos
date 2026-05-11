@@ -269,6 +269,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 5. 將餐點備註改成「隱藏」後重新整理消費者頁，確認品項選項面板不再提供文字註記；繞過前端送 `文字註記：` options 時，`pos-api` 應過濾掉。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認備註欄位設定、既有訂單備註與品項文字註記仍從 Supabase/API 還原。
 
+## 桌位 QR Code 桌卡
+
+桌位 QR Code 樣式存在 `online_ordering.tableQrCode`，桌位與樓層來自 `floor_plan`。這對照 iCHEF 後台「內用掃碼點餐 > 桌位 QR Code」的設定樣式、下載全部與單桌下載；fresh reinstall 後不應依賴 APK 本機資料。
+
+1. 連點工具箱 6 下進入後台編輯模式，到桌位地圖建立至少兩個樓層與多張桌位，儲存並確認另一台平板可同步看到。
+2. 到後台「線上點餐」選擇桌卡顏色、設定 Logo 文字或上傳 JPG/PNG Logo，按「儲存線上設定」。
+3. 在同頁按「下載全部」與單桌「下載」，確認產生的 HTML 桌卡含對應樓層、桌號與 QR Code。
+4. 掃描其中一張桌卡，確認消費者頁顯示「掃碼內用 · 樓層 桌號」，送單後 POS 訂單備註保留 `樓層 ... · 桌位 ...`。
+5. 切換內用掃碼結帳模式為先結/後結後重新產生桌卡，確認桌卡操作步驟跟著改變。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認桌卡樣式、Logo、樓層桌位與掃碼送單仍從 Supabase runtime/API 還原。
+
 ## 線上服務方式開關
 
 自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`，對照 iCHEF 可在 POS 或後台臨時調整營業狀態的流程。這不是 APK 本機開關，fresh reinstall 後仍應從 runtime 還原。
@@ -434,6 +445,7 @@ rtk npm run apk:install:fresh
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測內用掃碼結帳流程時，`online_ordering.dineInCheckout` 應控制先結/後結；後結 QR 內用頁不得顯示付款方式且 API 會寫入現場待收款，先結 QR 內用頁只能顯示線上付款且 API 必須拒絕現場付款。
 - 測線上點餐備註欄位時，`online_ordering.commentFields` 應控制餐點文字註記與訂單備註欄位；必填訂單備註要由前端與 API 同時阻擋，隱藏欄位不得靠舊頁/API 寫入額外消費者備註。
+- 測桌位 QR Code 桌卡時，樣式應寫入 `online_ordering.tableQrCode`，樓層桌位應來自 `floor_plan`；下載全部與單桌下載產生的 QR URL 需含樓層/桌號，掃碼送單後 POS 備註也要保留同一組資訊。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測訂單 QR 自動列印時，後台「線上點餐」的開關、指定出單機與 Logo 文字應寫入 `online_ordering.sessionQrCode`；fresh reinstall 後建立內用桌位訂單仍應用同一設定建立 QR `print_jobs`，並由 APK `LanPrinter` 送到指定出單機。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。

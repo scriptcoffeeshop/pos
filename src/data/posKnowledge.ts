@@ -101,6 +101,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'table-qr-cards',
+    category: 'online',
+    title: '桌位 QR Code 桌卡',
+    summary: '後台可依樓層與桌位產生專屬 QR 桌卡，並同步桌卡顏色、Logo 與先結/後結步驟。',
+    steps: [
+      '先在桌位地圖後台編輯模式建立樓層與桌位，桌號、樓層與位置會保存到 `floor_plan` runtime。',
+      '到後台「線上點餐」設定桌卡顏色、Logo 文字或 Logo 圖檔，設定會寫入 `online_ordering.tableQrCode`。',
+      '按「下載全部」可依目前所有樓層桌位產生 A4 桌卡；也可在單桌列按「下載」只產生該桌桌卡。',
+      '桌卡 QR URL 會帶 `source=qr`、`mode=dine-in`、桌號與樓層；消費者送單後 POS 訂單備註會保留同一組樓層與桌位。',
+      '桌卡操作步驟會依 `online_ordering.dineInCheckout` 自動顯示先結或後結流程，換平板與 fresh reinstall 後仍從 runtime 還原。',
+    ],
+    keywords: ['桌位 QR Code', '桌卡', '樓層', '內用掃碼', '先結', '後結', 'Logo', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'product-total-display',
     category: 'orders',
     title: '商品總數設定',

@@ -27,6 +27,7 @@ type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
 type OnlineDineInCheckoutMode = "prepaid" | "postpaid";
 type OnlineItemCommentMode = "hidden" | "shown";
 type OnlineOrderCommentMode = "hidden" | "optional" | "required";
+type OnlineTableQrTheme = "black" | "green" | "orange" | "yellow" | "purple";
 type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
 type InventoryConsumptionSubject = "product" | "option";
 
@@ -513,6 +514,12 @@ interface OnlineCommentFieldSettings {
   orderNotePlaceholder: string;
 }
 
+interface OnlineTableQrCodeSettings {
+  theme: OnlineTableQrTheme;
+  logoText: string;
+  logoDataUrl: string;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -547,6 +554,7 @@ interface OnlineOrderingSettings {
   dineInTimeLimit: OnlineDineInTimeLimitSettings;
   dineInCheckout: OnlineDineInCheckoutSettings;
   commentFields: OnlineCommentFieldSettings;
+  tableQrCode: OnlineTableQrCodeSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1114,6 +1122,11 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     itemNotes: "shown",
     orderNote: "optional",
     orderNotePlaceholder: "甜度、冰量或其他需求",
+  },
+  tableQrCode: {
+    theme: "black",
+    logoText: "Script Coffee",
+    logoDataUrl: "",
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -6361,6 +6374,30 @@ const normalizeCommentFieldSettings = (input: unknown): OnlineCommentFieldSettin
   };
 };
 
+const normalizeTableQrCodeSettings = (input: unknown): OnlineTableQrCodeSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.tableQrCode };
+  }
+
+  const settings = input as Partial<OnlineTableQrCodeSettings>;
+  const theme =
+    settings.theme === "black" ||
+    settings.theme === "green" ||
+    settings.theme === "orange" ||
+    settings.theme === "yellow" ||
+    settings.theme === "purple"
+      ? settings.theme
+      : defaultOnlineOrdering.tableQrCode.theme;
+
+  const logoDataUrl = sanitizeText(settings.logoDataUrl, "");
+  return {
+    theme,
+    logoText: sanitizeText(settings.logoText, defaultOnlineOrdering.tableQrCode.logoText).slice(0, 40) ||
+      defaultOnlineOrdering.tableQrCode.logoText,
+    logoDataUrl: logoDataUrl.startsWith("data:image/") ? logoDataUrl.slice(0, 120_000) : "",
+  };
+};
+
 const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
   if (!Array.isArray(input)) {
     return [...fallback];
@@ -8314,6 +8351,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
     commentFields: normalizeCommentFieldSettings(settings.commentFields),
+    tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8654,6 +8692,7 @@ const validateOnlineOrdering = (input: unknown): {
       dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
       dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
       commentFields: normalizeCommentFieldSettings(settings.commentFields),
+      tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
       pauseMessage,
       menuCategories,
       availableOptionChoices,

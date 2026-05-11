@@ -184,6 +184,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 平板 A 將餐點備註改成「隱藏」後儲存，平板 B 重新整理後品項選項面板不再提供文字註記；舊頁或 API 送 `文字註記：` options 時，`pos-api` 應過濾掉。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認備註欄位設定、既有訂單備註與品項文字註記仍從 Supabase/API 還原。
 
+## 多平板桌位 QR Code 桌卡
+
+桌位 QR Code 樣式存在 `online_ordering.tableQrCode`，桌位與樓層來自 `floor_plan`。測試時至少準備一個後台工作站、一個 POS 平板與一個 QR/消費者頁：
+
+1. 平板 A 在桌位地圖後台編輯模式建立兩個樓層與多張桌位，儲存後確認平板 B 同步看到同一份樓層桌位。
+2. 平板 A 到後台「線上點餐」設定桌卡顏色、Logo 文字或 Logo 圖檔並儲存，平板 B 重新整理後應看到同一份設定。
+3. 在平板 A 下載全部桌卡與單桌桌卡，確認產生的 QR URL 含 `source=qr`、`mode=dine-in`、`floor` 與 `table`。
+4. 用 QR/消費者頁開啟單桌 URL，確認頁首顯示該樓層與桌號，送單後兩台平板都應看到 POS 訂單備註保留 `樓層 ... · 桌位 ...`。
+5. 將內用掃碼結帳切成先結或後結後重新下載桌卡，確認桌卡步驟文字跟著 `online_ordering.dineInCheckout` 改變。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認桌卡樣式、Logo、樓層桌位與掃碼送單仍從 Supabase runtime/API 還原。
+
 ## 多平板線上服務方式開關
 
 自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`。測試時至少準備一個後台工作站與一個消費者頁：
@@ -456,6 +467,8 @@ POS 操作權限驗證會把 iCHEF 後台式「需要驗證」開關保存在 `a
 手動 QR / 顧客聯測試：在訂單中心展開一張已有品項的訂單，分別按「QR」與「顧客聯」，確認兩者都建立 `print_jobs` 並出現在列印佇列。QR payload 需包含 `order.scriptcoffee.com.tw?source=qr`；掃碼送單後，POS 佇列中的來源應顯示為「掃碼」。
 
 訂單 QR 自動列印測試：在後台「線上點餐」開啟「建立內用訂單後自動列印 QR」，選擇一台出單機並儲存。回到桌位地圖建立內用訂單後，應自動建立一筆 `訂單 QR Code` print job；換另一台平板或 fresh reinstall 後，開關、指定出單機與 Logo 文字都應從 `online_ordering.sessionQrCode` 還原。
+
+桌位 QR Code 桌卡測試：在後台「線上點餐」設定桌卡顏色與 Logo，下載全部桌卡與單桌桌卡；產生的 QR URL 應含 `source=qr`、`mode=dine-in`、`floor` 與 `table`。掃碼送單後兩台平板都應看到同一張 QR 內用單，且訂單備註保留樓層與桌位；fresh reinstall 後桌卡樣式與樓層桌位仍由 Supabase runtime 還原。
 
 ## 後台編輯模式
 
