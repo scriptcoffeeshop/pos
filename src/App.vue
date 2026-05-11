@@ -919,6 +919,9 @@ const accessPermissionLabels: Record<AdminPermission, string> = {
   deleteOrders: '刪單',
   deleteOrderItems: '刪品項',
   useVariablePriceNotes: '使用變價註記',
+  checkoutOrders: '結帳',
+  adjustServiceCharges: '服務費與其他費用',
+  applyManualDiscounts: '手動折扣',
   manageProducts: '商品管理',
   managePrinting: '列印設定',
   managePayments: '支付設定',
@@ -4110,7 +4113,20 @@ const openCashDrawerForCheckout = async (order: PosOrder): Promise<void> => {
   }
 }
 
-const collectOrderPaymentAction = async (order: PosOrder): Promise<void> => {
+const collectOrderPaymentAction = async (
+  order: PosOrder,
+  options: { skipVerification?: boolean } = {},
+): Promise<void> => {
+  if (!options.skipVerification && !(await verifyProtectedPermissions([
+    {
+      permission: 'checkoutOrders',
+      title: accessPermissionLabels.checkoutOrders,
+      detail: `${compactOrderId(order.id)} 標記已收款前需驗證員工識別碼。`,
+    },
+  ]))) {
+    return
+  }
+
   await updatePaymentStatus(order.id, 'paid')
   const paidOrder = orderQueue.value.find((entry) => entry.id === order.id) ?? order
   if (paidOrder.paymentStatus === 'paid') {
@@ -4963,11 +4979,46 @@ const ticketActionPermissionSteps = (action: TicketAction): ProtectedPermissionS
     openOrderPermissionStep('建立或更新門市訂單前需驗證員工識別碼。'),
   ]
 
+  if (action === 'checkout-print' || action === 'checkout-only') {
+    steps.push({
+      permission: 'checkoutOrders',
+      title: accessPermissionLabels.checkoutOrders,
+      detail: '執行結帳前需驗證員工識別碼。',
+    })
+  }
+
   if (action === 'print' || action === 'checkout-print') {
     steps.push({
       permission: 'sendOrdersToKitchen',
       title: accessPermissionLabels.sendOrdersToKitchen,
       detail: '送出廚房出單前需驗證員工識別碼。',
+    })
+  }
+
+  const defaultServiceFeeRate = Math.max(0, Math.trunc(Number(engagementSettings.value.defaultServiceFeeRate) || 0))
+  const currentServiceFeeRate = Math.max(0, Math.trunc(Number(serviceFeeRate.value) || 0))
+  const currentExtraFeeAmount = Math.max(0, Math.trunc(Number(extraFeeAmount.value) || 0))
+  if (
+    (action === 'checkout-print' || action === 'checkout-only') &&
+    (currentServiceFeeRate !== defaultServiceFeeRate || currentExtraFeeAmount > 0)
+  ) {
+    steps.push({
+      permission: 'adjustServiceCharges',
+      title: accessPermissionLabels.adjustServiceCharges,
+      detail: '調整服務費或其他費用後結帳前需驗證員工識別碼。',
+    })
+  }
+
+  const manualDiscountAmount = Math.max(0, Math.trunc(Number(discountAmount.value) || 0))
+  const manualPointsRedeemed = Math.max(0, Math.trunc(Number(pointsRedeemed.value) || 0))
+  if (
+    (action === 'checkout-print' || action === 'checkout-only') &&
+    (manualDiscountAmount > 0 || manualPointsRedeemed > 0 || Boolean(couponCode.value))
+  ) {
+    steps.push({
+      permission: 'applyManualDiscounts',
+      title: accessPermissionLabels.applyManualDiscounts,
+      detail: '套用手動折扣、點數或優惠券後結帳前需驗證員工識別碼。',
     })
   }
 
@@ -5011,7 +5062,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
 
   try {
     if (action === 'checkout-print' || action === 'checkout-only') {
-      await collectOrderPaymentAction(order)
+      await collectOrderPaymentAction(order, { skipVerification: true })
     }
 
     if (action === 'checkout-print' || action === 'print') {

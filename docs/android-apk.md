@@ -124,7 +124,7 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 POS 操作權限對照 iCHEF 後台「帳號與權限」的操作驗證開關。`access_control.protectedPermissions` 會保存在 Supabase runtime；APK 只從 `/settings/runtime` 取得低敏感的 `accessPolicy`，真正驗證會呼叫 `POST /access/verify` 並由後端比對員工識別碼與角色權限。
 
 1. 連點工具箱 6 下進入後台編輯模式，到後台「權限」新增一位測試員工，建立一個不含 `deleteOrderItems` 或 `sendOrdersToKitchen` 的角色。
-2. 在「操作驗證開關」勾選「出單至廚房」「刪品項」「刪單」「取消線上訂單」「錢櫃」等測試項目並儲存。
+2. 在「操作驗證開關」勾選「出單至廚房」「結帳」「服務費/其他費用」「手動折扣」「刪品項」「刪單」「取消線上訂單」「錢櫃」等測試項目並儲存。
 3. 回 POS 建立草稿單，按「出單」或刪除購物車品項，確認出現員工識別碼視窗。
 4. 輸入無此權限的員工識別碼，確認操作被拒絕且訂單/品項狀態不改變；輸入具備權限的識別碼後操作才繼續。
 5. 測外帶/外送訂單左滑刪除、線上新單接單/拒絕、作廢/退款與工具箱錢櫃管理，確認被保護操作都使用同一個驗證 modal。
@@ -331,6 +331,7 @@ rtk npm run apk:install:fresh
 - 測付款拆單時，子單必須寫入 `orders.payment_splits`；另一台平板、App 重開與 fresh reinstall 都要看到同一子單數、未結張數、付款方式與已結狀態。
 - 測關帳員工識別碼時，`POST /register/close` 必須帶 `staffCode`，並由 `access_control.staffAccounts` 驗證啟用員工與 `closeRegister` 角色權限；操作員資料應只出現在 `pos_audit_events.register.close` metadata，不應保存在 APK localStorage。
 - 測 POS 操作權限驗證時，`access_control.protectedPermissions` 必須由 `/settings/runtime` 同步成低敏感 `accessPolicy`；被保護操作要呼叫 `/access/verify`，無權限員工不得通過，fresh reinstall 後不得靠本機記憶體保存驗證開關。
+- 測結帳相關權限時，結帳/標記已收款應檢查 `checkoutOrders`，調整服務費或其他費用應檢查 `adjustServiceCharges`，套用手動折扣、點數或優惠券應檢查 `applyManualDiscounts`，且都只能寫 `access.verify` 稽核，不應把通過狀態存在 APK localStorage。
 - 測工具箱標籤管理時，新增、改名、調整顏色或刪除標籤後必須寫入 `engagement_settings.orderLabels`；點餐頁標籤列與送出後的 `orders.order_labels` 應跟同一份設定一致，fresh reinstall 後不得靠本機快取顯示。
 - 測工具箱裝置管理時，出單機清單應來自 `printer_settings.stations`，刷卡/掃碼/錢櫃外設應來自 `engagement_settings.hardwareDevices`，未印出單據應來自訂單 `print_jobs`；取消未印出單據後 fresh reinstall 不得再次看到已刪除的 print jobs。
 - 測工具箱顧客資訊管理時，搜尋、類型篩選、排序與新增顧客都應走 `GET/POST /admin/members`；新增後點餐頁 CRM 搜尋與後台會員錢包應看到同一位顧客，fresh reinstall 後不得靠本機快取顯示。
