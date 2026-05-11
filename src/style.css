@@ -9834,6 +9834,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .consumer-cover {
+  position: relative;
   display: grid;
   height: 200px;
   place-items: center;
@@ -9846,6 +9847,32 @@ button.cart-line-summary:focus-visible {
   width: min(86%, 560px);
   height: 150px;
   object-fit: contain;
+}
+
+.consumer-cover--photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.consumer-cover-dots {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.consumer-cover-dots span {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 999px;
+  background: rgba(32, 33, 36, 0.38);
+}
+
+.consumer-cover-dots .consumer-cover-dot--active {
+  background: white;
 }
 
 .consumer-store-info {
@@ -9881,6 +9908,39 @@ button.cart-line-summary:focus-visible {
 
 .consumer-status-line strong {
   color: var(--amber);
+}
+
+.consumer-store-notice {
+  display: grid;
+  gap: 5px;
+  max-width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.consumer-store-notice p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  font-weight: 750;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.consumer-store-notice--clamped p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.consumer-store-notice .text-button {
+  justify-self: start;
+  min-height: 30px;
+  padding: 0;
+  font-size: 0.82rem;
 }
 
 .consumer-menu-shell {
@@ -11146,6 +11206,46 @@ button.cart-line-summary:focus-visible {
 
 .admin-table-qr-row span,
 .admin-inline-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-online-store-profile {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-store-cover-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.admin-store-cover-row {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.admin-store-cover-row img {
+  width: 100%;
+  aspect-ratio: 15 / 8;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-muted);
+}
+
+.admin-store-cover-row span {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 850;

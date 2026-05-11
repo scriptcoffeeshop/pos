@@ -520,6 +520,15 @@ interface OnlineTableQrCodeSettings {
   logoDataUrl: string;
 }
 
+interface OnlineStoreProfileSettings {
+  name: string;
+  phone: string;
+  address: string;
+  notice: string;
+  noticeExpanded: boolean;
+  coverImageDataUrls: string[];
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -555,6 +564,7 @@ interface OnlineOrderingSettings {
   dineInCheckout: OnlineDineInCheckoutSettings;
   commentFields: OnlineCommentFieldSettings;
   tableQrCode: OnlineTableQrCodeSettings;
+  storeProfile: OnlineStoreProfileSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1127,6 +1137,14 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     theme: "black",
     logoText: "Script Coffee",
     logoDataUrl: "",
+  },
+  storeProfile: {
+    name: "Script Coffee",
+    phone: "",
+    address: "",
+    notice: "",
+    noticeExpanded: false,
+    coverImageDataUrls: [],
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -6398,6 +6416,39 @@ const normalizeTableQrCodeSettings = (input: unknown): OnlineTableQrCodeSettings
   };
 };
 
+const normalizeImageDataUrls = (input: unknown, limit = 4): string[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .filter((entry): entry is string => typeof entry === "string" && entry.startsWith("data:image/"))
+    .map((entry) => entry.slice(0, 600_000))
+    .slice(0, limit);
+};
+
+const normalizeOnlineStoreProfileSettings = (input: unknown): OnlineStoreProfileSettings => {
+  const defaults = defaultOnlineOrdering.storeProfile;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {
+      ...defaults,
+      coverImageDataUrls: [...defaults.coverImageDataUrls],
+    };
+  }
+
+  const settings = input as Partial<OnlineStoreProfileSettings>;
+  const name = typeof settings.name === "string" ? settings.name.trim().slice(0, 60) : "";
+
+  return {
+    name: name || defaults.name,
+    phone: typeof settings.phone === "string" ? settings.phone.trim().slice(0, 32) : defaults.phone,
+    address: typeof settings.address === "string" ? settings.address.trim().slice(0, 160) : defaults.address,
+    notice: typeof settings.notice === "string" ? settings.notice.trim().slice(0, 3000) : defaults.notice,
+    noticeExpanded: settings.noticeExpanded === true,
+    coverImageDataUrls: normalizeImageDataUrls(settings.coverImageDataUrls),
+  };
+};
+
 const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
   if (!Array.isArray(input)) {
     return [...fallback];
@@ -8352,6 +8403,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
     commentFields: normalizeCommentFieldSettings(settings.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
+    storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8693,6 +8745,7 @@ const validateOnlineOrdering = (input: unknown): {
       dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
       commentFields: normalizeCommentFieldSettings(settings.commentFields),
       tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
+      storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
       pauseMessage,
       menuCategories,
       availableOptionChoices,

@@ -485,6 +485,15 @@ export interface OnlineTableQrCodeSettings {
   logoDataUrl: string
 }
 
+export interface OnlineStoreProfileSettings {
+  name: string
+  phone: string
+  address: string
+  notice: string
+  noticeExpanded: boolean
+  coverImageDataUrls: string[]
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -516,6 +525,7 @@ export interface OnlineOrderingSettings {
   dineInCheckout: OnlineDineInCheckoutSettings
   commentFields: OnlineCommentFieldSettings
   tableQrCode: OnlineTableQrCodeSettings
+  storeProfile: OnlineStoreProfileSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

@@ -478,6 +478,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-store-profile',
+    category: 'online',
+    title: '店家營業資訊與封面',
+    summary: '後台可對照 iCHEF 內用掃碼店家營業資訊，設定店名、電話、地址、提醒事項與最多 4 張封面圖片。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「店家營業資訊」設定店家名稱、聯絡電話、店家地址與提醒事項。',
+      '提醒事項預設顯示 3 行；開啟「顯示全文」後消費者頁會直接展開完整內容。',
+      '上傳最多 4 張 JPG/PNG 封面圖片；多張時消費者頁會自動輪播並顯示目前頁點。',
+      '設定存在 `online_ordering.storeProfile`，換平板、重開 App 或 fresh reinstall 後仍從 runtime 還原。',
+    ],
+    keywords: ['店家營業資訊', '店家資訊', '提醒事項', '顯示全文', '封面圖片', '輪播', '內用掃碼', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'online-checkout-invoice-fields',
     category: 'online',
     title: '線上結帳統編與載具欄位',
