@@ -10339,6 +10339,25 @@ button.cart-line-summary:focus-visible {
   color: var(--primary-dark);
 }
 
+.consumer-item-note-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.consumer-item-note-field input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+}
+
 .consumer-option-choice--active small,
 .consumer-option-choice--active svg {
   color: var(--primary-dark);

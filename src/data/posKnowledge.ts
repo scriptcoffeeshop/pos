@@ -86,6 +86,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'online-comment-fields',
+    category: 'online',
+    title: '線上點餐備註欄位',
+    summary: '可依 iCHEF 備註欄位設定顯示餐點備註、隱藏訂單備註或要求訂單備註必填。',
+    steps: [
+      '到後台「線上點餐」的備註欄位設定餐點備註顯示或隱藏，設定會寫入 `online_ordering.commentFields.itemNotes`。',
+      '訂單備註可設定為隱藏、選填或必填，並可自訂欄位提示文字。',
+      '消費者填寫的餐點備註會保存到該品項 options；訂單備註會保存到 POS 訂單備註欄位。',
+      '若訂單備註被隱藏，QR 桌號資訊仍會保留，但消費者送出的額外備註會被前端與 API 過濾。',
+      '`pos-api` 會重新讀取 runtime 驗證必填備註與隱藏欄位，避免舊頁或 API 繞過前端。',
+    ],
+    keywords: ['備註欄位', '餐點備註', '訂單備註', '必填', '文字註記', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'product-total-display',
     category: 'orders',
     title: '商品總數設定',
