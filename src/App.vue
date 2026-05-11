@@ -835,6 +835,7 @@ const {
   printStation,
   printerSettings,
   productStatusCatalog,
+  applyPendingSettingsProfile,
   quickAddItems,
   refreshBackendData,
   registerMessage,
@@ -858,6 +859,11 @@ const {
   setItemQuantity,
   setLineQuantity,
   startCounterDraft,
+  settingsProfileAppliedAt,
+  settingsProfileMessage,
+  settingsProfilePending,
+  settingsProfilePendingSince,
+  settingsProfileStatus,
   stationClaimLabel,
   stationHeartbeatMessage,
   transactionReceiptCount,
@@ -4972,6 +4978,29 @@ const dineInTimeLimitToolboxSummary = computed(() => {
 })
 const enabledPrinterRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const enabledPrinterStationCount = computed(() => printerSettings.value.stations.filter((station) => station.enabled).length)
+const settingsProfileStatusLabel = computed(() => {
+  if (settingsProfilePending.value) {
+    return '待套用'
+  }
+  if (settingsProfileStatus.value === 'loading') {
+    return '檢查中'
+  }
+  if (settingsProfileStatus.value === 'local') {
+    return '本機模式'
+  }
+  return '已套用'
+})
+const settingsProfileDetail = computed(() => {
+  if (settingsProfilePending.value) {
+    return settingsProfilePendingSince.value
+      ? `新設定檔 ${formatOrderTime(settingsProfilePendingSince.value)} 待套用`
+      : '後台已有新設定檔待套用'
+  }
+
+  return settingsProfileAppliedAt.value
+    ? `上次套用 ${formatOrderTime(settingsProfileAppliedAt.value)}`
+    : settingsProfileMessage.value
+})
 const systemInfoItems = computed<SystemInfoItem[]>(() => [
   {
     label: '運行平台',
@@ -4982,6 +5011,11 @@ const systemInfoItems = computed<SystemInfoItem[]>(() => [
     label: 'POS API',
     value: backendStatus.label,
     detail: backendStatus.detail || '等待下一次同步',
+  },
+  {
+    label: '設定檔',
+    value: settingsProfileStatusLabel.value,
+    detail: settingsProfileDetail.value,
   },
   {
     label: '工作站',
@@ -9796,6 +9830,17 @@ onBeforeUnmount(() => {
             <Wifi :size="18" aria-hidden="true" />
             {{ backendStatus.label }}
           </span>
+          <button
+            class="status-pill status-pill--button"
+            :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
+            type="button"
+            :title="settingsProfileMessage"
+            :disabled="!settingsProfilePending"
+            @click="applyPendingSettingsProfile"
+          >
+            <BookOpenCheck :size="18" aria-hidden="true" />
+            {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+          </button>
           <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
             <Printer :size="18" aria-hidden="true" />
             {{ printStation.host }}:{{ printStation.port }}
@@ -9858,6 +9903,17 @@ onBeforeUnmount(() => {
                 <span>{{ activeFloorLabel }} · {{ activeFloorOrderCount }} 桌內用</span>
                 <span>{{ floorLevels.length }} 樓層 · {{ activeFloorTables.length }} 桌</span>
                 <span>候位 {{ waitlineEntries.length }} 組 · {{ waitlinePeopleCount }} 人</span>
+                <button
+                  class="status-pill status-pill--button pos-command-settings-button"
+                  :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
+                  type="button"
+                  :title="settingsProfileMessage"
+                  :disabled="!settingsProfilePending"
+                  @click="applyPendingSettingsProfile"
+                >
+                  <BookOpenCheck :size="18" aria-hidden="true" />
+                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                </button>
                 <button class="primary-button queue-new-order-button" type="button" @click="addWaitlineEntry">
                   <UsersRound :size="22" aria-hidden="true" />
                   新增候位
@@ -9866,6 +9922,17 @@ onBeforeUnmount(() => {
               <div v-else-if="activeWorkspaceTab === 'queue'" class="queue-command-actions">
                 <span>{{ pendingOrders.length }} 張待處理</span>
                 <span>顯示 {{ visibleQueueOrders.length }} 張 · 全部 {{ queueBaseOrders.length }} 張</span>
+                <button
+                  class="status-pill status-pill--button pos-command-settings-button"
+                  :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
+                  type="button"
+                  :title="settingsProfileMessage"
+                  :disabled="!settingsProfilePending"
+                  @click="applyPendingSettingsProfile"
+                >
+                  <BookOpenCheck :size="18" aria-hidden="true" />
+                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                </button>
                 <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
                   <ShoppingBag :size="22" aria-hidden="true" />
                   新增外帶
@@ -9874,6 +9941,17 @@ onBeforeUnmount(() => {
               <div v-else-if="activeWorkspaceTab === 'reservations'" class="queue-command-actions">
                 <span>{{ reservationRangeLabel }}</span>
                 <span>{{ visibleReservations.length }} 筆 · 遲到 {{ lateReservationCount }} 筆</span>
+                <button
+                  class="status-pill status-pill--button pos-command-settings-button"
+                  :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
+                  type="button"
+                  :title="settingsProfileMessage"
+                  :disabled="!settingsProfilePending"
+                  @click="applyPendingSettingsProfile"
+                >
+                  <BookOpenCheck :size="18" aria-hidden="true" />
+                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                </button>
                 <button class="primary-button queue-new-order-button" type="button" :disabled="isReservationLoading" @click="refreshReservations">
                   <RefreshCw :size="22" aria-hidden="true" />
                   同步訂位
@@ -9892,6 +9970,17 @@ onBeforeUnmount(() => {
                   <Wifi :size="18" aria-hidden="true" />
                   {{ backendStatus.label }}
                 </span>
+                <button
+                  class="status-pill status-pill--button pos-command-settings-button"
+                  :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
+                  type="button"
+                  :title="settingsProfileMessage"
+                  :disabled="!settingsProfilePending"
+                  @click="applyPendingSettingsProfile"
+                >
+                  <BookOpenCheck :size="18" aria-hidden="true" />
+                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                </button>
                 <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
                   <Printer :size="18" aria-hidden="true" />
                   {{ printStation.host }}:{{ printStation.port }}
@@ -13821,6 +13910,17 @@ onBeforeUnmount(() => {
             <strong>{{ backendEditModeEnabled ? '後台編輯已啟用' : '後台編輯未啟用' }}</strong>
             <span>{{ backendEditMessage }}</span>
           </button>
+          <button
+            type="button"
+            class="toolbox-card"
+            :class="{ 'toolbox-card--status': settingsProfilePending }"
+            :disabled="!settingsProfilePending"
+            @click="applyPendingSettingsProfile"
+          >
+            <BookOpenCheck :size="24" aria-hidden="true" />
+            <strong>{{ settingsProfilePending ? '套用新設定檔' : '設定檔已套用' }}</strong>
+            <span>{{ settingsProfileMessage }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
             <ShoppingCart :size="24" aria-hidden="true" />
             <strong>新增外帶</strong>
@@ -14611,6 +14711,15 @@ onBeforeUnmount(() => {
           >
             <RefreshCw :size="18" aria-hidden="true" />
             重新同步
+          </button>
+          <button
+            class="secondary-button preference-reset-button"
+            type="button"
+            :disabled="!settingsProfilePending"
+            @click="applyPendingSettingsProfile"
+          >
+            <BookOpenCheck :size="18" aria-hidden="true" />
+            {{ settingsProfilePending ? '套用新設定檔' : '沒有待套用設定檔' }}
           </button>
         </section>
         <section v-else-if="activeToolboxPanel === 'label-management'" class="toolbox-detail-panel label-management-panel" aria-labelledby="toolbox-title">

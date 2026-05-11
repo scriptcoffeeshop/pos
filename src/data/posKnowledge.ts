@@ -545,6 +545,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'settings-profile-apply',
+    category: 'register',
+    title: '套用新設定檔',
+    summary: '對照 iCHEF POS，後台設定更新會先停在待套用狀態，由平板操作員決定何時套用。',
+    steps: [
+      '後台或其他平板儲存 runtime 設定後，本平板 topbar 會顯示「新設定檔」。',
+      '訂單、班別、工作站心跳與提醒仍持續同步；商品、線上、列印、桌況、權限、外觀與折扣 runtime 會保留目前已套用版本。',
+      '在確認現場可更新時，按 topbar、工具箱首頁或系統資訊裡的「套用新設定檔」。',
+      '套用後本平板會保存新的設定檔快照，重開 App 仍以最後套用版本為準；fresh reinstall 會清除本機快照並以伺服器 runtime 重新建立已套用版本。',
+      '若只是要檢查連線或拉取訂單，使用「重新同步」即可，不會強制套用待更新設定檔。',
+    ],
+    keywords: ['設定檔', '套用新設定檔', 'runtime', '後台設定', '同步', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'online-settings',
     category: 'online',
     title: '暫停線上點餐與預約設定',

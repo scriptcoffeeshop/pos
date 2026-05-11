@@ -149,6 +149,7 @@ const localCounterOrdersStorageKey = 'script-coffee-pos-local-counter-orders'
 const localProductsStorageKey = 'script-coffee-pos-local-products'
 const acceptedOnlineOrderIdsStorageKey = 'script-coffee-pos-accepted-online-orders'
 const dismissedQueueOrderKeysStorageKey = 'script-coffee-pos-dismissed-queue-orders'
+const appliedSettingsProfileStoragePrefix = 'script-coffee-pos-applied-settings-profile'
 
 interface UsePosSessionOptions {
   autoLoad?: boolean
@@ -158,6 +159,14 @@ interface BackendStatus {
   mode: BackendMode
   label: string
   detail: string
+}
+
+type SettingsProfileStatus = 'loading' | 'current' | 'pending' | 'local'
+
+interface StoredSettingsProfile {
+  fingerprint: string
+  appliedAt: string
+  runtimeSettings: RuntimeSettings
 }
 
 interface CounterDraftState {
@@ -711,6 +720,96 @@ const writeDismissedQueueOrderKeys = (keys: string[]): void => {
   }
 }
 
+const settingsProfileStorageKey = (stationId: string): string =>
+  `${appliedSettingsProfileStoragePrefix}:${stationId || 'default'}`
+
+const stableSettingsProfileStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(stableSettingsProfileStringify).join(',')}]`
+  }
+
+  const source = value as Record<string, unknown>
+  return `{${Object.keys(source).sort().map((key) =>
+    `${JSON.stringify(key)}:${stableSettingsProfileStringify(source[key])}`,
+  ).join(',')}}`
+}
+
+const settingsProfileFingerprint = (runtimeSettings: RuntimeSettings): string => {
+  const source = stableSettingsProfileStringify(runtimeSettings)
+  let hash = 2166136261
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+const isStoredRuntimeSettings = (value: unknown): value is RuntimeSettings => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const settings = value as Partial<RuntimeSettings>
+  return Boolean(
+    settings.onlineOrdering &&
+    settings.discountSettings &&
+    settings.printerSettings &&
+    settings.posAppearance &&
+    settings.floorPlan &&
+    settings.engagementSettings &&
+    settings.accessPolicy,
+  )
+}
+
+const readStoredSettingsProfile = (stationId: string): StoredSettingsProfile | null => {
+  try {
+    const rawProfile = globalThis.localStorage?.getItem(settingsProfileStorageKey(stationId))
+    if (!rawProfile) {
+      return null
+    }
+
+    const parsed = JSON.parse(rawProfile) as Partial<StoredSettingsProfile>
+    if (
+      typeof parsed.fingerprint !== 'string' ||
+      typeof parsed.appliedAt !== 'string' ||
+      !isStoredRuntimeSettings(parsed.runtimeSettings)
+    ) {
+      return null
+    }
+
+    return {
+      fingerprint: parsed.fingerprint,
+      appliedAt: parsed.appliedAt,
+      runtimeSettings: parsed.runtimeSettings,
+    }
+  } catch {
+    return null
+  }
+}
+
+const writeStoredSettingsProfile = (
+  stationId: string,
+  runtimeSettings: RuntimeSettings,
+  fingerprint: string,
+  appliedAt = new Date().toISOString(),
+): string => {
+  try {
+    globalThis.localStorage?.setItem(settingsProfileStorageKey(stationId), JSON.stringify({
+      fingerprint,
+      appliedAt,
+      runtimeSettings,
+    }))
+  } catch {
+    return appliedAt
+  }
+
+  return appliedAt
+}
+
 const mergeLocalPendingOrders = (pendingOrders: PosOrder[], baseOrders: PosOrder[]): PosOrder[] => {
   const baseIds = new Set(baseOrders.map((order) => order.id))
   return [...pendingOrders.filter((order) => !baseIds.has(order.id)), ...baseOrders]
@@ -1183,6 +1282,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
   const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
   const accessPolicy = ref<AccessControlPolicy>({ protectedPermissions: [] })
+  const settingsProfileStatus = ref<SettingsProfileStatus>(isPosApiConfigured ? 'loading' : 'local')
+  const settingsProfileMessage = ref(isPosApiConfigured ? '正在檢查設定檔' : '本機模式不使用設定檔套用')
+  const settingsProfileAppliedAt = ref<string | null>(null)
+  const settingsProfilePendingSince = ref<string | null>(null)
   const onlineReminderClock = ref(Date.now())
   const onlineReminderStates = ref<Record<string, OnlineOrderReminderState>>({})
   const onlineReminderStateHydrated = ref(!isPosApiConfigured)
@@ -1207,6 +1310,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   let realtimeSubscriptionToken = 0
   let realtimeClosedByClient = false
   let lastPlayedOnlineReminderSignature = ''
+  let settingsProfileHydrated = false
+  let appliedSettingsProfileFingerprint = ''
+  const pendingRuntimeSettingsProfile = ref<RuntimeSettings | null>(null)
+  let pendingSettingsProfileFingerprint = ''
 
   const currentPrinterSettings = (): PrinterSettings => ({
     stations: printerSettings.value.stations.map((station) => {
@@ -1283,6 +1390,78 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printStation.protocol = primaryStation.protocol
     printStation.autoPrint = primaryStation.autoPrint
     printStation.online = primaryStation.enabled
+  }
+
+  const settingsProfilePending = computed(() => Boolean(pendingRuntimeSettingsProfile.value))
+
+  const markSettingsProfileCurrent = (fingerprint: string, appliedAt: string | null): void => {
+    appliedSettingsProfileFingerprint = fingerprint
+    pendingRuntimeSettingsProfile.value = null
+    pendingSettingsProfileFingerprint = ''
+    settingsProfilePendingSince.value = null
+    settingsProfileAppliedAt.value = appliedAt
+    settingsProfileStatus.value = 'current'
+    settingsProfileMessage.value = appliedAt
+      ? `已套用設定檔 · ${new Date(appliedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`
+      : '已套用目前設定檔'
+  }
+
+  const queuePendingSettingsProfile = (
+    runtimeSettings: RuntimeSettings,
+    fingerprint: string,
+    reason = '偵測到後台新設定',
+  ): void => {
+    const isSamePendingProfile = pendingSettingsProfileFingerprint === fingerprint
+    pendingRuntimeSettingsProfile.value = runtimeSettings
+    pendingSettingsProfileFingerprint = fingerprint
+    if (!isSamePendingProfile || !settingsProfilePendingSince.value) {
+      settingsProfilePendingSince.value = new Date().toISOString()
+    }
+    settingsProfileStatus.value = 'pending'
+    settingsProfileMessage.value = `${reason}，請在工具箱套用新設定檔`
+  }
+
+  const applyRuntimeSettingsWithProfile = (runtimeSettings: RuntimeSettings): void => {
+    const fingerprint = settingsProfileFingerprint(runtimeSettings)
+
+    if (!settingsProfileHydrated) {
+      settingsProfileHydrated = true
+      const storedProfile = readStoredSettingsProfile(stationClaimId)
+      if (storedProfile && storedProfile.fingerprint !== fingerprint) {
+        try {
+          applyRuntimeSettings(storedProfile.runtimeSettings)
+          appliedSettingsProfileFingerprint = storedProfile.fingerprint
+          settingsProfileAppliedAt.value = storedProfile.appliedAt
+          queuePendingSettingsProfile(runtimeSettings, fingerprint, '後台已有更新設定檔')
+          return
+        } catch {
+          // Corrupt local snapshots should not block POS startup.
+        }
+      }
+    }
+
+    if (appliedSettingsProfileFingerprint && appliedSettingsProfileFingerprint !== fingerprint) {
+      queuePendingSettingsProfile(runtimeSettings, fingerprint)
+      return
+    }
+
+    applyRuntimeSettings(runtimeSettings)
+    const appliedAt = writeStoredSettingsProfile(stationClaimId, runtimeSettings, fingerprint)
+    markSettingsProfileCurrent(fingerprint, appliedAt)
+  }
+
+  const applyPendingSettingsProfile = (): void => {
+    if (!pendingRuntimeSettingsProfile.value || !pendingSettingsProfileFingerprint) {
+      settingsProfileMessage.value = '目前沒有待套用的新設定檔'
+      return
+    }
+
+    const runtimeSettings = pendingRuntimeSettingsProfile.value
+    const fingerprint = pendingSettingsProfileFingerprint
+    applyRuntimeSettings(runtimeSettings)
+    const appliedAt = writeStoredSettingsProfile(stationClaimId, runtimeSettings, fingerprint)
+    markSettingsProfileCurrent(fingerprint, appliedAt)
+    setBackendStatus('connected', '設定檔已套用', '已依 iCHEF 流程套用後台最新設定')
   }
 
   const onlineReminderMinutes = computed(() =>
@@ -2725,7 +2904,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         fetchCurrentRegisterSession(),
         fetchRuntimeSettings(),
       ])
-      applyRuntimeSettings(runtimeSettings)
+      applyRuntimeSettingsWithProfile(runtimeSettings)
       await refreshOnlineReminderStatesForOrders(remoteOrders)
       writeLocalProducts([])
       menuCatalog.value = sortProducts(remoteProducts)
@@ -2764,7 +2943,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     try {
-      applyRuntimeSettings(await fetchRuntimeSettings())
+      applyRuntimeSettingsWithProfile(await fetchRuntimeSettings())
     } catch {
       return
     }
@@ -3047,7 +3226,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         fetchRuntimeSettings().catch(() => null),
       ])
       if (runtimeSettings) {
-        applyRuntimeSettings(runtimeSettings)
+        applyRuntimeSettingsWithProfile(runtimeSettings)
       }
       await refreshOnlineReminderStatesForOrders(remoteOrders)
       applyRemoteOrders(remoteOrders)
@@ -4562,6 +4741,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   return {
     appendCustomerNote,
+    applyPendingSettingsProfile,
     acknowledgeOnlineOrderReminders,
     acceptOnlineOrderForStation,
     activeOnlineReminderOrders,
@@ -4662,6 +4842,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     setItemQuantity,
     setLineQuantity,
     startCounterDraft,
+    settingsProfileAppliedAt,
+    settingsProfileMessage,
+    settingsProfilePending,
+    settingsProfilePendingSince,
+    settingsProfileStatus,
     stationClaimId,
     stationClaimLabel,
     stationHeartbeatMessage,
