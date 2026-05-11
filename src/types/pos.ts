@@ -142,6 +142,9 @@ export interface PosOrder {
   paymentBreakdown: PaymentAllocation[]
   transactionReceiptCount: number
   memberPointsEarned: number
+  registerSessionId?: string | null
+  checkoutStationId?: string
+  checkoutBookId?: string
   paymentMethod: PaymentMethod
   paymentStatus: PaymentStatus
   status: OrderStatus
@@ -254,6 +257,9 @@ export interface InventoryConsumptionRule {
 export interface RegisterSession {
   id: string
   status: RegisterSessionStatus
+  bookId: string
+  bookName: string
+  stationId: string
   openedAt: string
   closedAt: string | null
   openingCash: number
@@ -735,6 +741,22 @@ export interface LoyaltyPointSettings {
   maximumRedeemPointsPerOrder: number
 }
 
+export interface CheckoutCounterBookSetting {
+  id: string
+  name: string
+  stationIds: string[]
+  printStationId: string
+  cashDrawerDeviceId: string
+  paymentDeviceIds: string[]
+  enabled: boolean
+}
+
+export interface CheckoutCounterSettings {
+  enabled: boolean
+  defaultBookId: string
+  books: CheckoutCounterBookSetting[]
+}
+
 export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
 
 export interface ServiceChargeSettings {
@@ -755,6 +777,7 @@ export interface CustomerEngagementSettings {
   serviceCharge: ServiceChargeSettings
   productTotalDisplay: ProductTotalDisplaySettings
   loyaltyPoints: LoyaltyPointSettings
+  checkoutCounters: CheckoutCounterSettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

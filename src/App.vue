@@ -4495,6 +4495,7 @@ const registerStatusLabel = computed(() => {
 
   return `已關班 · ${formatOrderTime(registerSession.value.closedAt ?? registerSession.value.openedAt)}`
 })
+const registerBookLabel = computed(() => registerSession.value?.bookName || '主帳本')
 const registerCashAdjustmentNet = computed(() =>
   (registerSession.value?.cashAdjustmentIncome ?? 0) - (registerSession.value?.cashAdjustmentExpense ?? 0),
 )
@@ -4648,10 +4649,15 @@ const currentSalesPeriodLabel = computed(() =>
 )
 const currentSalesOrders = computed(() => {
   const startTime = salesPeriodStart.value.getTime()
+  const currentRegisterSessionId = registerSession.value?.status === 'open' ? registerSession.value.id : ''
 
   return orderQueue.value.filter((order) => {
     if (order.status === 'failed' || order.status === 'voided') {
       return false
+    }
+
+    if (currentRegisterSessionId && order.registerSessionId) {
+      return order.registerSessionId === currentRegisterSessionId
     }
 
     const createdAt = new Date(order.createdAt).getTime()
@@ -12370,7 +12376,7 @@ onBeforeUnmount(() => {
                           <div>
                             <span>班別</span>
                             <strong>{{ registerStatusLabel }}</strong>
-                            <small>{{ registerMessage }}</small>
+                            <small>{{ registerBookLabel }} · {{ registerMessage }}</small>
                           </div>
                           <button
                             class="icon-button"

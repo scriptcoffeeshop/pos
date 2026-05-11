@@ -389,6 +389,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'multi-checkout-counters',
+    category: 'register',
+    title: '多結帳口 / 獨立帳本',
+    summary: '對照 iCHEF 多結帳口，每台指定 iPad 可用自己的帳本、開關班、錢櫃與付款外設設定。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再到「iCHEF 補齊」開啟「多結帳口 / 帳本」。',
+      '為每個結帳口建立帳本，填入要綁定的 station id；未指定的平板會使用預設帳本。',
+      '依現場設備選擇該帳本的出單機、錢櫃，並輸入刷卡或掃碼 device id。',
+      '指定平板開班、關班、現金臨時收支與開錢櫃時，只會操作自己的帳本。',
+      'POS 建單、草稿 finalize 或收款時，API 會把訂單寫入目前平板對應的 `register_session_id` 與 `checkout_book_id`。',
+      '關帳摘要與目前營業概況會優先以班別 id 彙總，避免不同結帳口的訂單混在同一帳本。',
+    ],
+    keywords: ['多結帳口', '獨立帳本', '帳本', '結帳櫃檯', '子機', 'station id', 'register_session_id', 'checkoutCounters', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'pos-access-verification',
     category: 'register',
     title: 'POS 操作權限驗證',
