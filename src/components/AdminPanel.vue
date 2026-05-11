@@ -4689,6 +4689,10 @@ const saveAccessControl = async (): Promise<void> => {
                   step="1"
                 />
               </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.scheduledPickupReminderEnabled" type="checkbox" />
+                預約取餐提前提醒
+              </label>
               <label>
                 預設外帶取餐時間（分）
                 <input
@@ -4702,6 +4706,104 @@ const saveAccessControl = async (): Promise<void> => {
               <label class="toggle-row">
                 <input v-model="engagementSettings.workflowAlerts.fulfillmentConfirmationEnabled" type="checkbox" />
                 出餐確認
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.waitlineWaitWarningEnabled" type="checkbox" />
+                候位等待警示
+              </label>
+              <label>
+                候位等待警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.waitlineWaitWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.dineInUnprintedWarningEnabled" type="checkbox" />
+                內用未出單警示
+              </label>
+              <label>
+                內用未出單警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.dineInUnprintedWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.dineInFulfillmentWarningEnabled" type="checkbox" />
+                內用出餐等待警示
+              </label>
+              <label>
+                內用出餐等待警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.dineInFulfillmentWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.dineInDwellWarningEnabled" type="checkbox" />
+                店內滯留警示
+              </label>
+              <label>
+                店內滯留警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.dineInDwellWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.takeoutUnprintedWarningEnabled" type="checkbox" />
+                外帶未出單警示
+              </label>
+              <label>
+                外帶未出單警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.takeoutUnprintedWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.takeoutFulfillmentWarningEnabled" type="checkbox" />
+                外帶出餐等待警示
+              </label>
+              <label>
+                外帶出餐等待警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.takeoutFulfillmentWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.takeoutWaitWarningEnabled" type="checkbox" />
+                外帶等待警示
+              </label>
+              <label>
+                外帶等待警示分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.takeoutWaitWarningMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
               </label>
               <label class="toggle-row">
                 <input v-model="engagementSettings.workflowAlerts.takeoutLoopEnabled" type="checkbox" />
@@ -4726,7 +4828,7 @@ const saveAccessControl = async (): Promise<void> => {
             </div>
 
             <p class="panel-note">
-              訂單工作區的今日/未來/過去篩選會依開始與結束時間切分；外帶草稿會預帶取餐時間；出餐確認關閉時，首次出單後會自動標記可交付，開啟時需手動按完成；外帶循環會在送單或結帳後開下一張外帶單；自動出店會在已完成製作且已付款時把訂單交付，內用掃碼已付款單仍需手動出店；註記欄位數量會套用到點餐頁商品註記選項。
+              訂單工作區的今日/未來/過去篩選會依開始與結束時間切分；外帶草稿會預帶取餐時間；出餐確認關閉時，首次出單後會自動標記可交付，開啟時需手動按完成；候位、未出單、出餐等待、店內滯留與外帶等待警示會顯示在桌況、候位與訂單任務；外帶循環會在送單或結帳後開下一張外帶單；自動出店會在已完成製作且已付款時把訂單交付，內用掃碼已付款單仍需手動出店；註記欄位數量會套用到點餐頁商品註記選項。
             </p>
           </section>
 

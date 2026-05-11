@@ -127,7 +127,7 @@ type QueueSourceFilter = 'all' | OrderSource
 type QueueFulfillmentFilter = 'all' | 'overdue' | 'due-soon' | 'scheduled'
 type QueueSortMode = 'fulfillment-asc' | 'fulfillment-desc' | 'created-desc' | 'amount-desc'
 type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
-type QueueTaskActionId = 'fulfillment-alerts' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
+type QueueTaskActionId = 'fulfillment-alerts' | 'workflow-warnings' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
 type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
 type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
@@ -195,6 +195,7 @@ interface FloorTableState {
   stayLabel: string
   timeLimitLabel: string
   lastOrderLabel: string
+  warningLabels: string[]
   isMealOver: boolean
   isLastOrderOver: boolean
 }
@@ -2652,6 +2653,24 @@ const fulfillmentAlertWindowMinutes = computed(() => {
   const minutes = Number.isFinite(rawMinutes) ? Math.trunc(rawMinutes) : defaultFulfillmentAlertWindowMinutes
   return Math.min(Math.max(minutes, 0), 1440)
 })
+const workflowThresholdMinutes = (value: number, fallback: number): number => {
+  const minutes = Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : fallback
+  return Math.min(Math.max(minutes, 0), 1440)
+}
+const workflowElapsedMinutesSince = (timestamp: string | null): number => {
+  if (!timestamp) {
+    return 0
+  }
+
+  const startedAt = new Date(timestamp).getTime()
+  if (!Number.isFinite(startedAt)) {
+    return 0
+  }
+
+  return Math.max(0, Math.floor((currentTime.value - startedAt) / 60_000))
+}
+const workflowWarningExceeded = (enabled: boolean, timestamp: string | null, minutes: number): boolean =>
+  enabled && workflowElapsedMinutesSince(timestamp) >= workflowThresholdMinutes(minutes, 0)
 const workflowTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/
 const workflowTimeToMinutes = (value: string, fallback: number): number => {
   if (!workflowTimePattern.test(value)) {
@@ -2876,8 +2895,80 @@ const orderFulfillmentUrgency = (order: PosOrder): FulfillmentUrgency => {
     return 'overdue'
   }
 
+  if (!engagementSettings.value.workflowAlerts.scheduledPickupReminderEnabled) {
+    return 'scheduled'
+  }
+
   const dueSoonThreshold = now + fulfillmentAlertWindowMinutes.value * 60 * 1000
   return timestamp <= dueSoonThreshold ? 'soon' : 'scheduled'
+}
+const latestPrintJobTimestamp = (order: PosOrder): string | null =>
+  [...order.printJobs]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]?.createdAt ?? null
+const orderHasInitialPrint = (order: PosOrder): boolean =>
+  order.printJobs.length > 0 || order.printStatus === 'queued' || order.printStatus === 'printed' || order.printStatus === 'failed'
+const orderWorkflowWarningLabels = (order: PosOrder): string[] => {
+  if (!orderIsOpenForFulfillment(order)) {
+    return []
+  }
+
+  const settings = engagementSettings.value.workflowAlerts
+  const labels: string[] = []
+  const hasInitialPrint = orderHasInitialPrint(order)
+  const printStartedAt = latestPrintJobTimestamp(order) ?? order.createdAt
+
+  if (order.mode === 'dine-in') {
+    if (
+      order.status !== 'ready' &&
+      !hasInitialPrint &&
+      workflowWarningExceeded(settings.dineInUnprintedWarningEnabled, order.createdAt, settings.dineInUnprintedWarningMinutes)
+    ) {
+      labels.push('內用未出單')
+    }
+
+    if (
+      order.status !== 'ready' &&
+      hasInitialPrint &&
+      workflowWarningExceeded(settings.dineInFulfillmentWarningEnabled, printStartedAt, settings.dineInFulfillmentWarningMinutes)
+    ) {
+      labels.push('出餐等待')
+    }
+
+    if (workflowWarningExceeded(settings.dineInDwellWarningEnabled, order.createdAt, settings.dineInDwellWarningMinutes)) {
+      labels.push('店內滯留')
+    }
+  }
+
+  if (order.mode === 'takeout' || order.mode === 'delivery') {
+    if (
+      order.status !== 'ready' &&
+      !hasInitialPrint &&
+      workflowWarningExceeded(settings.takeoutUnprintedWarningEnabled, order.createdAt, settings.takeoutUnprintedWarningMinutes)
+    ) {
+      labels.push('外帶未出單')
+    }
+
+    if (
+      order.status !== 'ready' &&
+      hasInitialPrint &&
+      workflowWarningExceeded(settings.takeoutFulfillmentWarningEnabled, printStartedAt, settings.takeoutFulfillmentWarningMinutes)
+    ) {
+      labels.push(order.mode === 'delivery' ? '外送出餐等待' : '外帶出餐等待')
+    }
+
+    if (
+      hasInitialPrint &&
+      workflowWarningExceeded(settings.takeoutWaitWarningEnabled, printStartedAt, settings.takeoutWaitWarningMinutes)
+    ) {
+      labels.push(order.mode === 'delivery' ? '外送等待' : '外帶等待')
+    }
+  }
+
+  return labels
+}
+const orderWorkflowWarningSearchText = (order: PosOrder): string => {
+  const labels = orderWorkflowWarningLabels(order)
+  return labels.length > 0 ? `流程警示 警示 ${labels.join(' ')}` : ''
 }
 const orderMatchesQueueDate = (order: PosOrder): boolean => {
   if (queueDateFilter.value === 'all') {
@@ -2939,6 +3030,7 @@ const orderMatchesQueueSearch = (order: PosOrder, keyword: string): boolean => {
     statusLabels[order.status],
     orderPaymentSplitSummary(order),
     orderPaymentBreakdownSummary(order),
+    orderWorkflowWarningSearchText(order),
     `列印${printStatusLabels[order.printStatus]}`,
     orderNeedsOnlineReminder(order) ? '未確認 線上未確認 掃碼未確認' : '',
     fulfillmentLabel(order),
@@ -3078,6 +3170,9 @@ const queueReadyOrders = computed(() =>
 const queuePrintIssueOrders = computed(() =>
   pendingOrders.value.filter((order) => order.printStatus === 'failed'),
 )
+const queueWorkflowWarningOrders = computed(() =>
+  pendingOrders.value.filter((order) => orderWorkflowWarningLabels(order).length > 0),
+)
 const queueTaskActions = computed<QueueTaskAction[]>(() => [
   {
     id: 'fulfillment-alerts',
@@ -3088,6 +3183,16 @@ const queueTaskActions = computed<QueueTaskAction[]>(() => [
     count: queueFulfillmentAlert.value.count,
     actionLabel: queueFulfillmentAlert.value.count > 0 ? '處理' : '查看',
     tone: queueFulfillmentAlert.value.isOverdue ? 'danger' : 'warning',
+  },
+  {
+    id: 'workflow-warnings',
+    label: '流程警示',
+    detail: queueWorkflowWarningOrders.value.length > 0
+      ? '候位、未出單、出餐或滯留超時'
+      : '目前沒有流程警示',
+    count: queueWorkflowWarningOrders.value.length,
+    actionLabel: queueWorkflowWarningOrders.value.length > 0 ? '處理' : '查看',
+    tone: queueWorkflowWarningOrders.value.length > 0 ? 'danger' : 'primary',
   },
   {
     id: 'pending-payments',
@@ -5124,6 +5229,7 @@ const floorTableStates = computed<FloorTableState[]>(() =>
       stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
       timeLimitLabel: dineInTimeLimitLabel(order),
       lastOrderLabel: dineInLastOrderLabel(order),
+      warningLabels: order ? orderWorkflowWarningLabels(order) : [],
       isMealOver: timeLimit?.isMealOver ?? false,
       isLastOrderOver: timeLimit?.isLastOrderOver ?? false,
     }
@@ -5352,6 +5458,14 @@ const averageWaitlineMinutes = computed(() => {
   const totalMinutes = waitlineEntries.value.reduce((total, entry) => total + elapsedMinutesSince(entry.createdAt), 0)
   return Math.round(totalMinutes / waitlineEntries.value.length)
 })
+const waitlineWarningLabel = (entry: WaitlineEntry): string => {
+  const settings = engagementSettings.value.workflowAlerts
+  if (!workflowWarningExceeded(settings.waitlineWaitWarningEnabled, entry.createdAt, settings.waitlineWaitWarningMinutes)) {
+    return ''
+  }
+
+  return `候位超時 ${workflowThresholdMinutes(settings.waitlineWaitWarningMinutes, 30)} min`
+}
 const floorNotificationItems = computed<PosNotificationItem[]>(() => [
   {
     id: 'display-controls',
@@ -8709,6 +8823,10 @@ const runQueueTaskAction = (action: QueueTaskAction): void => {
       : queueFulfillmentAlert.value.overdueCount > 0 ? 'overdue' : 'due-soon'
   }
 
+  if (action.id === 'workflow-warnings') {
+    queueSearchTerm.value = '流程警示'
+  }
+
   if (action.id === 'pending-payments') {
     queuePaymentFilter.value = 'pending'
   }
@@ -10445,6 +10563,7 @@ onBeforeUnmount(() => {
                               'floor-table-card--editable': backendEditModeEnabled,
                               'floor-table-card--dragging': floorTableDragState?.tableId === state.table.id,
                               'floor-table-card--time-limit': state.isMealOver,
+                              'floor-table-card--workflow-warning': state.warningLabels.length > 0,
                             },
                           ]"
                           type="button"
@@ -10479,6 +10598,10 @@ onBeforeUnmount(() => {
                             <Clock3 :size="13" aria-hidden="true" />
                             {{ state.lastOrderLabel }}
                           </span>
+                          <span v-if="state.warningLabels.length > 0" class="floor-table-warning">
+                            <CircleAlert :size="13" aria-hidden="true" />
+                            {{ state.warningLabels[0] }}
+                          </span>
                         </button>
                         <div v-if="floorTableStates.length === 0" class="empty-state floor-empty-state floor-map-empty-state">
                           <LayoutDashboard :size="24" aria-hidden="true" />
@@ -10508,6 +10631,10 @@ onBeforeUnmount(() => {
                         <p v-if="selectedFloorTable.timeLimitLabel" class="floor-time-limit-note">
                           <Clock3 :size="16" aria-hidden="true" />
                           {{ selectedFloorTable.timeLimitLabel }} · {{ selectedFloorTable.lastOrderLabel }}
+                        </p>
+                        <p v-if="selectedFloorTable.warningLabels.length > 0" class="floor-workflow-warning-note">
+                          <CircleAlert :size="16" aria-hidden="true" />
+                          {{ selectedFloorTable.warningLabels.join('、') }}
                         </p>
                         <div class="floor-control-actions">
                           <button
@@ -10586,7 +10713,12 @@ onBeforeUnmount(() => {
                           </button>
                         </div>
                         <div class="waitline-list">
-                          <article v-for="entry in waitlineEntries" :key="entry.id" class="waitline-row">
+                          <article
+                            v-for="entry in waitlineEntries"
+                            :key="entry.id"
+                            class="waitline-row"
+                            :class="{ 'waitline-row--warning': waitlineWarningLabel(entry) }"
+                          >
                             <div>
                               <strong>{{ entry.name }}</strong>
                               <span>
@@ -10594,6 +10726,10 @@ onBeforeUnmount(() => {
                                 <template v-if="entry.phone"> · {{ entry.phone }}</template>
                                 <template v-if="entry.note"> · {{ entry.note }}</template>
                               </span>
+                              <small v-if="waitlineWarningLabel(entry)" class="waitline-warning-status">
+                                <CircleAlert :size="13" aria-hidden="true" />
+                                {{ waitlineWarningLabel(entry) }}
+                              </small>
                               <small class="waitline-preorder-status">{{ waitlinePreorderSummary(entry) }}</small>
                             </div>
                             <div class="waitline-actions">
@@ -11988,6 +12124,14 @@ onBeforeUnmount(() => {
                             >
                               <Clock3 :size="13" aria-hidden="true" />
                               {{ fulfillmentUrgencyLabel(order) }}
+                            </span>
+                            <span
+                              v-for="warning in orderWorkflowWarningLabels(order)"
+                              :key="`${order.id}-${warning}`"
+                              class="workflow-warning-chip"
+                            >
+                              <CircleAlert :size="13" aria-hidden="true" />
+                              {{ warning }}
                             </span>
                             <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                           </div>

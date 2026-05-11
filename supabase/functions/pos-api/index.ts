@@ -831,6 +831,21 @@ interface CustomerEngagementSettings {
     fulfillmentDueSoonMinutes: number;
     defaultTakeoutPickupMinutes: number;
     fulfillmentConfirmationEnabled: boolean;
+    scheduledPickupReminderEnabled: boolean;
+    waitlineWaitWarningEnabled: boolean;
+    waitlineWaitWarningMinutes: number;
+    dineInUnprintedWarningEnabled: boolean;
+    dineInUnprintedWarningMinutes: number;
+    dineInFulfillmentWarningEnabled: boolean;
+    dineInFulfillmentWarningMinutes: number;
+    dineInDwellWarningEnabled: boolean;
+    dineInDwellWarningMinutes: number;
+    takeoutUnprintedWarningEnabled: boolean;
+    takeoutUnprintedWarningMinutes: number;
+    takeoutFulfillmentWarningEnabled: boolean;
+    takeoutFulfillmentWarningMinutes: number;
+    takeoutWaitWarningEnabled: boolean;
+    takeoutWaitWarningMinutes: number;
     takeoutLoopEnabled: boolean;
     dineInAutoExitEnabled: boolean;
     takeoutAutoExitEnabled: boolean;
@@ -1369,6 +1384,21 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     fulfillmentDueSoonMinutes: 15,
     defaultTakeoutPickupMinutes: 5,
     fulfillmentConfirmationEnabled: false,
+    scheduledPickupReminderEnabled: false,
+    waitlineWaitWarningEnabled: false,
+    waitlineWaitWarningMinutes: 30,
+    dineInUnprintedWarningEnabled: false,
+    dineInUnprintedWarningMinutes: 15,
+    dineInFulfillmentWarningEnabled: false,
+    dineInFulfillmentWarningMinutes: 15,
+    dineInDwellWarningEnabled: false,
+    dineInDwellWarningMinutes: 120,
+    takeoutUnprintedWarningEnabled: false,
+    takeoutUnprintedWarningMinutes: 15,
+    takeoutFulfillmentWarningEnabled: false,
+    takeoutFulfillmentWarningMinutes: 15,
+    takeoutWaitWarningEnabled: false,
+    takeoutWaitWarningMinutes: 15,
     takeoutLoopEnabled: false,
     dineInAutoExitEnabled: false,
     takeoutAutoExitEnabled: true,
@@ -9863,6 +9893,56 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         86400,
       ),
       fulfillmentConfirmationEnabled: workflowAlerts.fulfillmentConfirmationEnabled === true,
+      scheduledPickupReminderEnabled: workflowAlerts.scheduledPickupReminderEnabled === true,
+      waitlineWaitWarningEnabled: workflowAlerts.waitlineWaitWarningEnabled === true,
+      waitlineWaitWarningMinutes: clampIntegerRange(
+        workflowAlerts.waitlineWaitWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.waitlineWaitWarningMinutes,
+        0,
+        1440,
+      ),
+      dineInUnprintedWarningEnabled: workflowAlerts.dineInUnprintedWarningEnabled === true,
+      dineInUnprintedWarningMinutes: clampIntegerRange(
+        workflowAlerts.dineInUnprintedWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.dineInUnprintedWarningMinutes,
+        0,
+        1440,
+      ),
+      dineInFulfillmentWarningEnabled: workflowAlerts.dineInFulfillmentWarningEnabled === true,
+      dineInFulfillmentWarningMinutes: clampIntegerRange(
+        workflowAlerts.dineInFulfillmentWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.dineInFulfillmentWarningMinutes,
+        0,
+        1440,
+      ),
+      dineInDwellWarningEnabled: workflowAlerts.dineInDwellWarningEnabled === true,
+      dineInDwellWarningMinutes: clampIntegerRange(
+        workflowAlerts.dineInDwellWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.dineInDwellWarningMinutes,
+        0,
+        1440,
+      ),
+      takeoutUnprintedWarningEnabled: workflowAlerts.takeoutUnprintedWarningEnabled === true,
+      takeoutUnprintedWarningMinutes: clampIntegerRange(
+        workflowAlerts.takeoutUnprintedWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.takeoutUnprintedWarningMinutes,
+        0,
+        1440,
+      ),
+      takeoutFulfillmentWarningEnabled: workflowAlerts.takeoutFulfillmentWarningEnabled === true,
+      takeoutFulfillmentWarningMinutes: clampIntegerRange(
+        workflowAlerts.takeoutFulfillmentWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.takeoutFulfillmentWarningMinutes,
+        0,
+        1440,
+      ),
+      takeoutWaitWarningEnabled: workflowAlerts.takeoutWaitWarningEnabled === true,
+      takeoutWaitWarningMinutes: clampIntegerRange(
+        workflowAlerts.takeoutWaitWarningMinutes,
+        defaultEngagementSettings.workflowAlerts.takeoutWaitWarningMinutes,
+        0,
+        1440,
+      ),
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
       dineInAutoExitEnabled: workflowAlerts.dineInAutoExitEnabled === true,
       takeoutAutoExitEnabled: workflowAlerts.takeoutAutoExitEnabled !== false,
