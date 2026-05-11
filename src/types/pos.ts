@@ -786,6 +786,8 @@ export interface WorkflowAlertSettings {
   fulfillmentDueSoonMinutes: number
   defaultTakeoutPickupMinutes: number
   takeoutLoopEnabled: boolean
+  dineInAutoExitEnabled: boolean
+  takeoutAutoExitEnabled: boolean
 }
 
 export interface OrderPageDisplaySettings {
