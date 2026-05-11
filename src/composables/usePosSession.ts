@@ -157,6 +157,11 @@ interface UsePosSessionOptions {
   autoLoad?: boolean
 }
 
+interface PrintOrderOptions {
+  lineSignatures?: string[]
+  forceIncludePausedLines?: boolean
+}
+
 interface BackendStatus {
   mode: BackendMode
   label: string
@@ -3839,7 +3844,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const printOrder = async (orderId: string, timing: PrintRuleTiming | null = null): Promise<void> => {
+  const printOrder = async (
+    orderId: string,
+    timing: PrintRuleTiming | null = null,
+    options: PrintOrderOptions = {},
+  ): Promise<void> => {
     if (printingOrderId.value) {
       return
     }
@@ -3860,11 +3869,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printingOrderId.value = orderId
     const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
     const printTiming = timing ?? (claimedOrder.printJobs.length > 0 ? 'reprint' : 'order')
-    const printPlan = buildOrderPrintPlan(claimedOrder, currentPrinterSettings(), { timing: printTiming })
+    const lineSignatureFilter = new Set(options.lineSignatures ?? [])
+    const isLineSubsetPrint = lineSignatureFilter.size > 0
+    const printOrderSubject: PosOrder = isLineSubsetPrint
+      ? {
+        ...claimedOrder,
+        lines: claimedOrder.lines
+          .filter((line) => lineSignatureFilter.has(lineVariantSignature(line)))
+          .map((line) => options.forceIncludePausedLines ? { ...line, printPaused: false } : line),
+      }
+      : claimedOrder
+
+    if (isLineSubsetPrint && printOrderSubject.lines.length === 0) {
+      setBackendStatus('fallback', '批次出單略過', `${orderId} 找不到符合狀態的品項`)
+      printingOrderId.value = null
+      return
+    }
+
+    const printPlan = buildOrderPrintPlan(printOrderSubject, currentPrinterSettings(), { timing: printTiming })
     lastPrintPreview.value = printPlan.preview
 
     if (printPlan.jobs.length === 0) {
-      if (printTiming === 'order' || printTiming === 'reprint') {
+      if (!isLineSubsetPrint && (printTiming === 'order' || printTiming === 'reprint')) {
         const nextOrder = { ...claimedOrder, printStatus: 'skipped' as const }
         replaceOrder(order.id, nextOrder)
       }
@@ -3920,7 +3946,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       setBackendStatus(
         'connected',
-        '出單完成',
+        isLineSubsetPrint ? '批次出單完成' : '出單完成',
         nextPrintStatus === 'printed'
           ? `${order.id} 已完成 ${printPlan.jobs.length} 筆列印`
           : `${order.id} 出單狀態：${nextPrintStatus}`,
@@ -3935,6 +3961,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } finally {
       printingOrderId.value = null
     }
+  }
+
+  const printCartLinesByPrintStatus = async (printPaused: boolean): Promise<boolean> => {
+    const lineSignatures = cartLines.value
+      .filter((line) => (line.printPaused === true) === printPaused)
+      .map(lineVariantSignature)
+
+    if (lineSignatures.length === 0) {
+      setBackendStatus('fallback', '批次出單略過', printPaused ? '沒有暫停出單品項' : '沒有待出單品項')
+      return false
+    }
+
+    const order = await saveCounterOrder(false)
+    if (!order) {
+      return false
+    }
+
+    await printOrder(order.id, 'reprint', {
+      lineSignatures,
+      forceIncludePausedLines: true,
+    })
+    return true
   }
 
   const printManualOrderPayload = async (
@@ -4991,6 +5039,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     pointRedemptionLimit,
     pointsRedeemed,
     memberPointsEarned,
+    printCartLinesByPrintStatus,
     printCustomerReceipt,
     printTransactionDetail,
     printOrder,

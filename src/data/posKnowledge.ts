@@ -72,6 +72,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'floor',
   },
   {
+    id: 'cart-batch-item-actions',
+    category: 'orders',
+    title: '批次點餐清單操作',
+    summary: '點餐票券可依出單狀態批次重印或刪除品項，對齊 iCHEF 點餐清單操作。',
+    steps: [
+      '在點餐頁左側票券加入品項後，使用「批次商品操作」的狀態選單選擇「出單」或「暫停」。',
+      '畫面會即時計算符合該狀態的明細數與商品件數；沒有符合品項時批次按鈕會停用。',
+      '按「重印」會先儲存目前票券，再只針對符合狀態的明細建立重印列印工作。',
+      '按「刪除」會依後台刪品項操作驗證設定要求員工識別碼，通過後才移除符合狀態的明細。',
+      '單一明細仍可保留原本的「出單 / 暫停」切換，批次操作只處理目前選定狀態的品項。',
+    ],
+    keywords: ['批次', '點餐清單', '重印廚房', '刪除品項', '出單狀態', '暫停出單', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',
