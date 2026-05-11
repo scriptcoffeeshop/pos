@@ -830,6 +830,7 @@ interface CustomerEngagementSettings {
     todayOrderEndTime: string;
     fulfillmentDueSoonMinutes: number;
     defaultTakeoutPickupMinutes: number;
+    fulfillmentConfirmationEnabled: boolean;
     takeoutLoopEnabled: boolean;
     dineInAutoExitEnabled: boolean;
     takeoutAutoExitEnabled: boolean;
@@ -1367,6 +1368,7 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     todayOrderEndTime: "23:59",
     fulfillmentDueSoonMinutes: 15,
     defaultTakeoutPickupMinutes: 5,
+    fulfillmentConfirmationEnabled: false,
     takeoutLoopEnabled: false,
     dineInAutoExitEnabled: false,
     takeoutAutoExitEnabled: true,
@@ -9860,6 +9862,7 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         0,
         86400,
       ),
+      fulfillmentConfirmationEnabled: workflowAlerts.fulfillmentConfirmationEnabled === true,
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
       dineInAutoExitEnabled: workflowAlerts.dineInAutoExitEnabled === true,
       takeoutAutoExitEnabled: workflowAlerts.takeoutAutoExitEnabled !== false,
