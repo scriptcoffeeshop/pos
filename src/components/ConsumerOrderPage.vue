@@ -121,6 +121,7 @@ const optionSelections = ref<OptionSelectionMap>({})
 const comboSelections = ref<ComboSelectionMap>({})
 const comboOptionSelections = ref<ComboOptionSelectionMap>({})
 const optionError = ref('')
+const itemNoteDraft = ref('')
 let onlineMenuSyncTimer: number | null = null
 let onlineRealtimeRefreshTimer: number | null = null
 let consumerClockTimer: number | null = null
@@ -340,6 +341,14 @@ const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(
     }))
 })
 const hasPaymentOptions = computed(() => !requiresPaymentSelection.value || paymentOptions.value.length > 0)
+const itemNotesVisible = computed(() => onlineOrdering.value.commentFields.itemNotes !== 'hidden')
+const orderNoteMode = computed(() => onlineOrdering.value.commentFields.orderNote)
+const orderNoteVisible = computed(() => orderNoteMode.value !== 'hidden')
+const orderNoteRequired = computed(() => orderNoteMode.value === 'required')
+const orderNotePlaceholder = computed(() =>
+  onlineOrdering.value.commentFields.orderNotePlaceholder.trim() || '甜度、冰量或其他需求',
+)
+const normalizedItemNote = computed(() => itemNoteDraft.value.trim().replace(/\s+/g, ' ').slice(0, 80))
 const dineInCheckoutDetail = computed(() => {
   if (!isQrDineInOrder.value) {
     return ''
@@ -448,6 +457,7 @@ const canSubmit = computed(() =>
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
+  (!orderNoteRequired.value || customer.note.trim().length > 0) &&
   (!requiresPaymentSelection.value || paymentOptions.value.some((option) => option.value === paymentMethod.value)) &&
   deliveryMinimumMet.value &&
   requestedFulfillmentError() === null &&
@@ -577,6 +587,7 @@ const selectedOptionLabels = computed(() =>
     ...selectedOptionChoices.value.map((entry) =>
       optionChoiceLabel(entry.choice),
     ),
+    ...(itemNotesVisible.value && normalizedItemNote.value ? [`文字註記：${normalizedItemNote.value}`] : []),
     ...selectedComboItems.value.map((entry) => {
       const quantityLabel = entry.quantity > 1 ? ` x${entry.quantity}` : ''
       const priceDelta = entry.choice.priceDelta + entry.optionDetails.priceDelta
@@ -599,6 +610,7 @@ const openOptionPanel = (item: MenuItem): void => {
   optionSelections.value = resetOptionSelections(groups)
   comboSelections.value = {}
   comboOptionSelections.value = {}
+  itemNoteDraft.value = ''
   optionError.value = ''
 }
 
@@ -607,6 +619,7 @@ const closeOptionPanel = (): void => {
   optionSelections.value = {}
   comboSelections.value = {}
   comboOptionSelections.value = {}
+  itemNoteDraft.value = ''
   optionError.value = ''
 }
 
@@ -837,7 +850,7 @@ const addItem = (item: MenuItem): void => {
     return
   }
 
-  if (optionGroupsForItem(item).length > 0 || comboGroupsForItem(item).length > 0) {
+  if (itemNotesVisible.value || optionGroupsForItem(item).length > 0 || comboGroupsForItem(item).length > 0) {
     openOptionPanel(item)
     return
   }
@@ -1009,9 +1022,11 @@ const submitOnlineOrder = async (): Promise<void> => {
   }
 
   if (!canSubmit.value) {
-    formError.value = requiresDeliveryAddress.value
-      ? '請填寫姓名、電話、外送地址並加入品項'
-      : '請填寫姓名、電話並加入品項'
+    formError.value = orderNoteRequired.value && customer.note.trim().length === 0
+      ? '請填寫訂單備註'
+      : requiresDeliveryAddress.value
+        ? '請填寫姓名、電話、外送地址並加入品項'
+        : '請填寫姓名、電話並加入品項'
     return
   }
 
@@ -1042,7 +1057,10 @@ const submitOnlineOrder = async (): Promise<void> => {
     taxId: normalizeTaxId(customer.taxId),
     invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
     memberId: null,
-    note: [qrTableLabel ? `桌位 ${qrTableLabel}` : '', customer.note.trim()].filter(Boolean).join(' · '),
+    note: [
+      qrTableLabel ? `桌位 ${qrTableLabel}` : '',
+      orderNoteVisible.value ? customer.note.trim() : '',
+    ].filter(Boolean).join(' · '),
     qrSessionOrderId: qrSessionOrderId || null,
     qrSessionStartedAt: qrSessionStartedAt || null,
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -1413,9 +1431,10 @@ watch(
           載具條碼
           <input v-model="customer.invoiceCarrierBarcode" type="text" maxlength="32" placeholder="/ABC1234" />
         </label>
-        <label class="wide-field">
+        <label v-if="orderNoteVisible" class="wide-field">
           備註
-          <textarea v-model="customer.note" rows="3" placeholder="甜度、冰量或其他需求" />
+          <textarea v-model="customer.note" rows="3" :placeholder="orderNotePlaceholder" />
+          <small>{{ orderNoteRequired ? '此欄位為必填' : '可填寫整筆訂單需求' }}</small>
         </label>
       </div>
 
@@ -1545,6 +1564,17 @@ watch(
                 </div>
               </div>
             </div>
+          </section>
+
+          <section v-if="itemNotesVisible" class="consumer-option-group">
+            <div class="consumer-option-group-heading">
+              <h3>餐點備註</h3>
+              <span>選填</span>
+            </div>
+            <label class="consumer-item-note-field">
+              <span>文字註記</span>
+              <input v-model="itemNoteDraft" type="text" maxlength="80" placeholder="少冰、少糖、不要香菜" />
+            </label>
           </section>
 
           <p v-if="optionError" class="consumer-form-error">{{ optionError }}</p>

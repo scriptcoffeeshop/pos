@@ -417,6 +417,11 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   dineInCheckout: {
     mode: 'postpaid',
   },
+  commentFields: {
+    itemNotes: 'shown',
+    orderNote: 'optional',
+    orderNotePlaceholder: '甜度、冰量或其他需求',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -467,6 +472,19 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...defaultOnlineOrderingSettings().dineInCheckout,
     ...(settings.dineInCheckout ?? {}),
     mode: settings.dineInCheckout?.mode === 'prepaid' ? 'prepaid' : 'postpaid',
+  },
+  commentFields: {
+    ...defaultOnlineOrderingSettings().commentFields,
+    ...(settings.commentFields ?? {}),
+    itemNotes: settings.commentFields?.itemNotes === 'hidden' ? 'hidden' : 'shown',
+    orderNote:
+      settings.commentFields?.orderNote === 'hidden' || settings.commentFields?.orderNote === 'required'
+        ? settings.commentFields.orderNote
+        : 'optional',
+    orderNotePlaceholder:
+      typeof settings.commentFields?.orderNotePlaceholder === 'string' && settings.commentFields.orderNotePlaceholder.trim().length > 0
+        ? settings.commentFields.orderNotePlaceholder.trim().slice(0, 80)
+        : defaultOnlineOrderingSettings().commentFields.orderNotePlaceholder,
   },
   scheduledOrderTimeWindows: (
     settings.scheduledOrderTimeWindows ?? defaultOnlineOrderingSettings().scheduledOrderTimeWindows
@@ -2316,6 +2334,16 @@ const saveOnlineOrdering = async (): Promise<void> => {
         dineInCheckout: {
           mode: onlineOrdering.value.dineInCheckout.mode === 'prepaid' ? 'prepaid' : 'postpaid',
         },
+        commentFields: {
+          itemNotes: onlineOrdering.value.commentFields.itemNotes === 'hidden' ? 'hidden' : 'shown',
+          orderNote:
+            onlineOrdering.value.commentFields.orderNote === 'hidden' || onlineOrdering.value.commentFields.orderNote === 'required'
+              ? onlineOrdering.value.commentFields.orderNote
+              : 'optional',
+          orderNotePlaceholder:
+            onlineOrdering.value.commentFields.orderNotePlaceholder.trim().slice(0, 80) ||
+            defaultOnlineOrderingSettings().commentFields.orderNotePlaceholder,
+        },
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -3322,6 +3350,11 @@ const saveAccessControl = async (): Promise<void> => {
             <strong>{{ onlineOrdering.dineInCheckout.mode === 'prepaid' ? '先結' : '後結' }}</strong>
             <small>{{ onlineOrdering.dineInCheckout.mode === 'prepaid' ? '掃碼送單前需選線上付款' : '掃碼送單後由 POS 收款' }}</small>
           </article>
+          <article>
+            <span>備註欄位</span>
+            <strong>{{ onlineOrdering.commentFields.orderNote === 'required' ? '訂單必填' : onlineOrdering.commentFields.orderNote === 'hidden' ? '訂單隱藏' : '訂單選填' }}</strong>
+            <small>{{ onlineOrdering.commentFields.itemNotes === 'hidden' ? '隱藏餐點備註' : '顯示餐點備註' }}</small>
+          </article>
         </div>
 
         <section class="admin-subpanel">
@@ -3411,6 +3444,28 @@ const saveAccessControl = async (): Promise<void> => {
                 <option value="prepaid">先結：送單前需線上付款</option>
               </select>
               <small>後結模式會在 QR 頁隱藏付款選項，先結模式只允許線上付款模組。</small>
+            </label>
+            <label>
+              餐點備註
+              <select v-model="onlineOrdering.commentFields.itemNotes">
+                <option value="shown">顯示欄位</option>
+                <option value="hidden">隱藏欄位</option>
+              </select>
+              <small>控制消費者是否可在單一品項填寫文字備註。</small>
+            </label>
+            <label>
+              訂單備註
+              <select v-model="onlineOrdering.commentFields.orderNote">
+                <option value="optional">顯示欄位，消費者選填</option>
+                <option value="required">顯示欄位，消費者必填</option>
+                <option value="hidden">隱藏欄位</option>
+              </select>
+              <small>隱藏時 QR 桌號資訊仍會保留，但消費者不能送出額外訂單備註。</small>
+            </label>
+            <label>
+              備註提示文字
+              <input v-model="onlineOrdering.commentFields.orderNotePlaceholder" type="text" maxlength="80" />
+              <small>顯示於消費者訂單備註欄位。</small>
             </label>
             <label class="wide-field">
               暫停接單提示

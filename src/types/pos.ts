@@ -16,6 +16,8 @@ export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-draw
 export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
 export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
 export type OnlineDineInCheckoutMode = 'prepaid' | 'postpaid'
+export type OnlineItemCommentMode = 'hidden' | 'shown'
+export type OnlineOrderCommentMode = 'hidden' | 'optional' | 'required'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
@@ -470,6 +472,12 @@ export interface OnlineDineInCheckoutSettings {
   mode: OnlineDineInCheckoutMode
 }
 
+export interface OnlineCommentFieldSettings {
+  itemNotes: OnlineItemCommentMode
+  orderNote: OnlineOrderCommentMode
+  orderNotePlaceholder: string
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -499,6 +507,7 @@ export interface OnlineOrderingSettings {
   }
   dineInTimeLimit: OnlineDineInTimeLimitSettings
   dineInCheckout: OnlineDineInCheckoutSettings
+  commentFields: OnlineCommentFieldSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

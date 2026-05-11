@@ -1388,6 +1388,11 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   dineInCheckout: {
     mode: 'postpaid',
   },
+  commentFields: {
+    itemNotes: 'shown',
+    orderNote: 'optional',
+    orderNotePlaceholder: '甜度、冰量或其他需求',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1479,6 +1484,30 @@ const normalizeDineInCheckoutSettings = (
   const settings = value as Partial<OnlineOrderingSettings['dineInCheckout']>
   return {
     mode: settings.mode === 'prepaid' ? 'prepaid' : 'postpaid',
+  }
+}
+
+const normalizeCommentFieldSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().commentFields,
+): OnlineOrderingSettings['commentFields'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['commentFields']>
+  const orderNote =
+    settings.orderNote === 'hidden' || settings.orderNote === 'required' || settings.orderNote === 'optional'
+      ? settings.orderNote
+      : defaults.orderNote
+
+  return {
+    itemNotes: settings.itemNotes === 'hidden' ? 'hidden' : 'shown',
+    orderNote,
+    orderNotePlaceholder:
+      typeof settings.orderNotePlaceholder === 'string' && settings.orderNotePlaceholder.trim().length > 0
+        ? settings.orderNotePlaceholder.trim().slice(0, 80)
+        : defaults.orderNotePlaceholder,
   }
 }
 
@@ -1938,6 +1967,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode, defaults.sessionQrCode),
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit, defaults.dineInTimeLimit),
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout, defaults.dineInCheckout),
+    commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

@@ -258,6 +258,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 5. 先結模式下嘗試用舊頁或 API 送出 `cash` / `bank_transfer`，`POST /orders` 應回覆 409，不得寫入訂單。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認結帳模式、結帳說明與 QR 頁付款行為仍從 `online_ordering` runtime 還原。
 
+## 線上點餐備註欄位
+
+餐點備註與訂單備註設定存在 `online_ordering.commentFields`，對照 iCHEF 後台「內用掃碼點餐 / 外帶外送訂餐 > 備註欄位」。這不是 APK 本機設定；fresh reinstall 後仍應從 runtime 還原。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」設定餐點備註為顯示、訂單備註為選填，並修改備註提示文字後儲存。
+2. 用 QR 或線上點餐頁加入一個品項，確認品項選項面板可輸入「餐點備註」，送單後 POS 訂單明細或待接單明細應看到該文字註記。
+3. 將訂單備註改成「必填」後重新整理消費者頁，不填備註不得送單；填寫後送單應寫入 POS 訂單備註。
+4. 將訂單備註改成「隱藏」後重新整理消費者頁，確認整筆訂單備註欄位消失；QR 內用單仍保留桌位資訊，額外備註不應被舊頁或 API 寫入。
+5. 將餐點備註改成「隱藏」後重新整理消費者頁，確認品項選項面板不再提供文字註記；繞過前端送 `文字註記：` options 時，`pos-api` 應過濾掉。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認備註欄位設定、既有訂單備註與品項文字註記仍從 Supabase/API 還原。
+
 ## 線上服務方式開關
 
 自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`，對照 iCHEF 可在 POS 或後台臨時調整營業狀態的流程。這不是 APK 本機開關，fresh reinstall 後仍應從 runtime 還原。
@@ -422,6 +433,7 @@ rtk npm run apk:install:fresh
 - 測會員優惠券時，使用券必須把 `member_coupons.status` 改成 `redeemed` 並記錄 `redeemed_order_id`；另一台平板不得重複使用同一張券，作廢或退款後才可退回 active。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測內用掃碼結帳流程時，`online_ordering.dineInCheckout` 應控制先結/後結；後結 QR 內用頁不得顯示付款方式且 API 會寫入現場待收款，先結 QR 內用頁只能顯示線上付款且 API 必須拒絕現場付款。
+- 測線上點餐備註欄位時，`online_ordering.commentFields` 應控制餐點文字註記與訂單備註欄位；必填訂單備註要由前端與 API 同時阻擋，隱藏欄位不得靠舊頁/API 寫入額外消費者備註。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測訂單 QR 自動列印時，後台「線上點餐」的開關、指定出單機與 Logo 文字應寫入 `online_ordering.sessionQrCode`；fresh reinstall 後建立內用桌位訂單仍應用同一設定建立 QR `print_jobs`，並由 APK `LanPrinter` 送到指定出單機。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。

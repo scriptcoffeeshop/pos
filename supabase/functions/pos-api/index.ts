@@ -25,6 +25,8 @@ type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
 type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
 type OnlineDineInCheckoutMode = "prepaid" | "postpaid";
+type OnlineItemCommentMode = "hidden" | "shown";
+type OnlineOrderCommentMode = "hidden" | "optional" | "required";
 type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
 type InventoryConsumptionSubject = "product" | "option";
 
@@ -505,6 +507,12 @@ interface OnlineDineInCheckoutSettings {
   mode: OnlineDineInCheckoutMode;
 }
 
+interface OnlineCommentFieldSettings {
+  itemNotes: OnlineItemCommentMode;
+  orderNote: OnlineOrderCommentMode;
+  orderNotePlaceholder: string;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -538,6 +546,7 @@ interface OnlineOrderingSettings {
   };
   dineInTimeLimit: OnlineDineInTimeLimitSettings;
   dineInCheckout: OnlineDineInCheckoutSettings;
+  commentFields: OnlineCommentFieldSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1100,6 +1109,11 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   },
   dineInCheckout: {
     mode: "postpaid",
+  },
+  commentFields: {
+    itemNotes: "shown",
+    orderNote: "optional",
+    orderNotePlaceholder: "甜度、冰量或其他需求",
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -3939,7 +3953,7 @@ api.post("/orders", async (c) => {
   }
 
   const stationId = sanitizeStationId(input.stationId);
-  const orderLines = input.lines ?? [];
+  let orderLines = input.lines ?? [];
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
@@ -3961,6 +3975,11 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
     }
+    const commentFieldError = applyOnlineCommentFieldRules(input, onlineOrdering.commentFields);
+    if (commentFieldError) {
+      return c.json({ error: commentFieldError }, 409);
+    }
+    orderLines = input.lines ?? [];
     const qrDineInPostpaid =
       orderSource === "qr" &&
       serviceMode === "dine-in" &&
@@ -6321,6 +6340,27 @@ const normalizeDineInCheckoutSettings = (input: unknown): OnlineDineInCheckoutSe
   };
 };
 
+const normalizeCommentFieldSettings = (input: unknown): OnlineCommentFieldSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.commentFields };
+  }
+
+  const settings = input as Partial<OnlineCommentFieldSettings>;
+  const orderNote =
+    settings.orderNote === "hidden" || settings.orderNote === "required" || settings.orderNote === "optional"
+      ? settings.orderNote
+      : defaultOnlineOrdering.commentFields.orderNote;
+
+  return {
+    itemNotes: settings.itemNotes === "hidden" ? "hidden" : "shown",
+    orderNote,
+    orderNotePlaceholder: sanitizeText(
+      settings.orderNotePlaceholder,
+      defaultOnlineOrdering.commentFields.orderNotePlaceholder,
+    ).slice(0, 80) || defaultOnlineOrdering.commentFields.orderNotePlaceholder,
+  };
+};
+
 const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
   if (!Array.isArray(input)) {
     return [...fallback];
@@ -6424,6 +6464,50 @@ const validateQrDineInTimeLimit = (
   const lastOrderOffsetMinutes = Math.min(rule.lastOrderBeforeEndMinutes, rule.mealMinutes);
   const lastOrderAt = mealEndsAt - lastOrderOffsetMinutes * 60_000;
   return Date.now() >= lastOrderAt ? "已超過最後加點時間，請洽現場人員" : null;
+};
+
+const onlineItemNotePrefix = "文字註記：";
+
+const onlineOrderNoteSegments = (note: string): string[] =>
+  sanitizeText(note, "")
+    .split(/[·]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+const onlineOrderStructuralNoteSegments = (segments: string[]): string[] =>
+  segments.filter((segment) => /^桌位\s+\S+/.test(segment) || /^樓層\s+\S+/.test(segment));
+
+const onlineOrderCustomerNoteSegments = (segments: string[]): string[] =>
+  segments.filter((segment) => !onlineOrderStructuralNoteSegments([segment]).length);
+
+const applyOnlineCommentFieldRules = (
+  input: CreateOrderInput,
+  settings: OnlineCommentFieldSettings,
+): string | null => {
+  const segments = onlineOrderNoteSegments(input.note ?? "");
+  const structuralSegments = onlineOrderStructuralNoteSegments(segments);
+  const customerSegments = onlineOrderCustomerNoteSegments(segments);
+
+  if (settings.orderNote === "required" && customerSegments.join("").trim().length === 0) {
+    return "請填寫訂單備註";
+  }
+
+  input.note = (settings.orderNote === "hidden" ? structuralSegments : [...structuralSegments, ...customerSegments])
+    .join(" · ")
+    .slice(0, 240);
+
+  if (settings.itemNotes === "hidden" && Array.isArray(input.lines)) {
+    input.lines = input.lines.map((line) => ({
+      ...line,
+      options: (line.options ?? []).filter((option) => !sanitizeText(option, "").startsWith(onlineItemNotePrefix)),
+      comboItems: line.comboItems?.map((comboItem) => ({
+        ...comboItem,
+        options: (comboItem.options ?? []).filter((option) => !sanitizeText(option, "").startsWith(onlineItemNotePrefix)),
+      })),
+    }));
+  }
+
+  return null;
 };
 
 const normalizeScheduledOrderTimeWindows = (input: unknown): OnlineScheduledOrderTimeWindow[] => {
@@ -8229,6 +8313,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
+    commentFields: normalizeCommentFieldSettings(settings.commentFields),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8568,6 +8653,7 @@ const validateOnlineOrdering = (input: unknown): {
       sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
       dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
       dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
+      commentFields: normalizeCommentFieldSettings(settings.commentFields),
       pauseMessage,
       menuCategories,
       availableOptionChoices,
