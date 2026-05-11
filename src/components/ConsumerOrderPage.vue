@@ -228,7 +228,7 @@ const itemMatchesFilter = (item: MenuItem): boolean => {
     item.name.toLowerCase().includes(keyword) ||
     item.tags.some((tag) => tag.toLowerCase().includes(keyword))
 
-  return isProductOrderable(item) && item.onlineVisible && matchesCategory && matchesKeyword
+  return isProductOrderable(item) && productVisibleForOrderSource(item) && matchesCategory && matchesKeyword
 }
 
 const filteredMenu = computed(() => menuCatalog.value.filter(itemMatchesFilter))
@@ -421,6 +421,18 @@ const requestedFulfillmentMaximum = computed(() =>
   formatDatetimeLocal(new Date(Date.now() + scheduledOrderMaxDays.value * 24 * 60 * 60_000)),
 )
 const requestedFulfillmentStepSeconds = computed(() => scheduledOrderIntervalMinutes.value * 60)
+const requestedFulfillmentDate = computed(() => {
+  const value = customer.requestedFulfillmentAt.trim()
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date : null
+})
+const isFutureRequestedFulfillmentDay = computed(() =>
+  requestedFulfillmentDate.value !== null && formatDateKey(requestedFulfillmentDate.value) > formatDateKey(new Date()),
+)
 const scheduledOrderWindowMatches = (date: Date): boolean => {
   const windows = onlineOrdering.value.scheduledOrderTimeWindows
   if (windows.length === 0) {
@@ -485,6 +497,7 @@ const canSubmit = computed(() =>
   (!requiresPaymentSelection.value || paymentOptions.value.some((option) => option.value === paymentMethod.value)) &&
   deliveryMinimumMet.value &&
   requestedFulfillmentError() === null &&
+  cartAvailabilityError.value === null &&
   (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
   !isSubmitting.value,
 )
@@ -947,13 +960,39 @@ const isProductTemporarilyStopped = (item: MenuItem): boolean => {
   return Number.isFinite(stoppedUntil) && stoppedUntil > Date.now()
 }
 
+const productAllowsFutureOrder = (item: MenuItem): boolean =>
+  item.futureOrderAvailable &&
+  onlineOrdering.value.allowScheduledOrders &&
+  isFutureRequestedFulfillmentDay.value
+
+const productVisibleForOrderSource = (item: MenuItem): boolean =>
+  consumerOrderSource === 'qr' ? item.qrVisible : item.onlineVisible
+
 const isProductOrderable = (item: MenuItem): boolean =>
   item.available &&
   item.inventoryCount !== 0 &&
-  !isProductTemporarilyStopped(item)
+  (!isProductTemporarilyStopped(item) || productAllowsFutureOrder(item))
+
+const productAvailableForCart = (item: MenuItem): boolean =>
+  productVisibleForOrderSource(item) && isProductOrderable(item)
+
+const cartAvailabilityError = computed(() => {
+  const unavailableNames = cartLines.value.flatMap((line) => {
+    const item = menuCatalog.value.find((product) => product.id === line.itemId || product.sku === line.productSku)
+    return item && !productAvailableForCart(item) ? [item.name] : []
+  })
+
+  return unavailableNames.length > 0
+    ? `${[...new Set(unavailableNames)].slice(0, 3).join('、')} 目前不供應，請調整希望時間或移除品項`
+    : null
+})
 
 const productDescription = (item: MenuItem): string => {
   const description = item.tags.join('、') || categoryLabelFor(item.category)
+  if (isProductTemporarilyStopped(item) && productAllowsFutureOrder(item)) {
+    return `${description} · 預約可訂`
+  }
+
   if (
     item.inventoryCount !== null &&
     item.lowStockThreshold !== null &&
@@ -1001,7 +1040,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
 
     const [runtimeSettings, products] = await Promise.all([
       fetchRuntimeSettings(),
-      fetchProducts('online'),
+      fetchProducts(consumerOrderSource === 'qr' ? 'qr' : 'online'),
     ])
     onlineOrdering.value = runtimeSettings.onlineOrdering
     engagementSettings.value = normalizeEngagementSettings(runtimeSettings.engagementSettings)
@@ -1046,11 +1085,12 @@ const submitOnlineOrder = async (): Promise<void> => {
   }
 
   if (!canSubmit.value) {
-    formError.value = orderNoteRequired.value && customer.note.trim().length === 0
+    formError.value = cartAvailabilityError.value ??
+      (orderNoteRequired.value && customer.note.trim().length === 0
       ? '請填寫訂單備註'
       : requiresDeliveryAddress.value
         ? '請填寫姓名、電話、外送地址並加入品項'
-        : '請填寫姓名、電話並加入品項'
+        : '請填寫姓名、電話並加入品項')
     return
   }
 
