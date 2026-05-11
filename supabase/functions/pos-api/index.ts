@@ -343,6 +343,7 @@ interface AccessVerificationInput {
 
 interface ProductUpdateInput {
   sku?: string;
+  barcode?: string;
   name?: string;
   category?: MenuCategory;
   price?: number;
@@ -931,7 +932,7 @@ const orderSelect =
   "*, order_items(*), print_jobs(id, status, printed_at, created_at, attempts, last_error)";
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
-  "id, sku, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until, supply_windows, future_order_available";
+  "id, sku, barcode, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until, supply_windows, future_order_available";
 const memberSelect =
   "id, line_user_id, line_display_name, phone, customer_type, points_balance, wallet_balance, created_at, updated_at";
 const transactionLedgerSelect =
@@ -7642,6 +7643,31 @@ const sanitizeSku = (value: unknown): string => {
   return sku || `product-${Date.now().toString(36)}`;
 };
 
+const sanitizeProductBarcode = (value: unknown): { barcode: string; error: string | null } => {
+  if (value === undefined || value === null || value === "") {
+    return { barcode: "", error: null };
+  }
+
+  if (typeof value !== "string") {
+    return { barcode: "", error: "barcode must be a string" };
+  }
+
+  const barcode = value.trim().replace(/\s+/g, "").toUpperCase();
+  if (barcode.length === 0) {
+    return { barcode: "", error: null };
+  }
+
+  if (barcode.length > 48) {
+    return { barcode: "", error: "barcode must be 48 characters or fewer" };
+  }
+
+  if (!new RegExp("^[A-Z0-9.$/+%:-]+$").test(barcode)) {
+    return { barcode: "", error: "barcode format is invalid" };
+  }
+
+  return { barcode, error: null };
+};
+
 const isPrintStatus = (status: unknown): status is PrintStatus =>
   status === "queued" || status === "printed" || status === "skipped" ||
   status === "failed";
@@ -7726,6 +7752,12 @@ const validateProductUpdateInput = (
     }
     payload.sku = sku;
   }
+
+  const { barcode, error: barcodeError } = sanitizeProductBarcode(input.barcode);
+  if (barcodeError) {
+    return { payload, error: barcodeError };
+  }
+  payload.barcode = barcode;
 
   if (typeof input.name !== "string" || input.name.trim().length === 0) {
     return { payload, error: "name is required" };

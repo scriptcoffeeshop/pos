@@ -980,6 +980,7 @@ interface ProductUpdateOverrides {
 }
 
 const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrides = {}): ProductUpdateInput => ({
+  barcode: product.barcode,
   name: product.name,
   category: product.category,
   price: product.price,
@@ -1016,6 +1017,7 @@ const createLocalProductId = (): string =>
 const buildLocalProduct = (input: ProductUpdateInput): MenuItem => ({
   id: createLocalProductId(),
   sku: input.sku?.trim() || productSkuFromName(input.name),
+  barcode: input.barcode?.trim() ?? '',
   name: input.name.trim(),
   category: input.category.trim(),
   price: input.price,
@@ -1056,6 +1058,7 @@ const sanitizeLocalProduct = (value: unknown): MenuItem | null => {
   return {
     id: product.id,
     sku: product.sku,
+    barcode: typeof product.barcode === 'string' ? product.barcode : '',
     name: product.name,
     category: product.category,
     price: Math.max(0, Math.trunc(product.price)),
@@ -1950,6 +1953,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       const matchesKeyword =
         keyword.length === 0 ||
         item.name.toLowerCase().includes(keyword) ||
+        item.sku.toLowerCase().includes(keyword) ||
+        item.barcode.toLowerCase().includes(keyword) ||
         item.tags.some((tag) => tag.toLowerCase().includes(keyword))
       return isProductVisibleInPos(item) && matchesCategory && matchesKeyword
     })

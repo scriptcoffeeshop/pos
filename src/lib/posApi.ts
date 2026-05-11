@@ -78,6 +78,7 @@ import { defaultDiscountSettings, normalizeDiscountSettings } from './discounts'
 interface ApiProduct {
   id: string
   sku: string
+  barcode?: string | null
   name: string
   category: MenuCategory
   price: number
@@ -553,6 +554,7 @@ interface DailyReportResponse {
 
 export interface ProductUpdateInput {
   sku?: string
+  barcode?: string
   name: string
   category: MenuCategory
   price: number
@@ -1206,6 +1208,7 @@ const normalizeStaffTimeClockEntry = (entry: ApiStaffTimeClockEntry): StaffTimeC
 export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   id: product.id,
   sku: product.sku,
+  barcode: product.barcode ?? '',
   name: product.name,
   category: product.category,
   price: product.price,

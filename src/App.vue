@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
   Filter,
+  ScanBarcode,
   GripVertical,
   LayoutDashboard,
   LockKeyhole,
@@ -1953,6 +1954,7 @@ const newCategoryName = ref('')
 const newProductName = ref('')
 const newProductPrice = ref(0)
 const newProductSku = ref('')
+const newProductBarcode = ref('')
 const newAvailableNoteName = ref('')
 const newAvailableNotePriceDelta = ref(0)
 const newOptionGroupName = ref('')
@@ -2198,6 +2200,44 @@ const selectedCategoryLabel = computed(
 const selectedCategoryIndex = computed(() =>
   categoryOptions.value.findIndex((category) => category.value === selectedCategory.value),
 )
+
+interface BarcodeDetectorLike {
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue?: string }>>
+}
+
+interface BarcodeDetectorConstructorLike {
+  new(options?: { formats?: string[] }): BarcodeDetectorLike
+}
+
+const barcodeScanCode = ref('')
+const barcodeScanMessage = ref('掃碼器可直接輸入；相機支援時會開啟預覽。')
+const barcodeScanInputRef = ref<HTMLInputElement | null>(null)
+const barcodeVideoRef = ref<HTMLVideoElement | null>(null)
+const isBarcodeScannerOpen = ref(false)
+const isBarcodeCameraStarting = ref(false)
+const isBarcodeCameraActive = ref(false)
+let barcodeCameraStream: MediaStream | null = null
+let barcodeScanFrameId: number | null = null
+let barcodeDetector: BarcodeDetectorLike | null = null
+
+const barcodeDetectorConstructor = (): BarcodeDetectorConstructorLike | undefined =>
+  (globalThis as unknown as { BarcodeDetector?: BarcodeDetectorConstructorLike }).BarcodeDetector
+
+const barcodeCameraSupported = computed(() =>
+  Boolean(barcodeDetectorConstructor() && globalThis.navigator?.mediaDevices?.getUserMedia),
+)
+
+const normalizeProductBarcode = (value: string): string =>
+  value.trim().replace(/\s+/g, '').toUpperCase().slice(0, 48)
+
+const productBarcodePattern = new RegExp('^[A-Z0-9.$/+%:-]{1,48}$')
+
+const productByBarcode = computed(() => {
+  const entries = menuCatalog.value
+    .map((item) => [normalizeProductBarcode(item.barcode), item] as const)
+    .filter(([barcode]) => barcode.length > 0)
+  return new Map(entries)
+})
 
 const selectCategory = (category: MenuCategoryOptionValue): void => {
   selectedCategory.value = category
@@ -5808,6 +5848,145 @@ const selectMenuItem = (item: MenuItem): void => {
   resetOptionSelections()
 }
 
+const stopBarcodeCamera = (): void => {
+  if (barcodeScanFrameId !== null) {
+    globalThis.cancelAnimationFrame(barcodeScanFrameId)
+    barcodeScanFrameId = null
+  }
+
+  barcodeCameraStream?.getTracks().forEach((track) => track.stop())
+  barcodeCameraStream = null
+  barcodeDetector = null
+  isBarcodeCameraActive.value = false
+  if (barcodeVideoRef.value) {
+    barcodeVideoRef.value.srcObject = null
+  }
+}
+
+const addProductByBarcode = (rawCode: string): boolean => {
+  const barcode = normalizeProductBarcode(rawCode)
+  if (!barcode) {
+    barcodeScanMessage.value = '請掃描或輸入商品條碼'
+    return false
+  }
+
+  if (!productBarcodePattern.test(barcode)) {
+    barcodeScanMessage.value = '條碼限半形英數字與 -.$/+%:，最多 48 字元'
+    return false
+  }
+
+  const item = productByBarcode.value.get(barcode)
+  if (!item) {
+    barcodeScanMessage.value = `找不到條碼 ${barcode} 對應商品`
+    return false
+  }
+
+  if (productOrderingDisabled(item)) {
+    barcodeScanMessage.value = `${item.name} 目前不可加入訂單`
+    return false
+  }
+
+  selectMenuItem(item)
+  barcodeScanCode.value = ''
+  barcodeScanMessage.value = productRequiresOptions(item)
+    ? `${item.name} 已開啟選項`
+    : `${item.name} 已加入票券`
+  return true
+}
+
+const submitBarcodeScan = (): void => {
+  const added = addProductByBarcode(barcodeScanCode.value)
+  if (added) {
+    void nextTick(() => barcodeScanInputRef.value?.focus())
+  }
+}
+
+const scanBarcodeCameraFrame = async (): Promise<void> => {
+  if (!isBarcodeScannerOpen.value || !isBarcodeCameraActive.value || !barcodeDetector) {
+    return
+  }
+
+  const video = barcodeVideoRef.value
+  if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    try {
+      const detections = await barcodeDetector.detect(video)
+      const rawValue = detections.find((entry) => typeof entry.rawValue === 'string' && entry.rawValue.trim())?.rawValue
+      if (rawValue) {
+        barcodeScanCode.value = rawValue
+        const added = addProductByBarcode(rawValue)
+        if (added) {
+          stopBarcodeCamera()
+          void nextTick(() => barcodeScanInputRef.value?.focus())
+          return
+        }
+      }
+    } catch {
+      barcodeScanMessage.value = '相機掃描暫時無法辨識，可改用掃碼器或手動輸入'
+    }
+  }
+
+  barcodeScanFrameId = globalThis.requestAnimationFrame(() => {
+    void scanBarcodeCameraFrame()
+  })
+}
+
+const startBarcodeCamera = async (): Promise<void> => {
+  const BarcodeDetectorCtor = barcodeDetectorConstructor()
+  if (!BarcodeDetectorCtor || !globalThis.navigator?.mediaDevices?.getUserMedia) {
+    barcodeScanMessage.value = '此環境未支援相機辨識，可直接用掃碼器輸入'
+    return
+  }
+
+  isBarcodeCameraStarting.value = true
+  try {
+    barcodeDetector = new BarcodeDetectorCtor({
+      formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'codabar'],
+    })
+    barcodeCameraStream = await globalThis.navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    })
+    await nextTick()
+    const video = barcodeVideoRef.value
+    if (!video) {
+      stopBarcodeCamera()
+      return
+    }
+
+    video.srcObject = barcodeCameraStream
+    await video.play()
+    isBarcodeCameraActive.value = true
+    barcodeScanMessage.value = '相機掃描中，也可直接用掃碼器輸入'
+    await scanBarcodeCameraFrame()
+  } catch (error) {
+    stopBarcodeCamera()
+    barcodeScanMessage.value = error instanceof Error
+      ? `相機未啟用：${error.message}`
+      : '相機未啟用，可直接用掃碼器輸入'
+  } finally {
+    isBarcodeCameraStarting.value = false
+  }
+}
+
+const openBarcodeScanner = async (): Promise<void> => {
+  isBarcodeScannerOpen.value = true
+  barcodeScanCode.value = ''
+  barcodeScanMessage.value = barcodeCameraSupported.value
+    ? '準備相機掃描；掃碼器可直接輸入'
+    : '掃碼器可直接輸入；此環境未支援相機辨識'
+  await nextTick()
+  barcodeScanInputRef.value?.focus()
+  if (barcodeCameraSupported.value) {
+    await startBarcodeCamera()
+  }
+}
+
+const closeBarcodeScanner = (): void => {
+  stopBarcodeCamera()
+  isBarcodeScannerOpen.value = false
+  barcodeScanCode.value = ''
+}
+
 const closeOptionPanel = (): void => {
   activeOptionItem.value = null
   activeOptionLineId.value = null
@@ -9118,6 +9297,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
   const undoSnapshot = captureSupplySnapshot('新增商品')
   const product = await createProductForStation({
     sku: newProductSku.value.trim() || slugFromText(name, 'product'),
+    barcode: newProductBarcode.value.trim().replace(/\s+/g, '').toUpperCase(),
     name,
     category: categoryId,
     price,
@@ -9151,6 +9331,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
   newProductName.value = ''
   newProductPrice.value = 0
   newProductSku.value = ''
+  newProductBarcode.value = ''
   supplyActionMessage.value = `${product.name} 已加入 ${categoryLabelFor(categoryId)}`
 }
 
@@ -9797,6 +9978,7 @@ onBeforeUnmount(() => {
   clearFloorPlanPersistTimer()
   clearCategorySortTimer()
   clearProductSortTimer()
+  stopBarcodeCamera()
   if (categorySortSuppressTimer !== null) {
     globalThis.clearTimeout(categorySortSuppressTimer)
   }
@@ -10366,11 +10548,47 @@ onBeforeUnmount(() => {
                       <h2 id="menu-title">商品菜單</h2>
                       <span class="panel-note">顯示 {{ filteredMenu.length }} 個品項</span>
                     </div>
-                    <label class="search-box menu-search-box">
-                      <Search :size="18" aria-hidden="true" />
-                      <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項或標籤" />
-                    </label>
+                    <div class="menu-heading-actions">
+                      <label class="search-box menu-search-box">
+                        <Search :size="18" aria-hidden="true" />
+                        <input ref="searchInput" v-model="searchTerm" type="search" placeholder="搜尋品項、標籤或條碼" />
+                      </label>
+                      <button class="icon-button barcode-scan-button" type="button" title="掃描商品條碼" @click="openBarcodeScanner">
+                        <ScanBarcode :size="22" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
+
+                  <section v-if="isBarcodeScannerOpen" class="barcode-scan-panel" aria-label="商品條碼掃描">
+                    <div class="barcode-scan-main">
+                      <video
+                        v-if="barcodeCameraSupported"
+                        ref="barcodeVideoRef"
+                        class="barcode-scan-video"
+                        muted
+                        playsinline
+                      ></video>
+                      <form class="barcode-scan-form" @submit.prevent="submitBarcodeScan">
+                        <label>
+                          商品條碼
+                          <input
+                            ref="barcodeScanInputRef"
+                            v-model="barcodeScanCode"
+                            type="text"
+                            inputmode="text"
+                            autocomplete="off"
+                            maxlength="48"
+                            placeholder="掃碼器輸入後按 Enter"
+                          />
+                        </label>
+                        <button type="submit">加入</button>
+                      </form>
+                    </div>
+                    <p class="barcode-scan-message">{{ isBarcodeCameraStarting ? '相機啟動中' : barcodeScanMessage }}</p>
+                    <button class="icon-button barcode-scan-close" type="button" title="關閉條碼掃描" @click="closeBarcodeScanner">
+                      <X :size="20" aria-hidden="true" />
+                    </button>
+                  </section>
 
                   <div
                     class="menu-workarea"
@@ -13522,6 +13740,7 @@ onBeforeUnmount(() => {
                     <input v-model="newProductName" type="text" placeholder="新增商品，例如：髒髒咖啡" />
                     <input v-model.number="newProductPrice" type="number" inputmode="numeric" min="0" placeholder="價格" />
                     <input v-model="newProductSku" type="text" placeholder="SKU 可留空" />
+                    <input v-model="newProductBarcode" type="text" maxlength="48" placeholder="商品條碼選填" />
                     <button type="submit">
                       <Plus :size="18" aria-hidden="true" />
                       新增商品
