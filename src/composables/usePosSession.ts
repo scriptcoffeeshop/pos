@@ -2496,7 +2496,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     markOnlineOrderHandled(orderId, 'accepted')
   }
 
-  const acceptOnlineOrderForStation = async (orderId: string): Promise<boolean> => {
+  const acceptOnlineOrderForStation = async (
+    orderId: string,
+    options: { printAfterAccept?: boolean } = {},
+  ): Promise<boolean> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
       return false
@@ -2504,6 +2507,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     if (!onlineOrderRequiresAcceptance(order)) {
       markOnlineOrderAccepted(order.id)
+      if (options.printAfterAccept) {
+        await printOrder(order.id, 'order')
+      }
       return true
     }
 
@@ -2513,7 +2519,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     markOnlineOrderAccepted(order.id)
-    setBackendStatus('connected', '線上訂單已接單', `${order.id} 已排入桌況頁`)
+    if (options.printAfterAccept) {
+      await printOrder(order.id, 'order')
+    }
+    setBackendStatus(
+      'connected',
+      options.printAfterAccept ? '線上訂單已接單並出單' : '線上訂單已接單',
+      options.printAfterAccept ? `${order.id} 已排入桌況頁並執行出單流程` : `${order.id} 已接受但未出單`,
+    )
     return true
   }
 

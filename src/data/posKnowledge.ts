@@ -525,6 +525,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'online-accept-print-option',
+    category: 'online',
+    title: '線上接單與接受但不出單',
+    summary: '對照 iCHEF 內用掃碼接單選項，待接單畫面可選擇接單並出單或接受但不出單。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '勾選「接單時可接受但不出單」後，線上/掃碼待接單清單、訂單內容彈窗與浮動提醒會出現「接受不出單」選項。',
+      '按「接單並出單」會先鎖定訂單，再依目前出單機規則建立列印任務；按「接受不出單」只會鎖定並排入佇列。',
+      '兩種接受方式都會寫入線上提醒 shared state，換平板、重開 App 或 fresh reinstall 後不會再次提醒同一張單。',
+      '若未勾選此選項，待接單畫面只保留單一接單按鈕，並依列印站規則出單。',
+    ],
+    keywords: ['線上接單', '接受不出單', '接單並出單', '接單選項', '內用掃碼', '出單', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'online-store-profile',
     category: 'online',
     title: '店家營業資訊與封面',

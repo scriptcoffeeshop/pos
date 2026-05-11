@@ -8473,23 +8473,37 @@ const markOnlineReminderReadFromDetail = (order: PosOrder): void => {
   closeOnlineReminderDetail()
 }
 
-const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+const onlineAcceptButtonLabel = (order: PosOrder, printAfterAccept: boolean): string => {
+  if (claimingOrderId.value === order.id || printingOrderId.value === order.id) {
+    return printAfterAccept ? '接單出單中' : '接單中'
+  }
+
+  return printAfterAccept
+    ? (onlineOrderingSettings.value.acceptWithoutPrinting ? '接單並出單' : '接單')
+    : '接受不出單'
+}
+
+const acceptOnlineReminderOrder = async (order: PosOrder, printAfterAccept: boolean): Promise<void> => {
   if (!(await verifyProtectedPermissions([
     {
       permission: 'manageOnlineOrders',
       title: accessPermissionLabels.manageOnlineOrders,
-      detail: `${compactOrderId(order.id)} 接單並出單至廚房前需驗證員工識別碼。`,
+      detail: printAfterAccept
+        ? `${compactOrderId(order.id)} 接單並出單至廚房前需驗證員工識別碼。`
+        : `${compactOrderId(order.id)} 接受但不出單前需驗證員工識別碼。`,
     },
   ]))) {
     return
   }
 
-  const accepted = await acceptOnlineOrderForStation(order.id)
+  const accepted = await acceptOnlineOrderForStation(order.id, { printAfterAccept })
   if (accepted) {
     if (activeOnlineReminderDetailId.value === order.id) {
       closeOnlineReminderDetail()
     }
-    queueActionMessage.value = `${compactOrderId(order.id)} 已接單並排入桌況頁`
+    queueActionMessage.value = printAfterAccept
+      ? `${compactOrderId(order.id)} 已接單並執行出單`
+      : `${compactOrderId(order.id)} 已接受但未出單`
     setWorkspaceTab('queue')
     return
   }
@@ -11550,10 +11564,19 @@ onBeforeUnmount(() => {
                               <button
                                 type="button"
                                 class="online-reminder-accept-button"
-                                :disabled="claimingOrderId === order.id"
-                                @click.stop="acceptOnlineReminderOrder(order)"
+                                :disabled="claimingOrderId === order.id || printingOrderId === order.id"
+                                @click.stop="acceptOnlineReminderOrder(order, true)"
                               >
-                                {{ claimingOrderId === order.id ? '接單中' : '接單' }}
+                                {{ onlineAcceptButtonLabel(order, true) }}
+                              </button>
+                              <button
+                                v-if="onlineOrderingSettings.acceptWithoutPrinting"
+                                type="button"
+                                class="online-reminder-accept-secondary-button"
+                                :disabled="claimingOrderId === order.id || printingOrderId === order.id"
+                                @click.stop="acceptOnlineReminderOrder(order, false)"
+                              >
+                                {{ onlineAcceptButtonLabel(order, false) }}
                               </button>
                             </div>
                           </article>
@@ -12929,13 +12952,22 @@ onBeforeUnmount(() => {
                 {{ voidingOrderId === onlineReminderDetailOrder.id ? '拒絕中' : '拒絕接單' }}
               </button>
               <button
+                v-if="onlineOrderingSettings.acceptWithoutPrinting"
                 type="button"
-                class="primary-button"
-                :disabled="claimingOrderId === onlineReminderDetailOrder.id"
-                @click="acceptOnlineReminderOrder(onlineReminderDetailOrder)"
+                :disabled="claimingOrderId === onlineReminderDetailOrder.id || printingOrderId === onlineReminderDetailOrder.id"
+                @click="acceptOnlineReminderOrder(onlineReminderDetailOrder, false)"
               >
                 <Check :size="18" aria-hidden="true" />
-                {{ claimingOrderId === onlineReminderDetailOrder.id ? '接單中' : '接單' }}
+                {{ onlineAcceptButtonLabel(onlineReminderDetailOrder, false) }}
+              </button>
+              <button
+                type="button"
+                class="primary-button"
+                :disabled="claimingOrderId === onlineReminderDetailOrder.id || printingOrderId === onlineReminderDetailOrder.id"
+                @click="acceptOnlineReminderOrder(onlineReminderDetailOrder, true)"
+              >
+                <Check :size="18" aria-hidden="true" />
+                {{ onlineAcceptButtonLabel(onlineReminderDetailOrder, true) }}
               </button>
             </footer>
           </section>
@@ -12956,25 +12988,35 @@ onBeforeUnmount(() => {
             </span>
             <small>{{ onlineReminderOrderLineSummary(primaryOnlineReminderOrder) }}</small>
           </div>
-          <button type="button" @click="acknowledgeOnlineOrderReminders">稍後</button>
-          <button type="button" @click="markOnlineOrderRemindersSeen([primaryOnlineReminderOrder.id])">已讀</button>
-          <button type="button" @click="openOnlineReminderDetail(primaryOnlineReminderOrder)">查看內容</button>
-          <button
-            type="button"
-            class="online-order-reject-button"
-            :disabled="voidingOrderId === primaryOnlineReminderOrder.id"
-            @click="rejectOnlineReminderOrder(primaryOnlineReminderOrder)"
-          >
-            {{ voidingOrderId === primaryOnlineReminderOrder.id ? '拒絕中' : '拒絕' }}
-          </button>
-          <button
-            class="primary-button"
-            type="button"
-            :disabled="claimingOrderId === primaryOnlineReminderOrder.id"
-            @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder)"
-          >
-            {{ claimingOrderId === primaryOnlineReminderOrder.id ? '接單中' : '接單' }}
-          </button>
+          <div class="online-order-notification-actions">
+            <button type="button" @click="acknowledgeOnlineOrderReminders">稍後</button>
+            <button type="button" @click="markOnlineOrderRemindersSeen([primaryOnlineReminderOrder.id])">已讀</button>
+            <button type="button" @click="openOnlineReminderDetail(primaryOnlineReminderOrder)">查看內容</button>
+            <button
+              type="button"
+              class="online-order-reject-button"
+              :disabled="voidingOrderId === primaryOnlineReminderOrder.id"
+              @click="rejectOnlineReminderOrder(primaryOnlineReminderOrder)"
+            >
+              {{ voidingOrderId === primaryOnlineReminderOrder.id ? '拒絕中' : '拒絕' }}
+            </button>
+            <button
+              v-if="onlineOrderingSettings.acceptWithoutPrinting"
+              type="button"
+              :disabled="claimingOrderId === primaryOnlineReminderOrder.id || printingOrderId === primaryOnlineReminderOrder.id"
+              @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder, false)"
+            >
+              {{ onlineAcceptButtonLabel(primaryOnlineReminderOrder, false) }}
+            </button>
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="claimingOrderId === primaryOnlineReminderOrder.id || printingOrderId === primaryOnlineReminderOrder.id"
+              @click="acceptOnlineReminderOrder(primaryOnlineReminderOrder, true)"
+            >
+              {{ onlineAcceptButtonLabel(primaryOnlineReminderOrder, true) }}
+            </button>
+          </div>
         </section>
 
         <section
