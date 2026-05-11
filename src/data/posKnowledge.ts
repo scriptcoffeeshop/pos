@@ -71,6 +71,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'dine-in-checkout-flow',
+    category: 'online',
+    title: '內用掃碼結帳流程',
+    summary: '後台可設定內用掃碼先結或後結，QR 頁與 API 會套用同一份規則。',
+    steps: [
+      '到後台「線上點餐」的內用掃碼結帳模式選擇「先結」或「後結」，設定會寫入 `online_ordering.dineInCheckout`。',
+      '先結模式會要求 QR 內用客人先選 LINE Pay、街口或線上刷卡等線上付款方式，才可送出訂單。',
+      '後結模式會隱藏 QR 頁付款方式，訂單先以待收款進 POS，客人用餐完畢後再由店員結帳。',
+      '結帳說明最多 500 字，會顯示在 QR/消費者結帳頁；統編與載具欄位仍由同一頁開關控制。',
+      '`pos-api` 會重新讀取 runtime 驗證結帳模式，避免前端被繞過後用錯付款方式送單。',
+    ],
+    keywords: ['結帳流程', '先結', '後結', '內用掃碼', 'QR Code', '付款方式', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'product-total-display',
     category: 'orders',
     title: '商品總數設定',

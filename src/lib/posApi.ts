@@ -1385,6 +1385,9 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
   },
   dineInTimeLimit: defaultDineInTimeLimitSettings(),
+  dineInCheckout: {
+    mode: 'postpaid',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1462,6 +1465,20 @@ const normalizeSessionQrCodeSettings = (
     autoPrint: settings.autoPrint === true,
     stationId: typeof settings.stationId === 'string' ? settings.stationId.trim().slice(0, 80) : defaults.stationId,
     logoText,
+  }
+}
+
+const normalizeDineInCheckoutSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().dineInCheckout,
+): OnlineOrderingSettings['dineInCheckout'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['dineInCheckout']>
+  return {
+    mode: settings.mode === 'prepaid' ? 'prepaid' : 'postpaid',
   }
 }
 
@@ -1905,7 +1922,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
       : defaults.notificationVolume,
     checkoutInstructions:
       typeof settings.checkoutInstructions === 'string'
-        ? settings.checkoutInstructions.trim().slice(0, 240)
+        ? settings.checkoutInstructions.trim().slice(0, 500)
         : defaults.checkoutInstructions,
     showTaxIdField:
       typeof settings.showTaxIdField === 'boolean' ? settings.showTaxIdField : defaults.showTaxIdField,
@@ -1920,6 +1937,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     deliveryTravelMinutes: clampRuntimeInteger(settings.deliveryTravelMinutes, defaults.deliveryTravelMinutes, 0, 180),
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode, defaults.sessionQrCode),
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit, defaults.dineInTimeLimit),
+    dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout, defaults.dineInCheckout),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

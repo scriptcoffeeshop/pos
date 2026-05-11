@@ -414,6 +414,9 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
   },
   dineInTimeLimit: defaultDineInTimeLimitSettings(),
+  dineInCheckout: {
+    mode: 'postpaid',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -460,6 +463,11 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     settings.dineInTimeLimit,
     defaultOnlineOrderingSettings().dineInTimeLimit,
   ),
+  dineInCheckout: {
+    ...defaultOnlineOrderingSettings().dineInCheckout,
+    ...(settings.dineInCheckout ?? {}),
+    mode: settings.dineInCheckout?.mode === 'prepaid' ? 'prepaid' : 'postpaid',
+  },
   scheduledOrderTimeWindows: (
     settings.scheduledOrderTimeWindows ?? defaultOnlineOrderingSettings().scheduledOrderTimeWindows
   ).map((timeWindow) => ({ ...timeWindow, days: [...timeWindow.days] })),
@@ -2263,7 +2271,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
           takeout: onlineOrdering.value.serviceModeAvailability.takeout !== false,
           delivery: onlineOrdering.value.serviceModeAvailability.delivery !== false,
         },
-        checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 240),
+        checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 500),
         showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
         showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
         scheduledOrderIntervalMinutes: Math.min(
@@ -2305,6 +2313,9 @@ const saveOnlineOrdering = async (): Promise<void> => {
           lastOrderBeforeEndMinutes: onlineOrdering.value.dineInTimeLimit.lastOrderBeforeEndMinutes,
           holidayRules: onlineOrdering.value.dineInTimeLimit.holidayRules,
         }, defaultOnlineOrderingSettings().dineInTimeLimit),
+        dineInCheckout: {
+          mode: onlineOrdering.value.dineInCheckout.mode === 'prepaid' ? 'prepaid' : 'postpaid',
+        },
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -3306,6 +3317,11 @@ const saveAccessControl = async (): Promise<void> => {
             <strong>{{ onlineOrdering.dineInTimeLimit.enabled ? `${onlineOrdering.dineInTimeLimit.mealMinutes} 分` : '未啟用' }}</strong>
             <small>最後加點 {{ onlineOrdering.dineInTimeLimit.lastOrderBeforeEndMinutes }} 分鐘前</small>
           </article>
+          <article>
+            <span>內用結帳</span>
+            <strong>{{ onlineOrdering.dineInCheckout.mode === 'prepaid' ? '先結' : '後結' }}</strong>
+            <small>{{ onlineOrdering.dineInCheckout.mode === 'prepaid' ? '掃碼送單前需選線上付款' : '掃碼送單後由 POS 收款' }}</small>
+          </article>
         </div>
 
         <section class="admin-subpanel">
@@ -3388,6 +3404,14 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model.number="onlineOrdering.notificationVolume" type="range" min="0" max="100" step="5" />
               <small>{{ onlineOrdering.notificationVolume }}%</small>
             </label>
+            <label>
+              內用掃碼結帳模式
+              <select v-model="onlineOrdering.dineInCheckout.mode">
+                <option value="postpaid">後結：用餐後由 POS 結帳</option>
+                <option value="prepaid">先結：送單前需線上付款</option>
+              </select>
+              <small>後結模式會在 QR 頁隱藏付款選項，先結模式只允許線上付款模組。</small>
+            </label>
             <label class="wide-field">
               暫停接單提示
               <input v-model="onlineOrdering.pauseMessage" type="text" maxlength="120" />
@@ -3397,7 +3421,7 @@ const saveAccessControl = async (): Promise<void> => {
               <textarea
                 v-model="onlineOrdering.checkoutInstructions"
                 rows="3"
-                maxlength="240"
+                maxlength="500"
                 placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
               />
             </label>

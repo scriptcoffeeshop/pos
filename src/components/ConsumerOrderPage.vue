@@ -288,8 +288,16 @@ const deliveryFeeLabel = computed(() => {
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
 const serviceModeOpen = (mode: ServiceMode): boolean => onlineOrdering.value.serviceModeAvailability[mode] !== false
 const currentServiceModeOpen = computed(() => serviceModeOpen(serviceMode.value))
+const isQrDineInOrder = computed(() => consumerOrderSource === 'qr' && serviceMode.value === 'dine-in')
+const dineInCheckoutPostpaid = computed(() =>
+  isQrDineInOrder.value && onlineOrdering.value.dineInCheckout.mode !== 'prepaid',
+)
+const dineInCheckoutPrepaid = computed(() =>
+  isQrDineInOrder.value && onlineOrdering.value.dineInCheckout.mode === 'prepaid',
+)
+const requiresPaymentSelection = computed(() => !dineInCheckoutPostpaid.value)
 const qrDineInTimeLimit = computed(() =>
-  consumerOrderSource === 'qr' && serviceMode.value === 'dine-in'
+  isQrDineInOrder.value
     ? calculateDineInTimeLimitWindow(
       onlineOrdering.value.dineInTimeLimit,
       qrSessionStartedAt,
@@ -317,18 +325,30 @@ const qrDineInTimeLimitDetail = computed(() => {
 const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(() => {
   const configuredMethods = onlineOrdering.value.paymentMethods
   if (configuredMethods.length === 0) {
-    return fallbackPaymentOptions.filter((method) => paymentAllowedForServiceMode(method.value, serviceMode.value))
+    return fallbackPaymentOptions
+      .filter((method) => paymentAllowedForServiceMode(method.value, serviceMode.value))
+      .filter((method) => !dineInCheckoutPrepaid.value || deliveryOnlinePaymentMethods.has(method.value))
   }
 
   return configuredMethods
     .filter((method) => method.enabled)
     .filter((method) => paymentAllowedForServiceMode(method.id, serviceMode.value))
+    .filter((method) => !dineInCheckoutPrepaid.value || deliveryOnlinePaymentMethods.has(method.id))
     .map((method) => ({
       value: method.id,
       label: method.label.trim() || (fallbackPaymentOptions.find((fallback) => fallback.value === method.id)?.label ?? method.id),
     }))
 })
-const hasPaymentOptions = computed(() => paymentOptions.value.length > 0)
+const hasPaymentOptions = computed(() => !requiresPaymentSelection.value || paymentOptions.value.length > 0)
+const dineInCheckoutDetail = computed(() => {
+  if (!isQrDineInOrder.value) {
+    return ''
+  }
+
+  return dineInCheckoutPrepaid.value
+    ? '先結模式：請先選擇線上付款方式，完成付款後才會送出訂單。'
+    : '後結模式：可先送出訂單，用餐完畢後再至櫃檯或由店員在 POS 完成結帳。'
+})
 const canOrderOnline = computed(() =>
   onlineOrdering.value.enabled &&
   currentServiceModeOpen.value &&
@@ -347,9 +367,13 @@ const onlineStatusDetail = computed(() =>
       ? qrDineInLastOrderBlocked.value
         ? '已超過最後加點時間'
         : hasPaymentOptions.value
-          ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+          ? dineInCheckoutPostpaid.value
+            ? `後結 · 平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+            : `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
           : serviceMode.value === 'delivery'
             ? '外送需啟用線上付款'
+            : dineInCheckoutPrepaid.value
+              ? '先結模式需啟用線上付款模組'
             : '目前沒有開放付款方式'
       : `目前不開放${serviceModeLabels[serviceMode.value]}訂單`,
 )
@@ -424,7 +448,7 @@ const canSubmit = computed(() =>
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
-  paymentOptions.value.some((option) => option.value === paymentMethod.value) &&
+  (!requiresPaymentSelection.value || paymentOptions.value.some((option) => option.value === paymentMethod.value)) &&
   deliveryMinimumMet.value &&
   requestedFulfillmentError() === null &&
   (!requiresDeliveryAddress.value || customer.deliveryAddress.trim().length > 0) &&
@@ -974,7 +998,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
-  if (!paymentOptions.value.some((option) => option.value === paymentMethod.value)) {
+  if (requiresPaymentSelection.value && !paymentOptions.value.some((option) => option.value === paymentMethod.value)) {
     formError.value = '目前不開放這個付款方式'
     return
   }
@@ -1006,6 +1030,7 @@ const submitOnlineOrder = async (): Promise<void> => {
   formError.value = ''
 
   const now = new Date()
+  const selectedPaymentMethod = dineInCheckoutPostpaid.value ? 'cash' : paymentMethod.value
   const order: PosOrder = {
     id: buildOnlineOrderNumber(now),
     source: consumerOrderSource,
@@ -1033,7 +1058,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     paymentBreakdown: [],
     transactionReceiptCount: 0,
     memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
-    paymentMethod: paymentMethod.value,
+    paymentMethod: selectedPaymentMethod,
     paymentStatus: 'pending',
     status: 'new',
     createdAt: now.toISOString(),
@@ -1128,8 +1153,13 @@ watch(
 )
 
 watch(
-  paymentOptions,
-  (options) => {
+  [paymentOptions, requiresPaymentSelection],
+  ([options, shouldSelectPayment]) => {
+    if (!shouldSelectPayment) {
+      paymentMethod.value = 'cash'
+      return
+    }
+
     if (!options.some((option) => option.value === paymentMethod.value)) {
       paymentMethod.value = options[0]?.value ?? 'cash'
     }
@@ -1346,6 +1376,9 @@ watch(
       <p v-if="onlineOrdering.checkoutInstructions" class="consumer-checkout-instructions">
         {{ onlineOrdering.checkoutInstructions }}
       </p>
+      <p v-if="dineInCheckoutDetail" class="consumer-checkout-instructions">
+        {{ dineInCheckoutDetail }}
+      </p>
 
       <div class="customer-grid consumer-customer-grid">
         <label>
@@ -1386,7 +1419,7 @@ watch(
         </label>
       </div>
 
-      <div class="payment-list consumer-payment-list" aria-label="付款方式">
+      <div v-if="requiresPaymentSelection" class="payment-list consumer-payment-list" aria-label="付款方式">
         <button
           v-for="payment in paymentOptions"
           :key="payment.value"
@@ -1400,6 +1433,9 @@ watch(
         </button>
         <span v-if="paymentOptions.length === 0" class="panel-note">目前沒有開放付款方式</span>
       </div>
+      <p v-else class="consumer-checkout-instructions">
+        付款方式將保留為現場後結，店員可在 POS 訂單內完成收款。
+      </p>
 
       <p v-if="formError" class="consumer-form-error">{{ formError }}</p>
 
