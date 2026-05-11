@@ -805,6 +805,7 @@ const {
   isRegisterBusy,
   lastPrintPreview,
   menuCatalog,
+  mergeOrderIntoOrderForStation,
   loadCashDrawerEvents,
   loadCounterOrderForEditing,
   loadRegisterSession,
@@ -1614,9 +1615,11 @@ const printLabelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
 const printRuleTimingOptions: Array<{ value: PrintRuleTiming; label: string }> = [
   { value: 'order', label: '出單' },
   { value: 'reprint', label: '重印' },
+  { value: 'move', label: '移桌' },
+  { value: 'merge', label: '併單' },
 ]
 
-const defaultPrintRuleTimings: PrintRuleTiming[] = printRuleTimingOptions.map((option) => option.value)
+const defaultPrintRuleTimings: PrintRuleTiming[] = ['order', 'reprint']
 
 const noteSnippets = ['需要袋子']
 const ticketNoteSnippets = ['需要袋子']
@@ -5317,43 +5320,53 @@ const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null)
   const storedSize = floorPartySizes.value[table.id]
   return Math.min(table.capacity, Math.max(1, Math.trunc(Number(storedSize) || 1)))
 }
-const floorTableStates = computed<FloorTableState[]>(() =>
-  activeFloorTables.value.map((table) => {
-    const order = dineInOrderForTable(table.id)
-    const timeLimit = dineInTimeLimitState(order)
-    const isLocked = Boolean(order && orderClaimedByOtherStation(order))
-    const status: FloorTableState['status'] = !order
-      ? 'empty'
-      : isLocked
-        ? 'locked'
-        : order.status === 'ready'
-          ? 'ready'
-          : 'active'
+const floorTableStateForTable = (table: DiningTableDefinition): FloorTableState => {
+  const order = dineInOrderForTable(table.id)
+  const timeLimit = dineInTimeLimitState(order)
+  const isLocked = Boolean(order && orderClaimedByOtherStation(order))
+  const status: FloorTableState['status'] = !order
+    ? 'empty'
+    : isLocked
+      ? 'locked'
+      : order.status === 'ready'
+        ? 'ready'
+        : 'active'
+  const partySize = partySizeForTable(table, order)
 
-    return {
-      table,
-      order,
-      partySize: partySizeForTable(table, order),
-      status,
-      amountLabel: order ? formatCurrency(order.subtotal) : formatCurrency(0),
-      orderLabel: order ? orderSequenceLabel(order.id) : '',
-      peopleLabel: `${partySizeForTable(table, order)}/${table.capacity}`,
-      waitLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
-      stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
-      timeLimitLabel: dineInTimeLimitLabel(order),
-      lastOrderLabel: dineInLastOrderLabel(order),
-      warningLabels: order ? orderWorkflowWarningLabels(order) : [],
-      isMealOver: timeLimit?.isMealOver ?? false,
-      isLastOrderOver: timeLimit?.isLastOrderOver ?? false,
-    }
-  }),
-)
+  return {
+    table,
+    order,
+    partySize,
+    status,
+    amountLabel: order ? formatCurrency(order.subtotal) : formatCurrency(0),
+    orderLabel: order ? orderSequenceLabel(order.id) : '',
+    peopleLabel: `${partySize}/${table.capacity}`,
+    waitLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
+    stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
+    timeLimitLabel: dineInTimeLimitLabel(order),
+    lastOrderLabel: dineInLastOrderLabel(order),
+    warningLabels: order ? orderWorkflowWarningLabels(order) : [],
+    isMealOver: timeLimit?.isMealOver ?? false,
+    isLastOrderOver: timeLimit?.isLastOrderOver ?? false,
+  }
+}
+const floorTableStates = computed<FloorTableState[]>(() => activeFloorTables.value.map(floorTableStateForTable))
 const selectedFloorTable = computed(() =>
   floorTableStates.value.find((state) => state.table.id === selectedFloorTableId.value) ?? floorTableStates.value[0] ?? null,
 )
 const emptyFloorTableStates = computed(() =>
   floorTableStates.value.filter((state) => state.status === 'empty'),
 )
+const mergeTargetFloorTableStates = computed<FloorTableState[]>(() => {
+  const sourceOrderId = selectedFloorTable.value?.order?.id
+  if (!sourceOrderId) {
+    return []
+  }
+
+  return floorTables.value
+    .map(floorTableStateForTable)
+    .filter((state) => state.order && state.order.id !== sourceOrderId)
+})
 const activeFloorOrderCount = computed(() => floorTableStates.value.filter((state) => state.order).length)
 const reservationRange = computed(() => {
   const selected = localDateFromKey(reservationSelectedDate.value)
@@ -7380,6 +7393,40 @@ const transferFloorTableOrder = async (
     [targetTable.id]: partySize,
   }
   selectedFloorTableId.value = targetTable.id
+}
+
+const mergeFloorTableOrder = async (
+  state: FloorTableState,
+  targetState: FloorTableState,
+): Promise<void> => {
+  if (!state.order || !targetState.order || orderClaimedByOtherStation(state.order) || orderClaimedByOtherStation(targetState.order)) {
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'transferOrders',
+      title: accessPermissionLabels.transferOrders,
+      detail: `將 ${state.table.label} 訂單併入 ${targetState.table.label} 前需驗證員工識別碼。`,
+    },
+  ]))) {
+    return
+  }
+
+  const partySize = Math.min(
+    targetState.table.capacity,
+    Math.max(1, (state.partySize || floorPartySizes.value[state.table.id] || 1) + (targetState.partySize || floorPartySizes.value[targetState.table.id] || 1)),
+  )
+  const merged = await mergeOrderIntoOrderForStation(state.order.id, targetState.order.id)
+  if (!merged) {
+    return
+  }
+  floorPartySizes.value = {
+    ...floorPartySizes.value,
+    [state.table.id]: 0,
+    [targetState.table.id]: partySize,
+  }
+  selectedFloorTableId.value = targetState.table.id
 }
 
 const selectFloorTable = (state: FloorTableState): void => {
@@ -11030,6 +11077,22 @@ onBeforeUnmount(() => {
                             @click="transferFloorTableOrder(selectedFloorTable, target.table)"
                           >
                             {{ target.table.label }}
+                          </button>
+                        </div>
+                        <div
+                          v-if="selectedFloorTable.order && mergeTargetFloorTableStates.length > 0"
+                          class="floor-transfer-actions"
+                          aria-label="併單"
+                        >
+                          <span>併單</span>
+                          <button
+                            v-for="target in mergeTargetFloorTableStates"
+                            :key="`merge-${target.table.id}`"
+                            type="button"
+                            :disabled="orderClaimedByOtherStation(selectedFloorTable.order) || Boolean(target.order && orderClaimedByOtherStation(target.order))"
+                            @click="mergeFloorTableOrder(selectedFloorTable, target)"
+                          >
+                            {{ floorLabelForTable(target.table) }} {{ target.table.label }} · {{ target.amountLabel }}
                           </button>
                         </div>
                       </section>

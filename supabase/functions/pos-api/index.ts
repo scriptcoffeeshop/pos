@@ -18,7 +18,7 @@ type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
 type CashDrawerDeliveryStatus = "sent" | "preview" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type PrintRuleTiming = "order" | "reprint";
+type PrintRuleTiming = "order" | "reprint" | "move" | "merge";
 type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "discount_settings" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
 type ReservationStatus = "booked" | "reminded" | "confirmed" | "seated" | "cancelled" | "no_show";
@@ -134,6 +134,11 @@ interface UpdateFloorAssignmentInput {
   tableLabel?: string;
   floorLabel?: string;
   partySize?: number;
+  stationId?: string;
+}
+
+interface MergeOrderInput {
+  targetOrderId?: string;
   stationId?: string;
 }
 
@@ -1527,6 +1532,105 @@ const normalizeOrderLabels = (labels: unknown): string[] => {
 
   return [...new Set(labels.map((label) => sanitizeText(label, "").slice(0, 40)).filter(Boolean))].slice(0, 12);
 };
+
+const orderAmount = (value: unknown): number => {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? Math.max(0, Math.trunc(amount)) : 0;
+};
+
+const orderArrayField = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+
+const orderHasPaymentFragments = (order: Record<string, unknown>): boolean =>
+  orderArrayField(order.payment_splits).length > 0 || orderArrayField(order.payment_breakdown).length > 0;
+
+const validateMergeableDineInOrder = (order: Record<string, unknown>, role: "Source" | "Target"): string | null => {
+  const label = role === "Source" ? "Source order" : "Target order";
+  if (order.service_mode !== "dine-in") {
+    return `${label} must be a dine-in order`;
+  }
+  if (terminalOrderStatuses.has(order.status as OrderStatus)) {
+    return `${label} is already completed or voided`;
+  }
+  if (!["pending", "authorized"].includes(String(order.payment_status))) {
+    return `${label} already has a final payment status`;
+  }
+  if (orderHasPaymentFragments(order)) {
+    return `${label} has split or recorded payments and cannot be merged`;
+  }
+  if (order.electronic_invoice_status && order.electronic_invoice_status !== "not_requested") {
+    return `${label} already has electronic invoice activity`;
+  }
+
+  return null;
+};
+
+const mergedOrderStatus = (targetStatus: OrderStatus, sourceStatus: OrderStatus): OrderStatus => {
+  if (targetStatus === "ready" || sourceStatus === "ready") {
+    return "ready";
+  }
+  if (targetStatus === "preparing" || sourceStatus === "preparing") {
+    return "preparing";
+  }
+
+  return "new";
+};
+
+const diningNoteTokens = (note: unknown): string[] =>
+  sanitizeText(note, "")
+    .split(/[、，,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const preservedDiningNoteTokens = (note: unknown): string[] =>
+  diningNoteTokens(note).filter((entry) =>
+    !/^樓層\s*\S+/i.test(entry) &&
+    !/^桌位\s*\S+/i.test(entry) &&
+    !/^\d+\s*人$/.test(entry) &&
+    !/^併單\s+/i.test(entry) &&
+    !/^已併入\s+/i.test(entry)
+  );
+
+const noteTokenValue = (note: unknown, pattern: RegExp): string => {
+  for (const token of diningNoteTokens(note)) {
+    const match = token.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return "";
+};
+
+const partySizeFromOrderNote = (note: unknown): number => {
+  const partyToken = diningNoteTokens(note).find((entry) => /^\d+\s*人$/.test(entry));
+  const partySize = Number(partyToken?.match(/^(\d+)/)?.[1] ?? 1);
+  return Number.isFinite(partySize) ? Math.min(Math.max(Math.trunc(partySize), 1), 99) : 1;
+};
+
+const buildMergedDineInNote = (targetOrder: Record<string, unknown>, sourceOrder: Record<string, unknown>): string => {
+  const targetFloor = noteTokenValue(targetOrder.note, /^樓層\s*(\S+)/i);
+  const targetTable = noteTokenValue(targetOrder.note, /^桌位\s*(\S+)/i);
+  const targetPartySize = partySizeFromOrderNote(targetOrder.note);
+  const sourcePartySize = partySizeFromOrderNote(sourceOrder.note);
+  const preservedNotes = [
+    ...preservedDiningNoteTokens(targetOrder.note),
+    ...preservedDiningNoteTokens(sourceOrder.note),
+  ].filter((note, index, allNotes) => allNotes.indexOf(note) === index);
+
+  return [
+    targetFloor ? `樓層 ${targetFloor}` : "",
+    targetTable ? `桌位 ${targetTable}` : "",
+    `${targetPartySize + sourcePartySize} 人`,
+    `併單 ${sanitizeText(sourceOrder.order_number, "")}`,
+    ...preservedNotes,
+  ].filter(Boolean).join("、").slice(0, 500);
+};
+
+const buildMergedSourceNote = (sourceOrder: Record<string, unknown>, targetOrder: Record<string, unknown>): string =>
+  [
+    ...diningNoteTokens(sourceOrder.note),
+    `已併入 ${sanitizeText(targetOrder.order_number, "")}`,
+  ].filter(Boolean).join("、").slice(0, 500);
 
 const clampNonNegativeInteger = (value: unknown, fallback = 0): number => {
   const numberValue = Number(value ?? fallback);
@@ -5250,6 +5354,179 @@ api.patch("/orders/:id/floor", async (c) => {
   return c.json({ order: data });
 });
 
+api.post("/orders/:id/merge", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const sourceOrderId = c.req.param("id");
+  const input: MergeOrderInput = await c.req.json<MergeOrderInput>().catch(() => ({}));
+  const targetOrderId = sanitizeText(input.targetOrderId, "");
+  const stationId = sanitizeStationId(input.stationId);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  if (!targetOrderId) {
+    return c.json({ error: "targetOrderId is required" }, 400);
+  }
+
+  const source = await loadOrderByIdOrNumber(sourceOrderId);
+  if (source.error) {
+    return c.json({ error: source.error.message }, 500);
+  }
+  if (!source.data) {
+    return c.json({ error: "Source order not found" }, 404);
+  }
+
+  const target = await loadOrderByIdOrNumber(targetOrderId);
+  if (target.error) {
+    return c.json({ error: target.error.message }, 500);
+  }
+  if (!target.data) {
+    return c.json({ error: "Target order not found" }, 404);
+  }
+
+  if (String(source.data.id) === String(target.data.id)) {
+    return c.json({ error: "Source and target orders must be different" }, 400);
+  }
+
+  const sourceValidation = validateMergeableDineInOrder(source.data, "Source");
+  if (sourceValidation) {
+    return c.json({ error: sourceValidation, order: source.data }, 409);
+  }
+  const targetValidation = validateMergeableDineInOrder(target.data, "Target");
+  if (targetValidation) {
+    return c.json({ error: targetValidation, order: target.data }, 409);
+  }
+
+  const now = new Date();
+  if (isLeaseActiveForOtherStation(source.data, stationId, now)) {
+    return claimConflictResponse(c, String(source.data.id), stationId);
+  }
+  if (isLeaseActiveForOtherStation(target.data, stationId, now)) {
+    return claimConflictResponse(c, String(target.data.id), stationId);
+  }
+
+  const sourceItems = Array.isArray(source.data.order_items) ? source.data.order_items : [];
+  const targetItems = Array.isArray(target.data.order_items) ? target.data.order_items : [];
+  const sourceDraftLines = normalizeDraftOrderLines(source.data.draft_lines);
+  const targetDraftLines = normalizeDraftOrderLines(target.data.draft_lines);
+  const targetHasPersistedItems = sourceItems.length > 0 || targetItems.length > 0;
+
+  if (targetHasPersistedItems) {
+    const linesToInsert = [...targetDraftLines, ...sourceDraftLines];
+    if (linesToInsert.length > 0) {
+      const { error } = await supabase
+        .from("order_items")
+        .insert(linesToInsert.map((line) => ({
+          order_id: target.data.id,
+          product_id: line.productId ?? null,
+          product_sku: line.productSku,
+          name: line.name,
+          unit_price: line.unitPrice,
+          quantity: line.quantity,
+          options: line.options ?? [],
+          combo_items: normalizeOrderComboItems(line.comboItems),
+          print_paused: line.printPaused === true,
+        })));
+
+      if (error) {
+        return c.json({ error: error.message }, 500);
+      }
+    }
+
+    if (sourceItems.length > 0) {
+      const { error } = await supabase
+        .from("order_items")
+        .update({ order_id: target.data.id })
+        .eq("order_id", source.data.id);
+
+      if (error) {
+        return c.json({ error: error.message }, 500);
+      }
+    }
+  }
+
+  const mergedNote = buildMergedDineInNote(target.data, source.data);
+  const mergedOrderLabels = [
+    ...new Set([
+      ...normalizeOrderLabels(target.data.order_labels),
+      ...normalizeOrderLabels(source.data.order_labels),
+    ]),
+  ];
+  const targetPayload = {
+    service_mode: "dine-in" as ServiceMode,
+    customer_name: target.data.customer_name || source.data.customer_name || "現場客",
+    customer_phone: target.data.customer_phone || source.data.customer_phone || "",
+    note: mergedNote,
+    subtotal: orderAmount(target.data.subtotal) + orderAmount(source.data.subtotal),
+    service_fee_amount: orderAmount(target.data.service_fee_amount) + orderAmount(source.data.service_fee_amount),
+    extra_fee_amount: orderAmount(target.data.extra_fee_amount) + orderAmount(source.data.extra_fee_amount),
+    discount_amount: orderAmount(target.data.discount_amount) + orderAmount(source.data.discount_amount),
+    points_redeemed: orderAmount(target.data.points_redeemed) + orderAmount(source.data.points_redeemed),
+    member_points_earned: orderAmount(target.data.member_points_earned) + orderAmount(source.data.member_points_earned),
+    order_labels: mergedOrderLabels,
+    member_id: target.data.member_id ?? source.data.member_id ?? null,
+    status: mergedOrderStatus(target.data.status as OrderStatus, source.data.status as OrderStatus),
+    draft_lines: targetHasPersistedItems ? [] : [...targetDraftLines, ...sourceDraftLines],
+    ...buildClaimPayload(stationId, now),
+  };
+
+  const { data: updatedTarget, error: targetUpdateError } = await supabase
+    .from("orders")
+    .update(targetPayload)
+    .eq("id", target.data.id)
+    .select(orderSelect)
+    .single();
+
+  if (targetUpdateError) {
+    return c.json({ error: targetUpdateError.message }, 500);
+  }
+
+  const { error: sourceUpdateError } = await supabase
+    .from("orders")
+    .update({
+      status: "voided" as OrderStatus,
+      payment_status: "failed" as PaymentStatus,
+      note: buildMergedSourceNote(source.data, target.data),
+      subtotal: 0,
+      service_fee_amount: 0,
+      extra_fee_amount: 0,
+      discount_amount: 0,
+      points_redeemed: 0,
+      member_points_earned: 0,
+      draft_lines: [],
+      claimed_by: null,
+      claimed_at: null,
+      claim_expires_at: null,
+    })
+    .eq("id", source.data.id);
+
+  if (sourceUpdateError) {
+    return c.json({ error: sourceUpdateError.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.merge",
+    orderId: updatedTarget.id,
+    stationId,
+    metadata: {
+      sourceOrderId: source.data.id,
+      sourceOrderNumber: source.data.order_number,
+      targetOrderId: updatedTarget.id,
+      targetOrderNumber: updatedTarget.order_number,
+      sourceSubtotal: source.data.subtotal,
+      targetSubtotal: updatedTarget.subtotal,
+      partySize: partySizeFromOrderNote(updatedTarget.note),
+    },
+  });
+
+  return c.json({ order: updatedTarget });
+});
+
 api.post("/orders/:id/void", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -6699,7 +6976,8 @@ const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "app91-card", "transfer"];
 const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card", "app91-card"]);
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
-const printRuleTimings: PrintRuleTiming[] = ["order", "reprint"];
+const defaultPrintRuleTimings: PrintRuleTiming[] = ["order", "reprint"];
+const printRuleTimings: PrintRuleTiming[] = ["order", "reprint", "move", "merge"];
 const onlineTimePattern = /^\d{2}:\d{2}$/;
 const onlineDeliveryChargeableAmount = (input: CreateOrderInput): number =>
   Math.max(
@@ -8768,13 +9046,13 @@ const normalizePrintRuleLabelMode = (
 
 const normalizePrintRuleTimings = (timings: unknown): PrintRuleTiming[] => {
   if (!Array.isArray(timings)) {
-    return printRuleTimings;
+    return defaultPrintRuleTimings;
   }
 
   const normalized = timings.filter((timing): timing is PrintRuleTiming =>
     printRuleTimings.includes(timing as PrintRuleTiming)
   );
-  return normalized.length > 0 ? [...new Set(normalized)] : printRuleTimings;
+  return normalized.length > 0 ? [...new Set(normalized)] : defaultPrintRuleTimings;
 };
 
 const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterSettings => ({

@@ -306,7 +306,7 @@ export interface PrintStation {
 }
 
 export type PrintLabelMode = 'receipt' | 'label' | 'both'
-export type PrintRuleTiming = 'order' | 'reprint'
+export type PrintRuleTiming = 'order' | 'reprint' | 'move' | 'merge'
 
 export interface PrintStationSetting {
   id: string
