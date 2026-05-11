@@ -68,6 +68,10 @@ import type {
   PrintStation,
   ServiceMode,
 } from '../types/pos'
+import {
+  defaultDineInTimeLimitSettings,
+  normalizeDineInTimeLimitSettings,
+} from './dineInTimeLimit'
 import { defaultDiscountSettings, normalizeDiscountSettings } from './discounts'
 
 interface ApiProduct {
@@ -1380,6 +1384,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     stationId: '',
     logoText: 'Script Coffee',
   },
+  dineInTimeLimit: defaultDineInTimeLimitSettings(),
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1914,6 +1919,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     freeDeliveryThreshold: clampRuntimeInteger(settings.freeDeliveryThreshold, defaults.freeDeliveryThreshold, 0, 999_999),
     deliveryTravelMinutes: clampRuntimeInteger(settings.deliveryTravelMinutes, defaults.deliveryTravelMinutes, 0, 180),
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode, defaults.sessionQrCode),
+    dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit, defaults.dineInTimeLimit),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)
@@ -3114,6 +3120,8 @@ const orderPayload = (order: PosOrder) => ({
   invoiceCarrierBarcode: order.invoiceCarrierBarcode,
   memberId: order.memberId,
   note: order.note,
+  qrSessionOrderId: order.qrSessionOrderId ?? null,
+  qrSessionStartedAt: order.qrSessionStartedAt ?? null,
   subtotal: order.subtotal,
   orderLabels: order.orderLabels,
   serviceFeeRate: order.serviceFeeRate,

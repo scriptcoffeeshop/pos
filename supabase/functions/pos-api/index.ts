@@ -73,6 +73,8 @@ interface CreateOrderInput {
   invoiceCarrierBarcode?: string;
   memberId?: string | null;
   note?: string;
+  qrSessionOrderId?: string | null;
+  qrSessionStartedAt?: string | null;
   subtotal: number;
   orderLabels?: string[];
   serviceFeeRate?: number;
@@ -483,6 +485,21 @@ interface OnlineScheduledOrderTimeWindow {
   allDay: boolean;
 }
 
+interface OnlineDineInTimeLimitRule {
+  id: string;
+  label: string;
+  days: number[];
+  mealMinutes: number;
+  lastOrderBeforeEndMinutes: number;
+}
+
+interface OnlineDineInTimeLimitSettings {
+  enabled: boolean;
+  mealMinutes: number;
+  lastOrderBeforeEndMinutes: number;
+  holidayRules: OnlineDineInTimeLimitRule[];
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -514,6 +531,7 @@ interface OnlineOrderingSettings {
     stationId: string;
     logoText: string;
   };
+  dineInTimeLimit: OnlineDineInTimeLimitSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1067,6 +1085,12 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     autoPrint: false,
     stationId: "",
     logoText: "Script Coffee",
+  },
+  dineInTimeLimit: {
+    enabled: false,
+    mealMinutes: 120,
+    lastOrderBeforeEndMinutes: 0,
+    holidayRules: [],
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -3951,6 +3975,10 @@ api.post("/orders", async (c) => {
     if (scheduleValidationError) {
       return c.json({ error: scheduleValidationError }, 409);
     }
+    const dineInTimeLimitError = validateQrDineInTimeLimit(input, orderSource, serviceMode, onlineOrdering);
+    if (dineInTimeLimitError) {
+      return c.json({ error: dineInTimeLimitError }, 409);
+    }
   }
 
   const couponClaimResult = await claimCouponForOrderInput(input, stationId);
@@ -6261,6 +6289,111 @@ const normalizeSessionQrCodeSettings = (input: unknown): OnlineOrderingSettings[
   };
 };
 
+const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
+  if (!Array.isArray(input)) {
+    return [...fallback];
+  }
+
+  return [...new Set(input.map((day) => Number(day)).filter((day) =>
+    Number.isInteger(day) && day >= 0 && day <= 6
+  ))];
+};
+
+const normalizeDineInTimeLimitSettings = (input: unknown): OnlineDineInTimeLimitSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {
+      ...defaultOnlineOrdering.dineInTimeLimit,
+      holidayRules: defaultOnlineOrdering.dineInTimeLimit.holidayRules.map((rule) => ({
+        ...rule,
+        days: [...rule.days],
+      })),
+    };
+  }
+
+  const settings = input as Partial<OnlineDineInTimeLimitSettings>;
+  const defaults = defaultOnlineOrdering.dineInTimeLimit;
+  const holidayRules = Array.isArray(settings.holidayRules)
+    ? settings.holidayRules.flatMap((entry, index): OnlineDineInTimeLimitRule[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return [];
+      }
+
+      const rule = entry as Partial<OnlineDineInTimeLimitRule>;
+      return [{
+        id: sanitizeText(rule.id, `holiday-${index + 1}`).slice(0, 60),
+        label: sanitizeText(rule.label, `假日規則 ${index + 1}`).slice(0, 40),
+        days: normalizeDineInTimeLimitDays(rule.days, [0, 6]),
+        mealMinutes: clampIntegerRange(rule.mealMinutes, defaults.mealMinutes, 0, 720),
+        lastOrderBeforeEndMinutes: clampIntegerRange(
+          rule.lastOrderBeforeEndMinutes,
+          defaults.lastOrderBeforeEndMinutes,
+          0,
+          720,
+        ),
+      }];
+    }).slice(0, 12)
+    : defaults.holidayRules.map((rule) => ({ ...rule, days: [...rule.days] }));
+
+  return {
+    enabled: settings.enabled === true,
+    mealMinutes: clampIntegerRange(settings.mealMinutes, defaults.mealMinutes, 0, 720),
+    lastOrderBeforeEndMinutes: clampIntegerRange(
+      settings.lastOrderBeforeEndMinutes,
+      defaults.lastOrderBeforeEndMinutes,
+      0,
+      720,
+    ),
+    holidayRules,
+  };
+};
+
+const activeDineInTimeLimitRule = (
+  settings: OnlineDineInTimeLimitSettings,
+  startedAt: Date,
+): Pick<OnlineDineInTimeLimitRule, "label" | "mealMinutes" | "lastOrderBeforeEndMinutes"> => {
+  const day = startedAt.getDay();
+  const holidayRule = settings.holidayRules.find((rule) => rule.days.includes(day));
+  if (holidayRule) {
+    return holidayRule;
+  }
+
+  return {
+    label: "預設規則",
+    mealMinutes: settings.mealMinutes,
+    lastOrderBeforeEndMinutes: settings.lastOrderBeforeEndMinutes,
+  };
+};
+
+const validateQrDineInTimeLimit = (
+  input: CreateOrderInput,
+  orderSource: OrderSource,
+  serviceMode: ServiceMode,
+  settings: OnlineOrderingSettings,
+): string | null => {
+  if (orderSource !== "qr" || serviceMode !== "dine-in" || !settings.dineInTimeLimit.enabled) {
+    return null;
+  }
+
+  if (!input.qrSessionStartedAt) {
+    return null;
+  }
+
+  const startedAt = new Date(input.qrSessionStartedAt);
+  if (!Number.isFinite(startedAt.getTime())) {
+    return null;
+  }
+
+  const rule = activeDineInTimeLimitRule(settings.dineInTimeLimit, startedAt);
+  if (rule.mealMinutes <= 0) {
+    return null;
+  }
+
+  const mealEndsAt = startedAt.getTime() + rule.mealMinutes * 60_000;
+  const lastOrderOffsetMinutes = Math.min(rule.lastOrderBeforeEndMinutes, rule.mealMinutes);
+  const lastOrderAt = mealEndsAt - lastOrderOffsetMinutes * 60_000;
+  return Date.now() >= lastOrderAt ? "已超過最後加點時間，請洽現場人員" : null;
+};
+
 const normalizeScheduledOrderTimeWindows = (input: unknown): OnlineScheduledOrderTimeWindow[] => {
   if (!Array.isArray(input)) {
     return defaultScheduledOrderTimeWindows();
@@ -8062,6 +8195,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
       180,
     ),
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
+    dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8399,6 +8533,7 @@ const validateOnlineOrdering = (input: unknown): {
       freeDeliveryThreshold,
       deliveryTravelMinutes,
       sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
+      dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
       pauseMessage,
       menuCategories,
       availableOptionChoices,

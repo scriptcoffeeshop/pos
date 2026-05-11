@@ -56,6 +56,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'dine-in-time-limits',
+    category: 'online',
+    title: '內用掃碼用餐與點餐限時',
+    summary: '後台設定用餐限時與最後加點，POS 工具箱可同步開關，QR 頁逾時會阻擋加點。',
+    steps: [
+      '到後台「線上點餐」設定用餐限時、最後加點與假日規則，規則會寫入 `online_ordering.dineInTimeLimit`。',
+      'POS 工具箱的「用餐與點餐限時」卡片只切換功能狀態，切換後會同步到後台與其他平板。',
+      '內用訂單 QR Code 會帶開單時間；QR 點餐頁會顯示最後加點與用餐結束時間。',
+      '超過最後加點後，QR 頁會暫停加入與送出，`pos-api` 也會拒絕繞過前端的送單。',
+      '桌位地圖會顯示剩餘或逾時時間，用餐結束後桌卡會出現鬧鐘式警示。',
+    ],
+    keywords: ['用餐限時', '最後加點', '內用掃碼', 'QR Code', '假日規則', '鬧鐘', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'product-total-display',
     category: 'orders',
     title: '商品總數設定',
