@@ -74,6 +74,7 @@ import {
   type PosRealtimeStatus,
 } from '../lib/posRealtime'
 import {
+  buildBillingStatementPayload,
   buildCustomerReceiptPayload,
   buildCashDrawerPulsePayload,
   buildOrderQrCodePayload,
@@ -4129,6 +4130,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printCustomerReceipt = (orderId: string): Promise<void> =>
     printManualOrderPayload(orderId, buildCustomerReceiptPayload, '顧客聯')
 
+  const printBillingStatement = (orderId: string): Promise<void> =>
+    printManualOrderPayload(orderId, buildBillingStatementPayload, '請款明細')
+
+  const printCurrentBillingStatement = async (): Promise<void> => {
+    if (cartLines.value.length === 0) {
+      setBackendStatus('fallback', '請款明細略過', '尚未加入品項，無法列印請款明細')
+      return
+    }
+
+    const order = await saveCounterOrder(false)
+    if (!order) {
+      return
+    }
+
+    await printBillingStatement(order.id)
+  }
+
   const printTransactionDetail = (orderId: string): Promise<void> =>
     printManualOrderPayload(orderId, buildTransactionDetailPayload, '交易明細')
 
@@ -5078,8 +5096,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     pointRedemptionLimit,
     pointsRedeemed,
     memberPointsEarned,
+    printBillingStatement,
     printCartLinesByPrintStatus,
     printCustomerReceipt,
+    printCurrentBillingStatement,
     printTransactionDetail,
     printOrder,
     printOrderQrCode,

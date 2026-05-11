@@ -63,6 +63,22 @@ const stationSettingToRuntime = (station: PrintStationSetting): PrintStation => 
 const lineTotal = (lines: CartLine[]): number =>
   lines.reduce((total, line) => total + line.unitPrice * line.quantity, 0)
 
+const orderAdjustmentAmount = (value: number | undefined): number =>
+  Math.max(0, Math.trunc(Number(value) || 0))
+
+const orderGrossTotal = (order: PosOrder, lines: CartLine[]): number =>
+  lineTotal(lines) +
+  orderAdjustmentAmount(order.serviceFeeAmount) +
+  orderAdjustmentAmount(order.extraFeeAmount)
+
+const orderPayableTotal = (order: PosOrder, lines: CartLine[]): number =>
+  Math.max(
+    0,
+    orderGrossTotal(order, lines) -
+      orderAdjustmentAmount(order.discountAmount) -
+      orderAdjustmentAmount(order.pointsRedeemed),
+  )
+
 const fulfillmentLinesForOrder = (order: PosOrder): string[] => {
   const fulfillmentLines: string[] = []
 
@@ -122,6 +138,63 @@ const paymentLinesForOrder = (order: PosOrder): string[] => {
     .filter((payment) => payment.amount > 0)
     .map((payment) => `PAY ${paymentMethodLabels[payment.paymentMethod]} ${formatCurrency(payment.amount)}`)
 }
+
+const orderFeeLines = (order: PosOrder): string[] => {
+  const lines: string[] = []
+  const serviceFeeAmount = orderAdjustmentAmount(order.serviceFeeAmount)
+  const extraFeeAmount = orderAdjustmentAmount(order.extraFeeAmount)
+
+  if (serviceFeeAmount > 0) {
+    lines.push(`SERVICE ${formatCurrency(serviceFeeAmount)}`)
+  }
+
+  if (extraFeeAmount > 0) {
+    lines.push(`EXTRA ${formatCurrency(extraFeeAmount)}`)
+  }
+
+  return lines
+}
+
+const orderDiscountLines = (order: PosOrder): string[] => {
+  const lines: string[] = []
+  const discountAmount = orderAdjustmentAmount(order.discountAmount)
+  const pointsRedeemed = orderAdjustmentAmount(order.pointsRedeemed)
+
+  if (discountAmount > 0) {
+    lines.push(`DISCOUNT -${formatCurrency(discountAmount)}`)
+  }
+
+  if (pointsRedeemed > 0) {
+    lines.push(`POINTS -${formatCurrency(pointsRedeemed)}`)
+  }
+
+  if (order.couponCode) {
+    lines.push(`COUPON ${order.couponCode}`)
+  }
+
+  return lines
+}
+
+const customerReceiptFooterLines = (order: PosOrder, lines: CartLine[]): string[] => [
+  `ITEMS ${formatCurrency(lineTotal(lines))}`,
+  ...orderFeeLines(order),
+  `TOTAL ${formatCurrency(orderGrossTotal(order, lines))}`,
+  ...paymentLinesForOrder(order),
+  ...fulfillmentLinesForOrder(order),
+  ...invoiceLinesForOrder(order),
+  `NOTE ${escapeEzplText(order.note || '-')}`,
+]
+
+const billingStatementFooterLines = (order: PosOrder, lines: CartLine[]): string[] => [
+  `ITEMS ${formatCurrency(lineTotal(lines))}`,
+  ...orderFeeLines(order),
+  ...orderDiscountLines(order),
+  `TOTAL ${formatCurrency(order.subtotal > 0 ? order.subtotal : orderPayableTotal(order, lines))}`,
+  ...paymentLinesForOrder(order),
+  ...fulfillmentLinesForOrder(order),
+  ...invoiceLinesForOrder(order),
+  `NOTE ${escapeEzplText(order.note || '-')}`,
+]
 
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
   const ruleCategories = rule.categories ?? []
@@ -187,6 +260,7 @@ const buildReceiptPayload = (
   lines: CartLine[],
   ruleName = station.name,
   title = 'Script Coffee POS',
+  footerLinesOverride: string[] | null = null,
 ): string => {
   const itemCommands = lines.flatMap((line, index) => {
     const y = 112 + index * 28
@@ -196,13 +270,12 @@ const buildReceiptPayload = (
   })
 
   const totalY = 128 + lines.length * 28
-  const note = escapeEzplText(order.note || '-')
-  const footerLines = [
+  const footerLines = footerLinesOverride ?? [
     `TOTAL ${formatCurrency(lineTotal(lines))}`,
     ...paymentLinesForOrder(order),
     ...fulfillmentLinesForOrder(order),
     ...invoiceLinesForOrder(order),
-    `NOTE ${note}`,
+    `NOTE ${escapeEzplText(order.note || '-')}`,
   ]
 
   return [
@@ -435,10 +508,34 @@ export const buildOrderQrCodePayload = (
 }
 
 export const buildCustomerReceiptPayload = (order: PosOrder, station: PrintStation): string =>
-  buildReceiptPayload(order, station, order.lines, '顧客聯', 'Script Coffee 顧客聯')
+  buildReceiptPayload(
+    order,
+    station,
+    order.lines,
+    '顧客聯',
+    'Script Coffee 顧客聯',
+    customerReceiptFooterLines(order, order.lines),
+  )
+
+export const buildBillingStatementPayload = (order: PosOrder, station: PrintStation): string =>
+  buildReceiptPayload(
+    order,
+    station,
+    order.lines,
+    '請款明細',
+    'Script Coffee 請款明細',
+    billingStatementFooterLines(order, order.lines),
+  )
 
 export const buildTransactionDetailPayload = (order: PosOrder, station: PrintStation): string =>
-  buildReceiptPayload(order, station, order.lines, '交易明細', 'Script Coffee 交易明細')
+  buildReceiptPayload(
+    order,
+    station,
+    order.lines,
+    '交易明細',
+    'Script Coffee 交易明細',
+    billingStatementFooterLines(order, order.lines),
+  )
 
 export const buildCashDrawerPulsePayload = (): string => '\x1bp\x00\x19\xfa'
 

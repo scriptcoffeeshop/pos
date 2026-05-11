@@ -102,6 +102,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'billing-statement-print',
+    category: 'orders',
+    title: '請款明細與交易明細',
+    summary: '結帳前可列印含折扣後金額的請款明細，已收款後可補印交易明細。',
+    steps: [
+      '在付款頁套用服務費、其他費用、優惠折扣、點數或優惠券後，按底部「請款明細」。',
+      '請款明細會列出商品小計、服務費/其他費用、折扣、點數折抵、優惠券與折扣後總計。',
+      '顧客聯仍保留折扣前總額，適合桌邊核對餐點；折扣後金額請用請款明細。',
+      '訂單中心未收款單的明細按鈕會顯示「請款明細」；已收款或授權後會改為「交易明細」。',
+      '交易查詢與作廢中的「補印交易明細」同樣會使用折扣後總計。',
+    ],
+    keywords: ['請款明細', '交易明細', '顧客聯', '折扣', '點數折抵', '結帳', 'iCHEF'],
+    target: 'payment',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',
