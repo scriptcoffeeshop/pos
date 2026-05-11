@@ -2486,6 +2486,8 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     fulfillmentDueSoonMinutes: 15,
     defaultTakeoutPickupMinutes: 5,
     takeoutLoopEnabled: false,
+    dineInAutoExitEnabled: false,
+    takeoutAutoExitEnabled: true,
   },
   orderPageDisplay: {
     noteColumns: 3,
@@ -2725,6 +2727,8 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         86400,
       ),
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
+      dineInAutoExitEnabled: workflowAlerts.dineInAutoExitEnabled === true,
+      takeoutAutoExitEnabled: workflowAlerts.takeoutAutoExitEnabled !== false,
     },
     orderPageDisplay: {
       noteColumns: clampRuntimeInteger(

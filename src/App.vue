@@ -4664,6 +4664,37 @@ const openCashDrawerForCheckout = async (order: PosOrder): Promise<void> => {
   }
 }
 
+const orderPaymentAllowsAutoExit = (order: PosOrder): boolean =>
+  order.paymentStatus === 'paid' || order.paymentStatus === 'authorized'
+
+const workflowAutoExitEnabledForOrder = (order: PosOrder): boolean => {
+  if (order.mode === 'dine-in') {
+    return order.source !== 'qr' && engagementSettings.value.workflowAlerts.dineInAutoExitEnabled
+  }
+
+  return (order.mode === 'takeout' || order.mode === 'delivery') &&
+    engagementSettings.value.workflowAlerts.takeoutAutoExitEnabled
+}
+
+const shouldWorkflowAutoExitOrder = (order: PosOrder): boolean =>
+  order.status === 'ready' && orderPaymentAllowsAutoExit(order) && workflowAutoExitEnabledForOrder(order)
+
+const applyWorkflowAutoExit = async (orderId: string): Promise<void> => {
+  const latestOrder = orderQueue.value.find((entry) => entry.id === orderId)
+  if (!latestOrder || !shouldWorkflowAutoExitOrder(latestOrder)) {
+    return
+  }
+
+  await updateOrderStatus(latestOrder.id, 'served')
+}
+
+const updateOrderStatusWithWorkflow = async (orderId: string, status: OrderStatus): Promise<void> => {
+  await updateOrderStatus(orderId, status)
+  if (status === 'ready') {
+    await applyWorkflowAutoExit(orderId)
+  }
+}
+
 const collectOrderPaymentAction = async (
   order: PosOrder,
   options: { skipVerification?: boolean } = {},
@@ -4683,6 +4714,7 @@ const collectOrderPaymentAction = async (
   if (paidOrder.paymentStatus === 'paid') {
     await openCashDrawerForCheckout(paidOrder)
   }
+  await applyWorkflowAutoExit(order.id)
 }
 
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
@@ -6435,7 +6467,7 @@ const orderSwipeCompleteAction = (order: PosOrder): void => {
     order.mode === 'delivery' || order.source !== 'counter'
       ? 'served'
       : order.status === 'ready' ? 'served' : 'ready'
-  void updateOrderStatus(order.id, nextStatus)
+  void updateOrderStatusWithWorkflow(order.id, nextStatus)
   openSwipeKey.value = null
 }
 
@@ -12027,7 +12059,7 @@ onBeforeUnmount(() => {
                               :class="{ 'order-action--active': order.status === action.value }"
                               type="button"
                               :disabled="order.status === action.value || orderClaimedByOtherStation(order)"
-                              @click="updateOrderStatus(order.id, action.value)"
+                              @click="updateOrderStatusWithWorkflow(order.id, action.value)"
                             >
                               {{ action.label }}
                             </button>

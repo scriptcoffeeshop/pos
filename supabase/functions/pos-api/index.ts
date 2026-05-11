@@ -831,6 +831,8 @@ interface CustomerEngagementSettings {
     fulfillmentDueSoonMinutes: number;
     defaultTakeoutPickupMinutes: number;
     takeoutLoopEnabled: boolean;
+    dineInAutoExitEnabled: boolean;
+    takeoutAutoExitEnabled: boolean;
   };
   orderPageDisplay: {
     noteColumns: number;
@@ -1366,6 +1368,8 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     fulfillmentDueSoonMinutes: 15,
     defaultTakeoutPickupMinutes: 5,
     takeoutLoopEnabled: false,
+    dineInAutoExitEnabled: false,
+    takeoutAutoExitEnabled: true,
   },
   orderPageDisplay: {
     noteColumns: 3,
@@ -9857,6 +9861,8 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         86400,
       ),
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
+      dineInAutoExitEnabled: workflowAlerts.dineInAutoExitEnabled === true,
+      takeoutAutoExitEnabled: workflowAlerts.takeoutAutoExitEnabled !== false,
     },
     orderPageDisplay: {
       noteColumns: clampIntegerRange(
