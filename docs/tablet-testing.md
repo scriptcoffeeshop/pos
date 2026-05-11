@@ -106,6 +106,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 5. 到列印站確認已裁貼紙「不計算商品」仍可獨立設定；只改商品總數設定不得改變貼紙序號。
 6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認商品總數開關與不計算品項仍從 Supabase runtime 還原。
 
+## 多平板服務費設定
+
+服務費設定存在 `engagement_settings.serviceCharge`，POS 與線上/QR 都應由 `/settings/runtime` 還原同一份規則：
+
+1. 在平板 A 連點工具箱 6 下進入後台，到「iCHEF 補齊」開啟服務費，設定名稱、內用/外帶/外送費率與「折扣前」或「折扣後」。
+2. 點分類文字確認只切換下方品項清單，不會直接勾選分類；勾選分類方框後，下方同分類品項都應顯示已排除。
+3. 取消其中一個品項，分類方框應取消，其他同分類品項仍保留為個別排除。
+4. 儲存後在平板 B 重新同步，分別建立內用、外帶與外送單，確認付款頁服務費名稱與金額依服務方式切換。
+5. 建立線上/QR 訂單時，消費者頁與 `POST /orders` 應用同一份 serviceCharge，不能只依前端送出的服務費金額。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認服務費名稱、費率、折扣基準與排除項目仍從 Supabase runtime 還原。
+
 ## 多平板套餐商品
 
 套餐設定存在 `online_ordering.comboProductAssignments`，正式訂單的子商品會保存到 `order_items.combo_items`。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

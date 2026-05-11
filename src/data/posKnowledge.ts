@@ -71,6 +71,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'service-charge-settings',
+    category: 'orders',
+    title: '服務費設定',
+    summary: '後台可設定服務費名稱、內用/外帶/外送費率、折扣計算基準與不計算商品。',
+    steps: [
+      '連點工具箱 6 下進入後台，到「iCHEF 補齊」開啟「啟用服務費」。',
+      '設定服務費名稱，並分別輸入內用、外帶與外送服務費百分比。',
+      '選擇折扣前或折扣後計算；折扣後會先扣除優惠活動與手動折抵，再計算服務費。',
+      '分類文字只切換下方品項清單；分類方框才會整類加入服務費不計算商品。',
+      '儲存後，POS 付款頁會依目前服務方式帶入預設費率，線上/QR 送單也會由 `pos-api` 重新計算服務費。',
+      '設定寫入 `engagement_settings.serviceCharge`，換平板、重開 App 或 fresh reinstall 後仍從 `/settings/runtime` 還原。',
+    ],
+    keywords: ['服務費', '折扣後服務費', '內用服務費', '外帶服務費', '外送服務費', '不計算商品', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'combo-product-management',
     category: 'orders',
     title: '套餐商品與子項目',

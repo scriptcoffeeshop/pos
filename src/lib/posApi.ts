@@ -2145,6 +2145,16 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
   ],
   customerTypes: ['一般顧客', '常客', 'VIP', '員工'],
   defaultServiceFeeRate: 0,
+  serviceCharge: {
+    enabled: false,
+    label: '服務費',
+    dineInRate: 0,
+    takeoutRate: 0,
+    deliveryRate: 0,
+    discountBasis: 'before-discount',
+    excludedCategories: [],
+    excludedItemIds: [],
+  },
   productTotalDisplay: {
     enabled: true,
     excludedCategories: [],
@@ -2209,6 +2219,11 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeOnlineText(type)).filter(Boolean))].slice(0, 16)
     : defaults.customerTypes
+  const legacyServiceRate = Math.min(Math.max(normalizeNumber(settings.defaultServiceFeeRate, 0), 0), 30)
+  const rawServiceCharge = settings.serviceCharge && typeof settings.serviceCharge === 'object'
+    ? settings.serviceCharge
+    : defaults.serviceCharge
+  const serviceCharge = rawServiceCharge as Partial<CustomerEngagementSettings['serviceCharge']>
   const rawProductTotalDisplay = settings.productTotalDisplay && typeof settings.productTotalDisplay === 'object'
     ? settings.productTotalDisplay
     : defaults.productTotalDisplay
@@ -2272,7 +2287,23 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
   return {
     orderLabels: orderLabels.length > 0 ? orderLabels : defaults.orderLabels,
     customerTypes: customerTypes.length > 0 ? customerTypes : defaults.customerTypes,
-    defaultServiceFeeRate: Math.min(Math.max(normalizeNumber(settings.defaultServiceFeeRate, 0), 0), 30),
+    defaultServiceFeeRate: legacyServiceRate,
+    serviceCharge: {
+      enabled: serviceCharge.enabled === true || legacyServiceRate > 0,
+      label: sanitizeOnlineText(serviceCharge.label, defaults.serviceCharge.label).slice(0, 40) || defaults.serviceCharge.label,
+      dineInRate: Math.min(Math.max(normalizeNumber(serviceCharge.dineInRate, legacyServiceRate), 0), 30),
+      takeoutRate: Math.min(Math.max(normalizeNumber(serviceCharge.takeoutRate, 0), 0), 30),
+      deliveryRate: Math.min(Math.max(normalizeNumber(serviceCharge.deliveryRate, 0), 0), 30),
+      discountBasis: serviceCharge.discountBasis === 'after-discount' ? 'after-discount' : 'before-discount',
+      excludedCategories: Array.isArray(serviceCharge.excludedCategories)
+        ? [...new Set(serviceCharge.excludedCategories.filter((category): category is MenuCategory => typeof category === 'string'))]
+          .slice(0, 40)
+        : defaults.serviceCharge.excludedCategories,
+      excludedItemIds: Array.isArray(serviceCharge.excludedItemIds)
+        ? [...new Set(serviceCharge.excludedItemIds.filter((itemId): itemId is string => typeof itemId === 'string'))]
+          .slice(0, 200)
+        : defaults.serviceCharge.excludedItemIds,
+    },
     productTotalDisplay: {
       enabled: productTotalDisplay.enabled !== false,
       excludedCategories: Array.isArray(productTotalDisplay.excludedCategories)
