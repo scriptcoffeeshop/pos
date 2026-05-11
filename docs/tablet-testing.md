@@ -95,6 +95,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 7. 關帳頁付款方式對帳應依 `payment_breakdown` 分攤金額。
 8. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認混合支付摘要、交易明細張數與補印功能仍從 Supabase 還原。
 
+## 多平板商品總數設定
+
+商品總數設定存在 `engagement_settings.productTotalDisplay`，和 GoDEX 已裁貼紙的 `countExcludedCategories/countExcludedItemIds` 分開。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 在平板 A 連點工具箱 6 下進入後台，到「iCHEF 補齊」開啟「顯示商品總數」。
+2. 點分類文字確認只切換下方品項清單，不會直接勾選分類；勾選分類方框後，下方同分類品項都應顯示已勾選。
+3. 取消其中一個品項，分類方框應取消，其他同分類品項仍保留為個別勾選，避免整類與單品狀態錯亂。
+4. 儲存後在平板 B 重新同步，建立含一般商品與袋子/餐具的訂單，點餐票券、付款摘要與訂單明細應顯示排除後的商品總數。
+5. 到列印站確認已裁貼紙「不計算商品」仍可獨立設定；只改商品總數設定不得改變貼紙序號。
+6. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認商品總數開關與不計算品項仍從 Supabase runtime 還原。
+
 ## 多平板線上新單提醒
 
 線上/掃碼新單提醒的「稍後」「已讀」「接單」「拒絕接單」狀態會寫入 Supabase `online_order_reminder_states`，並透過 `pos_realtime_events` 的 `online_order_reminders` topic 讓其他平板重拉 `/online-order-reminders/state`。測試時至少準備兩台平板或一台 APK 加一個瀏覽器視窗：

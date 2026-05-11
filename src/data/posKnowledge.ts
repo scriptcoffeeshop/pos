@@ -56,6 +56,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'product-total-display',
+    category: 'orders',
+    title: '商品總數設定',
+    summary: '後台可控制 POS 是否顯示商品總數，並排除袋子、餐具等不需計算的商品。',
+    steps: [
+      '連點工具箱 6 下進入後台，到「iCHEF 補齊」開啟「顯示商品總數」。',
+      '分類文字只切換下方品項清單；分類方框才會整類加入不計算商品。',
+      '若整類已排除後取消單一品項，系統會取消分類方框並保留其他同分類品項的個別勾選。',
+      '儲存後，點餐票券、付款摘要與訂單明細會顯示排除後的商品總數。',
+      'GoDEX 已裁貼紙的不計算商品在列印規則中獨立設定，兩邊不會互相覆蓋。',
+    ],
+    keywords: ['商品總數', '品項數', '不計算商品', '袋子', '餐具', 'iCHEF', '已裁貼紙'],
+    target: 'admin',
+  },
+  {
     id: 'payment-exception',
     category: 'payments',
     title: '收款、作廢與退款',

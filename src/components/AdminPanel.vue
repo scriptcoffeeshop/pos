@@ -463,6 +463,12 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
     ...settings,
     orderLabels: settings.orderLabels.map((label) => ({ ...label })),
     customerTypes: [...settings.customerTypes],
+    productTotalDisplay: {
+      ...defaults.productTotalDisplay,
+      ...settings.productTotalDisplay,
+      excludedCategories: [...(settings.productTotalDisplay?.excludedCategories ?? [])],
+      excludedItemIds: [...(settings.productTotalDisplay?.excludedItemIds ?? [])],
+    },
     recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
     translations: settings.translations.map((translation) => ({ ...translation })),
     hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
@@ -803,6 +809,26 @@ const printRuleCountCategoryFullySelected = (rule: PrintRuleSetting, category: M
 }
 const printRuleCountItemSelected = (rule: PrintRuleSetting, product: ProductDraft): boolean =>
   (rule.countExcludedCategories ?? []).includes(product.category) || (rule.countExcludedItemIds ?? []).includes(product.id)
+const activeProductTotalCategory = ref<MenuCategory>(menuCategoryOptions[0]?.value ?? 'coffee')
+const selectProductTotalCategory = (category: MenuCategory): void => {
+  activeProductTotalCategory.value = category
+}
+const productTotalProductOptions = computed<ProductDraft[]>(() =>
+  sortedPrintRuleProducts.value.filter((product) => product.category === activeProductTotalCategory.value),
+)
+const productTotalCategoryFullyExcluded = (category: MenuCategory): boolean => {
+  const settings = engagementSettings.value.productTotalDisplay
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  if (categoryProductIds.length === 0) {
+    return settings.excludedCategories.includes(category)
+  }
+
+  const excludedItemIds = new Set(settings.excludedItemIds)
+  return settings.excludedCategories.includes(category) || categoryProductIds.every((itemId) => excludedItemIds.has(itemId))
+}
+const productTotalItemExcluded = (product: ProductDraft): boolean =>
+  engagementSettings.value.productTotalDisplay.excludedCategories.includes(product.category) ||
+  engagementSettings.value.productTotalDisplay.excludedItemIds.includes(product.id)
 const normalizePrintRuleFullCategories = (rule: PrintRuleSetting): void => {
   const itemIds = new Set(rule.itemIds ?? [])
   const categories = new Set(rule.categories)
@@ -838,6 +864,25 @@ const normalizePrintRuleCountFullCategories = (rule: PrintRuleSetting): void => 
 
   rule.countExcludedCategories = [...categories]
   rule.countExcludedItemIds = [...itemIds]
+}
+const normalizeProductTotalFullCategories = (): void => {
+  const settings = engagementSettings.value.productTotalDisplay
+  const itemIds = new Set(settings.excludedItemIds)
+  const categories = new Set(settings.excludedCategories)
+  for (const category of menuCategoryOptions.map((option) => option.value)) {
+    const categoryProductIds = printRuleProductIdsForCategory(category)
+    if (categoryProductIds.length === 0 || !categoryProductIds.every((itemId) => itemIds.has(itemId))) {
+      continue
+    }
+
+    categories.add(category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+  }
+
+  settings.excludedCategories = [...categories]
+  settings.excludedItemIds = [...itemIds]
 }
 
 const operationStationOptions = computed(() => {
@@ -1991,6 +2036,54 @@ const toggleRuleCountItem = (rule: PrintRuleSetting, itemId: string): void => {
   itemIds.add(product.id)
   rule.countExcludedItemIds = [...itemIds]
   normalizePrintRuleCountFullCategories(rule)
+}
+
+const toggleProductTotalCategory = (category: MenuCategory): void => {
+  selectProductTotalCategory(category)
+  const settings = engagementSettings.value.productTotalDisplay
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  const itemIds = new Set(settings.excludedItemIds)
+  if (productTotalCategoryFullyExcluded(category)) {
+    settings.excludedCategories = settings.excludedCategories.filter((entry) => entry !== category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+    settings.excludedItemIds = [...itemIds]
+    return
+  }
+
+  settings.excludedCategories = [...new Set([...settings.excludedCategories, category])]
+  for (const itemId of categoryProductIds) {
+    itemIds.delete(itemId)
+  }
+  settings.excludedItemIds = [...itemIds]
+}
+
+const toggleProductTotalItem = (itemId: string): void => {
+  const product = sortedPrintRuleProducts.value.find((entry) => entry.id === itemId)
+  if (!product) {
+    return
+  }
+
+  const settings = engagementSettings.value.productTotalDisplay
+  const itemIds = new Set(settings.excludedItemIds)
+  if (productTotalItemExcluded(product)) {
+    if (settings.excludedCategories.includes(product.category)) {
+      settings.excludedCategories = settings.excludedCategories.filter((entry) => entry !== product.category)
+      for (const categoryItemId of printRuleProductIdsForCategory(product.category)) {
+        if (categoryItemId !== product.id) {
+          itemIds.add(categoryItemId)
+        }
+      }
+    }
+    itemIds.delete(product.id)
+    settings.excludedItemIds = [...itemIds]
+    return
+  }
+
+  itemIds.add(product.id)
+  settings.excludedItemIds = [...itemIds]
+  normalizeProductTotalFullCategories()
 }
 
 const savePrinterSettings = async (): Promise<void> => {
@@ -3588,6 +3681,83 @@ const saveAccessControl = async (): Promise<void> => {
         </div>
 
         <div class="admin-section-grid">
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Item Counts</p>
+                <h3>商品總數設定</h3>
+              </div>
+              <strong>{{ engagementSettings.productTotalDisplay.enabled ? '顯示' : '隱藏' }}</strong>
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.productTotalDisplay.enabled" type="checkbox" />
+                顯示商品總數
+              </label>
+            </div>
+
+            <p class="panel-note">
+              POS 點餐與結帳畫面會排除下方商品；此設定與 GoDEX 已裁貼紙「不計算商品」分開管理。
+            </p>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>不計算分類</strong>
+                <span>分類文字只切換下方品項，方框才會整類排除。</span>
+              </div>
+              <div class="admin-toggle-grid">
+                <div
+                  v-for="category in menuCategoryOptions"
+                  :key="`product-total-${category.value}`"
+                  class="toggle-row admin-rule-category-row"
+                  :class="{
+                    'toggle-row--active': productTotalCategoryFullyExcluded(category.value),
+                    'toggle-row--focused': activeProductTotalCategory === category.value,
+                  }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="productTotalCategoryFullyExcluded(category.value)"
+                    @click.stop
+                    @change="toggleProductTotalCategory(category.value)"
+                  />
+                  <button
+                    class="admin-rule-category-button"
+                    type="button"
+                    @click="selectProductTotalCategory(category.value)"
+                  >
+                    {{ category.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>不計算指定品項</strong>
+                <span>{{ categoryLabels[activeProductTotalCategory] ?? activeProductTotalCategory }} 品項可單獨調整。</span>
+              </div>
+              <div class="admin-rule-item-grid">
+                <label
+                  v-for="product in productTotalProductOptions"
+                  :key="`product-total-item-${product.id}`"
+                  class="toggle-row"
+                  :class="{ 'toggle-row--active': productTotalItemExcluded(product) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="productTotalItemExcluded(product)"
+                    @change="toggleProductTotalItem(product.id)"
+                  />
+                  <span>{{ product.name }}</span>
+                  <small>{{ categoryLabels[product.category] ?? product.category }}</small>
+                </label>
+              </div>
+              <p v-if="productTotalProductOptions.length === 0" class="panel-note">此分類尚無商品。</p>
+            </div>
+          </section>
+
           <section class="admin-subpanel">
             <div class="admin-subpanel-heading">
               <div>

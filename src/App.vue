@@ -757,6 +757,7 @@ const {
   cartItemSubtotal,
   cartLines,
   cartQuantity,
+  cartProductTotalQuantity,
   cartTotal,
   clearCart,
   clearCustomerMember,
@@ -3303,8 +3304,33 @@ const activeKnowledgeArticle = computed<PosKnowledgeArticle | null>(() =>
   filteredKnowledgeArticles.value[0] ??
   null,
 )
+const productTotalDisplayEnabled = computed(() => engagementSettings.value.productTotalDisplay.enabled)
+const lineCountsForProductTotalDisplay = (line: CartLine): boolean => {
+  const settings = engagementSettings.value.productTotalDisplay
+  if (!settings.enabled) {
+    return true
+  }
+
+  const excludedCategorySet = new Set(settings.excludedCategories)
+  const excludedItemIdSet = new Set(settings.excludedItemIds)
+  return !(
+    (line.category && excludedCategorySet.has(line.category)) ||
+    excludedItemIdSet.has(line.itemId) ||
+    (line.productId ? excludedItemIdSet.has(line.productId) : false)
+  )
+}
+const menuItemCountsForProductTotalDisplay = (item: MenuItem): boolean => {
+  const settings = engagementSettings.value.productTotalDisplay
+  if (!settings.enabled) {
+    return true
+  }
+
+  return !settings.excludedCategories.includes(item.category) && !settings.excludedItemIds.includes(item.id)
+}
+const orderProductTotalQuantity = (lines: CartLine[]): number =>
+  lines.reduce((total, line) => total + (lineCountsForProductTotalDisplay(line) ? line.quantity : 0), 0)
 const activeOrderItemCount = computed(
-  () => activeOrder.value?.lines.reduce((total, line) => total + line.quantity, 0) ?? 0,
+  () => activeOrder.value ? orderProductTotalQuantity(activeOrder.value.lines) : 0,
 )
 const stationProducts = computed(() =>
   [...productStatusCatalog.value]
@@ -4102,7 +4128,14 @@ const pendingOptionUnitPrice = computed(() =>
 )
 const pendingOptionLineTotal = computed(() => pendingOptionUnitPrice.value * (activeOptionLine.value?.quantity ?? 1))
 const ticketDisplayQuantity = computed(() =>
-  cartQuantity.value + (activeOptionItem.value && !activeOptionLineId.value ? 1 : 0),
+  cartProductTotalQuantity.value +
+    (
+      activeOptionItem.value &&
+        !activeOptionLineId.value &&
+        menuItemCountsForProductTotalDisplay(activeOptionItem.value)
+        ? 1
+        : 0
+    ),
 )
 const ticketDisplayTotal = computed(() => {
   if (activeOptionItem.value && activeOptionLine.value) {
@@ -4278,7 +4311,7 @@ const collectOrderPaymentAction = async (
 
 const workspaceTabSummaries = computed<Record<WorkspaceTab, string>>(() => ({
   floor: `${activeDineInOrders.value.length} 桌內用 · ${floorLevels.value.length} 樓層`,
-  order: cartQuantity.value > 0 ? `${cartQuantity.value} 件` : '菜單與購物車',
+  order: cartQuantity.value > 0 ? `${cartProductTotalQuantity.value} 件` : '菜單與購物車',
   details: `${serviceModeLabels[serviceMode.value]} · ${customer.name || '現場客'}`,
   payment: paymentLabels[paymentMethod.value],
   queue: queueFulfillmentAlert.value.count > 0 ? `${queueFulfillmentAlert.value.count} 張到點` : `${pendingOrders.value.length} 待處理`,
@@ -8959,7 +8992,7 @@ onBeforeUnmount(() => {
                   <footer class="checkout-bar checkout-bar--ticket">
                     <div class="ticket-footer-summary-row">
                       <div class="ticket-total-summary">
-                        <span>{{ ticketDisplayQuantity }} 件</span>
+                        <span>{{ productTotalDisplayEnabled ? '商品總數 ' : '' }}{{ ticketDisplayQuantity }} 件</span>
                         <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
                       </div>
                       <button
@@ -10177,7 +10210,7 @@ onBeforeUnmount(() => {
                   <div class="payment-summary-grid" aria-label="付款摘要">
                     <article>
                       <span>品項</span>
-                      <strong>{{ cartQuantity }} 件</strong>
+                      <strong>{{ productTotalDisplayEnabled ? '商品總數 ' : '' }}{{ cartProductTotalQuantity }} 件</strong>
                     </article>
                     <article>
                       <span>小計</span>
@@ -11496,7 +11529,7 @@ onBeforeUnmount(() => {
                       </span>
                     </span>
                   </div>
-                  <p>{{ activeOrder.customerName }} · {{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
+                  <p>{{ activeOrder.customerName }} · {{ productTotalDisplayEnabled ? '商品總數 ' : '' }}{{ activeOrderItemCount }} 件 · {{ activeOrder.note || '無備註' }}</p>
                   <p v-if="fulfillmentLabel(activeOrder)" class="order-fulfillment">
                     {{ fulfillmentLabel(activeOrder) }}
                   </p>

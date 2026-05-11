@@ -2017,6 +2017,11 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
   ],
   customerTypes: ['一般顧客', '常客', 'VIP', '員工'],
   defaultServiceFeeRate: 0,
+  productTotalDisplay: {
+    enabled: true,
+    excludedCategories: [],
+    excludedItemIds: [],
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2076,6 +2081,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeOnlineText(type)).filter(Boolean))].slice(0, 16)
     : defaults.customerTypes
+  const rawProductTotalDisplay = settings.productTotalDisplay && typeof settings.productTotalDisplay === 'object'
+    ? settings.productTotalDisplay
+    : defaults.productTotalDisplay
+  const productTotalDisplay = rawProductTotalDisplay as Partial<CustomerEngagementSettings['productTotalDisplay']>
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index) => {
       const rule = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['recommendations'][number] : null
@@ -2136,6 +2145,17 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     orderLabels: orderLabels.length > 0 ? orderLabels : defaults.orderLabels,
     customerTypes: customerTypes.length > 0 ? customerTypes : defaults.customerTypes,
     defaultServiceFeeRate: Math.min(Math.max(normalizeNumber(settings.defaultServiceFeeRate, 0), 0), 30),
+    productTotalDisplay: {
+      enabled: productTotalDisplay.enabled !== false,
+      excludedCategories: Array.isArray(productTotalDisplay.excludedCategories)
+        ? [...new Set(productTotalDisplay.excludedCategories.filter((category): category is MenuCategory => typeof category === 'string'))]
+          .slice(0, 40)
+        : defaults.productTotalDisplay.excludedCategories,
+      excludedItemIds: Array.isArray(productTotalDisplay.excludedItemIds)
+        ? [...new Set(productTotalDisplay.excludedItemIds.filter((itemId): itemId is string => typeof itemId === 'string'))]
+          .slice(0, 200)
+        : defaults.productTotalDisplay.excludedItemIds,
+    },
     recommendations,
     translations,
     hardwareDevices,
