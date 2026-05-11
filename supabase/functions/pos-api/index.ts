@@ -16,6 +16,7 @@ type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
 type CashDrawerDeliveryStatus = "sent" | "preview" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
+type PrintRuleTiming = "order" | "reprint";
 type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "discount_settings" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
 type ReservationStatus = "booked" | "reminded" | "confirmed" | "seated" | "cancelled" | "no_show";
@@ -366,6 +367,7 @@ interface PrintRuleSetting {
   name: string;
   serviceMode: ServiceMode;
   stationId: string;
+  timings: PrintRuleTiming[];
   categories: MenuCategory[];
   itemIds: string[];
   countExcludedCategories: MenuCategory[];
@@ -924,6 +926,7 @@ const defaultPrinterSettings: PrinterSettings = {
       name: "外帶貼紙",
       serviceMode: "takeout",
       stationId: "counter",
+      timings: ["order", "reprint"],
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
       countExcludedCategories: [],
@@ -937,6 +940,7 @@ const defaultPrinterSettings: PrinterSettings = {
       name: "內用貼紙",
       serviceMode: "dine-in",
       stationId: "counter",
+      timings: ["order", "reprint"],
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
       countExcludedCategories: [],
@@ -950,6 +954,7 @@ const defaultPrinterSettings: PrinterSettings = {
       name: "外送貼紙",
       serviceMode: "delivery",
       stationId: "counter",
+      timings: ["order", "reprint"],
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
       countExcludedCategories: [],
@@ -5888,6 +5893,7 @@ const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "transfer"];
 const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card"]);
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
+const printRuleTimings: PrintRuleTiming[] = ["order", "reprint"];
 const onlineTimePattern = /^\d{2}:\d{2}$/;
 const onlineDeliveryChargeableAmount = (input: CreateOrderInput): number =>
   Math.max(
@@ -7474,6 +7480,17 @@ const normalizePrintRuleLabelMode = (
   return labelMode;
 };
 
+const normalizePrintRuleTimings = (timings: unknown): PrintRuleTiming[] => {
+  if (!Array.isArray(timings)) {
+    return printRuleTimings;
+  }
+
+  const normalized = timings.filter((timing): timing is PrintRuleTiming =>
+    printRuleTimings.includes(timing as PrintRuleTiming)
+  );
+  return normalized.length > 0 ? [...new Set(normalized)] : printRuleTimings;
+};
+
 const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterSettings => ({
   stations: Array.isArray(settings.stations)
     ? settings.stations.map((station) => ({ ...station }))
@@ -7500,6 +7517,7 @@ const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterS
         ...rule,
         name: normalizePrintRuleName(originalName, serviceMode),
         serviceMode,
+        timings: normalizePrintRuleTimings(rule.timings),
         categories,
         itemIds,
         countExcludedCategories,
@@ -7585,11 +7603,13 @@ const validatePrinterSettings = (input: unknown): {
       ? entry.countExcludedItemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
       : [];
     const name = sanitizeText(entry.name, `規則 ${index + 1}`);
+    const timings = normalizePrintRuleTimings(entry.timings);
     rules.push({
       id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),
       name: normalizePrintRuleName(name, serviceMode),
       serviceMode,
       stationId,
+      timings,
       categories,
       itemIds,
       countExcludedCategories,

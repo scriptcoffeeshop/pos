@@ -6451,6 +6451,7 @@ button.cart-line-summary:focus-visible {
 }
 
 .printer-rule-enable-toggle input,
+.printer-rule-timing-toggle input,
 .printer-rule-chip input,
 .printer-rule-product-chip input {
   width: 17px;
@@ -6467,6 +6468,40 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-control-grid label:last-child {
   grid-column: 1 / -1;
+}
+
+.printer-rule-timing-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.printer-rule-timing-grid > span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.printer-rule-timing-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.printer-rule-timing-toggle--active {
+  border-color: rgba(10, 121, 106, 0.45);
+  background: rgba(10, 121, 106, 0.1);
+  color: var(--primary-dark);
 }
 
 .printer-rule-scope {

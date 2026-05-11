@@ -104,6 +104,7 @@ import type {
   PrintLabelMode,
   PrintJob,
   PrintRuleSetting,
+  PrintRuleTiming,
   PrintStationSetting,
   RegisterCashAdjustmentKind,
   ReservationStatus,
@@ -1568,6 +1569,13 @@ const printLabelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
   { value: 'receipt', label: '收據' },
   { value: 'both', label: '收據 + 貼紙' },
 ]
+
+const printRuleTimingOptions: Array<{ value: PrintRuleTiming; label: string }> = [
+  { value: 'order', label: '出單' },
+  { value: 'reprint', label: '重印' },
+]
+
+const defaultPrintRuleTimings: PrintRuleTiming[] = printRuleTimingOptions.map((option) => option.value)
 
 const noteSnippets = ['需要袋子']
 const ticketNoteSnippets = ['需要袋子']
@@ -3131,8 +3139,15 @@ const printerRuleScopeLabel = (rule: PrintRuleSetting): string => {
 
   return `${categoryCount} 類 · ${itemCount} 個指定品項`
 }
+const printerRuleTimingSelected = (rule: PrintRuleSetting, timing: PrintRuleTiming): boolean =>
+  (rule.timings ?? defaultPrintRuleTimings).includes(timing)
+const printerRuleTimingLabel = (rule: PrintRuleSetting): string =>
+  printRuleTimingOptions
+    .filter((option) => printerRuleTimingSelected(rule, option.value))
+    .map((option) => option.label)
+    .join('、') || '未選時機'
 const printerRuleModeLabel = (rule: PrintRuleSetting): string =>
-  `${serviceModeLabels[rule.serviceMode]} · ${printLabelModeLabels[rule.labelMode]}`
+  `${serviceModeLabels[rule.serviceMode]} · ${printerRuleTimingLabel(rule)} · ${printLabelModeLabels[rule.labelMode]}`
 const printerRuleProductIdsForCategory = (category: MenuCategory): string[] =>
   printRuleMenuItems.value.filter((item) => item.category === category).map((item) => item.id)
 const activePrinterRuleCategoryId = (rule: PrintRuleSetting): MenuCategory | '' => {
@@ -3284,6 +3299,15 @@ const togglePrinterRuleItem = (rule: PrintRuleSetting, itemId: string): void => 
   rule.itemIds = [...itemIds]
   normalizePrinterRuleFullCategories(rule)
 }
+const togglePrinterRuleTiming = (rule: PrintRuleSetting, timing: PrintRuleTiming): void => {
+  const timings = new Set(rule.timings ?? defaultPrintRuleTimings)
+  if (timings.has(timing)) {
+    timings.delete(timing)
+  } else {
+    timings.add(timing)
+  }
+  rule.timings = timings.size > 0 ? [...timings] : [timing]
+}
 const togglePrinterRuleCountCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
   selectPrinterRuleCountCategory(rule, category)
   const categoryProductIds = printerRuleProductIdsForCategory(category)
@@ -3332,6 +3356,7 @@ const clonePrinterSettingsForSave = (): PrinterSettings => ({
   stations: printerSettings.value.stations.map((station) => ({ ...station })),
   rules: printerSettings.value.rules.map((rule) => ({
     ...rule,
+    timings: [...new Set(rule.timings ?? defaultPrintRuleTimings)],
     categories: [...new Set(rule.categories)],
     itemIds: [...new Set(rule.itemIds ?? [])],
     countExcludedCategories: [...new Set(rule.countExcludedCategories ?? [])],
@@ -3349,6 +3374,7 @@ const savePrinterSettingsFromWorkstation = async (): Promise<void> => {
       stations: savedSettings.stations.map((station) => ({ ...station })),
       rules: savedSettings.rules.map((rule) => ({
         ...rule,
+        timings: [...(rule.timings ?? defaultPrintRuleTimings)],
         categories: [...rule.categories],
         itemIds: [...(rule.itemIds ?? [])],
         countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
@@ -5736,7 +5762,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
     }
 
     if (action === 'checkout-print' || action === 'print') {
-      await printOrder(order.id)
+      await printOrder(order.id, 'order')
     }
 
     if (action === 'checkout-print' || action === 'checkout-only') {
@@ -11695,6 +11721,22 @@ onBeforeUnmount(() => {
                               <label>
                                 份數
                                 <input v-model.number="rule.copies" type="number" min="1" max="5" />
+                              </label>
+                            </div>
+                            <div class="printer-rule-timing-grid" aria-label="印單時機">
+                              <span>印單時機</span>
+                              <label
+                                v-for="timing in printRuleTimingOptions"
+                                :key="`${rule.id}-${timing.value}`"
+                                class="printer-rule-timing-toggle"
+                                :class="{ 'printer-rule-timing-toggle--active': printerRuleTimingSelected(rule, timing.value) }"
+                              >
+                                <input
+                                  type="checkbox"
+                                  :checked="printerRuleTimingSelected(rule, timing.value)"
+                                  @change="togglePrinterRuleTiming(rule, timing.value)"
+                                />
+                                {{ timing.label }}
                               </label>
                             </div>
                             <small>{{ printerStationName(rule.stationId) }} · {{ printerRuleModeLabel(rule) }}</small>
