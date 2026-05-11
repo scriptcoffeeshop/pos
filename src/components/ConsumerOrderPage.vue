@@ -97,7 +97,9 @@ const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
 const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
 const qrSessionOrderId = urlParams.get('order')?.trim() ?? ''
 const qrSessionStartedAt = urlParams.get('openedAt')?.trim() || urlParams.get('startedAt')?.trim() || ''
+const qrFloorLabel = urlParams.get('floor')?.trim() ?? ''
 const qrTableLabel = urlParams.get('table')?.trim() ?? ''
+const qrTableDisplayLabel = [qrFloorLabel, qrTableLabel].filter(Boolean).join(' ')
 
 const selectedCategory = ref<CategoryFilter>('all')
 const searchTerm = ref('')
@@ -1058,6 +1060,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
     memberId: null,
     note: [
+      qrFloorLabel ? `樓層 ${qrFloorLabel}` : '',
       qrTableLabel ? `桌位 ${qrTableLabel}` : '',
       orderNoteVisible.value ? customer.note.trim() : '',
     ].filter(Boolean).join(' · '),
@@ -1203,7 +1206,7 @@ watch(
           </p>
           <p class="consumer-status-line">
             <ShoppingBag :size="18" aria-hidden="true" />
-            <span>{{ qrTableLabel ? `掃碼內用 · ${qrTableLabel}` : orderMessage }}</span>
+            <span>{{ qrTableLabel ? `掃碼內用 · ${qrTableDisplayLabel}` : orderMessage }}</span>
           </p>
           <p v-if="qrDineInTimeLimitDetail" class="consumer-status-line consumer-status-line--limit">
             <Clock3 :size="18" aria-hidden="true" />
