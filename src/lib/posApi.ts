@@ -849,6 +849,9 @@ const normalizeComboLineItems = (items: unknown): ComboLineItem[] => {
       name: comboItem.name,
       quantity: Math.max(1, Math.trunc(Number(comboItem.quantity) || 1)),
       priceDelta: Math.trunc(Number(comboItem.priceDelta) || 0),
+      options: Array.isArray(comboItem.options)
+        ? comboItem.options.filter((option): option is string => typeof option === 'string')
+        : [],
     }]
   }).slice(0, 80)
 }

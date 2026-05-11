@@ -74,6 +74,7 @@ export interface ComboLineItem {
   name: string
   quantity: number
   priceDelta: number
+  options?: string[]
 }
 
 export interface PaymentSplit {

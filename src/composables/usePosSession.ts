@@ -293,6 +293,9 @@ const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
         name: source.name,
         quantity: Math.max(1, Math.trunc(Number(source.quantity) || 1)),
         priceDelta: Math.trunc(Number(source.priceDelta) || 0),
+        options: Array.isArray(source.options)
+          ? source.options.filter((option): option is string => typeof option === 'string')
+          : [],
       }]
     }).slice(0, 80)
     : []
@@ -2741,7 +2744,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     if (comboItems.length > 0) {
-      nextLine.comboItems = comboItems.map((comboItem) => ({ ...comboItem }))
+      nextLine.comboItems = comboItems.map((comboItem) => ({
+        ...comboItem,
+        options: comboItem.options ? [...comboItem.options] : [],
+      }))
     }
 
     if (item.id !== item.sku || itemId !== item.id) {
@@ -2821,7 +2827,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     return remoteLines.map((line) => {
       const localLine = localBySignature.get(lineVariantSignature(line))
       return localLine?.comboItems && localLine.comboItems.length > 0
-        ? { ...line, comboItems: localLine.comboItems.map((item) => ({ ...item })) }
+        ? {
+          ...line,
+          comboItems: localLine.comboItems.map((item) => ({
+            ...item,
+            options: item.options ? [...item.options] : [],
+          })),
+        }
         : line
     })
   }
