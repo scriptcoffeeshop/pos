@@ -937,6 +937,19 @@ const stationOptions = computed(() => {
 const stationNameForId = (stationId: string): string =>
   stationOptions.value.find((station) => station.id === stationId)?.name ?? '目前出單機'
 
+const printerRulesInPrintOrder = (settings: PrinterSettings): PrintRuleSetting[] => {
+  if (settings.stations.length === 0) {
+    return settings.rules
+  }
+
+  const stationIds = new Set(settings.stations.map((station) => station.id))
+  return [
+    ...settings.stations.flatMap((station) => settings.rules.filter((rule) => rule.stationId === station.id)),
+    ...settings.rules.filter((rule) => !stationIds.has(rule.stationId)),
+  ]
+}
+const printerRuleRows = computed<PrintRuleSetting[]>(() => printerRulesInPrintOrder(printerSettings.value))
+
 const tableQrThemeLabel = computed(() =>
   tableQrThemeOptions.find((option) => option.value === onlineOrdering.value.tableQrCode.theme)?.label ?? '經典黑色',
 )
@@ -2189,6 +2202,23 @@ const removeStation = (stationId: string): void => {
   )
 }
 
+const moveStation = (stationId: string, direction: -1 | 1): void => {
+  const stations = [...printerSettings.value.stations]
+  const index = stations.findIndex((station) => station.id === stationId)
+  const nextIndex = index + direction
+  if (index < 0 || nextIndex < 0 || nextIndex >= stations.length) {
+    return
+  }
+
+  const [station] = stations.splice(index, 1)
+  if (!station) {
+    return
+  }
+
+  stations.splice(nextIndex, 0, station)
+  printerSettings.value.stations = stations
+}
+
 const addPrintRule = (): void => {
   printerSettings.value.rules.push({
     id: buildId('rule'),
@@ -2208,6 +2238,37 @@ const addPrintRule = (): void => {
 
 const removePrintRule = (ruleId: string): void => {
   printerSettings.value.rules = printerSettings.value.rules.filter((rule) => rule.id !== ruleId)
+}
+
+const printRuleStationIndex = (rule: PrintRuleSetting): number =>
+  printerSettings.value.rules.filter((entry) => entry.stationId === rule.stationId).findIndex((entry) => entry.id === rule.id)
+const printRuleStationCount = (rule: PrintRuleSetting): number =>
+  printerSettings.value.rules.filter((entry) => entry.stationId === rule.stationId).length
+const movePrintRule = (ruleId: string, direction: -1 | 1): void => {
+  const rules = [...printerSettings.value.rules]
+  const index = rules.findIndex((rule) => rule.id === ruleId)
+  const rule = rules[index]
+  if (!rule) {
+    return
+  }
+
+  const stationRuleIndexes = rules
+    .map((entry, entryIndex) => (entry.stationId === rule.stationId ? entryIndex : -1))
+    .filter((entryIndex) => entryIndex >= 0)
+  const stationPosition = stationRuleIndexes.indexOf(index)
+  const targetIndex = stationRuleIndexes[stationPosition + direction]
+  if (stationPosition < 0 || targetIndex === undefined) {
+    return
+  }
+
+  const targetRule = rules[targetIndex]
+  if (!targetRule) {
+    return
+  }
+
+  rules[index] = targetRule
+  rules[targetIndex] = rule
+  printerSettings.value.rules = rules
 }
 
 const toggleRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
@@ -2413,7 +2474,19 @@ const savePrinterSettings = async (): Promise<void> => {
   adminMessage.value = '儲存出單機設定'
 
   try {
-    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', printerSettings.value)
+    const settingsForSave: PrinterSettings = {
+      stations: printerSettings.value.stations.map((station) => ({ ...station })),
+      rules: printerRulesInPrintOrder(printerSettings.value).map((rule) => ({
+        ...rule,
+        timings: [...new Set(rule.timings ?? defaultPrintRuleTimings)],
+        categories: [...new Set(rule.categories)],
+        itemIds: [...new Set(rule.itemIds ?? [])],
+        countExcludedCategories: [...new Set(rule.countExcludedCategories ?? [])],
+        countExcludedItemIds: [...new Set(rule.countExcludedItemIds ?? [])],
+        copies: Math.min(5, Math.max(1, Number(rule.copies) || 1)),
+      })),
+    }
+    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', settingsForSave)
     printerSettings.value = clonePrinterSettings(savedSettings)
     adminMessage.value = '出單機設定已更新'
     emit('refreshPos')
@@ -5826,10 +5899,30 @@ const saveAccessControl = async (): Promise<void> => {
               </button>
             </div>
 
-            <article v-for="station in printerSettings.stations" :key="station.id" class="admin-station-row">
+            <article v-for="(station, stationIndex) in printerSettings.stations" :key="station.id" class="admin-station-row">
               <div class="admin-station-title">
                 <Printer :size="20" aria-hidden="true" />
                 <strong>{{ station.name }}</strong>
+                <div class="admin-order-actions" aria-label="出單機排序">
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="出單機往上"
+                    :disabled="stationIndex === 0"
+                    @click="moveStation(station.id, -1)"
+                  >
+                    <ArrowUp :size="16" aria-hidden="true" />
+                  </button>
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="出單機往下"
+                    :disabled="stationIndex >= printerSettings.stations.length - 1"
+                    @click="moveStation(station.id, 1)"
+                  >
+                    <ArrowDown :size="16" aria-hidden="true" />
+                  </button>
+                </div>
                 <button class="icon-button" type="button" title="刪除出單機" @click="removeStation(station.id)">
                   <Trash2 :size="16" aria-hidden="true" />
                 </button>
@@ -5876,15 +5969,35 @@ const saveAccessControl = async (): Promise<void> => {
               </button>
             </div>
 
-            <article v-for="rule in printerSettings.rules" :key="rule.id" class="admin-rule-row">
+            <article v-for="rule in printerRuleRows" :key="rule.id" class="admin-rule-row">
               <div class="admin-row-header">
                 <label>
                   規則名稱
                   <input v-model="rule.name" type="text" />
                 </label>
-                <button class="icon-button" type="button" title="刪除印單規則" @click="removePrintRule(rule.id)">
-                  <Trash2 :size="16" aria-hidden="true" />
-                </button>
+                <div class="admin-order-actions" aria-label="印單規則排序">
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="同出單機規則往上"
+                    :disabled="printRuleStationIndex(rule) <= 0"
+                    @click="movePrintRule(rule.id, -1)"
+                  >
+                    <ArrowUp :size="16" aria-hidden="true" />
+                  </button>
+                  <button
+                    class="icon-button"
+                    type="button"
+                    title="同出單機規則往下"
+                    :disabled="printRuleStationIndex(rule) >= printRuleStationCount(rule) - 1"
+                    @click="movePrintRule(rule.id, 1)"
+                  >
+                    <ArrowDown :size="16" aria-hidden="true" />
+                  </button>
+                  <button class="icon-button" type="button" title="刪除印單規則" @click="removePrintRule(rule.id)">
+                    <Trash2 :size="16" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
 
               <div class="admin-rule-grid">

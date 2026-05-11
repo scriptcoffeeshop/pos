@@ -6797,7 +6797,7 @@ button.cart-line-summary:focus-visible {
 
 .printer-station-card-main {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   color: var(--primary-dark);
@@ -6895,9 +6895,38 @@ button.cart-line-summary:focus-visible {
 
 .printer-rule-title-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: stretch;
+}
+
+.printer-order-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.printer-order-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  touch-action: manipulation;
+}
+
+.printer-order-actions button:not(:disabled):hover {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.printer-order-actions button:disabled {
+  opacity: 0.4;
 }
 
 .printer-rule-name-field,
@@ -11101,10 +11130,16 @@ button.cart-line-summary:focus-visible {
 .admin-station-title,
 .admin-subpanel-heading,
 .admin-role-header,
-.admin-action-row {
+.admin-action-row,
+.admin-order-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.admin-order-actions {
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .admin-row-header,
