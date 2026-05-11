@@ -56,6 +56,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'online-notification-routing',
+    category: 'online',
+    title: '每台平板線上訂單通知',
+    summary: '對照 iCHEF POS 工具箱，可為每台平板獨立設定新單提示、服務方式與內用桌位通知範圍。',
+    steps: [
+      '在 POS 桌位地圖右側「線上通知設定」確認目前平板名稱與是否接收通知。',
+      '依現場分工開關內用、自取與外送通知；例如吧台平板可只接自取，外場平板可只接內用掃碼。',
+      '提示聲模式與音量是每台平板自己的設定，會覆蓋後台全域提示音設定。',
+      '若只想讓某台平板接收指定桌位，點選內用桌位 chip；未指定時代表接收所有內用桌位。',
+      '設定寫入 `online_ordering.notificationRouting`，前景提醒與 Android 背景新單提醒都會套用同一份 runtime。',
+    ],
+    keywords: ['線上通知', '訂單通知', '平板', '內用掃碼', '桌位通知', '提示音', 'iCHEF'],
+    target: 'floor',
+  },
+  {
     id: 'dine-in-time-limits',
     category: 'online',
     title: '內用掃碼用餐與點餐限時',

@@ -533,6 +533,21 @@ type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
 
+interface OnlineNotificationStationSettings {
+  stationId: string;
+  stationLabel: string;
+  enabled: boolean;
+  serviceModes: OnlineServiceModeAvailability;
+  tableIds: string[];
+  soundEnabled: boolean;
+  notificationRepeatMode: OnlineNotificationRepeatMode;
+  notificationVolume: number;
+}
+
+interface OnlineNotificationRoutingSettings {
+  stations: OnlineNotificationStationSettings[];
+}
+
 interface OnlineOrderingSettings {
   enabled: boolean;
   serviceModeAvailability: OnlineServiceModeAvailability;
@@ -565,6 +580,7 @@ interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings;
   tableQrCode: OnlineTableQrCodeSettings;
   storeProfile: OnlineStoreProfileSettings;
+  notificationRouting: OnlineNotificationRoutingSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1145,6 +1161,9 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     notice: "",
     noticeExpanded: false,
     coverImageDataUrls: [],
+  },
+  notificationRouting: {
+    stations: [],
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -6449,6 +6468,70 @@ const normalizeOnlineStoreProfileSettings = (input: unknown): OnlineStoreProfile
   };
 };
 
+const normalizeOnlineNotificationServiceModes = (input: unknown): OnlineServiceModeAvailability => {
+  const settings = input && typeof input === "object" && !Array.isArray(input)
+    ? input as Partial<OnlineServiceModeAvailability>
+    : {};
+
+  return serviceModes.reduce<OnlineServiceModeAvailability>((availability, mode) => {
+    availability[mode] = settings[mode] !== false;
+    return availability;
+  }, {
+    "dine-in": true,
+    takeout: true,
+    delivery: true,
+  });
+};
+
+const normalizeOnlineNotificationRoutingSettings = (input: unknown): OnlineNotificationRoutingSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {
+      stations: defaultOnlineOrdering.notificationRouting.stations.map((station) => ({
+        ...station,
+        serviceModes: { ...station.serviceModes },
+        tableIds: [...station.tableIds],
+      })),
+    };
+  }
+
+  const settings = input as Partial<OnlineNotificationRoutingSettings>;
+  const seenStationIds = new Set<string>();
+  const stations = Array.isArray(settings.stations)
+    ? settings.stations.flatMap((entry): OnlineNotificationStationSettings[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return [];
+      }
+
+      const station = entry as Partial<OnlineNotificationStationSettings>;
+      const stationId = sanitizeText(station.stationId, "").slice(0, 80);
+      if (!stationId || seenStationIds.has(stationId)) {
+        return [];
+      }
+
+      seenStationIds.add(stationId);
+      const notificationRepeatMode = station.notificationRepeatMode === "once" ? "once" : "continuous";
+      const notificationVolume = clampIntegerRange(station.notificationVolume, defaultOnlineOrdering.notificationVolume, 0, 100);
+      const tableIds = Array.isArray(station.tableIds)
+        ? [...new Set(station.tableIds.map((tableId) => sanitizeText(tableId, "").toUpperCase().slice(0, 12)).filter(Boolean))]
+          .slice(0, 80)
+        : [];
+
+      return [{
+        stationId,
+        stationLabel: sanitizeText(station.stationLabel, stationId).slice(0, 80) || stationId,
+        enabled: station.enabled !== false,
+        serviceModes: normalizeOnlineNotificationServiceModes(station.serviceModes),
+        tableIds,
+        soundEnabled: station.soundEnabled !== false,
+        notificationRepeatMode,
+        notificationVolume,
+      }];
+    }).slice(0, 32)
+    : [];
+
+  return { stations };
+};
+
 const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
   if (!Array.isArray(input)) {
     return [...fallback];
@@ -8404,6 +8487,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     commentFields: normalizeCommentFieldSettings(settings.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+    notificationRouting: normalizeOnlineNotificationRoutingSettings(settings.notificationRouting),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8746,6 +8830,7 @@ const validateOnlineOrdering = (input: unknown): {
       commentFields: normalizeCommentFieldSettings(settings.commentFields),
       tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
       storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+      notificationRouting: normalizeOnlineNotificationRoutingSettings(settings.notificationRouting),
       pauseMessage,
       menuCategories,
       availableOptionChoices,

@@ -431,6 +431,9 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     noticeExpanded: false,
     coverImageDataUrls: [],
   },
+  notificationRouting: {
+    stations: [],
+  },
   dineInTimeLimit: defaultDineInTimeLimitSettings(),
   dineInCheckout: {
     mode: 'postpaid',
@@ -515,6 +518,26 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
         .map((imageUrl) => imageUrl.slice(0, 600_000))
         .slice(0, 4)
       : [],
+  },
+  notificationRouting: {
+    stations: (settings.notificationRouting?.stations ?? [])
+      .filter((station) => station.stationId)
+      .slice(0, 32)
+      .map((station) => ({
+        stationId: station.stationId.trim().slice(0, 80),
+        stationLabel: (station.stationLabel || station.stationId).trim().slice(0, 80),
+        enabled: station.enabled !== false,
+        serviceModes: {
+          'dine-in': station.serviceModes?.['dine-in'] !== false,
+          takeout: station.serviceModes?.takeout !== false,
+          delivery: station.serviceModes?.delivery !== false,
+        },
+        tableIds: [...new Set((station.tableIds ?? []).map((tableId) => tableId.trim().toUpperCase()).filter(Boolean))]
+          .slice(0, 80),
+        soundEnabled: station.soundEnabled !== false,
+        notificationRepeatMode: station.notificationRepeatMode === 'once' ? 'once' : 'continuous',
+        notificationVolume: Math.min(Math.max(Math.trunc(Number(station.notificationVolume) || 0), 0), 100),
+      })),
   },
   dineInTimeLimit: normalizeDineInTimeLimitSettings(
     settings.dineInTimeLimit,
@@ -721,6 +744,9 @@ const roleCount = computed(() => accessControl.value.roles.length)
 const activeStaffCount = computed(() => accessControl.value.staffAccounts.filter((staff) => staff.active).length)
 const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
 const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
+const onlineNotificationRoutedStationCount = computed(() =>
+  onlineOrdering.value.notificationRouting.stations.filter((station) => station.enabled).length,
+)
 const activeDiscountCampaignCount = computed(() => discountSettings.value.campaigns.filter((campaign) => campaign.enabled).length)
 const automaticDiscountCampaignCount = computed(() =>
   discountSettings.value.campaigns.filter((campaign) => campaign.enabled && campaign.kind === 'automatic').length,
@@ -2573,6 +2599,26 @@ const saveOnlineOrdering = async (): Promise<void> => {
             .map((imageUrl) => imageUrl.slice(0, 600_000))
             .slice(0, 4),
         },
+        notificationRouting: {
+          stations: onlineOrdering.value.notificationRouting.stations
+            .filter((station) => station.stationId.trim())
+            .slice(0, 32)
+            .map((station) => ({
+              stationId: station.stationId.trim().slice(0, 80),
+              stationLabel: (station.stationLabel.trim() || station.stationId.trim()).slice(0, 80),
+              enabled: station.enabled !== false,
+              serviceModes: {
+                'dine-in': station.serviceModes['dine-in'] !== false,
+                takeout: station.serviceModes.takeout !== false,
+                delivery: station.serviceModes.delivery !== false,
+              },
+              tableIds: [...new Set(station.tableIds.map((tableId) => tableId.trim().toUpperCase()).filter(Boolean))]
+                .slice(0, 80),
+              soundEnabled: station.soundEnabled !== false,
+              notificationRepeatMode: station.notificationRepeatMode === 'once' ? 'once' : 'continuous',
+              notificationVolume: Math.min(Math.max(Math.trunc(Number(station.notificationVolume) || 0), 0), 100),
+            })),
+        },
         dineInTimeLimit: normalizeDineInTimeLimitSettings({
           enabled: Boolean(onlineOrdering.value.dineInTimeLimit.enabled),
           mealMinutes: onlineOrdering.value.dineInTimeLimit.mealMinutes,
@@ -3583,6 +3629,11 @@ const saveAccessControl = async (): Promise<void> => {
             <span>未確認提醒</span>
             <strong>{{ onlineOrdering.unconfirmedReminderMinutes }} 分</strong>
             <small>{{ onlineOrdering.soundEnabled ? '提示音已啟用' : '提示音未啟用' }}</small>
+          </article>
+          <article>
+            <span>平板通知</span>
+            <strong>{{ onlineNotificationRoutedStationCount }} 台</strong>
+            <small>POS 工具箱可為每台平板指定服務方式與內用桌位</small>
           </article>
           <article>
             <span>接單流程</span>

@@ -53,6 +53,7 @@ import {
   refundOrder,
   sendStationHeartbeat,
   defaultFloorPlanSettings,
+  updateAdminSetting,
   updateCounterDraftOrder,
   updateOrderFloorAssignment as persistOrderFloorAssignment,
   updateProduct,
@@ -91,6 +92,7 @@ import type {
   OrderStatus,
   OnlineOrderReminderAction,
   OnlineOrderReminderState,
+  OnlineNotificationStationSettings,
   OnlineOrderingSettings,
   PaymentAllocation,
   PaymentMethod,
@@ -1218,6 +1220,116 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     Math.max(0, onlineOrderingSettings.value.unconfirmedReminderMinutes),
   )
 
+  const defaultOnlineNotificationStationSettings = (): OnlineNotificationStationSettings => ({
+    stationId: stationClaimId,
+    stationLabel: stationClaimLabel,
+    enabled: true,
+    serviceModes: {
+      'dine-in': true,
+      takeout: true,
+      delivery: true,
+    },
+    tableIds: [],
+    soundEnabled: onlineOrderingSettings.value.soundEnabled,
+    notificationRepeatMode: onlineOrderingSettings.value.notificationRepeatMode,
+    notificationVolume: Math.min(Math.max(Math.trunc(onlineOrderingSettings.value.notificationVolume), 0), 100),
+  })
+
+  const currentOnlineNotificationSettings = computed<OnlineNotificationStationSettings>(() => {
+    const station = onlineOrderingSettings.value.notificationRouting.stations.find((entry) => entry.stationId === stationClaimId)
+    if (!station) {
+      return defaultOnlineNotificationStationSettings()
+    }
+
+    return {
+      stationId: station.stationId,
+      stationLabel: station.stationLabel || stationClaimLabel,
+      enabled: station.enabled !== false,
+      serviceModes: {
+        'dine-in': station.serviceModes['dine-in'] !== false,
+        takeout: station.serviceModes.takeout !== false,
+        delivery: station.serviceModes.delivery !== false,
+      },
+      tableIds: [...station.tableIds],
+      soundEnabled: station.soundEnabled !== false,
+      notificationRepeatMode: station.notificationRepeatMode === 'once' ? 'once' : 'continuous',
+      notificationVolume: Math.min(Math.max(Math.trunc(station.notificationVolume), 0), 100),
+    }
+  })
+
+  const effectiveOnlineOrderingNotificationSettings = computed<OnlineOrderingSettings>(() => ({
+    ...onlineOrderingSettings.value,
+    soundEnabled: currentOnlineNotificationSettings.value.soundEnabled,
+    notificationRepeatMode: currentOnlineNotificationSettings.value.notificationRepeatMode,
+    notificationVolume: currentOnlineNotificationSettings.value.notificationVolume,
+  }))
+
+  const floorTableIdsForOrder = (order: PosOrder): string[] => {
+    if (order.mode !== 'dine-in') {
+      return []
+    }
+
+    const noteTable = order.note.match(/桌位\s*([^、，,]+)/i)?.[1]?.trim().toUpperCase()
+    const nameTable = order.customerName.match(/(?:^|\s)([A-Z]\d+)\b/i)?.[1]?.trim().toUpperCase()
+    const tableLabel = noteTable || nameTable
+    if (!tableLabel) {
+      return []
+    }
+
+    const matches = floorPlanSettings.value.tables
+      .filter((table) => table.id.toUpperCase() === tableLabel || table.label.toUpperCase() === tableLabel)
+      .map((table) => table.id.toUpperCase())
+    return [...new Set([tableLabel, ...matches])]
+  }
+
+  const onlineNotificationOrderMatchesStation = (order: PosOrder): boolean => {
+    const settings = currentOnlineNotificationSettings.value
+    if (!settings.enabled || settings.serviceModes[order.mode] === false) {
+      return false
+    }
+
+    if (order.mode !== 'dine-in' || settings.tableIds.length === 0) {
+      return true
+    }
+
+    const routedTableIds = new Set(settings.tableIds.map((tableId) => tableId.toUpperCase()))
+    return floorTableIdsForOrder(order).some((tableId) => routedTableIds.has(tableId.toUpperCase()))
+  }
+
+  const saveCurrentStationOnlineNotificationSettings = async (
+    patch: Partial<OnlineNotificationStationSettings>,
+  ): Promise<void> => {
+    const currentSettings = currentOnlineNotificationSettings.value
+    const nextStation: OnlineNotificationStationSettings = {
+      ...currentSettings,
+      ...patch,
+      stationId: stationClaimId,
+      stationLabel: stationClaimLabel,
+      serviceModes: {
+        ...currentSettings.serviceModes,
+        ...(patch.serviceModes ?? {}),
+      },
+      tableIds: patch.tableIds
+        ? [...new Set(patch.tableIds.map((tableId) => tableId.trim().toUpperCase()).filter(Boolean))].slice(0, 80)
+        : [...currentSettings.tableIds],
+      notificationRepeatMode: patch.notificationRepeatMode === 'once' ? 'once' : (patch.notificationRepeatMode ?? currentSettings.notificationRepeatMode),
+      notificationVolume: Math.min(
+        Math.max(Math.trunc(Number(patch.notificationVolume ?? currentSettings.notificationVolume)), 0),
+        100,
+      ),
+    }
+    const otherStations = onlineOrderingSettings.value.notificationRouting.stations.filter(
+      (station) => station.stationId !== stationClaimId,
+    )
+    const savedSettings = await updateAdminSetting<OnlineOrderingSettings>('online_ordering', {
+      ...onlineOrderingSettings.value,
+      notificationRouting: {
+        stations: [nextStation, ...otherStations].slice(0, 32),
+      },
+    })
+    onlineOrderingSettings.value = savedSettings
+  }
+
   const onlineOrderAccepted = (order: PosOrder): boolean =>
     acceptedOnlineOrderIds.value.includes(order.id) || Boolean(order.claimedBy)
 
@@ -1280,12 +1392,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const candidateOrders = onlineOrderingSettings.value.acceptanceRequired
       ? unconfirmedOnlineOrders.value.filter(onlineOrderRequiresAcceptance)
       : overdueUnconfirmedOnlineOrders.value
-    return candidateOrders.filter((order) => !onlineReminderSuppressed(order))
+    return candidateOrders
+      .filter(onlineNotificationOrderMatchesStation)
+      .filter((order) => !onlineReminderSuppressed(order))
   })
 
   const onlineReminderSignature = computed(() => {
     const orderSignature = activeOnlineReminderOrders.value.map((order) => order.id).sort().join('|')
-    if (!orderSignature || onlineOrderingSettings.value.notificationRepeatMode !== 'continuous') {
+    if (!orderSignature || currentOnlineNotificationSettings.value.notificationRepeatMode !== 'continuous') {
       return orderSignature
     }
 
@@ -1293,7 +1407,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
 
   const onlineOrderReminder = computed(() => ({
-    soundEnabled: onlineOrderingSettings.value.soundEnabled,
+    soundEnabled: currentOnlineNotificationSettings.value.soundEnabled,
     reminderMinutes: onlineReminderMinutes.value,
     unconfirmedCount: unconfirmedOnlineOrders.value.length,
     overdueCount: overdueUnconfirmedOnlineOrders.value.length,
@@ -1306,7 +1420,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const syncOnlineReminderNotifier = (): void => {
     syncOnlineOrderNotifier({
-      settings: onlineOrderingSettings.value,
+      settings: effectiveOnlineOrderingNotificationSettings.value,
       activeOrders: activeOnlineReminderOrders.value,
       acceptedOrderIds: acceptedOnlineOrderIds.value,
       appActive: isDocumentActive(),
@@ -1432,7 +1546,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
       const now = audioContext.currentTime
       const gain = audioContext.createGain()
-      const volume = Math.min(Math.max(onlineOrderingSettings.value.notificationVolume, 0), 100) / 100
+      const volume = Math.min(Math.max(currentOnlineNotificationSettings.value.notificationVolume, 0), 100) / 100
       gain.gain.setValueAtTime(0.0001, now)
       gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, 0.18 * volume), now + 0.02)
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42)
@@ -1464,7 +1578,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    if (!onlineOrderingSettings.value.soundEnabled || signature === lastPlayedOnlineReminderSignature) {
+    if (!currentOnlineNotificationSettings.value.soundEnabled || signature === lastPlayedOnlineReminderSignature) {
       return
     }
 
@@ -1472,7 +1586,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       const notified = notifyBackgroundOnlineOrders({
         signature,
         orders: activeOnlineReminderOrders.value,
-        settings: onlineOrderingSettings.value,
+        settings: effectiveOnlineOrderingNotificationSettings.value,
       })
       if (notified) {
         lastPlayedOnlineReminderSignature = signature
@@ -1510,7 +1624,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   watch(
-    [onlineReminderSignature, () => onlineOrderingSettings.value.soundEnabled],
+    [onlineReminderSignature, () => currentOnlineNotificationSettings.value.soundEnabled],
     () => {
       maybePlayOnlineOrderReminder()
     },
@@ -1521,9 +1635,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       activeOnlineReminderOrders,
       acceptedOnlineOrderIds,
       () => onlineOrderingSettings.value.acceptanceRequired,
-      () => onlineOrderingSettings.value.soundEnabled,
-      () => onlineOrderingSettings.value.notificationRepeatMode,
-      () => onlineOrderingSettings.value.notificationVolume,
+      () => currentOnlineNotificationSettings.value.enabled,
+      () => currentOnlineNotificationSettings.value.soundEnabled,
+      () => currentOnlineNotificationSettings.value.notificationRepeatMode,
+      () => currentOnlineNotificationSettings.value.notificationVolume,
+      () => currentOnlineNotificationSettings.value.tableIds.join('|'),
+      () => Object.entries(currentOnlineNotificationSettings.value.serviceModes).map(([mode, enabled]) => `${mode}:${enabled}`).join('|'),
       () => onlineOrderingSettings.value.unconfirmedReminderMinutes,
     ],
     () => {
@@ -4264,6 +4381,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     closeRegisterSessionForStation,
     counterDraftOrderId,
     counterDraftStartedAt,
+    currentOnlineNotificationSettings,
     customer,
     customerHasNote,
     deletingPrintJobId,
@@ -4338,6 +4456,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     serviceFeeLabel,
     serviceFeeRate,
     saveCounterOrder,
+    saveCurrentStationOnlineNotificationSettings,
     setItemQuantity,
     setLineQuantity,
     startCounterDraft,

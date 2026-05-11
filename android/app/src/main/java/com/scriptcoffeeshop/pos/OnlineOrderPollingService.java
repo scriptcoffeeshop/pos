@@ -92,6 +92,11 @@ public class OnlineOrderPollingService extends Service {
     private boolean soundEnabled = true;
     private String notificationRepeatMode = "continuous";
     private int notificationVolume = 80;
+    private boolean routeNotificationsEnabled = true;
+    private boolean routeDineInOrders = true;
+    private boolean routeTakeoutOrders = true;
+    private boolean routeDeliveryOrders = true;
+    private final Set<String> routedTableIds = new HashSet<>();
     private int reminderMinutes = 5;
     private int pollIntervalMs = 20_000;
     private String lastNotificationSignature = "";
@@ -409,9 +414,65 @@ public class OnlineOrderPollingService extends Service {
                     ? "once"
                     : "continuous";
                 notificationVolume = clamp(onlineOrdering.optInt("notificationVolume", notificationVolume), 0, 100);
+                applyNotificationRoutingLocked(onlineOrdering);
             }
         } catch (Exception ignored) {
             // The next successful poll or foreground WebView sync will apply runtime changes.
+        }
+    }
+
+    private void applyNotificationRoutingLocked(JSONObject onlineOrdering) {
+        routeNotificationsEnabled = true;
+        routeDineInOrders = true;
+        routeTakeoutOrders = true;
+        routeDeliveryOrders = true;
+        routedTableIds.clear();
+
+        JSONObject routing = onlineOrdering.optJSONObject("notificationRouting");
+        if (routing == null) {
+            return;
+        }
+
+        JSONArray stations = routing.optJSONArray("stations");
+        if (stations == null) {
+            return;
+        }
+
+        JSONObject stationSettings = null;
+        for (int index = 0; index < stations.length(); index++) {
+            JSONObject candidate = stations.optJSONObject(index);
+            if (candidate != null && stationId.equals(candidate.optString("stationId", ""))) {
+                stationSettings = candidate;
+                break;
+            }
+        }
+
+        if (stationSettings == null) {
+            return;
+        }
+
+        routeNotificationsEnabled = stationSettings.optBoolean("enabled", true);
+        soundEnabled = stationSettings.optBoolean("soundEnabled", soundEnabled);
+        notificationRepeatMode = "once".equals(stationSettings.optString("notificationRepeatMode", notificationRepeatMode))
+            ? "once"
+            : "continuous";
+        notificationVolume = clamp(stationSettings.optInt("notificationVolume", notificationVolume), 0, 100);
+
+        JSONObject serviceModes = stationSettings.optJSONObject("serviceModes");
+        if (serviceModes != null) {
+            routeDineInOrders = serviceModes.optBoolean("dine-in", true);
+            routeTakeoutOrders = serviceModes.optBoolean("takeout", true);
+            routeDeliveryOrders = serviceModes.optBoolean("delivery", true);
+        }
+
+        JSONArray tableIds = stationSettings.optJSONArray("tableIds");
+        if (tableIds != null) {
+            for (int index = 0; index < tableIds.length(); index++) {
+                String tableId = tableIds.optString(index, "").trim().toUpperCase(Locale.US);
+                if (!tableId.isEmpty()) {
+                    routedTableIds.add(tableId);
+                }
+            }
         }
     }
 
@@ -521,10 +582,39 @@ public class OnlineOrderPollingService extends Service {
         if (acceptedOrderIds.contains(order.id)) {
             return false;
         }
+        if (!matchesNotificationRoutingLocked(order)) {
+            return false;
+        }
         if (acceptanceRequired) {
             return order.claimedBy.isEmpty();
         }
         return now - order.createdAtEpochMs >= reminderMinutes * 60_000L;
+    }
+
+    private boolean matchesNotificationRoutingLocked(OrderSnapshot order) {
+        if (!routeNotificationsEnabled) {
+            return false;
+        }
+
+        if ("dine-in".equals(order.serviceMode)) {
+            if (!routeDineInOrders) {
+                return false;
+            }
+            if (routedTableIds.isEmpty()) {
+                return true;
+            }
+            return routedTableIds.contains(order.tableLabelFromNote());
+        }
+
+        if ("takeout".equals(order.serviceMode)) {
+            return routeTakeoutOrders;
+        }
+
+        if ("delivery".equals(order.serviceMode)) {
+            return routeDeliveryOrders;
+        }
+
+        return true;
     }
 
     private boolean isOrderSuppressedLocked(OrderSnapshot order, long now) {
@@ -796,29 +886,35 @@ public class OnlineOrderPollingService extends Service {
     private static class OrderSnapshot {
         final String id;
         final String source;
+        final String serviceMode;
         final String status;
         final String paymentStatus;
         final String customerName;
         final String claimedBy;
+        final String note;
         final int subtotal;
         final long createdAtEpochMs;
 
         OrderSnapshot(
             String id,
             String source,
+            String serviceMode,
             String status,
             String paymentStatus,
             String customerName,
             String claimedBy,
+            String note,
             int subtotal,
             long createdAtEpochMs
         ) {
             this.id = id;
             this.source = source;
+            this.serviceMode = serviceMode;
             this.status = status;
             this.paymentStatus = paymentStatus;
             this.customerName = customerName;
             this.claimedBy = claimedBy;
+            this.note = note;
             this.subtotal = subtotal;
             this.createdAtEpochMs = createdAtEpochMs;
         }
@@ -836,13 +932,37 @@ public class OnlineOrderPollingService extends Service {
             return new OrderSnapshot(
                 orderNumber,
                 value.optString("source", ""),
+                value.optString("service_mode", ""),
                 value.optString("status", ""),
                 value.optString("payment_status", ""),
                 optNullableString(value, "customer_name"),
                 optNullableString(value, "claimed_by"),
+                optNullableString(value, "note"),
                 value.optInt("subtotal", 0),
                 parseIsoTimestamp(value.optString("created_at", ""))
             );
+        }
+
+        String tableLabelFromNote() {
+            String marker = "桌位";
+            int markerIndex = note.indexOf(marker);
+            if (markerIndex < 0) {
+                return "";
+            }
+
+            String value = note.substring(markerIndex + marker.length()).trim();
+            if (value.isEmpty()) {
+                return "";
+            }
+
+            int endIndex = value.length();
+            for (String separator : new String[] { "、", "，", "," }) {
+                int separatorIndex = value.indexOf(separator);
+                if (separatorIndex >= 0) {
+                    endIndex = Math.min(endIndex, separatorIndex);
+                }
+            }
+            return value.substring(0, endIndex).trim().toUpperCase(Locale.US);
         }
 
         private static String optNullableString(JSONObject value, String key) {
