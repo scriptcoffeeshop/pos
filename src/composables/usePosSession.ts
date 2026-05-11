@@ -101,6 +101,7 @@ import type {
   PosOrder,
   ProductSupplyStatus,
   PrintJob,
+  PrintRuleTiming,
   PrinterSettings,
   PrintStation,
   PrintStationSetting,
@@ -726,6 +727,7 @@ const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => 
       name: '櫃台全品項貼紙',
       serviceMode: 'takeout',
       stationId: station.id ?? 'counter',
+      timings: ['order', 'reprint'],
       categories: ['coffee', 'tea', 'food', 'retail'],
       itemIds: [],
       countExcludedCategories: [],
@@ -739,6 +741,7 @@ const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => 
       name: '內用貼紙',
       serviceMode: 'dine-in',
       stationId: station.id ?? 'counter',
+      timings: ['order', 'reprint'],
       categories: ['coffee', 'tea', 'food', 'retail'],
       itemIds: [],
       countExcludedCategories: [],
@@ -752,6 +755,7 @@ const buildDefaultPrinterSettings = (station: PrintStation): PrinterSettings => 
       name: '外送貼紙',
       serviceMode: 'delivery',
       stationId: station.id ?? 'counter',
+      timings: ['order', 'reprint'],
       categories: ['coffee', 'tea', 'food', 'retail'],
       itemIds: [],
       countExcludedCategories: [],
@@ -1151,6 +1155,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }),
     rules: printerSettings.value.rules.map((rule) => ({
       ...rule,
+      timings: [...(rule.timings ?? ['order', 'reprint'])],
       categories: [...rule.categories],
       itemIds: [...(rule.itemIds ?? [])],
       countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
@@ -3169,7 +3174,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const printOrder = async (orderId: string): Promise<void> => {
+  const printOrder = async (orderId: string, timing: PrintRuleTiming | null = null): Promise<void> => {
     if (printingOrderId.value) {
       return
     }
@@ -3189,7 +3194,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     printingOrderId.value = orderId
     const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
-    const printPlan = buildOrderPrintPlan(claimedOrder, currentPrinterSettings())
+    const printTiming = timing ?? (claimedOrder.printJobs.length > 0 ? 'reprint' : 'order')
+    const printPlan = buildOrderPrintPlan(claimedOrder, currentPrinterSettings(), { timing: printTiming })
     lastPrintPreview.value = printPlan.preview
 
     if (printPlan.jobs.length === 0) {
@@ -3827,7 +3833,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const draftSequence = sequenceFromOrderId(draftOrderId)
     const existingOrder = draftOrderId ? orderQueue.value.find((entry) => entry.id === draftOrderId) : null
     const order = buildCounterOrderFromDraft(now)
-    const printPlan = buildOrderPrintPlan(order, currentPrinterSettings())
+    const printPlan = buildOrderPrintPlan(order, currentPrinterSettings(), { timing: 'order' })
     order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
 
     if (draftOrderId || existingOrder) {
@@ -3962,7 +3968,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return null
     }
 
-    await printOrder(order.id)
+    await printOrder(order.id, 'order')
     return orderQueue.value.find((entry) => entry.id === order.id) ?? order
   }
 

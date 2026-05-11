@@ -4,6 +4,7 @@ import type {
   PrinterSettings,
   PrintLabelMode,
   PrintRuleSetting,
+  PrintRuleTiming,
   PrintStation,
   PrintStationSetting,
 } from '../types/pos'
@@ -12,11 +13,18 @@ import { formatCurrency, formatOrderTime } from './formatters'
 const escapeEzplText = (value: string): string => value.replaceAll('"', "'").replace(/\s+/g, ' ').trim().slice(0, 42)
 
 type PrintableMode = Exclude<PrintLabelMode, 'both'>
+const defaultPrintRuleTimings: PrintRuleTiming[] = ['order', 'reprint']
+
+const printRuleTimingLabels: Record<PrintRuleTiming, string> = {
+  order: '出單',
+  reprint: '重印',
+}
 
 export interface PrintPayloadJob {
   id: string
   ruleId: string
   ruleName: string
+  timing: PrintRuleTiming
   mode: PrintableMode
   copy: number
   station: PrintStation
@@ -28,6 +36,10 @@ export interface OrderPrintPlan {
   jobs: PrintPayloadJob[]
   preview: string
   skippedReason: string | null
+}
+
+export interface OrderPrintPlanOptions {
+  timing?: PrintRuleTiming
 }
 
 const modeLabels: Record<PrintableMode, string> = {
@@ -133,6 +145,17 @@ const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {
 
   return [mode]
 }
+
+const timingsForRule = (rule: PrintRuleSetting): PrintRuleTiming[] => {
+  const timings = Array.isArray(rule.timings) ? rule.timings : []
+  const normalized = timings.filter((timing): timing is PrintRuleTiming =>
+    timing === 'order' || timing === 'reprint',
+  )
+  return normalized.length > 0 ? [...new Set(normalized)] : defaultPrintRuleTimings
+}
+
+const ruleMatchesTiming = (rule: PrintRuleSetting, timing: PrintRuleTiming): boolean =>
+  timingsForRule(rule).includes(timing)
 
 const linesForMode = (lines: CartLine[], mode: PrintableMode): CartLine[] => {
   const activeLines = lines.filter((line) => line.printPaused !== true)
@@ -241,9 +264,12 @@ const buildPayload = (
   return buildLabelPayload(order, station, lines, rule)
 }
 
-const buildSkippedReason = (settings: PrinterSettings, order: PosOrder): string => {
+const buildSkippedReason = (settings: PrinterSettings, order: PosOrder, timing: PrintRuleTiming): string => {
   const hasEnabledStation = settings.stations.some((station) => station.enabled && station.autoPrint)
   const hasModeRule = settings.rules.some((rule) => rule.enabled && rule.serviceMode === order.mode)
+  const hasTimingRule = settings.rules.some((rule) =>
+    rule.enabled && rule.serviceMode === order.mode && ruleMatchesTiming(rule, timing),
+  )
 
   if (!hasEnabledStation) {
     return '沒有啟用自動列印的出單機'
@@ -253,6 +279,10 @@ const buildSkippedReason = (settings: PrinterSettings, order: PosOrder): string 
     return '沒有符合目前服務方式的啟用出單規則'
   }
 
+  if (!hasTimingRule) {
+    return `沒有符合「${printRuleTimingLabels[timing]}」時機的啟用出單規則`
+  }
+
   if (order.lines.length > 0 && order.lines.every((line) => line.printPaused === true)) {
     return '此訂單品項皆已暫停出單'
   }
@@ -260,7 +290,12 @@ const buildSkippedReason = (settings: PrinterSettings, order: PosOrder): string 
   return '出單規則沒有符合此訂單品項或貼紙設定'
 }
 
-export const buildOrderPrintPlan = (order: PosOrder, settings: PrinterSettings): OrderPrintPlan => {
+export const buildOrderPrintPlan = (
+  order: PosOrder,
+  settings: PrinterSettings,
+  options: OrderPrintPlanOptions = {},
+): OrderPrintPlan => {
+  const timing = options.timing ?? 'order'
   const stationById = new Map(
     settings.stations
       .filter((station) => station.enabled && station.autoPrint)
@@ -269,7 +304,7 @@ export const buildOrderPrintPlan = (order: PosOrder, settings: PrinterSettings):
   const jobs: PrintPayloadJob[] = []
 
   for (const rule of settings.rules) {
-    if (!rule.enabled || rule.serviceMode !== order.mode) {
+    if (!rule.enabled || rule.serviceMode !== order.mode || !ruleMatchesTiming(rule, timing)) {
       continue
     }
 
@@ -291,9 +326,10 @@ export const buildOrderPrintPlan = (order: PosOrder, settings: PrinterSettings):
 
       for (let copy = 1; copy <= rule.copies; copy += 1) {
         jobs.push({
-          id: `${rule.id}-${mode}-${copy}`,
+          id: `${rule.id}-${timing}-${mode}-${copy}`,
           ruleId: rule.id,
           ruleName: rule.name,
+          timing,
           mode,
           copy,
           station,
@@ -304,7 +340,7 @@ export const buildOrderPrintPlan = (order: PosOrder, settings: PrinterSettings):
     }
   }
 
-  const skippedReason = jobs.length === 0 ? buildSkippedReason(settings, order) : null
+  const skippedReason = jobs.length === 0 ? buildSkippedReason(settings, order, timing) : null
   const preview = buildPrintPlanPreview({ jobs, preview: '', skippedReason })
   return { jobs, preview, skippedReason }
 }
@@ -319,6 +355,7 @@ export const buildPrintPlanPreview = (plan: OrderPrintPlan): string => {
       [
         `JOB ${index + 1}/${plan.jobs.length} ${job.station.name} ${modeLabels[job.mode]} copy ${job.copy}`,
         `RULE ${job.ruleName}`,
+        `TIMING ${printRuleTimingLabels[job.timing]}`,
         `LINES ${job.lines.map((line) => `${line.quantity}x ${line.name}`).join(', ')}`,
         job.payload,
       ].join('\n'),

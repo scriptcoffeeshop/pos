@@ -408,6 +408,7 @@ rtk npm run apk:install:fresh
 - 測 iCHEF 商品總數設定時，先在後台「iCHEF 補齊」開啟「顯示商品總數」，再把袋子/包材加入 `engagement_settings.productTotalDisplay.excludedItemIds` 或不計算分類；APK 點餐票券、付款摘要與訂單明細應顯示排除後的商品總數。此設定不得影響 GoDEX 已裁貼紙序號，fresh reinstall 後仍應由 `/settings/runtime` 還原。
 - 測 iCHEF 服務費設定時，先在後台「iCHEF 補齊」開啟服務費，設定服務費名稱、內用/外帶/外送費率、折扣前/折扣後計算與不計算分類/品項；APK 付款頁應依目前服務方式帶入預設費率，服務費名稱與金額需同步更新。線上/QR 訂單送出後，`pos-api` 仍要依 `engagement_settings.serviceCharge` 重新計算 `service_fee_rate` 與 `service_fee_amount`；fresh reinstall 後所有規則仍應由 `/settings/runtime` 還原。
 - 測已裁貼紙「不計算商品」時，先在後台或列印站把袋子/包材加進 `countExcludedItemIds` 或不計算分類；APK 出單後飲品貼紙應用排除後的總數顯示 `1/2`、`2/2`，不計算品項若仍列印則顯示 `NC/2`，fresh reinstall 後規則仍由 Supabase runtime 還原。
+- 測印單時機時，先在列印站把某條規則只保留「出單」或只保留「重印」並儲存；APK 初次按「出單」與訂單列再按「重印」應分別只套用符合 `printer_settings.rules[].timings` 的規則，fresh reinstall 後設定仍由 `/settings/runtime` 還原。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。
 - APK 已包含 `LanPrinter` native plugin 與 `OnlineOrderNotifier` native plugin；瀏覽器版仍只能測 EZPL 預覽、`print_jobs` 建立與 Browser Notification fallback，實際 GODEX TCP 列印與可靠背景提醒要在 APK 內測。
 - 平板需要可連網，才能連到 Supabase。

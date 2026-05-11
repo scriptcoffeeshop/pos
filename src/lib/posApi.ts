@@ -62,6 +62,7 @@ import type {
   PrintJob,
   PrintLabelMode,
   PrintRuleSetting,
+  PrintRuleTiming,
   PrintStatus,
   PrinterSettings,
   PrintStation,
@@ -1227,6 +1228,19 @@ const legacyPrintRuleLabelMode = (rule: PrintRuleSetting): PrintLabelMode => {
   return rule.labelMode
 }
 
+const defaultPrintRuleTimings: PrintRuleTiming[] = ['order', 'reprint']
+
+const normalizePrintRuleTimings = (timings: unknown): PrintRuleTiming[] => {
+  if (!Array.isArray(timings)) {
+    return defaultPrintRuleTimings
+  }
+
+  const normalized = timings.filter((timing): timing is PrintRuleTiming =>
+    timing === 'order' || timing === 'reprint',
+  )
+  return normalized.length > 0 ? [...new Set(normalized)] : defaultPrintRuleTimings
+}
+
 const isPrinterSettings = (value: unknown): value is PrinterSettings => {
   if (!value || typeof value !== 'object') {
     return false
@@ -1249,6 +1263,7 @@ const normalizePrinterSettings = (value: unknown): PrinterSettings => {
         ...rule,
         name: legacyPrintRuleName(rule.name, rule.serviceMode),
         labelMode,
+        timings: normalizePrintRuleTimings((rule as Partial<PrintRuleSetting>).timings),
         categories: Array.isArray(rule.categories) ? [...rule.categories] : [],
         itemIds: Array.isArray(rule.itemIds) ? [...rule.itemIds] : [],
         countExcludedCategories: Array.isArray(rule.countExcludedCategories) ? [...rule.countExcludedCategories] : [],

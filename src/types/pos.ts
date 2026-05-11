@@ -279,6 +279,7 @@ export interface PrintStation {
 }
 
 export type PrintLabelMode = 'receipt' | 'label' | 'both'
+export type PrintRuleTiming = 'order' | 'reprint'
 
 export interface PrintStationSetting {
   id: string
@@ -295,6 +296,7 @@ export interface PrintRuleSetting {
   name: string
   serviceMode: ServiceMode
   stationId: string
+  timings: PrintRuleTiming[]
   categories: MenuCategory[]
   itemIds: string[]
   countExcludedCategories: MenuCategory[]

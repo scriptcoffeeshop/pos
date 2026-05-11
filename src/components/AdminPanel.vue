@@ -80,6 +80,7 @@ import type {
   PosStationHeartbeat,
   PrintLabelMode,
   PrintRuleSetting,
+  PrintRuleTiming,
   RoleSetting,
   ServiceMode,
   ReservationStatus,
@@ -215,6 +216,13 @@ const labelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
   { value: 'receipt', label: '收據' },
   { value: 'both', label: '貼紙+收據' },
 ]
+
+const printRuleTimingOptions: Array<{ value: PrintRuleTiming; label: string }> = [
+  { value: 'order', label: '出單' },
+  { value: 'reprint', label: '重印' },
+]
+
+const defaultPrintRuleTimings: PrintRuleTiming[] = printRuleTimingOptions.map((option) => option.value)
 
 const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'openOrders', label: '開單' },
@@ -407,6 +415,7 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
   stations: settings.stations.map((station) => ({ ...station })),
   rules: settings.rules.map((rule) => ({
     ...rule,
+    timings: [...(rule.timings ?? defaultPrintRuleTimings)],
     categories: [...rule.categories],
     itemIds: [...(rule.itemIds ?? [])],
     countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
@@ -816,6 +825,8 @@ const printRuleCountCategoryFullySelected = (rule: PrintRuleSetting, category: M
 }
 const printRuleCountItemSelected = (rule: PrintRuleSetting, product: ProductDraft): boolean =>
   (rule.countExcludedCategories ?? []).includes(product.category) || (rule.countExcludedItemIds ?? []).includes(product.id)
+const printRuleTimingSelected = (rule: PrintRuleSetting, timing: PrintRuleTiming): boolean =>
+  (rule.timings ?? defaultPrintRuleTimings).includes(timing)
 const activeProductTotalCategory = ref<MenuCategory>(menuCategoryOptions[0]?.value ?? 'coffee')
 const selectProductTotalCategory = (category: MenuCategory): void => {
   activeProductTotalCategory.value = category
@@ -1978,6 +1989,7 @@ const addPrintRule = (): void => {
     name: '新印單規則',
     serviceMode: 'takeout',
     stationId: stationOptions.value[0]?.id ?? 'bar',
+    timings: ['order', 'reprint'],
     categories: ['coffee', 'tea', 'food'],
     itemIds: [],
     countExcludedCategories: [],
@@ -2036,6 +2048,16 @@ const toggleRuleItem = (rule: PrintRuleSetting, itemId: string): void => {
   itemIds.add(product.id)
   rule.itemIds = [...itemIds]
   normalizePrintRuleFullCategories(rule)
+}
+
+const toggleRuleTiming = (rule: PrintRuleSetting, timing: PrintRuleTiming): void => {
+  const timings = new Set(rule.timings ?? defaultPrintRuleTimings)
+  if (timings.has(timing)) {
+    timings.delete(timing)
+  } else {
+    timings.add(timing)
+  }
+  rule.timings = timings.size > 0 ? [...timings] : [timing]
 }
 
 const toggleRuleCountCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
@@ -4765,6 +4787,19 @@ const saveAccessControl = async (): Promise<void> => {
                 <label class="toggle-row">
                   <input v-model="rule.enabled" type="checkbox" />
                   啟用
+                </label>
+                <label
+                  v-for="timing in printRuleTimingOptions"
+                  :key="`${rule.id}-timing-${timing.value}`"
+                  class="toggle-row"
+                  :class="{ 'toggle-row--active': printRuleTimingSelected(rule, timing.value) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="printRuleTimingSelected(rule, timing.value)"
+                    @change="toggleRuleTiming(rule, timing.value)"
+                  />
+                  {{ timing.label }}
                 </label>
                 <div
                   v-for="category in menuCategoryOptions"
