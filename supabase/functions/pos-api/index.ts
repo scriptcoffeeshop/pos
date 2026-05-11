@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 type MenuCategory = string;
 type PaymentAllocationStatus = "open" | "paid";
-type PaymentMethod = "cash" | "card" | "line-pay" | "jkopay" | "transfer";
+type PaymentMethod = "cash" | "card" | "app91-card" | "line-pay" | "jkopay" | "transfer";
 type PaymentSplitStatus = "open" | "paid";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
@@ -1090,6 +1090,7 @@ const defaultOnlinePaymentMethods = (): OnlinePaymentMethodSetting[] => [
   { id: "jkopay", label: "街口", enabled: true, opensCashDrawer: false },
   { id: "cash", label: "取餐時付款", enabled: true, opensCashDrawer: true },
   { id: "card", label: "線上刷卡", enabled: false, opensCashDrawer: false },
+  { id: "app91-card", label: "91APP 支付線上刷卡", enabled: false, opensCashDrawer: false },
   { id: "transfer", label: "轉帳", enabled: false, opensCashDrawer: false },
 ];
 
@@ -1578,7 +1579,7 @@ const normalizePaymentSplits = (input: unknown): Array<Record<string, unknown>> 
 
     const split = entry as PaymentSplitInput;
     const amount = clampNonNegativeInteger(split.amount);
-    const paymentMethod: PaymentMethod = ["cash", "card", "line-pay", "jkopay", "transfer"].includes(String(split.paymentMethod))
+    const paymentMethod: PaymentMethod = ["cash", "card", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(split.paymentMethod))
       ? split.paymentMethod as PaymentMethod
       : "cash";
     const paidAt = sanitizeText(split.paidAt, "");
@@ -1609,7 +1610,7 @@ const normalizePaymentBreakdown = (input: unknown): Array<Record<string, unknown
     }
 
     const payment = entry as PaymentAllocationInput;
-    const paymentMethod: PaymentMethod = ["cash", "card", "line-pay", "jkopay", "transfer"].includes(String(payment.paymentMethod))
+    const paymentMethod: PaymentMethod = ["cash", "card", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(payment.paymentMethod))
       ? payment.paymentMethod as PaymentMethod
       : "cash";
     const paidAt = sanitizeText(payment.paidAt, "");
@@ -6018,8 +6019,8 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
 };
 
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
-const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "transfer"];
-const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card"]);
+const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "app91-card", "transfer"];
+const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card", "app91-card"]);
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
 const printRuleTimings: PrintRuleTiming[] = ["order", "reprint"];
 const onlineTimePattern = /^\d{2}:\d{2}$/;

@@ -751,6 +751,7 @@ export const normalizePaymentSplits = (splits: unknown): PaymentSplit[] => {
     const split = entry as Partial<PaymentSplit>
     const amount = Math.max(0, Math.trunc(Number(split.amount) || 0))
     const paymentMethod: PaymentMethod = split.paymentMethod === 'card' ||
+      split.paymentMethod === 'app91-card' ||
       split.paymentMethod === 'line-pay' ||
       split.paymentMethod === 'jkopay' ||
       split.paymentMethod === 'transfer'
@@ -792,6 +793,7 @@ export const normalizePaymentBreakdown = (payments: unknown): PaymentAllocation[
 
     const payment = entry as Partial<PaymentAllocation>
     const paymentMethod: PaymentMethod = payment.paymentMethod === 'card' ||
+      payment.paymentMethod === 'app91-card' ||
       payment.paymentMethod === 'line-pay' ||
       payment.paymentMethod === 'jkopay' ||
       payment.paymentMethod === 'transfer'
@@ -1340,6 +1342,7 @@ const defaultOnlinePaymentMethods = (): OnlineOrderingSettings['paymentMethods']
   { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
   { id: 'cash', label: '取餐時付款', enabled: true, opensCashDrawer: true },
   { id: 'card', label: '線上刷卡', enabled: false, opensCashDrawer: false },
+  { id: 'app91-card', label: '91APP 支付線上刷卡', enabled: false, opensCashDrawer: false },
   { id: 'transfer', label: '轉帳', enabled: false, opensCashDrawer: false },
 ]
 
@@ -1424,7 +1427,7 @@ const reservationSpecialDateModes = new Set<ReservationSpecialDateMode>(['closed
 const reservationTimePattern = /^\d{2}:\d{2}$/
 const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
-const paymentMethodIds: PaymentMethod[] = ['line-pay', 'jkopay', 'cash', 'card', 'transfer']
+const paymentMethodIds: PaymentMethod[] = ['line-pay', 'jkopay', 'cash', 'card', 'app91-card', 'transfer']
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback

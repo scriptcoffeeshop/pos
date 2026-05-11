@@ -1,6 +1,6 @@
 export type MenuCategory = string
 export type ServiceMode = 'dine-in' | 'takeout' | 'delivery'
-export type PaymentMethod = 'cash' | 'card' | 'line-pay' | 'jkopay' | 'transfer'
+export type PaymentMethod = 'cash' | 'card' | 'app91-card' | 'line-pay' | 'jkopay' | 'transfer'
 export type PaymentAllocationStatus = 'open' | 'paid'
 export type PaymentSplitStatus = 'open' | 'paid'
 export type OrderSource = 'counter' | 'qr' | 'online'

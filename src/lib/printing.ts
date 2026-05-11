@@ -93,6 +93,7 @@ const invoiceLinesForOrder = (order: PosOrder): string[] => {
 const paymentMethodLabels: Record<PosOrder['paymentMethod'], string> = {
   cash: 'CASH',
   card: 'CARD',
+  'app91-card': '91APP CARD',
   'line-pay': 'LINE PAY',
   jkopay: 'JKOPAY',
   transfer: 'TRANSFER',
