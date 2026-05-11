@@ -4127,6 +4127,10 @@ const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({})
 const comboSelections = ref<ComboSelectionMap>({})
 const comboOptionSelections = ref<ComboOptionSelectionMap>({})
 const optionWarning = ref('')
+const manualOptionNote = ref('')
+const manualOptionIncrease = ref(0)
+const manualOptionDecrease = ref(0)
+const optionBaseLabels = ref<string[]>([])
 const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
 const toolboxPosition = ref<ToolboxPosition>(readToolboxPosition())
@@ -4253,6 +4257,70 @@ const activeOptionGroups = computed(() => activeOptionItem.value ? optionGroupsF
 const activeComboGroups = computed(() => activeOptionItem.value ? comboGroupsForProduct(activeOptionItem.value) : [])
 const optionChoiceLabel = (choice: MenuOptionChoice): string =>
   choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label
+const manualOptionNotePrefix = '文字註記：'
+const manualOptionIncreasePrefix = '手動加價 +'
+const manualOptionDecreasePrefix = '手動減價 -'
+const manualOptionLabelPrefixes = [manualOptionNotePrefix, manualOptionIncreasePrefix, manualOptionDecreasePrefix]
+const labelIsManualOptionAdjustment = (label: string): boolean =>
+  manualOptionLabelPrefixes.some((prefix) => label.startsWith(prefix))
+const configuredOptionLabelSetForProduct = (product: MenuItem): Set<string> =>
+  new Set(optionGroupsForProduct(product).flatMap((group) =>
+    group.choices.flatMap((choice) => [choice.label, optionChoiceLabel(choice)]),
+  ))
+const comboLabelPrefixesForProduct = (product: MenuItem): string[] =>
+  comboGroupsForProduct(product).map((group) => `${group.label}:`)
+const baseOptionLabelsFromLine = (line: CartLine, product: MenuItem): string[] => {
+  const configuredOptionLabels = configuredOptionLabelSetForProduct(product)
+  const comboLabelPrefixes = comboLabelPrefixesForProduct(product)
+
+  return line.options.filter((label) =>
+    !labelIsManualOptionAdjustment(label) &&
+    !configuredOptionLabels.has(label) &&
+    !comboLabelPrefixes.some((prefix) => label.startsWith(prefix)),
+  )
+}
+const normalizedManualOptionAmount = (value: number): number =>
+  Math.max(0, Math.min(999_999, Math.trunc(Number(value) || 0)))
+const normalizedManualOptionNote = computed(() =>
+  manualOptionNote.value.trim().replace(/\s+/g, ' ').slice(0, 80),
+)
+const manualOptionPriceDelta = computed(() =>
+  normalizedManualOptionAmount(manualOptionIncrease.value) - normalizedManualOptionAmount(manualOptionDecrease.value),
+)
+const manualOptionLabels = computed(() => [
+  ...(normalizedManualOptionNote.value ? [`${manualOptionNotePrefix}${normalizedManualOptionNote.value}`] : []),
+  ...(normalizedManualOptionAmount(manualOptionIncrease.value) > 0
+    ? [`${manualOptionIncreasePrefix}${formatCurrency(normalizedManualOptionAmount(manualOptionIncrease.value))}`]
+    : []),
+  ...(normalizedManualOptionAmount(manualOptionDecrease.value) > 0
+    ? [`${manualOptionDecreasePrefix}${formatCurrency(normalizedManualOptionAmount(manualOptionDecrease.value))}`]
+    : []),
+])
+const parseManualOptionAmount = (label: string, prefix: string): number => {
+  if (!label.startsWith(prefix)) {
+    return 0
+  }
+
+  const value = Number(label.slice(prefix.length).replace(/[^\d]/g, ''))
+  return Number.isFinite(value) ? normalizedManualOptionAmount(value) : 0
+}
+const resetManualOptionAdjustments = (): void => {
+  manualOptionNote.value = ''
+  manualOptionIncrease.value = 0
+  manualOptionDecrease.value = 0
+}
+const setManualOptionAdjustmentsFromLine = (line: CartLine): void => {
+  const noteLabel = line.options.find((option) => option.startsWith(manualOptionNotePrefix)) ?? ''
+  manualOptionNote.value = noteLabel.slice(manualOptionNotePrefix.length)
+  manualOptionIncrease.value = line.options.reduce(
+    (total, option) => total + parseManualOptionAmount(option, manualOptionIncreasePrefix),
+    0,
+  )
+  manualOptionDecrease.value = line.options.reduce(
+    (total, option) => total + parseManualOptionAmount(option, manualOptionDecreasePrefix),
+    0,
+  )
+}
 
 const selectedComboDetails = computed(() => {
   const entries = activeComboGroups.value.flatMap((group) => {
@@ -4306,16 +4374,25 @@ const selectedOptionDetails = computed(() => {
   )
 
   return {
-    labels: [...selectedChoices.map(optionChoiceLabel), ...selectedComboDetails.value.labels],
-    priceDelta: selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0) + selectedComboDetails.value.priceDelta,
+    labels: [
+      ...optionBaseLabels.value,
+      ...selectedChoices.map(optionChoiceLabel),
+      ...selectedComboDetails.value.labels,
+      ...manualOptionLabels.value,
+    ],
+    priceDelta:
+      selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0) +
+      selectedComboDetails.value.priceDelta +
+      manualOptionPriceDelta.value,
   }
 })
 const activeOptionLine = computed(() =>
   activeOptionLineId.value ? cartLines.value.find((line) => line.itemId === activeOptionLineId.value) ?? null : null,
 )
-const pendingOptionUnitPrice = computed(() =>
+const rawPendingOptionUnitPrice = computed(() =>
   activeOptionItem.value ? activeOptionItem.value.price + selectedOptionDetails.value.priceDelta : 0,
 )
+const pendingOptionUnitPrice = computed(() => Math.max(0, rawPendingOptionUnitPrice.value))
 const pendingOptionLineTotal = computed(() => pendingOptionUnitPrice.value * (activeOptionLine.value?.quantity ?? 1))
 const ticketDisplayQuantity = computed(() =>
   cartProductTotalQuantity.value +
@@ -5200,6 +5277,8 @@ const resetOptionSelections = (): void => {
   optionSelections.value = {}
   comboSelections.value = {}
   comboOptionSelections.value = {}
+  optionBaseLabels.value = []
+  resetManualOptionAdjustments()
   optionWarning.value = ''
 }
 
@@ -5291,12 +5370,12 @@ const menuItemForLine = (line: CartLine): MenuItem | null =>
 
 const lineRequiresOptions = (line: CartLine): boolean => {
   const item = menuItemForLine(line)
-  return Boolean(item && productRequiresOptions(item))
+  return Boolean(item)
 }
 
 const editCartLineOptions = (line: CartLine): void => {
   const item = menuItemForLine(line)
-  if (!item || !productRequiresOptions(item)) {
+  if (!item) {
     return
   }
 
@@ -5306,6 +5385,8 @@ const editCartLineOptions = (line: CartLine): void => {
   optionSelections.value = optionSelectionsFromLine(line)
   comboSelections.value = comboSelectionsFromLine(line)
   comboOptionSelections.value = comboOptionSelectionsFromLine(line)
+  optionBaseLabels.value = baseOptionLabelsFromLine(line, item)
+  setManualOptionAdjustmentsFromLine(line)
   optionWarning.value = ''
 }
 
@@ -5530,6 +5611,11 @@ const confirmMenuOptions = async (): Promise<boolean> => {
     optionWarning.value = invalidChildOption.reason === 'required'
       ? `「${invalidChildOption.product.name}」的「${invalidChildOption.group.label}」尚未選擇完成`
       : `「${invalidChildOption.product.name}」的「${invalidChildOption.group.label}」最多只能選 ${invalidChildOption.group.max} 個`
+    return false
+  }
+
+  if (rawPendingOptionUnitPrice.value < 0) {
+    optionWarning.value = '手動減價不可超過品項金額'
     return false
   }
 
@@ -9840,6 +9926,27 @@ onBeforeUnmount(() => {
                               </section>
                             </div>
                           </div>
+                        </div>
+                      </section>
+
+                      <section class="menu-option-group menu-option-group--manual">
+                        <div class="menu-option-group-title">
+                          <h4>文字註記與加減價</h4>
+                          <span>選填</span>
+                        </div>
+                        <div class="menu-option-manual-grid">
+                          <label class="menu-option-manual-field menu-option-manual-field--wide">
+                            文字註記
+                            <input v-model="manualOptionNote" type="text" maxlength="80" placeholder="少醬、加熱" />
+                          </label>
+                          <label class="menu-option-manual-field">
+                            + 加價
+                            <input v-model.number="manualOptionIncrease" type="number" min="0" step="1" inputmode="numeric" />
+                          </label>
+                          <label class="menu-option-manual-field">
+                            - 減價
+                            <input v-model.number="manualOptionDecrease" type="number" min="0" step="1" inputmode="numeric" />
+                          </label>
                         </div>
                       </section>
                     </div>

@@ -131,6 +131,15 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 8. 若套餐子商品有可售庫存、自動耗料規則或子商品註記耗料規則，正式建單後應扣子商品庫存並寫入 `inventory_records.consumption`；將主商品明細切成「暫停出單」時不應扣套餐子商品耗料。
 9. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認套餐設定、已送出的套餐子商品與子商品註記、列印規則與庫存紀錄仍從 Supabase 還原。
 
+## 多平板商品文字註記與加減價
+
+商品文字註記與臨時加減價保存於訂單明細 `options` 與 `unit_price`。測試時至少準備兩台平板或一台 APK 加一個瀏覽器視窗：
+
+1. 平板 A 新增一個一般商品，點票券品項名稱開啟選項面板，輸入文字註記、`+ 加價` 與 `- 減價` 後更新品項。
+2. 若啟用「變價註記」操作驗證，確認平板 A 更新前會要求員工識別碼，且通過後只寫入 `access.verify` 稽核，不把通過狀態存在 localStorage。
+3. 平板 A 出單或結帳後，平板 B 展開同一張訂單，應看到同一段文字註記與調整後單價。
+4. 重新開啟 App、fresh reinstall APK 或清除瀏覽器資料後，再次展開訂單，確認文字註記與加減價仍從 Supabase 還原。
+
 ## 多平板線上新單提醒
 
 線上/掃碼新單提醒的「稍後」「已讀」「接單」「拒絕接單」狀態會寫入 Supabase `online_order_reminder_states`，並透過 `pos_realtime_events` 的 `online_order_reminders` topic 讓其他平板重拉 `/online-order-reminders/state`。測試時至少準備兩台平板或一台 APK 加一個瀏覽器視窗：
