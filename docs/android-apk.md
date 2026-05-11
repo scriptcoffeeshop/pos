@@ -119,6 +119,18 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 5. 回後台「操作稽核」確認 `register.close` metadata 具有操作員姓名、員工識別碼、角色、實點現金、預期現金與異常數。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認關班結果與操作稽核仍從 Supabase 還原，不依賴本機資料。
 
+## 關帳信 / 日結報表寄送
+
+關帳信對照 iCHEF「小結／關帳報表與寄送關帳信」。角色需有 `sendDailyReports` 權限，員工才會在後台「權限」顯示「報表寄送 Email」欄位；收件設定與寄送紀錄都存在 Supabase，不是 APK 本機資料。
+
+1. 連點工具箱 6 下進入後台編輯模式，進入「權限」。
+2. 確認測試員工所屬角色勾選「日結報表寄送」，該員工列才會出現「報表寄送 Email」欄位。
+3. 輸入測試 Email 並儲存權限；另一台平板或 Web POS 重新載入後應看到同一收件設定。
+4. 完成一次關帳後，進入後台「營運日報」，確認「關帳信紀錄」出現該員工與收件 Email。
+5. 若 Edge Function 已設定 `RESEND_API_KEY` 與 `POS_REPORT_EMAIL_FROM`，狀態應變為「已寄送」；未設定時狀態會保留「待寄送」且顯示 manual provider。
+6. 回後台「操作稽核」確認有 `register.close_report.delivery` 事件，metadata 包含 total、sent、queued、failed。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認員工 Email、關帳信 outbox 與稽核仍可查。
+
 ## POS 操作權限驗證
 
 POS 操作權限對照 iCHEF 後台「帳號與權限」的操作驗證開關。`access_control.protectedPermissions` 會保存在 Supabase runtime；APK 只從 `/settings/runtime` 取得低敏感的 `accessPolicy`，真正驗證會呼叫 `POST /access/verify` 並由後端比對員工識別碼與角色權限。

@@ -263,6 +263,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'closeout-report-delivery',
+    category: 'register',
+    title: '關帳信 / 日結報表寄送',
+    summary: '關帳後會依權限與員工 Email 建立共享關帳信紀錄，必要時透過 Resend 寄出。',
+    steps: [
+      '進入後台「權限」，在角色權限勾選「日結報表寄送」。',
+      '員工所屬角色有此權限時，員工列會顯示「報表寄送 Email」欄位；沒有權限時欄位會隱藏。',
+      '關帳完成後，POS API 會把摘要寫入 closeout_report_deliveries，並在 register.close_report.delivery 稽核記錄寄送結果。',
+      '若 Edge Function 設定 RESEND_API_KEY 與 POS_REPORT_EMAIL_FROM，系統會即時寄出；未設定時保留 queued outbox。',
+      '後台「營運日報」可查看關帳信紀錄，換平板、重開 App 或 fresh reinstall 後都從 Supabase 還原。',
+    ],
+    keywords: ['關帳信', '日結報表', '報表寄送 Email', 'sendDailyReports', 'closeout_report_deliveries', 'Resend'],
+    target: 'closeout',
+  },
+  {
     id: 'register-cash-adjustment',
     category: 'register',
     title: '現金臨時收支',
