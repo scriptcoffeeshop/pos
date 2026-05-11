@@ -482,6 +482,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'printing',
   },
   {
+    id: 'printer-sort-order',
+    category: 'printing',
+    title: '出單機與印單規則排序',
+    summary: '列印工作會先依出單機排序，再依同一出單機中的印單規則排序建立出單順序。',
+    steps: [
+      '開啟「列印」工作區或後台「出單規則」，使用出單機列的上下箭頭調整工作站出單順序。',
+      '使用印單規則列的上下箭頭調整同一出單機內的規則順序；規則不會被移到其他出單機。',
+      '儲存後，`printer_settings.stations` 與 `printer_settings.rules` 的陣列順序會保留排序。',
+      '訂單出單時會先跑第一台啟用且自動列印的出單機，再依該出單機內規則順序建立貼紙或收據工作。',
+      '若某台出單機未啟用或未開自動列印，該站與底下規則會在本次 print plan 中略過。',
+    ],
+    keywords: ['出單順序', '印單排序', '出單機排序', '印單規則排序', '排單', '列印', 'iCHEF'],
+    target: 'printing',
+  },
+  {
     id: 'device-management',
     category: 'printing',
     title: '裝置管理',

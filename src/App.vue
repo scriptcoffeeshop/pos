@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core'
 import {
+  ArrowDown,
+  ArrowUp,
   Bell,
   BookOpenCheck,
   CalendarDays,
@@ -3316,8 +3318,19 @@ const printerStationRows = computed<PrintStationSetting[]>(() => {
   ]
 })
 const activePrinterStations = computed(() => printerStationRows.value.filter((station) => station.enabled))
+const printerRulesInPrintOrder = (settings: PrinterSettings): PrintRuleSetting[] => {
+  if (settings.stations.length === 0) {
+    return settings.rules
+  }
+
+  const stationIds = new Set(settings.stations.map((station) => station.id))
+  return [
+    ...settings.stations.flatMap((station) => settings.rules.filter((rule) => rule.stationId === station.id)),
+    ...settings.rules.filter((rule) => !stationIds.has(rule.stationId)),
+  ]
+}
 const printerRuleRows = computed<PrintRuleSetting[]>(() =>
-  printerSettings.value.rules.length > 0 ? printerSettings.value.rules : [],
+  printerSettings.value.rules.length > 0 ? printerRulesInPrintOrder(printerSettings.value) : [],
 )
 const enabledPrintRules = computed(() => printerRuleRows.value.filter((rule) => rule.enabled))
 const printerRuleSummary = computed(() =>
@@ -3587,9 +3600,55 @@ const togglePrinterRuleCountItem = (rule: PrintRuleSetting, itemId: string): voi
   rule.countExcludedItemIds = [...itemIds]
   normalizePrinterRuleCountFullCategories(rule)
 }
+const movePrinterStation = (stationId: string, direction: -1 | 1): void => {
+  const stations = [...printerSettings.value.stations]
+  const index = stations.findIndex((station) => station.id === stationId)
+  const nextIndex = index + direction
+  if (index < 0 || nextIndex < 0 || nextIndex >= stations.length) {
+    return
+  }
+
+  const [station] = stations.splice(index, 1)
+  if (!station) {
+    return
+  }
+
+  stations.splice(nextIndex, 0, station)
+  printerSettings.value.stations = stations
+}
+const printerRuleStationIndex = (rule: PrintRuleSetting): number =>
+  printerSettings.value.rules.filter((entry) => entry.stationId === rule.stationId).findIndex((entry) => entry.id === rule.id)
+const printerRuleStationCount = (rule: PrintRuleSetting): number =>
+  printerSettings.value.rules.filter((entry) => entry.stationId === rule.stationId).length
+const movePrinterRule = (ruleId: string, direction: -1 | 1): void => {
+  const rules = [...printerSettings.value.rules]
+  const index = rules.findIndex((rule) => rule.id === ruleId)
+  const rule = rules[index]
+  if (!rule) {
+    return
+  }
+
+  const stationRuleIndexes = rules
+    .map((entry, entryIndex) => (entry.stationId === rule.stationId ? entryIndex : -1))
+    .filter((entryIndex) => entryIndex >= 0)
+  const stationPosition = stationRuleIndexes.indexOf(index)
+  const targetIndex = stationRuleIndexes[stationPosition + direction]
+  if (stationPosition < 0 || targetIndex === undefined) {
+    return
+  }
+
+  const targetRule = rules[targetIndex]
+  if (!targetRule) {
+    return
+  }
+
+  rules[index] = targetRule
+  rules[targetIndex] = rule
+  printerSettings.value.rules = rules
+}
 const clonePrinterSettingsForSave = (): PrinterSettings => ({
   stations: printerSettings.value.stations.map((station) => ({ ...station })),
-  rules: printerSettings.value.rules.map((rule) => ({
+  rules: printerRulesInPrintOrder(printerSettings.value).map((rule) => ({
     ...rule,
     timings: [...new Set(rule.timings ?? defaultPrintRuleTimings)],
     categories: [...new Set(rule.categories)],
@@ -12891,7 +12950,7 @@ onBeforeUnmount(() => {
                       </div>
                       <div class="printer-station-list">
                         <article
-                          v-for="station in printerStationRows"
+                          v-for="(station, stationIndex) in printerStationRows"
                           :key="station.id"
                           class="printer-station-card"
                           :class="{ 'printer-station-card--active': station.id === printStation.id }"
@@ -12904,6 +12963,24 @@ onBeforeUnmount(() => {
                               <span>{{ station.enabled ? '已啟用出單機' : '未啟用出單機' }}</span>
                             </div>
                             <small>{{ station.autoPrint ? '自動出單' : '手動出單' }}</small>
+                            <div class="printer-order-actions" aria-label="出單機排序">
+                              <button
+                                type="button"
+                                title="出單機往上"
+                                :disabled="stationIndex === 0"
+                                @click="movePrinterStation(station.id, -1)"
+                              >
+                                <ArrowUp :size="15" aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                title="出單機往下"
+                                :disabled="stationIndex >= printerStationRows.length - 1"
+                                @click="movePrinterStation(station.id, 1)"
+                              >
+                                <ArrowDown :size="15" aria-hidden="true" />
+                              </button>
+                            </div>
                           </div>
                           <dl class="printer-station-details">
                             <div>
@@ -12955,6 +13032,24 @@ onBeforeUnmount(() => {
                                 <input v-model="rule.enabled" type="checkbox" />
                                 啟用
                               </label>
+                              <div class="printer-order-actions" aria-label="印單規則排序">
+                                <button
+                                  type="button"
+                                  title="同出單機規則往上"
+                                  :disabled="printerRuleStationIndex(rule) <= 0"
+                                  @click="movePrinterRule(rule.id, -1)"
+                                >
+                                  <ArrowUp :size="15" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="同出單機規則往下"
+                                  :disabled="printerRuleStationIndex(rule) >= printerRuleStationCount(rule) - 1"
+                                  @click="movePrinterRule(rule.id, 1)"
+                                >
+                                  <ArrowDown :size="15" aria-hidden="true" />
+                                </button>
+                              </div>
                             </div>
                             <div class="printer-rule-control-grid">
                               <label>

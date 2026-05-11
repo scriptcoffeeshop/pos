@@ -384,46 +384,45 @@ export const buildOrderPrintPlan = (
   options: OrderPrintPlanOptions = {},
 ): OrderPrintPlan => {
   const timing = options.timing ?? 'order'
-  const stationById = new Map(
-    settings.stations
-      .filter((station) => station.enabled && station.autoPrint)
-      .map((station) => [station.id, stationSettingToRuntime(station)]),
-  )
   const jobs: PrintPayloadJob[] = []
 
-  for (const rule of settings.rules) {
-    if (!rule.enabled || rule.serviceMode !== order.mode || !ruleMatchesTiming(rule, timing)) {
+  for (const stationSetting of settings.stations) {
+    if (!stationSetting.enabled || !stationSetting.autoPrint) {
       continue
     }
 
-    const station = stationById.get(rule.stationId)
-    if (!station) {
-      continue
-    }
+    const station = stationSettingToRuntime(stationSetting)
+    const stationRules = settings.rules.filter((rule) => rule.stationId === stationSetting.id)
 
-    const matchingLines = order.lines.filter((line) => lineMatchesRule(line, rule))
-    if (matchingLines.length === 0) {
-      continue
-    }
-
-    for (const mode of modesForRule(rule.labelMode)) {
-      const printableLines = linesForMode(matchingLines, mode)
-      if (printableLines.length === 0) {
+    for (const rule of stationRules) {
+      if (!rule.enabled || rule.serviceMode !== order.mode || !ruleMatchesTiming(rule, timing)) {
         continue
       }
 
-      for (let copy = 1; copy <= rule.copies; copy += 1) {
-        jobs.push({
-          id: `${rule.id}-${timing}-${mode}-${copy}`,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          timing,
-          mode,
-          copy,
-          station,
-          lines: printableLines,
-          payload: buildPayload(order, station, printableLines, mode, rule),
-        })
+      const matchingLines = order.lines.filter((line) => lineMatchesRule(line, rule))
+      if (matchingLines.length === 0) {
+        continue
+      }
+
+      for (const mode of modesForRule(rule.labelMode)) {
+        const printableLines = linesForMode(matchingLines, mode)
+        if (printableLines.length === 0) {
+          continue
+        }
+
+        for (let copy = 1; copy <= rule.copies; copy += 1) {
+          jobs.push({
+            id: `${rule.id}-${timing}-${mode}-${copy}`,
+            ruleId: rule.id,
+            ruleName: rule.name,
+            timing,
+            mode,
+            copy,
+            station,
+            lines: printableLines,
+            payload: buildPayload(order, station, printableLines, mode, rule),
+          })
+        }
       }
     }
   }
