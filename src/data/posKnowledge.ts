@@ -101,6 +101,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'online-payment-reject-refund',
+    category: 'online',
+    title: '線上付款拒絕接單退款',
+    summary: '線上或 QR 訂單若已授權/已付款，拒絕接單時會走退款流程，而不是只改訂單狀態。',
+    steps: [
+      '在 iCHEF 後台「支付模組設定」中，線上付款訂單被拒絕或取消時會自動退款。',
+      'POS 待接單提醒按「拒絕接單」時，待收款訂單會作廢並標成付款失敗。',
+      '已授權或已付款的線上/QR 訂單會呼叫退款 API，狀態改為作廢、付款狀態改為已退款，並建立退款流水。',
+      '退款後同樣寫入 shared reminder state，其他平板與 fresh reinstall 後不會再次提醒同一張單。',
+      '退款流程會沿用會員券、點數與電子發票的既有回補/退款同步規則。',
+    ],
+    keywords: ['線上付款', '拒絕接單', '自動退款', '線上刷卡', '91APP', 'QR Code', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'online-comment-fields',
     category: 'online',
     title: '線上點餐備註欄位',

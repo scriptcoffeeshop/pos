@@ -2541,19 +2541,28 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return false
     }
 
+    const shouldRefundRejectedOnlineOrder = ['authorized', 'paid'].includes(order.paymentStatus)
     voidingOrderId.value = orderId
+    if (shouldRefundRejectedOnlineOrder) {
+      refundingOrderId.value = orderId
+    }
 
     try {
       const rejectedOrder =
         isPosApiConfigured && order.remoteId
           ? order.paymentStatus === 'pending'
             ? await voidOrder(order, '拒絕接單')
-            : await persistOrderStatus(order, 'voided')
+            : shouldRefundRejectedOnlineOrder
+              ? await refundOrder(order, '拒絕接單')
+              : await persistOrderStatus(order, 'voided')
           : {
               ...order,
               status: 'voided' as OrderStatus,
-              paymentStatus: 'failed' as PaymentStatus,
-              note: [order.note, '拒絕接單'].filter(Boolean).join(' / '),
+              paymentStatus: shouldRefundRejectedOnlineOrder ? 'refunded' as PaymentStatus : 'failed' as PaymentStatus,
+              note: [
+                order.note,
+                shouldRefundRejectedOnlineOrder ? '已退款：拒絕接單' : '拒絕接單',
+              ].filter(Boolean).join(' / '),
               claimedBy: null,
               claimedAt: null,
               claimExpiresAt: null,
@@ -2565,7 +2574,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         printStatus: rejectedOrder.printStatus === 'skipped' ? order.printStatus : rejectedOrder.printStatus,
       })
       markOnlineOrderHandled(order.id, 'rejected')
-      setBackendStatus('connected', '已拒絕接單', `${order.id} 已從待接單移除`)
+      setBackendStatus(
+        'connected',
+        shouldRefundRejectedOnlineOrder ? '已退款並拒絕接單' : '已拒絕接單',
+        shouldRefundRejectedOnlineOrder ? `${order.id} 已退款並從待接單移除` : `${order.id} 已從待接單移除`,
+      )
       void loadRegisterSession()
       return true
     } catch (error) {
@@ -2573,6 +2586,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return false
     } finally {
       voidingOrderId.value = null
+      if (shouldRefundRejectedOnlineOrder) {
+        refundingOrderId.value = null
+      }
     }
   }
 

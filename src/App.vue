@@ -8512,6 +8512,7 @@ const acceptOnlineReminderOrder = async (order: PosOrder, printAfterAccept: bool
 }
 
 const rejectOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+  const shouldRefundRejectedOnlineOrder = ['authorized', 'paid'].includes(order.paymentStatus)
   if (!(await verifyProtectedPermissions([
     {
       permission: 'cancelOnlineOrders',
@@ -8527,7 +8528,9 @@ const rejectOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
     if (activeOnlineReminderDetailId.value === order.id) {
       closeOnlineReminderDetail()
     }
-    queueActionMessage.value = `${compactOrderId(order.id)} 已拒絕接單`
+    queueActionMessage.value = shouldRefundRejectedOnlineOrder
+      ? `${compactOrderId(order.id)} 已退款並拒絕接單`
+      : `${compactOrderId(order.id)} 已拒絕接單`
     setWorkspaceTab('queue')
     return
   }
