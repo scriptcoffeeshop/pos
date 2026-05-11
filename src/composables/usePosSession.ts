@@ -186,6 +186,8 @@ const orderSources: OrderSource[] = ['counter', 'qr', 'online']
 const orderStatuses: OrderStatus[] = ['new', 'preparing', 'ready', 'served', 'failed', 'voided']
 const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expired', 'failed', 'refunded']
 const printStatuses: PrintStatus[] = ['queued', 'printed', 'skipped', 'failed']
+const electronicInvoiceStatuses: PosOrder['electronicInvoiceStatus'][] = ['not_requested', 'queued', 'issued', 'voided', 'refunded', 'failed']
+const electronicInvoicePrintModes: PosOrder['electronicInvoicePrintMode'][] = ['paper', 'carrier', 'donation', 'none']
 
 const defaultCustomerDraft = (): CustomerDraft => ({
   memberId: null,
@@ -198,6 +200,9 @@ const defaultCustomerDraft = (): CustomerDraft => ({
   requestedFulfillmentAt: '',
   taxId: '',
   invoiceCarrierBarcode: '',
+  invoiceDonationCode: '',
+  electronicInvoiceRequested: false,
+  electronicInvoicePrintMode: 'none',
   note: '',
 })
 
@@ -234,16 +239,33 @@ const isPaymentStatus = (value: unknown): value is PaymentStatus =>
 const isPrintStatus = (value: unknown): value is PrintStatus =>
   typeof value === 'string' && printStatuses.includes(value as PrintStatus)
 
+const isElectronicInvoiceStatus = (value: unknown): value is PosOrder['electronicInvoiceStatus'] =>
+  typeof value === 'string' && electronicInvoiceStatuses.includes(value as PosOrder['electronicInvoiceStatus'])
+
+const isElectronicInvoicePrintMode = (value: unknown): value is PosOrder['electronicInvoicePrintMode'] =>
+  typeof value === 'string' && electronicInvoicePrintModes.includes(value as PosOrder['electronicInvoicePrintMode'])
+
 const normalizeTaxId = (value: string): string => value.replace(/\s/g, '').trim()
 const normalizeInvoiceCarrierBarcode = (value: string): string => value.replace(/\s/g, '').trim().toUpperCase()
-const invoiceFieldError = (taxId: string, carrierBarcode: string): string | null => {
+const normalizeInvoiceDonationCode = (value: string): string => value.replace(/\s/g, '').trim()
+const invoiceFieldError = (taxId: string, carrierBarcode: string, donationCode: string): string | null => {
   const normalizedTaxId = normalizeTaxId(taxId)
+  const normalizedCarrierBarcode = normalizeInvoiceCarrierBarcode(carrierBarcode)
+  const normalizedDonationCode = normalizeInvoiceDonationCode(donationCode)
   if (normalizedTaxId && !/^[0-9]{8}$/.test(normalizedTaxId)) {
     return '統一編號需為 8 碼數字'
   }
 
-  if (normalizeInvoiceCarrierBarcode(carrierBarcode).length > 32) {
+  if (normalizedCarrierBarcode.length > 32) {
     return '載具條碼最多 32 字元'
+  }
+
+  if (normalizedDonationCode && !/^[0-9]{3,7}$/.test(normalizedDonationCode)) {
+    return '捐贈碼需為 3 至 7 碼數字'
+  }
+
+  if (normalizedCarrierBarcode && normalizedDonationCode) {
+    return '載具條碼與捐贈碼只能擇一'
   }
 
   return null
@@ -361,6 +383,15 @@ const sanitizeCustomerDraft = (value: unknown): CustomerDraft => {
     invoiceCarrierBarcode: typeof draft.invoiceCarrierBarcode === 'string'
       ? draft.invoiceCarrierBarcode
       : fallback.invoiceCarrierBarcode,
+    invoiceDonationCode: typeof draft.invoiceDonationCode === 'string'
+      ? draft.invoiceDonationCode
+      : fallback.invoiceDonationCode,
+    electronicInvoiceRequested: typeof draft.electronicInvoiceRequested === 'boolean'
+      ? draft.electronicInvoiceRequested
+      : fallback.electronicInvoiceRequested,
+    electronicInvoicePrintMode: isElectronicInvoicePrintMode(draft.electronicInvoicePrintMode)
+      ? draft.electronicInvoicePrintMode
+      : fallback.electronicInvoicePrintMode,
     note: typeof draft.note === 'string' ? draft.note : fallback.note,
   }
 }
@@ -422,6 +453,9 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.requestedFulfillmentAt.trim().length > 0 ||
       draft.customer.taxId.trim().length > 0 ||
       draft.customer.invoiceCarrierBarcode.trim().length > 0 ||
+      draft.customer.invoiceDonationCode.trim().length > 0 ||
+      draft.customer.electronicInvoiceRequested ||
+      draft.customer.electronicInvoicePrintMode !== 'none' ||
       draft.customer.note.trim().length > 0 ||
       draft.customer.name.trim() !== '現場客' ||
       Boolean(draft.customer.memberId) ||
@@ -516,6 +550,15 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     requestedFulfillmentAt: nullableString(order.requestedFulfillmentAt),
     taxId: typeof order.taxId === 'string' ? order.taxId : '',
     invoiceCarrierBarcode: typeof order.invoiceCarrierBarcode === 'string' ? order.invoiceCarrierBarcode : '',
+    invoiceDonationCode: typeof order.invoiceDonationCode === 'string' ? order.invoiceDonationCode : '',
+    electronicInvoiceRequested: order.electronicInvoiceRequested === true,
+    electronicInvoiceStatus: isElectronicInvoiceStatus(order.electronicInvoiceStatus) ? order.electronicInvoiceStatus : 'not_requested',
+    electronicInvoicePrintMode: isElectronicInvoicePrintMode(order.electronicInvoicePrintMode) ? order.electronicInvoicePrintMode : 'none',
+    electronicInvoiceNumber: typeof order.electronicInvoiceNumber === 'string' ? order.electronicInvoiceNumber : '',
+    electronicInvoiceRandomCode: typeof order.electronicInvoiceRandomCode === 'string' ? order.electronicInvoiceRandomCode : '',
+    electronicInvoiceIssuedAt: nullableString(order.electronicInvoiceIssuedAt),
+    electronicInvoiceVoidedAt: nullableString(order.electronicInvoiceVoidedAt),
+    electronicInvoiceUploadDueAt: nullableString(order.electronicInvoiceUploadDueAt),
     memberId: nullableString(order.memberId),
     note: order.note,
     lines,
@@ -684,6 +727,32 @@ const paymentStatusFor = (method: PaymentMethod): PosOrder['paymentStatus'] => {
   }
   return 'authorized'
 }
+
+const invoicePrintModeFromDraft = (draft: CustomerDraft): PosOrder['electronicInvoicePrintMode'] => {
+  if (!draft.electronicInvoiceRequested) {
+    return 'none'
+  }
+
+  if (normalizeInvoiceDonationCode(draft.invoiceDonationCode)) {
+    return 'donation'
+  }
+
+  if (normalizeInvoiceCarrierBarcode(draft.invoiceCarrierBarcode)) {
+    return 'carrier'
+  }
+
+  return draft.electronicInvoicePrintMode === 'paper' ? 'paper' : 'none'
+}
+
+const invoiceRequestedFromDraft = (draft: CustomerDraft): boolean =>
+  draft.electronicInvoiceRequested ||
+  Boolean(normalizeTaxId(draft.taxId) || normalizeInvoiceCarrierBarcode(draft.invoiceCarrierBarcode) || normalizeInvoiceDonationCode(draft.invoiceDonationCode))
+
+const electronicInvoiceStatusFor = (
+  requested: boolean,
+  paymentStatus: PaymentStatus,
+): PosOrder['electronicInvoiceStatus'] =>
+  requested && (paymentStatus === 'authorized' || paymentStatus === 'paid') ? 'queued' : 'not_requested'
 
 const buildOrderId = (date: Date, sequence: number): string =>
   `POS-${formatDateKey(date)}-${String(sequence).padStart(3, '0')}`
@@ -1887,6 +1956,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.requestedFulfillmentAt = nextDraft.requestedFulfillmentAt
     customer.taxId = nextDraft.taxId
     customer.invoiceCarrierBarcode = nextDraft.invoiceCarrierBarcode
+    customer.invoiceDonationCode = nextDraft.invoiceDonationCode
+    customer.electronicInvoiceRequested = engagementSettings.value.electronicInvoice.enabled &&
+      engagementSettings.value.electronicInvoice.defaultIssueOnCheckout
+    customer.electronicInvoicePrintMode = engagementSettings.value.electronicInvoice.defaultPrintPaper ? 'paper' : 'none'
     customer.note = nextDraft.note
   }
 
@@ -1932,6 +2005,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       requestedFulfillmentAt: null,
       taxId: '',
       invoiceCarrierBarcode: '',
+      invoiceDonationCode: '',
+      electronicInvoiceRequested: false,
+      electronicInvoiceStatus: 'not_requested',
+      electronicInvoicePrintMode: 'none',
+      electronicInvoiceNumber: '',
+      electronicInvoiceRandomCode: '',
+      electronicInvoiceIssuedAt: null,
+      electronicInvoiceVoidedAt: null,
+      electronicInvoiceUploadDueAt: null,
       memberId: null,
       note: '',
       lines: [],
@@ -2166,6 +2248,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const nextPaymentStatus = ['pending', 'authorized'].includes(currentOrder.paymentStatus)
       ? paymentStatusFor(paymentMethod.value)
       : currentOrder.paymentStatus
+    const electronicInvoiceRequested = engagementSettings.value.electronicInvoice.enabled && invoiceRequestedFromDraft(customer)
+    const electronicInvoicePrintMode = electronicInvoiceRequested ? invoicePrintModeFromDraft(customer) : 'none'
     const nextOrder: PosOrder = {
       ...currentOrder,
       mode: serviceMode.value,
@@ -2175,6 +2259,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
       taxId: normalizeTaxId(customer.taxId),
       invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
+      invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+      electronicInvoiceRequested,
+      electronicInvoiceStatus: currentOrder.electronicInvoiceStatus === 'not_requested'
+        ? electronicInvoiceStatusFor(electronicInvoiceRequested, nextPaymentStatus)
+        : currentOrder.electronicInvoiceStatus,
+      electronicInvoicePrintMode,
+      electronicInvoiceNumber: currentOrder.electronicInvoiceNumber,
+      electronicInvoiceRandomCode: currentOrder.electronicInvoiceRandomCode,
+      electronicInvoiceIssuedAt: currentOrder.electronicInvoiceIssuedAt,
+      electronicInvoiceVoidedAt: currentOrder.electronicInvoiceVoidedAt,
+      electronicInvoiceUploadDueAt: currentOrder.electronicInvoiceUploadDueAt,
       memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -3953,6 +4048,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const paymentStatus = existingOrder && !['pending', 'authorized'].includes(existingOrder.paymentStatus)
       ? existingOrder.paymentStatus
       : paymentStatusFor(paymentMethod.value)
+    const electronicInvoiceRequested = engagementSettings.value.electronicInvoice.enabled && invoiceRequestedFromDraft(customer)
+    const electronicInvoicePrintMode = electronicInvoiceRequested ? invoicePrintModeFromDraft(customer) : 'none'
 
     return {
       ...(existingOrder ?? {}),
@@ -3965,6 +4062,17 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
       taxId: normalizeTaxId(customer.taxId),
       invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
+      invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+      electronicInvoiceRequested,
+      electronicInvoiceStatus: existingOrder?.electronicInvoiceStatus && existingOrder.electronicInvoiceStatus !== 'not_requested'
+        ? existingOrder.electronicInvoiceStatus
+        : electronicInvoiceStatusFor(electronicInvoiceRequested, paymentStatus),
+      electronicInvoicePrintMode,
+      electronicInvoiceNumber: existingOrder?.electronicInvoiceNumber ?? '',
+      electronicInvoiceRandomCode: existingOrder?.electronicInvoiceRandomCode ?? '',
+      electronicInvoiceIssuedAt: existingOrder?.electronicInvoiceIssuedAt ?? null,
+      electronicInvoiceVoidedAt: existingOrder?.electronicInvoiceVoidedAt ?? null,
+      electronicInvoiceUploadDueAt: existingOrder?.electronicInvoiceUploadDueAt ?? null,
       memberId: customer.memberId,
       note: customer.note.trim(),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -4010,7 +4118,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return null
     }
 
-    const invoiceError = invoiceFieldError(customer.taxId, customer.invoiceCarrierBarcode)
+    const invoiceError = invoiceFieldError(customer.taxId, customer.invoiceCarrierBarcode, customer.invoiceDonationCode)
     if (invoiceError) {
       setBackendStatus('fallback', '發票資訊格式錯誤', invoiceError)
       return null
@@ -4202,6 +4310,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.requestedFulfillmentAt = toDatetimeLocalInputValue(editableOrder.requestedFulfillmentAt)
     customer.taxId = editableOrder.taxId
     customer.invoiceCarrierBarcode = editableOrder.invoiceCarrierBarcode
+    customer.invoiceDonationCode = editableOrder.invoiceDonationCode
+    customer.electronicInvoiceRequested = editableOrder.electronicInvoiceRequested
+    customer.electronicInvoicePrintMode = editableOrder.electronicInvoicePrintMode
     customer.note = editableOrder.note
     cartLines.value = editableOrder.lines.map((line) => ({ ...line, options: [...line.options] }))
     counterDraftOrderId.value = editableOrder.id

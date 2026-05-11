@@ -24,6 +24,8 @@ export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
 export type DiscountCampaignScope = 'whole-order' | 'categories' | 'products'
 export type DiscountValueType = 'amount' | 'percentage'
+export type ElectronicInvoiceStatus = 'not_requested' | 'queued' | 'issued' | 'voided' | 'refunded' | 'failed'
+export type ElectronicInvoicePrintMode = 'paper' | 'carrier' | 'donation' | 'none'
 
 export interface SupplyPeriodRule {
   id: string
@@ -110,6 +112,9 @@ export interface CustomerDraft {
   requestedFulfillmentAt: string
   taxId: string
   invoiceCarrierBarcode: string
+  invoiceDonationCode: string
+  electronicInvoiceRequested: boolean
+  electronicInvoicePrintMode: ElectronicInvoicePrintMode
   note: string
 }
 
@@ -125,6 +130,15 @@ export interface PosOrder {
   requestedFulfillmentAt: string | null
   taxId: string
   invoiceCarrierBarcode: string
+  invoiceDonationCode: string
+  electronicInvoiceRequested: boolean
+  electronicInvoiceStatus: ElectronicInvoiceStatus
+  electronicInvoicePrintMode: ElectronicInvoicePrintMode
+  electronicInvoiceNumber: string
+  electronicInvoiceRandomCode: string
+  electronicInvoiceIssuedAt: string | null
+  electronicInvoiceVoidedAt: string | null
+  electronicInvoiceUploadDueAt: string | null
   memberId: string | null
   note: string
   qrSessionOrderId?: string | null
@@ -532,6 +546,7 @@ export interface OnlineOrderingSettings {
   checkoutInstructions: string
   showTaxIdField: boolean
   showCarrierBarcodeField: boolean
+  showDonationCodeField: boolean
   paymentMethods: OnlinePaymentMethodSetting[]
   deliveryFeeAmount: number
   deliveryMinimumSubtotal: number
@@ -757,6 +772,14 @@ export interface CheckoutCounterSettings {
   books: CheckoutCounterBookSetting[]
 }
 
+export interface ElectronicInvoiceSettings {
+  enabled: boolean
+  defaultIssueOnCheckout: boolean
+  allowManualIssueToggle: boolean
+  defaultPrintPaper: boolean
+  uploadDeadlineHours: number
+}
+
 export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
 
 export interface ServiceChargeSettings {
@@ -778,6 +801,7 @@ export interface CustomerEngagementSettings {
   productTotalDisplay: ProductTotalDisplaySettings
   loyaltyPoints: LoyaltyPointSettings
   checkoutCounters: CheckoutCounterSettings
+  electronicInvoice: ElectronicInvoiceSettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

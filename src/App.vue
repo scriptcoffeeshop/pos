@@ -1548,6 +1548,22 @@ const paymentStatusLabels = {
   refunded: '已退款',
 } as const
 
+const electronicInvoiceStatusLabels: Record<PosOrder['electronicInvoiceStatus'], string> = {
+  not_requested: '未開立',
+  queued: '待開立',
+  issued: '已開立',
+  voided: '已作廢',
+  refunded: '已退回',
+  failed: '開立失敗',
+}
+
+const electronicInvoicePrintModeLabels: Record<PosOrder['electronicInvoicePrintMode'], string> = {
+  paper: '紙本發票',
+  carrier: '存入載具',
+  donation: '捐贈碼',
+  none: '不列印',
+}
+
 const statusLabels: Record<OrderStatus, string> = {
   new: '新單',
   preparing: '製作中',
@@ -4848,7 +4864,15 @@ const transactionSearchHaystack = (order: PosOrder): string[] => {
   }
 
   if (transactionSearchCriterion.value === 'carrier') {
-    return [order.invoiceCarrierBarcode, order.taxId, order.couponCode, order.note]
+    return [
+      order.invoiceCarrierBarcode,
+      order.invoiceDonationCode,
+      order.taxId,
+      order.electronicInvoiceNumber,
+      order.electronicInvoiceRandomCode,
+      order.couponCode,
+      order.note,
+    ]
   }
 
   if (transactionSearchCriterion.value === 'table') {
@@ -11046,6 +11070,10 @@ onBeforeUnmount(() => {
                       載具條碼
                       <input v-model="customer.invoiceCarrierBarcode" type="text" maxlength="32" placeholder="/ABC1234" />
                     </label>
+                    <label v-if="engagementSettings.electronicInvoice.enabled || customer.invoiceDonationCode">
+                      捐贈碼
+                      <input v-model="customer.invoiceDonationCode" type="text" inputmode="numeric" maxlength="7" placeholder="3 至 7 碼" />
+                    </label>
                     <label>
                       顧客類型
                       <select v-model="customer.customerType">
@@ -11204,6 +11232,33 @@ onBeforeUnmount(() => {
                         </button>
                       </div>
                     </div>
+
+                    <section v-if="engagementSettings.electronicInvoice.enabled" class="electronic-invoice-panel" aria-label="電子發票">
+                      <div class="electronic-invoice-header">
+                        <div>
+                          <p class="eyebrow">E-Invoice</p>
+                          <h3>電子發票</h3>
+                          <span>{{ customer.invoiceCarrierBarcode ? '存入載具' : customer.invoiceDonationCode ? '使用捐贈碼' : customer.electronicInvoicePrintMode === 'paper' ? '紙本發票' : '只建交易明細' }}</span>
+                        </div>
+                        <label v-if="engagementSettings.electronicInvoice.allowManualIssueToggle" class="toggle-row compact-toggle">
+                          <input v-model="customer.electronicInvoiceRequested" type="checkbox" />
+                          結帳開立
+                        </label>
+                      </div>
+                      <div class="electronic-invoice-grid">
+                        <label>
+                          開立方式
+                          <select v-model="customer.electronicInvoicePrintMode" :disabled="!customer.electronicInvoiceRequested">
+                            <option value="paper">列印紙本發票</option>
+                            <option value="none">不列印紙本</option>
+                          </select>
+                        </label>
+                        <label>
+                          捐贈碼
+                          <input v-model="customer.invoiceDonationCode" type="text" inputmode="numeric" maxlength="7" placeholder="3 至 7 碼" />
+                        </label>
+                      </div>
+                    </section>
 
                     <p v-if="paymentBreakdown.length > 0 && !paymentBreakdownBalanced" class="payment-split-warning">
                       混合支付合計 {{ formatCurrency(paymentBreakdownTotal) }} 與訂單合計 {{ formatCurrency(cartTotal) }} 不一致。
@@ -11906,6 +11961,14 @@ onBeforeUnmount(() => {
                               <template v-if="order.invoiceCarrierBarcode">
                                 <span>載具</span>
                                 <strong>{{ order.invoiceCarrierBarcode }}</strong>
+                              </template>
+                              <template v-if="order.invoiceDonationCode">
+                                <span>捐贈碼</span>
+                                <strong>{{ order.invoiceDonationCode }}</strong>
+                              </template>
+                              <template v-if="order.electronicInvoiceRequested">
+                                <span>電子發票</span>
+                                <strong>{{ electronicInvoiceStatusLabels[order.electronicInvoiceStatus] }} / {{ electronicInvoicePrintModeLabels[order.electronicInvoicePrintMode] }}</strong>
                               </template>
                               <span>付款</span>
                               <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
@@ -12819,6 +12882,14 @@ onBeforeUnmount(() => {
                 <span>載具條碼</span>
                 <strong>{{ onlineReminderDetailOrder.invoiceCarrierBarcode }}</strong>
               </article>
+              <article v-if="onlineReminderDetailOrder.invoiceDonationCode">
+                <span>捐贈碼</span>
+                <strong>{{ onlineReminderDetailOrder.invoiceDonationCode }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.electronicInvoiceRequested">
+                <span>電子發票</span>
+                <strong>{{ electronicInvoiceStatusLabels[onlineReminderDetailOrder.electronicInvoiceStatus] }}</strong>
+              </article>
             </div>
 
             <section class="online-order-detail-lines" aria-label="點餐明細">
@@ -13698,9 +13769,25 @@ onBeforeUnmount(() => {
                   <dt>載具</dt>
                   <dd>{{ selectedTransactionOrder.invoiceCarrierBarcode }}</dd>
                 </div>
+                <div v-if="selectedTransactionOrder.invoiceDonationCode">
+                  <dt>捐贈碼</dt>
+                  <dd>{{ selectedTransactionOrder.invoiceDonationCode }}</dd>
+                </div>
                 <div v-if="selectedTransactionOrder.taxId">
                   <dt>統編</dt>
                   <dd>{{ selectedTransactionOrder.taxId }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.electronicInvoiceRequested">
+                  <dt>電子發票</dt>
+                  <dd>{{ electronicInvoiceStatusLabels[selectedTransactionOrder.electronicInvoiceStatus] }} / {{ electronicInvoicePrintModeLabels[selectedTransactionOrder.electronicInvoicePrintMode] }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.electronicInvoiceNumber">
+                  <dt>發票號碼</dt>
+                  <dd>{{ selectedTransactionOrder.electronicInvoiceNumber }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.electronicInvoiceUploadDueAt">
+                  <dt>上傳期限</dt>
+                  <dd>{{ formatOrderTime(selectedTransactionOrder.electronicInvoiceUploadDueAt) }}</dd>
                 </div>
               </dl>
 

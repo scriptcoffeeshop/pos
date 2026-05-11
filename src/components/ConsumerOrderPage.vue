@@ -143,11 +143,15 @@ const customer = reactive<CustomerDraft>({
   requestedFulfillmentAt: '',
   taxId: '',
   invoiceCarrierBarcode: '',
+  invoiceDonationCode: '',
+  electronicInvoiceRequested: false,
+  electronicInvoicePrintMode: 'none',
   note: '',
 })
 
 const normalizeTaxId = (value: string): string => value.replace(/\s/g, '').trim()
 const normalizeInvoiceCarrierBarcode = (value: string): string => value.replace(/\s/g, '').trim().toUpperCase()
+const normalizeInvoiceDonationCode = (value: string): string => value.replace(/\s/g, '').trim()
 const timeToMinutes = (value: string): number => {
   const [hours = 0, minutes = 0] = value.split(':').map(Number)
   return Number.isInteger(hours) && Number.isInteger(minutes) ? hours * 60 + minutes : 0
@@ -162,8 +166,19 @@ const invoiceFieldError = (): string | null => {
     return '統一編號需為 8 碼數字'
   }
 
-  if (normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode).length > 32) {
+  const carrierBarcode = normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode)
+  const donationCode = normalizeInvoiceDonationCode(customer.invoiceDonationCode)
+
+  if (carrierBarcode.length > 32) {
     return '載具條碼最多 32 字元'
+  }
+
+  if (donationCode && !/^[0-9]{3,7}$/.test(donationCode)) {
+    return '捐贈碼需為 3 至 7 碼數字'
+  }
+
+  if (carrierBarcode && donationCode) {
+    return '載具條碼與捐贈碼只能擇一'
   }
 
   return null
@@ -1110,6 +1125,12 @@ const submitOnlineOrder = async (): Promise<void> => {
 
   const now = new Date()
   const selectedPaymentMethod = dineInCheckoutPostpaid.value ? 'cash' : paymentMethod.value
+  const requestedElectronicInvoice = engagementSettings.value.electronicInvoice.enabled && Boolean(
+    engagementSettings.value.electronicInvoice.defaultIssueOnCheckout ||
+    normalizeTaxId(customer.taxId) ||
+    normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode) ||
+    normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+  )
   const order: PosOrder = {
     id: buildOnlineOrderNumber(now),
     source: consumerOrderSource,
@@ -1120,6 +1141,23 @@ const submitOnlineOrder = async (): Promise<void> => {
     requestedFulfillmentAt: toRequestedFulfillmentIso(customer.requestedFulfillmentAt),
     taxId: normalizeTaxId(customer.taxId),
     invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
+    invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+    electronicInvoiceRequested: requestedElectronicInvoice,
+    electronicInvoiceStatus: 'not_requested',
+    electronicInvoicePrintMode: normalizeInvoiceDonationCode(customer.invoiceDonationCode)
+      ? 'donation'
+      : normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode)
+        ? 'carrier'
+        : normalizeTaxId(customer.taxId)
+          ? 'paper'
+          : requestedElectronicInvoice && engagementSettings.value.electronicInvoice.defaultPrintPaper
+            ? 'paper'
+            : 'none',
+    electronicInvoiceNumber: '',
+    electronicInvoiceRandomCode: '',
+    electronicInvoiceIssuedAt: null,
+    electronicInvoiceVoidedAt: null,
+    electronicInvoiceUploadDueAt: null,
     memberId: null,
     note: [
       qrFloorLabel ? `樓層 ${qrFloorLabel}` : '',
@@ -1160,6 +1198,9 @@ const submitOnlineOrder = async (): Promise<void> => {
     customer.requestedFulfillmentAt = ''
     customer.taxId = ''
     customer.invoiceCarrierBarcode = ''
+    customer.invoiceDonationCode = ''
+    customer.electronicInvoiceRequested = false
+    customer.electronicInvoicePrintMode = 'none'
     customer.note = ''
   } catch (error) {
     formError.value = error instanceof Error ? error.message : '訂單送出失敗'
@@ -1548,6 +1589,10 @@ watch(
         <label v-if="onlineOrdering.showCarrierBarcodeField">
           載具條碼
           <input v-model="customer.invoiceCarrierBarcode" type="text" maxlength="32" placeholder="/ABC1234" />
+        </label>
+        <label v-if="onlineOrdering.showDonationCodeField">
+          捐贈碼
+          <input v-model="customer.invoiceDonationCode" type="text" inputmode="numeric" maxlength="7" placeholder="3 至 7 碼" />
         </label>
         <label v-if="orderNoteVisible" class="wide-field">
           備註

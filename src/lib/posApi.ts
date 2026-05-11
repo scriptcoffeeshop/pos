@@ -129,6 +129,15 @@ interface ApiOrder {
   requested_fulfillment_at?: string | null
   tax_id?: string | null
   invoice_carrier_barcode?: string | null
+  invoice_donation_code?: string | null
+  electronic_invoice_requested?: boolean | null
+  electronic_invoice_status?: PosOrder['electronicInvoiceStatus'] | null
+  electronic_invoice_print_mode?: PosOrder['electronicInvoicePrintMode'] | null
+  electronic_invoice_number?: string | null
+  electronic_invoice_random_code?: string | null
+  electronic_invoice_issued_at?: string | null
+  electronic_invoice_voided_at?: string | null
+  electronic_invoice_upload_due_at?: string | null
   member_id?: string | null
   note: string
   subtotal: number
@@ -1387,6 +1396,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   checkoutInstructions: '',
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  showDonationCodeField: false,
   paymentMethods: defaultOnlinePaymentMethods(),
   deliveryFeeAmount: 60,
   deliveryMinimumSubtotal: 0,
@@ -2129,6 +2139,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
       typeof settings.showCarrierBarcodeField === 'boolean'
         ? settings.showCarrierBarcodeField
         : defaults.showCarrierBarcodeField,
+    showDonationCodeField:
+      typeof settings.showDonationCodeField === 'boolean'
+        ? settings.showDonationCodeField
+        : defaults.showDonationCodeField,
     paymentMethods: paymentMethods.length > 0 ? paymentMethods : defaults.paymentMethods.map((method) => ({ ...method })),
     deliveryFeeAmount: clampRuntimeInteger(settings.deliveryFeeAmount, defaults.deliveryFeeAmount, 0, 999_999),
     deliveryMinimumSubtotal: clampRuntimeInteger(settings.deliveryMinimumSubtotal, defaults.deliveryMinimumSubtotal, 0, 999_999),
@@ -2454,6 +2468,13 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
       },
     ],
   },
+  electronicInvoice: {
+    enabled: false,
+    defaultIssueOnCheckout: true,
+    allowManualIssueToggle: true,
+    defaultPrintPaper: true,
+    uploadDeadlineHours: 48,
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2530,6 +2551,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.checkoutCounters
     : defaults.checkoutCounters
   const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings['checkoutCounters']>
+  const rawElectronicInvoice = settings.electronicInvoice && typeof settings.electronicInvoice === 'object'
+    ? settings.electronicInvoice
+    : defaults.electronicInvoice
+  const electronicInvoice = rawElectronicInvoice as Partial<CustomerEngagementSettings['electronicInvoice']>
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
       const book = entry && typeof entry === 'object' ? entry as Partial<CustomerEngagementSettings['checkoutCounters']['books'][number]> : null
@@ -2654,6 +2679,13 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       defaultBookId: sanitizeOnlineText(checkoutCounters.defaultBookId, defaults.checkoutCounters.defaultBookId).slice(0, 80) || defaults.checkoutCounters.defaultBookId,
       books: checkoutCounterBooks.length > 0 ? checkoutCounterBooks : defaults.checkoutCounters.books.map((book) => ({ ...book, stationIds: [...book.stationIds], paymentDeviceIds: [...book.paymentDeviceIds] })),
     },
+    electronicInvoice: {
+      enabled: electronicInvoice.enabled === true,
+      defaultIssueOnCheckout: electronicInvoice.defaultIssueOnCheckout !== false,
+      allowManualIssueToggle: electronicInvoice.allowManualIssueToggle !== false,
+      defaultPrintPaper: electronicInvoice.defaultPrintPaper !== false,
+      uploadDeadlineHours: Math.min(Math.max(normalizeNumber(electronicInvoice.uploadDeadlineHours, defaults.electronicInvoice.uploadDeadlineHours), 1), 168),
+    },
     recommendations,
     translations,
     hardwareDevices,
@@ -2723,6 +2755,15 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     requestedFulfillmentAt: order.requested_fulfillment_at ?? null,
     taxId: order.tax_id ?? '',
     invoiceCarrierBarcode: order.invoice_carrier_barcode ?? '',
+    invoiceDonationCode: order.invoice_donation_code ?? '',
+    electronicInvoiceRequested: order.electronic_invoice_requested === true,
+    electronicInvoiceStatus: order.electronic_invoice_status ?? 'not_requested',
+    electronicInvoicePrintMode: order.electronic_invoice_print_mode ?? 'none',
+    electronicInvoiceNumber: order.electronic_invoice_number ?? '',
+    electronicInvoiceRandomCode: order.electronic_invoice_random_code ?? '',
+    electronicInvoiceIssuedAt: order.electronic_invoice_issued_at ?? null,
+    electronicInvoiceVoidedAt: order.electronic_invoice_voided_at ?? null,
+    electronicInvoiceUploadDueAt: order.electronic_invoice_upload_due_at ?? null,
     memberId: order.member_id ?? null,
     note: order.note,
     subtotal: order.subtotal,
@@ -3417,6 +3458,9 @@ const orderPayload = (order: PosOrder) => ({
   requestedFulfillmentAt: order.requestedFulfillmentAt,
   taxId: order.taxId,
   invoiceCarrierBarcode: order.invoiceCarrierBarcode,
+  invoiceDonationCode: order.invoiceDonationCode,
+  electronicInvoiceRequested: order.electronicInvoiceRequested,
+  electronicInvoicePrintMode: order.electronicInvoicePrintMode,
   memberId: order.memberId,
   note: order.note,
   qrSessionOrderId: order.qrSessionOrderId ?? null,
