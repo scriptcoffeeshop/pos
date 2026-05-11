@@ -1,5 +1,7 @@
 import type {
   AccessControlSettings,
+  AccessControlPolicy,
+  AdminPermission,
   MenuCategory,
   MenuItem,
   MemberCoupon,
@@ -49,6 +51,7 @@ import type {
   CashDrawerEvent,
   ReservationStatus,
   StaffTimeClockEntry,
+  StaffPermissionVerification,
   SupplyPeriodRule,
   WaitlineEntry,
   PrintJob,
@@ -491,6 +494,7 @@ interface RuntimeSettingsResponse {
   posAppearance: PosAppearanceSettings
   floorPlan: FloorPlanSettings
   engagementSettings: CustomerEngagementSettings
+  accessPolicy: AccessControlPolicy
 }
 
 interface DailyReportResponse {
@@ -1176,11 +1180,14 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
 
 const normalizeAccessControlSettings = (value: unknown): AccessControlSettings => {
   if (!isAccessControlSettings(value)) {
-    return { roles: [], staffAccounts: [] }
+    return { roles: [], staffAccounts: [], protectedPermissions: [] }
   }
 
   const roles = value.roles.map((role) => ({ ...role, permissions: [...role.permissions] }))
   const fallbackRole = roles[0]
+  const protectedPermissions = Array.isArray(value.protectedPermissions)
+    ? [...new Set(value.protectedPermissions.filter((permission): permission is AdminPermission => typeof permission === 'string'))]
+    : []
 
   return {
     roles,
@@ -1197,6 +1204,20 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
             },
           ]
         : [],
+    protectedPermissions,
+  }
+}
+
+const normalizeAccessPolicy = (value: unknown): AccessControlPolicy => {
+  if (!value || typeof value !== 'object') {
+    return { protectedPermissions: [] }
+  }
+
+  const policy = value as Partial<AccessControlPolicy>
+  return {
+    protectedPermissions: Array.isArray(policy.protectedPermissions)
+      ? [...new Set(policy.protectedPermissions.filter((permission): permission is AdminPermission => typeof permission === 'string'))]
+      : [],
   }
 }
 
@@ -2627,6 +2648,19 @@ export const createStaffTimeClockEntry = async (
   return normalizeStaffTimeClockEntry(data.entry)
 }
 
+export const verifyAccessPermission = async (
+  permission: AdminPermission,
+  staffCode: string,
+): Promise<StaffPermissionVerification> => {
+  return request<StaffPermissionVerification>('/access/verify', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({ permission, staffCode, stationId: currentStationId() }),
+  })
+}
+
 export const updateAdminSetting = async <SettingValue>(
   key: AdminSettingKey,
   value: SettingValue,
@@ -2650,6 +2684,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
     posAppearance: normalizePosAppearanceSettings(data.posAppearance),
     floorPlan: normalizeFloorPlanSettings(data.floorPlan),
     engagementSettings: normalizeEngagementSettings(data.engagementSettings),
+    accessPolicy: normalizeAccessPolicy(data.accessPolicy),
   }
 }
 

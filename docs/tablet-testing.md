@@ -176,7 +176,7 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 
 ## 多平板關帳員工識別碼
 
-關帳員工識別碼走 `access_control` runtime 與 `pos-api` 驗證，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+關帳員工識別碼走 `access_control` runtime 與 `pos-api` 驗證，並會檢查角色是否具有 `closeRegister` 權限，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
 
 1. 在後台「權限」確認至少一個啟用員工，並記下其員工識別碼。
 2. 平板 A 連點工具箱 6 下進入後台編輯模式並開班。
@@ -184,6 +184,18 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 4. 輸入不存在或已停用的識別碼，確認關班失敗且 `/register/current` 仍回傳同一個 open session。
 5. 輸入啟用員工識別碼完成關班後，確認平板 B 透過 `register_sessions` realtime invalidation 重拉 `/register/current` 並看到 closed session。
 6. fresh reinstall APK 或清除瀏覽器資料後重新登入 POS，確認班別仍為已關班，且後台「操作稽核」的 `register.close` metadata 仍可追查操作員姓名、識別碼與角色。
+
+## 多平板 POS 操作權限驗證
+
+POS 操作權限驗證會把 iCHEF 後台式「需要驗證」開關保存在 `access_control.protectedPermissions`，角色權限與員工識別碼同樣由 `access_control` 管理。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 平板 A 進入後台「權限」，建立兩個角色：一個具備全部 POS 操作權限，一個移除「出單至廚房」「刪品項」「刪單」「錢櫃」等權限；各建立一位啟用員工並儲存。
+2. 在「操作驗證開關」勾選「開單」「出單至廚房」「轉單」「刪單」「刪品項」「變價註記」「線上接單」「取消線上訂單」「作廢」「退款」「錢櫃」與「關帳」的一部分測試項目。
+3. 平板 B 不重整時應透過 runtime settings Realtime 或 fallback 取得同一組 protected permissions；若未即時同步，按工具箱「重新同步」後必須一致。
+4. 在平板 B 嘗試被保護操作，確認會跳員工識別碼 modal；輸入無權限角色的識別碼應拒絕，輸入有權限角色才會繼續原操作。
+5. 測同一操作在另一台平板仍使用同一份設定，不得只靠觸發操作那台的記憶體。
+6. 到後台「操作稽核」確認 `access.verify` 事件包含 permission、操作員與角色；關帳仍另有 `register.close` 操作員 metadata。
+7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認驗證開關、角色權限與員工識別碼仍由 Supabase runtime/API 還原。
 
 ## 多平板標籤管理
 

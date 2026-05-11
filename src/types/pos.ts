@@ -293,13 +293,25 @@ export interface PrinterSettings {
 }
 
 export type AdminPermission =
+  | 'openOrders'
+  | 'sendOrdersToKitchen'
+  | 'transferOrders'
+  | 'deleteOrders'
+  | 'deleteOrderItems'
+  | 'useVariablePriceNotes'
   | 'manageProducts'
   | 'managePrinting'
   | 'managePayments'
   | 'manageReports'
   | 'manageCustomers'
   | 'manageAccess'
+  | 'manageOnlineOrders'
+  | 'cancelOnlineOrders'
+  | 'manageOnlineAvailability'
+  | 'manageReservations'
+  | 'manageCashDrawer'
   | 'voidOrders'
+  | 'refundOrders'
   | 'closeRegister'
 
 export interface RoleSetting {
@@ -320,6 +332,22 @@ export interface StaffAccountSetting {
 export interface AccessControlSettings {
   roles: RoleSetting[]
   staffAccounts: StaffAccountSetting[]
+  protectedPermissions: AdminPermission[]
+}
+
+export interface AccessControlPolicy {
+  protectedPermissions: AdminPermission[]
+}
+
+export interface StaffPermissionVerification {
+  verified: boolean
+  permission: AdminPermission
+  staff: {
+    id: string
+    name: string
+    roleId: string
+    roleName: string
+  }
 }
 
 export type TimeClockEventType = 'clock-in' | 'clock-out'

@@ -70,6 +70,7 @@ import {
 } from '../lib/printing'
 import type {
   CartLine,
+  AccessControlPolicy,
   CashDrawerDeliveryStatus,
   CashDrawerEvent,
   CustomerDraft,
@@ -1034,6 +1035,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
   const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
   const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
+  const accessPolicy = ref<AccessControlPolicy>({ protectedPermissions: [] })
   const onlineReminderClock = ref(Date.now())
   const onlineReminderStates = ref<Record<string, OnlineOrderReminderState>>({})
   const onlineReminderStateHydrated = ref(!isPosApiConfigured)
@@ -1098,6 +1100,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     posAppearanceSettings.value = runtimeSettings.posAppearance
     floorPlanSettings.value = runtimeSettings.floorPlan
     engagementSettings.value = runtimeSettings.engagementSettings
+    accessPolicy.value = runtimeSettings.accessPolicy
     if (!savedCounterDraft && runtimeSettings.engagementSettings.defaultServiceFeeRate > 0) {
       serviceFeeRate.value = runtimeSettings.engagementSettings.defaultServiceFeeRate
     }
@@ -4023,6 +4026,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customerHasNote,
     deletingPrintJobId,
     discountAmount,
+    accessPolicy,
     engagementSettings,
     extraFeeAmount,
     createProductForStation,

@@ -310,6 +310,12 @@ interface StaffTimeClockInput {
   stationId?: string;
 }
 
+interface AccessVerificationInput {
+  permission?: AdminPermission;
+  staffCode?: string;
+  stationId?: string;
+}
+
 interface ProductUpdateInput {
   sku?: string;
   name?: string;
@@ -359,11 +365,33 @@ interface PrinterSettings {
   rules: PrintRuleSetting[];
 }
 
+type AdminPermission =
+  | "openOrders"
+  | "sendOrdersToKitchen"
+  | "transferOrders"
+  | "deleteOrders"
+  | "deleteOrderItems"
+  | "useVariablePriceNotes"
+  | "manageProducts"
+  | "managePrinting"
+  | "managePayments"
+  | "manageReports"
+  | "manageCustomers"
+  | "manageAccess"
+  | "manageOnlineOrders"
+  | "cancelOnlineOrders"
+  | "manageOnlineAvailability"
+  | "manageReservations"
+  | "manageCashDrawer"
+  | "voidOrders"
+  | "refundOrders"
+  | "closeRegister";
+
 interface RoleSetting {
   id: string;
   name: string;
   pinRequired: boolean;
-  permissions: string[];
+  permissions: AdminPermission[];
 }
 
 interface StaffAccountSetting {
@@ -377,6 +405,7 @@ interface StaffAccountSetting {
 interface AccessControlSettings {
   roles: RoleSetting[];
   staffAccounts: StaffAccountSetting[];
+  protectedPermissions: AdminPermission[];
 }
 
 interface OnlineMenuOptionChoice {
@@ -825,13 +854,25 @@ const defaultAccessControl: AccessControlSettings = {
       name: "店主",
       pinRequired: false,
       permissions: [
+        "openOrders",
+        "sendOrdersToKitchen",
+        "transferOrders",
+        "deleteOrders",
+        "deleteOrderItems",
+        "useVariablePriceNotes",
         "manageProducts",
         "managePrinting",
         "managePayments",
         "manageReports",
         "manageCustomers",
         "manageAccess",
+        "manageOnlineOrders",
+        "cancelOnlineOrders",
+        "manageOnlineAvailability",
+        "manageReservations",
+        "manageCashDrawer",
         "voidOrders",
+        "refundOrders",
         "closeRegister",
       ],
     },
@@ -845,6 +886,7 @@ const defaultAccessControl: AccessControlSettings = {
       active: true,
     },
   ],
+  protectedPermissions: [],
 };
 
 const defaultOnlinePaymentMethods = (): OnlinePaymentMethodSetting[] => [
@@ -1434,6 +1476,11 @@ api.get("/settings/runtime", async (c) => {
     "engagement_settings",
     defaultEngagementSettings,
   );
+  const accessControl = await loadSetting<AccessControlSettings>(
+    "access_control",
+    defaultAccessControl,
+  );
+  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
 
   return c.json({
     printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
@@ -1441,6 +1488,9 @@ api.get("/settings/runtime", async (c) => {
     posAppearance: normalizePosAppearanceForRuntime(posAppearance),
     floorPlan: normalizeFloorPlanForRuntime(floorPlan),
     engagementSettings: normalizeEngagementSettingsForRuntime(engagementSettings),
+    accessPolicy: {
+      protectedPermissions: normalizedAccessControl.protectedPermissions,
+    },
   });
 });
 
@@ -1620,6 +1670,38 @@ api.get("/admin/time-clock", async (c) => {
   return c.json({ entries: data ?? [] });
 });
 
+api.post("/access/verify", async (c) => {
+  const input: AccessVerificationInput = await c.req.json<AccessVerificationInput>().catch(() => ({}));
+  const result = await verifyStaffPermission(input.permission, input.staffCode);
+  if (result.error || !result.staffAccount || !result.role || !isKnownPermission(input.permission)) {
+    const status = result.status === 403 ? 403 : result.status === 404 ? 404 : 400;
+    return c.json({ error: result.error ?? "Permission verification failed" }, status);
+  }
+
+  const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  await writeAuditEvent({
+    action: "access.verify",
+    stationId,
+    metadata: {
+      permission: input.permission,
+      operatorStaffName: result.staffAccount.name,
+      operatorRoleId: result.role.id,
+      operatorRoleName: result.role.name,
+    },
+  });
+
+  return c.json({
+    verified: true,
+    permission: input.permission,
+    staff: {
+      id: result.staffAccount.id,
+      name: result.staffAccount.name,
+      roleId: result.role.id,
+      roleName: result.role.name,
+    },
+  });
+});
+
 api.post("/time-clock", async (c) => {
   const input: StaffTimeClockInput = await c.req.json<StaffTimeClockInput>().catch(() => ({}));
   const staffCode = normalizeStaffCode(input.staffCode);
@@ -1766,20 +1848,13 @@ api.post("/register/close", async (c) => {
     return c.json({ error: closingCash.error }, 400);
   }
 
-  const staffCode = normalizeStaffCode(input.staffCode);
-  if (!staffCode) {
-    return c.json({ error: "staffCode is required" }, 400);
+  const accessResult = await verifyStaffPermission("closeRegister", input.staffCode);
+  if (accessResult.error || !accessResult.staffAccount || !accessResult.role) {
+    const status = accessResult.status === 403 ? 403 : accessResult.status === 404 ? 404 : 400;
+    return c.json({ error: accessResult.error ?? "Permission verification failed" }, status);
   }
-
-  const accessControl = await loadSetting<AccessControlSettings>("access_control", defaultAccessControl);
-  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
-  const staffAccount = normalizedAccessControl.staffAccounts.find((staff) =>
-    staff.active && staff.staffCode === staffCode
-  );
-  if (!staffAccount) {
-    return c.json({ error: "Staff account not found or inactive" }, 404);
-  }
-  const staffRole = normalizedAccessControl.roles.find((entry) => entry.id === staffAccount.roleId);
+  const { staffAccount } = accessResult;
+  const staffRole = accessResult.role;
 
   const openSession = await loadOpenRegisterSession();
   if (openSession.error) {
@@ -5234,16 +5309,31 @@ const normalizeScheduledOrderTimeWindows = (input: unknown): OnlineScheduledOrde
 
   return windows.length > 0 ? windows.slice(0, 20) : defaultScheduledOrderTimeWindows();
 };
-const knownPermissions = [
+const knownPermissions: AdminPermission[] = [
+  "openOrders",
+  "sendOrdersToKitchen",
+  "transferOrders",
+  "deleteOrders",
+  "deleteOrderItems",
+  "useVariablePriceNotes",
   "manageProducts",
   "managePrinting",
   "managePayments",
   "manageReports",
   "manageCustomers",
   "manageAccess",
+  "manageOnlineOrders",
+  "cancelOnlineOrders",
+  "manageOnlineAvailability",
+  "manageReservations",
+  "manageCashDrawer",
   "voidOrders",
+  "refundOrders",
   "closeRegister",
 ];
+
+const isKnownPermission = (permission: unknown): permission is AdminPermission =>
+  typeof permission === "string" && knownPermissions.includes(permission as AdminPermission);
 
 const loadSetting = async <SettingValue>(
   key: AdminSettingKey,
@@ -5260,6 +5350,41 @@ const loadSetting = async <SettingValue>(
   }
 
   return data.value as SettingValue;
+};
+
+const verifyStaffPermission = async (
+  permission: unknown,
+  staffCodeInput: unknown,
+): Promise<{
+  staffAccount: StaffAccountSetting | null;
+  role: RoleSetting | null;
+  status: number;
+  error: string | null;
+}> => {
+  if (!isKnownPermission(permission)) {
+    return { staffAccount: null, role: null, status: 400, error: "permission is invalid" };
+  }
+
+  const staffCode = normalizeStaffCode(staffCodeInput);
+  if (!staffCode) {
+    return { staffAccount: null, role: null, status: 400, error: "staffCode is required" };
+  }
+
+  const accessControl = await loadSetting<AccessControlSettings>("access_control", defaultAccessControl);
+  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
+  const staffAccount = normalizedAccessControl.staffAccounts.find((staff) =>
+    staff.active && staff.staffCode === staffCode
+  ) ?? null;
+  if (!staffAccount) {
+    return { staffAccount: null, role: null, status: 404, error: "Staff account not found or inactive" };
+  }
+
+  const role = normalizedAccessControl.roles.find((entry) => entry.id === staffAccount.roleId) ?? null;
+  if (!role || !role.permissions.includes(permission)) {
+    return { staffAccount, role, status: 403, error: "Staff account does not have permission" };
+  }
+
+  return { staffAccount, role, status: 200, error: null };
 };
 
 const readProductChannel = (channel: string | undefined): ProductChannel => {
@@ -6507,9 +6632,7 @@ const validateAccessControl = (input: unknown): {
   const roles: RoleSetting[] = settings.roles.map((role, index) => {
     const entry = role as Partial<RoleSetting>;
     const permissions = Array.isArray(entry.permissions)
-      ? entry.permissions.filter((permission): permission is string =>
-        knownPermissions.includes(permission)
-      )
+      ? entry.permissions.filter(isKnownPermission)
       : [];
 
     return {
@@ -6560,7 +6683,11 @@ const validateAccessControl = (input: unknown): {
       active: true,
     }];
 
-  return { value: { roles, staffAccounts }, error: null };
+  const protectedPermissions = Array.isArray(settings.protectedPermissions)
+    ? [...new Set(settings.protectedPermissions.filter(isKnownPermission))]
+    : [];
+
+  return { value: { roles, staffAccounts, protectedPermissions }, error: null };
 };
 
 const normalizeOnlineOptionGroups = (input: unknown): OnlineMenuOptionGroup[] => {
