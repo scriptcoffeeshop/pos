@@ -623,6 +623,15 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       ...defaults.loyaltyPoints,
       ...settings.loyaltyPoints,
     },
+    checkoutCounters: {
+      ...defaults.checkoutCounters,
+      ...settings.checkoutCounters,
+      books: (settings.checkoutCounters?.books ?? defaults.checkoutCounters.books).map((book) => ({
+        ...book,
+        stationIds: [...book.stationIds],
+        paymentDeviceIds: [...book.paymentDeviceIds],
+      })),
+    },
     recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
     translations: settings.translations.map((translation) => ({ ...translation })),
     hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
@@ -2907,6 +2916,50 @@ const addRecommendationRule = (): void => {
   })
 }
 
+const addCheckoutCounterBook = (): void => {
+  const nextIndex = engagementSettings.value.checkoutCounters.books.length + 1
+  engagementSettings.value.checkoutCounters.books.push({
+    id: buildId('book'),
+    name: `帳本 ${nextIndex}`,
+    stationIds: [],
+    printStationId: stationOptions.value[0]?.id ?? '',
+    cashDrawerDeviceId: engagementSettings.value.hardwareDevices.find((device) => device.kind === 'cash-drawer')?.id ?? '',
+    paymentDeviceIds: [],
+    enabled: true,
+  })
+}
+
+const removeCheckoutCounterBook = (bookId: string): void => {
+  if (engagementSettings.value.checkoutCounters.books.length <= 1) {
+    return
+  }
+
+  engagementSettings.value.checkoutCounters.books = engagementSettings.value.checkoutCounters.books.filter((book) => book.id !== bookId)
+  if (engagementSettings.value.checkoutCounters.defaultBookId === bookId) {
+    engagementSettings.value.checkoutCounters.defaultBookId = engagementSettings.value.checkoutCounters.books[0]?.id ?? 'main'
+  }
+}
+
+const checkoutCounterStationText = (book: CustomerEngagementSettings['checkoutCounters']['books'][number]): string =>
+  book.stationIds.join(', ')
+
+const checkoutCounterPaymentDeviceText = (book: CustomerEngagementSettings['checkoutCounters']['books'][number]): string =>
+  book.paymentDeviceIds.join(', ')
+
+const updateCheckoutCounterStations = (
+  book: CustomerEngagementSettings['checkoutCounters']['books'][number],
+  value: string,
+): void => {
+  book.stationIds = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))].slice(0, 20)
+}
+
+const updateCheckoutCounterPaymentDevices = (
+  book: CustomerEngagementSettings['checkoutCounters']['books'][number],
+  value: string,
+): void => {
+  book.paymentDeviceIds = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))].slice(0, 20)
+}
+
 const addSupplyWindow = (): void => {
   engagementSettings.value.supplyRules.defaultPeriods.push({
     id: buildId('window'),
@@ -5110,6 +5163,76 @@ const saveAccessControl = async (): Promise<void> => {
                   啟用
                 </label>
               </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>多結帳口 / 帳本</strong>
+                <button class="icon-button" type="button" title="新增帳本" @click="addCheckoutCounterBook">
+                  <Plus :size="18" aria-hidden="true" />
+                </button>
+              </div>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.checkoutCounters.enabled" type="checkbox" />
+                啟用 iPad 獨立結帳口
+              </label>
+              <label>
+                預設帳本
+                <select v-model="engagementSettings.checkoutCounters.defaultBookId">
+                  <option
+                    v-for="book in engagementSettings.checkoutCounters.books"
+                    :key="`checkout-default-${book.id}`"
+                    :value="book.id"
+                  >
+                    {{ book.name }}
+                  </option>
+                </select>
+              </label>
+              <article
+                v-for="book in engagementSettings.checkoutCounters.books"
+                :key="book.id"
+                class="admin-rule-grid"
+              >
+                <input v-model="book.name" type="text" placeholder="帳本名稱" />
+                <input
+                  :value="checkoutCounterStationText(book)"
+                  type="text"
+                  placeholder="指定平板 station id，逗號分隔"
+                  @input="updateCheckoutCounterStations(book, ($event.target as HTMLInputElement).value)"
+                />
+                <select v-model="book.printStationId">
+                  <option value="">預設出單機</option>
+                  <option v-for="station in printerSettings.stations" :key="`checkout-printer-${station.id}`" :value="station.id">
+                    {{ station.name }}
+                  </option>
+                </select>
+                <select v-model="book.cashDrawerDeviceId">
+                  <option value="">不指定錢櫃</option>
+                  <option
+                    v-for="device in engagementSettings.hardwareDevices.filter((entry) => entry.kind === 'cash-drawer')"
+                    :key="`checkout-drawer-${device.id}`"
+                    :value="device.id"
+                  >
+                    {{ device.name }}
+                  </option>
+                </select>
+                <input
+                  :value="checkoutCounterPaymentDeviceText(book)"
+                  type="text"
+                  placeholder="刷卡/掃碼 device id，逗號分隔"
+                  @input="updateCheckoutCounterPaymentDevices(book, ($event.target as HTMLInputElement).value)"
+                />
+                <label class="toggle-row">
+                  <input v-model="book.enabled" type="checkbox" />
+                  啟用
+                </label>
+                <button class="icon-button" type="button" title="刪除帳本" @click="removeCheckoutCounterBook(book.id)">
+                  <Trash2 :size="16" aria-hidden="true" />
+                </button>
+              </article>
+              <p class="panel-note">
+                指定平板會在開班、結帳、現金臨時收支與錢櫃事件中使用自己的帳本；未指定的平板使用預設帳本。
+              </p>
             </div>
 
             <div class="admin-rule-scope">

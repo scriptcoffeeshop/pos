@@ -143,6 +143,9 @@ interface ApiOrder {
   payment_breakdown?: unknown
   transaction_receipt_count?: number | null
   member_points_earned?: number | null
+  register_session_id?: string | null
+  checkout_station_id?: string | null
+  checkout_book_id?: string | null
   payment_method: PaymentMethod
   payment_status: PaymentStatus
   status: OrderStatus
@@ -195,6 +198,9 @@ interface ClaimOrderResponse {
 interface ApiRegisterSession {
   id: string
   status: 'open' | 'closed'
+  book_id?: string | null
+  book_name?: string | null
+  station_id?: string | null
   opened_at: string
   closed_at: string | null
   opening_cash: number
@@ -1025,6 +1031,9 @@ const normalizeInventoryConsumptionRule = (
 const normalizeRegisterSession = (session: ApiRegisterSession): RegisterSession => ({
   id: session.id,
   status: session.status,
+  bookId: session.book_id ?? 'main',
+  bookName: session.book_name ?? '主帳本',
+  stationId: session.station_id ?? '',
   openedAt: session.opened_at,
   closedAt: session.closed_at,
   openingCash: session.opening_cash,
@@ -2430,6 +2439,21 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     minimumRedeemPoints: 1,
     maximumRedeemPointsPerOrder: 0,
   },
+  checkoutCounters: {
+    enabled: false,
+    defaultBookId: 'main',
+    books: [
+      {
+        id: 'main',
+        name: '主帳本',
+        stationIds: [],
+        printStationId: '',
+        cashDrawerDeviceId: 'cash-drawer',
+        paymentDeviceIds: [],
+        enabled: true,
+      },
+    ],
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2502,6 +2526,34 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.loyaltyPoints
     : defaults.loyaltyPoints
   const loyaltyPoints = rawLoyaltyPoints as Partial<CustomerEngagementSettings['loyaltyPoints']>
+  const rawCheckoutCounters = settings.checkoutCounters && typeof settings.checkoutCounters === 'object'
+    ? settings.checkoutCounters
+    : defaults.checkoutCounters
+  const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings['checkoutCounters']>
+  const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
+    ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
+      const book = entry && typeof entry === 'object' ? entry as Partial<CustomerEngagementSettings['checkoutCounters']['books'][number]> : null
+      const id = sanitizeOnlineText(book?.id, `book-${index + 1}`).slice(0, 80)
+      const name = sanitizeOnlineText(book?.name, id || '帳本').slice(0, 80)
+      const stationIds = Array.isArray(book?.stationIds)
+        ? [...new Set(book.stationIds.map((stationId) => sanitizeOnlineText(stationId, '').slice(0, 80)).filter(Boolean))].slice(0, 20)
+        : []
+      const paymentDeviceIds = Array.isArray(book?.paymentDeviceIds)
+        ? [...new Set(book.paymentDeviceIds.map((deviceId) => sanitizeOnlineText(deviceId, '').slice(0, 80)).filter(Boolean))].slice(0, 20)
+        : []
+      return id && name
+        ? [{
+            id,
+            name,
+            stationIds,
+            printStationId: sanitizeOnlineText(book?.printStationId, '').slice(0, 80),
+            cashDrawerDeviceId: sanitizeOnlineText(book?.cashDrawerDeviceId, '').slice(0, 80),
+            paymentDeviceIds,
+            enabled: book?.enabled !== false,
+          }]
+        : []
+    }).slice(0, 20)
+    : defaults.checkoutCounters.books.map((book) => ({ ...book, stationIds: [...book.stationIds], paymentDeviceIds: [...book.paymentDeviceIds] }))
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index) => {
       const rule = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['recommendations'][number] : null
@@ -2597,6 +2649,11 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       minimumRedeemPoints: Math.min(Math.max(normalizeNumber(loyaltyPoints.minimumRedeemPoints, defaults.loyaltyPoints.minimumRedeemPoints), 0), 999_999),
       maximumRedeemPointsPerOrder: Math.min(Math.max(normalizeNumber(loyaltyPoints.maximumRedeemPointsPerOrder, defaults.loyaltyPoints.maximumRedeemPointsPerOrder), 0), 999_999),
     },
+    checkoutCounters: {
+      enabled: checkoutCounters.enabled === true,
+      defaultBookId: sanitizeOnlineText(checkoutCounters.defaultBookId, defaults.checkoutCounters.defaultBookId).slice(0, 80) || defaults.checkoutCounters.defaultBookId,
+      books: checkoutCounterBooks.length > 0 ? checkoutCounterBooks : defaults.checkoutCounters.books.map((book) => ({ ...book, stationIds: [...book.stationIds], paymentDeviceIds: [...book.paymentDeviceIds] })),
+    },
     recommendations,
     translations,
     hardwareDevices,
@@ -2680,6 +2737,9 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     paymentBreakdown: normalizePaymentBreakdown(order.payment_breakdown),
     transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(order.transaction_receipt_count ?? 0))),
     memberPointsEarned: order.member_points_earned ?? 0,
+    registerSessionId: order.register_session_id ?? null,
+    checkoutStationId: order.checkout_station_id ?? '',
+    checkoutBookId: order.checkout_book_id ?? 'main',
     paymentMethod: order.payment_method,
     paymentStatus: order.payment_status,
     status: order.status,
@@ -3259,7 +3319,11 @@ export const updateOnlineOrderReminderStates = async ({
 }
 
 export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | null> => {
-  const data = await request<RegisterSessionResponse>('/register/current')
+  const data = await request<RegisterSessionResponse>('/register/current', {
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+  })
   return data.session ? normalizeRegisterSession(data.session) : null
 }
 

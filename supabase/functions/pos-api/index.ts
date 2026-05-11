@@ -807,11 +807,26 @@ interface CustomerEngagementSettings {
     minimumRedeemPoints: number;
     maximumRedeemPointsPerOrder: number;
   };
+  checkoutCounters: {
+    enabled: boolean;
+    defaultBookId: string;
+    books: CheckoutCounterBookSetting[];
+  };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
   supplyRules: SupplyRulesSettings;
   reservationWebsite: ReservationWebsiteSettings;
+}
+
+interface CheckoutCounterBookSetting {
+  id: string;
+  name: string;
+  stationIds: string[];
+  printStationId: string;
+  cashDrawerDeviceId: string;
+  paymentDeviceIds: string[];
+  enabled: boolean;
 }
 
 interface CreateCouponInput {
@@ -890,7 +905,7 @@ const inventoryRecordSelect =
 const inventoryConsumptionRuleSelect =
   "id, subject_type, product_id, option_label, item_id, quantity, is_active, sort_order, created_at, updated_at";
 const registerSessionSelect =
-  "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
+  "id, status, book_id, book_name, station_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
 const closeoutReportDeliverySelect =
   "id, register_session_id, recipient_staff_id, recipient_name, recipient_email, status, subject, delivery_provider, error_message, sent_at, created_at";
 const auditEventSelect =
@@ -1298,6 +1313,21 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     spendAmountPerPoint: 100,
     minimumRedeemPoints: 1,
     maximumRedeemPointsPerOrder: 0,
+  },
+  checkoutCounters: {
+    enabled: false,
+    defaultBookId: "main",
+    books: [
+      {
+        id: "main",
+        name: "主帳本",
+        stationIds: [],
+        printStationId: "",
+        cashDrawerDeviceId: "cash-drawer",
+        paymentDeviceIds: [],
+        enabled: true,
+      },
+    ],
   },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
@@ -2398,7 +2428,9 @@ api.post("/time-clock", async (c) => {
 });
 
 api.get("/register/current", async (c) => {
-  const { session, error } = await loadCurrentRegisterSession();
+  const stationId = sanitizeStationId(c.req.header("x-pos-station-id"));
+  const book = await resolveCheckoutRegisterBook(stationId);
+  const { session, error } = await loadCurrentRegisterSessionForBook(book);
   if (error) {
     return c.json({ error: error.message }, 500);
   }
@@ -2414,12 +2446,13 @@ api.post("/register/open", async (c) => {
 
   const input: OpenRegisterInput = await c.req.json<OpenRegisterInput>().catch(() => ({}));
   const stationId = sanitizeStationId(input.stationId);
+  const book = await resolveCheckoutRegisterBook(stationId);
   const openingCash = readMoneyAmount(input.openingCash, "openingCash", 0);
   if (openingCash.error) {
     return c.json({ error: openingCash.error }, 400);
   }
 
-  const openSession = await loadOpenRegisterSession();
+  const openSession = await loadOpenRegisterSession(book.id);
   if (openSession.error) {
     return c.json({ error: openSession.error.message }, 500);
   }
@@ -2436,6 +2469,9 @@ api.post("/register/open", async (c) => {
   const { data, error } = await supabase
     .from("register_sessions")
     .insert({
+      book_id: book.id,
+      book_name: book.name,
+      station_id: stationId,
       opening_cash: openingCash.value,
       expected_cash: openingCash.value,
       note,
@@ -2453,6 +2489,8 @@ api.post("/register/open", async (c) => {
     stationId,
     metadata: {
       openingCash: openingCash.value,
+      bookId: book.id,
+      bookName: book.name,
     },
   });
 
@@ -2471,6 +2509,7 @@ api.post("/register/close", async (c) => {
 
   const input: CloseRegisterInput = await c.req.json<CloseRegisterInput>().catch(() => ({}));
   const stationId = sanitizeStationId(input.stationId);
+  const book = await resolveCheckoutRegisterBook(stationId);
   const closingCash = readMoneyAmount(input.closingCash, "closingCash");
   if (closingCash.error) {
     return c.json({ error: closingCash.error }, 400);
@@ -2484,7 +2523,7 @@ api.post("/register/close", async (c) => {
   const { staffAccount } = accessResult;
   const staffRole = accessResult.role;
 
-  const openSession = await loadOpenRegisterSession();
+  const openSession = await loadOpenRegisterSession(book.id);
   if (openSession.error) {
     return c.json({ error: openSession.error.message }, 500);
   }
@@ -2564,6 +2603,8 @@ api.post("/register/close", async (c) => {
       failedPrintCount: summary.failed_print_count,
       voidedOrderCount: summary.voided_order_count,
       forced: input.force === true,
+      bookId: book.id,
+      bookName: book.name,
       operatorStaffCode: staffAccount.staffCode,
       operatorStaffName: staffAccount.name,
       operatorRoleId: staffAccount.roleId,
@@ -2614,6 +2655,7 @@ api.post("/register/cash-adjustments", async (c) => {
 
   const input: RegisterCashAdjustmentInput = await c.req.json<RegisterCashAdjustmentInput>().catch(() => ({}));
   const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const book = await resolveCheckoutRegisterBook(stationId);
   const kind = input.kind === "income" || input.kind === "expense" ? input.kind : null;
   if (!kind) {
     return c.json({ error: "kind must be income or expense" }, 400);
@@ -2632,7 +2674,7 @@ api.post("/register/cash-adjustments", async (c) => {
     return c.json({ error: "reason is required" }, 400);
   }
 
-  const openSession = await loadOpenRegisterSession();
+  const openSession = await loadOpenRegisterSession(book.id);
   if (openSession.error) {
     return c.json({ error: openSession.error.message }, 500);
   }
@@ -2684,6 +2726,8 @@ api.post("/register/cash-adjustments", async (c) => {
       reason,
       amount: amount.value,
       note,
+      bookId: book.id,
+      bookName: book.name,
     },
   });
 
@@ -2730,6 +2774,7 @@ api.post("/cash-drawer/open", async (c) => {
 
   const input: CashDrawerOpenInput = await c.req.json<CashDrawerOpenInput>().catch(() => ({}));
   const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
+  const book = await resolveCheckoutRegisterBook(stationId);
   const reason = sanitizeText(input.reason, "手動開啟錢櫃").slice(0, 120) || "手動開啟錢櫃";
   const deviceId = sanitizeText(input.deviceId, "").slice(0, 120);
   const targetStationId = sanitizeText(input.targetStationId, "").slice(0, 120);
@@ -2741,7 +2786,7 @@ api.post("/cash-drawer/open", async (c) => {
   const deliveryStatus = normalizeCashDrawerDeliveryStatus(input.deliveryStatus);
   const errorMessage = sanitizeText(input.errorMessage, "").slice(0, 240);
 
-  const openSession = await loadOpenRegisterSession();
+  const openSession = await loadOpenRegisterSession(book.id);
   if (openSession.error) {
     return c.json({ error: openSession.error.message }, 500);
   }
@@ -2761,6 +2806,8 @@ api.post("/cash-drawer/open", async (c) => {
         printerPort,
         deliveryStatus,
         errorMessage,
+        bookId: book.id,
+        bookName: book.name,
       },
     })
     .select(cashDrawerEventSelect)
@@ -4311,6 +4358,14 @@ api.post("/orders", async (c) => {
     return c.json({ error: pointFinalizeError }, 500);
   }
 
+  const registerAssignment = await assignOrderToCheckoutRegister(String(savedOrder.id), stationId);
+  if (registerAssignment.error) {
+    return c.json({ error: registerAssignment.error }, 500);
+  }
+  (savedOrder as Record<string, unknown>).register_session_id = registerAssignment.registerSessionId;
+  (savedOrder as Record<string, unknown>).checkout_station_id = stationId;
+  (savedOrder as Record<string, unknown>).checkout_book_id = registerAssignment.bookId;
+
   await writeAuditEvent({
     action: "order.create",
     orderId: savedOrder.id,
@@ -4319,30 +4374,35 @@ api.post("/orders", async (c) => {
       orderNumber: savedOrder.order_number,
       subtotal: savedOrder.subtotal,
       lineCount: orderLines.length,
-	      paymentStatus: savedOrder.payment_status,
-	      deliveryAddress: savedOrder.delivery_address,
-	      requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
-	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
-	      discountCampaigns: discountRuntime.applications.map((application) => ({
-	        id: application.campaignId,
-	        name: application.campaignName,
-	        amount: application.amount,
-	      })),
-	      redeemedCoupon: couponClaim
-	        ? {
-	          id: couponClaim.coupon.id,
-	          code: couponClaim.code,
-	          title: couponClaim.coupon.title,
-	        }
-	        : null,
-        loyaltyPoints: pointClaim
-          ? {
+      paymentStatus: savedOrder.payment_status,
+      deliveryAddress: savedOrder.delivery_address,
+      requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
+      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+      discountCampaigns: discountRuntime.applications.map((application) => ({
+        id: application.campaignId,
+        name: application.campaignName,
+        amount: application.amount,
+      })),
+      redeemedCoupon: couponClaim
+        ? {
+          id: couponClaim.coupon.id,
+          code: couponClaim.code,
+          title: couponClaim.coupon.title,
+        }
+        : null,
+      loyaltyPoints: pointClaim
+        ? {
             redeemed: pointClaim.pointsRedeemed,
             earned: pointClaim.pointsEarned,
           }
-          : null,
-	    },
-	  });
+        : null,
+      checkoutBook: {
+        id: registerAssignment.bookId,
+        name: registerAssignment.bookName,
+        registerSessionId: registerAssignment.registerSessionId,
+      },
+    },
+  });
 
   return c.json({ order: savedOrder }, 201);
 });
@@ -4584,31 +4644,44 @@ api.post("/orders/:id/finalize", async (c) => {
     return c.json({ error: pointFinalizeError }, 500);
   }
 
+  const registerAssignment = await assignOrderToCheckoutRegister(String(savedOrder.id), stationId);
+  if (registerAssignment.error) {
+    return c.json({ error: registerAssignment.error }, 500);
+  }
+  (savedOrder as Record<string, unknown>).register_session_id = registerAssignment.registerSessionId;
+  (savedOrder as Record<string, unknown>).checkout_station_id = stationId;
+  (savedOrder as Record<string, unknown>).checkout_book_id = registerAssignment.bookId;
+
   await writeAuditEvent({
     action: "order.draft_finalize",
     orderId: savedOrder.id,
     stationId,
     metadata: {
       orderNumber: savedOrder.order_number,
-	      subtotal: savedOrder.subtotal,
-	      lineCount: orderLines.length,
-	      paymentStatus: savedOrder.payment_status,
-	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
-	      redeemedCoupon: couponClaim
-	        ? {
-	          id: couponClaim.coupon.id,
-	          code: couponClaim.code,
-	          title: couponClaim.coupon.title,
-	        }
-	        : null,
-        loyaltyPoints: pointClaim
-          ? {
+      subtotal: savedOrder.subtotal,
+      lineCount: orderLines.length,
+      paymentStatus: savedOrder.payment_status,
+      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+      redeemedCoupon: couponClaim
+        ? {
+          id: couponClaim.coupon.id,
+          code: couponClaim.code,
+          title: couponClaim.coupon.title,
+        }
+        : null,
+      loyaltyPoints: pointClaim
+        ? {
             redeemed: pointClaim.pointsRedeemed,
             earned: pointClaim.pointsEarned,
           }
-          : null,
-	    },
-	  });
+        : null,
+      checkoutBook: {
+        id: registerAssignment.bookId,
+        name: registerAssignment.bookName,
+        registerSessionId: registerAssignment.registerSessionId,
+      },
+    },
+  });
 
   return c.json({ order: savedOrder });
 });
@@ -4814,6 +4887,14 @@ api.patch("/orders/:id/payment", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
+  const registerAssignment = await assignOrderToCheckoutRegister(String(savedOrder.id), stationId);
+  if (registerAssignment.error) {
+    return c.json({ error: registerAssignment.error }, 500);
+  }
+  (savedOrder as Record<string, unknown>).register_session_id = registerAssignment.registerSessionId;
+  (savedOrder as Record<string, unknown>).checkout_station_id = stationId;
+  (savedOrder as Record<string, unknown>).checkout_book_id = registerAssignment.bookId;
+
   await writeAuditEvent({
     action: "order.payment.update",
     orderId: savedOrder.id,
@@ -4821,6 +4902,11 @@ api.patch("/orders/:id/payment", async (c) => {
     metadata: {
       orderNumber: savedOrder.order_number,
       paymentStatus: input.paymentStatus,
+      checkoutBook: {
+        id: registerAssignment.bookId,
+        name: registerAssignment.bookName,
+        registerSessionId: registerAssignment.registerSessionId,
+      },
     },
   });
 
@@ -5193,6 +5279,9 @@ interface PosApiError {
 interface RegisterSessionRow {
   id: string;
   status: RegisterSessionStatus;
+  book_id: string;
+  book_name: string;
+  station_id: string;
   opened_at: string;
   closed_at: string | null;
   opening_cash: number;
@@ -5278,7 +5367,33 @@ interface DailyReportOrderRow extends RegisterOrderSummaryRow {
 
 const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
 
-const loadOpenRegisterSession = async (): Promise<{
+const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
+  id: "main",
+  name: "主帳本",
+  stationIds: [],
+  printStationId: "",
+  cashDrawerDeviceId: "cash-drawer",
+  paymentDeviceIds: [],
+  enabled: true,
+});
+
+const resolveCheckoutRegisterBook = async (stationId: string): Promise<CheckoutCounterBookSetting> => {
+  const settings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  ));
+  const fallbackBook = settings.checkoutCounters.books.find((book) => book.id === settings.checkoutCounters.defaultBookId && book.enabled) ??
+    settings.checkoutCounters.books.find((book) => book.enabled) ??
+    defaultCheckoutRegisterBook();
+
+  if (!settings.checkoutCounters.enabled || !stationId) {
+    return fallbackBook;
+  }
+
+  return settings.checkoutCounters.books.find((book) => book.enabled && book.stationIds.includes(stationId)) ?? fallbackBook;
+};
+
+const loadOpenRegisterSession = async (bookId = "main"): Promise<{
   session: RegisterSessionRow | null;
   error: PosApiError | null;
 }> => {
@@ -5286,6 +5401,7 @@ const loadOpenRegisterSession = async (): Promise<{
     .from("register_sessions")
     .select(registerSessionSelect)
     .eq("status", "open")
+    .eq("book_id", bookId)
     .order("opened_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -5299,8 +5415,13 @@ const loadOpenRegisterSession = async (): Promise<{
 const loadCurrentRegisterSession = async (): Promise<{
   session: RegisterSessionRow | null;
   error: PosApiError | null;
+}> => loadCurrentRegisterSessionForBook(defaultCheckoutRegisterBook());
+
+const loadCurrentRegisterSessionForBook = async (book: CheckoutCounterBookSetting): Promise<{
+  session: RegisterSessionRow | null;
+  error: PosApiError | null;
 }> => {
-  const openSession = await loadOpenRegisterSession();
+  const openSession = await loadOpenRegisterSession(book.id);
   if (openSession.error || openSession.session) {
     try {
       return {
@@ -5315,6 +5436,7 @@ const loadCurrentRegisterSession = async (): Promise<{
   const { data, error } = await supabase
     .from("register_sessions")
     .select(registerSessionSelect)
+    .eq("book_id", book.id)
     .order("opened_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -5322,6 +5444,41 @@ const loadCurrentRegisterSession = async (): Promise<{
   return {
     session: data ? data as RegisterSessionRow : null,
     error,
+  };
+};
+
+const assignOrderToCheckoutRegister = async (
+  orderId: string,
+  stationId: string,
+): Promise<{ registerSessionId: string | null; bookId: string; bookName: string; error: string | null }> => {
+  if (!orderId) {
+    return { registerSessionId: null, bookId: "main", bookName: "主帳本", error: null };
+  }
+
+  const book = await resolveCheckoutRegisterBook(stationId);
+  const openSession = await loadOpenRegisterSession(book.id);
+  if (openSession.error) {
+    return { registerSessionId: null, bookId: book.id, bookName: book.name, error: openSession.error.message };
+  }
+
+  const payload: Record<string, unknown> = {
+    checkout_station_id: stationId,
+    checkout_book_id: book.id,
+  };
+  if (openSession.session) {
+    payload.register_session_id = openSession.session.id;
+  }
+
+  const { error } = await supabase
+    .from("orders")
+    .update(payload)
+    .eq("id", orderId);
+
+  return {
+    registerSessionId: openSession.session?.id ?? null,
+    bookId: book.id,
+    bookName: book.name,
+    error: error?.message ?? null,
   };
 };
 
@@ -5336,8 +5493,8 @@ const withCurrentRegisterSummary = async (session: RegisterSessionRow): Promise<
 
 const summarizeRegisterOrders = async (
   registerSessionId: string,
-  openedAt: string,
-  closedAt: Date,
+  _openedAt: string,
+  _closedAt: Date,
   openingCash: number,
 ): Promise<Pick<
   RegisterSessionRow,
@@ -5356,8 +5513,7 @@ const summarizeRegisterOrders = async (
   const { data, error } = await supabase
     .from("orders")
     .select("subtotal, payment_method, payment_status, status, print_jobs(status)")
-    .gte("created_at", openedAt)
-    .lte("created_at", closedAt.toISOString());
+    .eq("register_session_id", registerSessionId);
 
   if (error) {
     throw new Error(error.message);
@@ -9237,6 +9393,41 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.loyaltyPoints
     : defaultEngagementSettings.loyaltyPoints;
   const loyaltyPoints = rawLoyaltyPoints as Partial<CustomerEngagementSettings["loyaltyPoints"]>;
+  const rawCheckoutCounters = settings.checkoutCounters && typeof settings.checkoutCounters === "object"
+    ? settings.checkoutCounters
+    : defaultEngagementSettings.checkoutCounters;
+  const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings["checkoutCounters"]>;
+  const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
+    ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      const book = entry as Partial<CheckoutCounterBookSetting>;
+      const id = sanitizeText(book.id, `book-${index + 1}`).slice(0, 80);
+      const name = sanitizeText(book.name, id || "帳本").slice(0, 80);
+      const stationIds = Array.isArray(book.stationIds)
+        ? [...new Set(book.stationIds.map((stationId) => sanitizeText(stationId, "").slice(0, 80)).filter(Boolean))].slice(0, 20)
+        : [];
+      const paymentDeviceIds = Array.isArray(book.paymentDeviceIds)
+        ? [...new Set(book.paymentDeviceIds.map((deviceId) => sanitizeText(deviceId, "").slice(0, 80)).filter(Boolean))].slice(0, 20)
+        : [];
+      return id && name
+        ? [{
+          id,
+          name,
+          stationIds,
+          printStationId: sanitizeText(book.printStationId, "").slice(0, 80),
+          cashDrawerDeviceId: sanitizeText(book.cashDrawerDeviceId, "").slice(0, 80),
+          paymentDeviceIds,
+          enabled: book.enabled !== false,
+        }]
+        : [];
+    }).slice(0, 20)
+    : defaultEngagementSettings.checkoutCounters.books.map((book) => ({
+      ...book,
+      stationIds: [...book.stationIds],
+      paymentDeviceIds: [...book.paymentDeviceIds],
+    }));
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index): RecommendationRule[] => {
       if (!entry || typeof entry !== "object") {
@@ -9358,6 +9549,18 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         0,
         999_999,
       ),
+    },
+    checkoutCounters: {
+      enabled: checkoutCounters.enabled === true,
+      defaultBookId: sanitizeText(checkoutCounters.defaultBookId, defaultEngagementSettings.checkoutCounters.defaultBookId).slice(0, 80) ||
+        defaultEngagementSettings.checkoutCounters.defaultBookId,
+      books: checkoutCounterBooks.length > 0
+        ? checkoutCounterBooks
+        : defaultEngagementSettings.checkoutCounters.books.map((book) => ({
+          ...book,
+          stationIds: [...book.stationIds],
+          paymentDeviceIds: [...book.paymentDeviceIds],
+        })),
     },
     recommendations,
     translations,
