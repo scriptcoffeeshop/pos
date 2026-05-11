@@ -1181,6 +1181,10 @@ button:disabled {
   padding-inline: 12px;
 }
 
+.pos-main-surface--ordering .cart-batch-actions {
+  margin-inline: 12px;
+}
+
 .pos-main-surface--ordering .ticket-note-chips {
   flex-wrap: nowrap;
   gap: 6px;
@@ -4194,6 +4198,63 @@ h3 {
   gap: 9px;
   min-height: 190px;
   margin: 12px 0;
+}
+
+.cart-batch-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.cart-batch-actions label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.cart-batch-actions select {
+  min-width: 84px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.cart-batch-count {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.cart-batch-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 34px;
+  padding-inline: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.cart-batch-actions button:disabled {
+  opacity: 0.42;
 }
 
 .cart-line {
@@ -12495,6 +12556,14 @@ button.cart-line-summary:focus-visible {
 
   .cart-line {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cart-batch-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .cart-batch-count {
+    grid-column: 1 / -1;
   }
 
   .cart-inline-panel--customer {

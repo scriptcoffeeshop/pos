@@ -143,6 +143,7 @@ type InventoryOperationDraftMode = InventoryRecordAction
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
 type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
+type CartBatchStatus = 'ready' | 'paused'
 type CategoryMoveDirection = -1 | 1
 type MenuCategoryOptionValue = 'all' | MenuCategory
 type ReservationViewMode = 'day' | 'week' | 'month'
@@ -829,6 +830,7 @@ const {
   pointsRedeemed,
   effectivePointsRedeemed,
   memberPointsEarned,
+  printCartLinesByPrintStatus,
   printCustomerReceipt,
   printTransactionDetail,
   printOrder,
@@ -4471,6 +4473,7 @@ let toolboxBackendEditLongPressTimer: number | null = null
 let appearancePersistTimer: number | null = null
 let floorPlanPersistTimer: number | null = null
 const floorTableDragState = ref<FloorTableDragState | null>(null)
+const cartBatchStatus = ref<CartBatchStatus>('ready')
 const currentClockLabel = computed(() => formatOrderTime(new Date(currentTime.value).toISOString()))
 const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.value))
 const ticketStartedLabel = computed(() =>
@@ -4677,6 +4680,17 @@ const ticketDisplayTotal = computed(() => {
 
   return cartTotal.value + (activeOptionItem.value ? pendingOptionLineTotal.value : 0)
 })
+const cartBatchStatusOptions: Array<{ value: CartBatchStatus; label: string }> = [
+  { value: 'ready', label: '出單' },
+  { value: 'paused', label: '暫停' },
+]
+const cartBatchStatusPrintPaused = computed(() => cartBatchStatus.value === 'paused')
+const cartBatchLines = computed(() =>
+  cartLines.value.filter((line) => (line.printPaused === true) === cartBatchStatusPrintPaused.value),
+)
+const cartBatchLineCount = computed(() => cartBatchLines.value.length)
+const cartBatchItemCount = computed(() => cartBatchLines.value.reduce((total, line) => total + line.quantity, 0))
+const cartBatchActionDisabled = computed(() => cartBatchLineCount.value === 0 || isSubmitting.value || Boolean(printingOrderId.value))
 const activeWorkspaceTitle = computed(() => workspaceTabLabels[activeWorkspaceTab.value])
 const showInternalHeaderControls = computed(() => !isConsumerDomain && activeView.value !== 'online' && activeView.value !== 'reservation')
 const canSwitchWorkspace = computed(() => showInternalHeaderControls.value && !isNativeApp)
@@ -5828,6 +5842,40 @@ const blurQuantityInput = (event: KeyboardEvent): void => {
   if (event.target instanceof HTMLInputElement) {
     event.target.blur()
   }
+}
+
+const deleteCartBatchAction = async (): Promise<void> => {
+  const targetLines = cartBatchLines.value
+  if (targetLines.length === 0) {
+    return
+  }
+
+  const verified = await verifyProtectedPermissions([
+    deleteOrderItemPermissionStep(`批次刪除 ${targetLines.length} 個${cartBatchStatus.value === 'paused' ? '暫停' : '待出單'}品項前需驗證員工識別碼。`),
+  ])
+  if (!verified) {
+    return
+  }
+
+  const targetIds = new Set(targetLines.map((line) => line.itemId))
+  cartLines.value = cartLines.value.filter((line) => !targetIds.has(line.itemId))
+}
+
+const printCartBatchAction = async (): Promise<void> => {
+  if (cartBatchActionDisabled.value) {
+    return
+  }
+
+  if (activeOptionItem.value && !(await confirmMenuOptions())) {
+    return
+  }
+
+  const verified = await verifyProtectedPermissions(ticketActionPermissionSteps('print'))
+  if (!verified) {
+    return
+  }
+
+  await printCartLinesByPrintStatus(cartBatchStatusPrintPaused.value)
 }
 
 const resetOptionSelections = (): void => {
@@ -10429,6 +10477,30 @@ onBeforeUnmount(() => {
                         {{ payment.label }}
                       </button>
                     </div>
+                  </div>
+
+                  <div v-if="cartLines.length > 0" class="cart-batch-actions" aria-label="批次商品操作">
+                    <label>
+                      <span>狀態</span>
+                      <select v-model="cartBatchStatus">
+                        <option
+                          v-for="option in cartBatchStatusOptions"
+                          :key="option.value"
+                          :value="option.value"
+                        >
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </label>
+                    <span class="cart-batch-count">{{ cartBatchLineCount }} 項 · {{ cartBatchItemCount }} 件</span>
+                    <button type="button" :disabled="cartBatchActionDisabled" @click="printCartBatchAction">
+                      <Printer :size="16" aria-hidden="true" />
+                      重印
+                    </button>
+                    <button type="button" :disabled="cartBatchActionDisabled" @click="deleteCartBatchAction">
+                      <Trash2 :size="16" aria-hidden="true" />
+                      刪除
+                    </button>
                   </div>
 
                   <div class="cart-lines" aria-live="polite">
