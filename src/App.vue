@@ -856,6 +856,7 @@ const {
   selectedDiscountCampaignIds,
   saveCounterOrder,
   saveCurrentStationOnlineNotificationSettings,
+  canApplySettingsProfile,
   setItemQuantity,
   setLineQuantity,
   startCounterDraft,
@@ -866,6 +867,9 @@ const {
   settingsProfileStatus,
   stationClaimLabel,
   stationHeartbeatMessage,
+  stationOperationMessage,
+  stationOperationMode,
+  stationOperationModeLabel,
   transactionReceiptCount,
   togglingProductId,
   toggleCustomerNote,
@@ -5001,6 +5005,36 @@ const settingsProfileDetail = computed(() => {
     ? `上次套用 ${formatOrderTime(settingsProfileAppliedAt.value)}`
     : settingsProfileMessage.value
 })
+const settingsProfileActionDisabled = computed(() => !settingsProfilePending.value || !canApplySettingsProfile.value)
+const settingsProfileActionLabel = computed(() => {
+  if (!settingsProfilePending.value) {
+    return '設定檔已套用'
+  }
+
+  return canApplySettingsProfile.value ? '套用新設定檔' : '子機不可套用'
+})
+const settingsProfileActionDetail = computed(() =>
+  settingsProfilePending.value && !canApplySettingsProfile.value
+    ? stationOperationMessage.value
+    : settingsProfileMessage.value,
+)
+const childToolboxRestrictionMessage = '子機工具箱僅開放交易查詢與作廢、錢櫃管理、裝置管理、小結與系統資訊'
+const childAllowedToolboxActions = new Set<ToolboxAction>([
+  'transactions',
+  'cash-drawer',
+  'device-management',
+  'current-sales',
+  'system-info',
+  'sync',
+])
+const toolboxActionAllowed = (action: ToolboxAction): boolean =>
+  stationOperationMode.value !== 'child' || childAllowedToolboxActions.has(action)
+const toolboxActionDisabled = (action: ToolboxAction): boolean => !toolboxActionAllowed(action)
+const toolboxHomeStatusMessage = computed(() =>
+  stationOperationMode.value === 'child'
+    ? childToolboxRestrictionMessage
+    : onlineTimeLimitToggleMessage.value,
+)
 const systemInfoItems = computed<SystemInfoItem[]>(() => [
   {
     label: '運行平台',
@@ -5016,6 +5050,11 @@ const systemInfoItems = computed<SystemInfoItem[]>(() => [
     label: '設定檔',
     value: settingsProfileStatusLabel.value,
     detail: settingsProfileDetail.value,
+  },
+  {
+    label: 'App 運作模式',
+    value: stationOperationModeLabel.value,
+    detail: stationOperationMessage.value,
   },
   {
     label: '工作站',
@@ -8477,6 +8516,10 @@ const submitTimeClockAction = async (): Promise<void> => {
 }
 
 const runToolboxAction = (action: ToolboxAction): void => {
+  if (!toolboxActionAllowed(action)) {
+    return
+  }
+
   if (action === 'floor') {
     setWorkspaceTab('floor')
   }
@@ -9818,9 +9861,9 @@ onBeforeUnmount(() => {
         </span>
 
         <div v-if="activeView !== 'online'" class="topbar-status" aria-label="POS 狀態">
-          <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
+          <span class="status-pill status-pill--neutral" :title="stationOperationMessage">
             <LockKeyhole :size="18" aria-hidden="true" />
-            {{ stationClaimLabel }}
+            {{ stationClaimLabel }} · {{ stationOperationModeLabel }}
           </span>
           <span
             class="status-pill"
@@ -9834,12 +9877,12 @@ onBeforeUnmount(() => {
             class="status-pill status-pill--button"
             :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
             type="button"
-            :title="settingsProfileMessage"
-            :disabled="!settingsProfilePending"
+            :title="settingsProfileActionDetail"
+            :disabled="settingsProfileActionDisabled"
             @click="applyPendingSettingsProfile"
           >
             <BookOpenCheck :size="18" aria-hidden="true" />
-            {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+            {{ settingsProfilePending ? (canApplySettingsProfile ? '新設定檔' : '子機設定檔') : '設定檔' }}
           </button>
           <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
             <Printer :size="18" aria-hidden="true" />
@@ -9907,12 +9950,12 @@ onBeforeUnmount(() => {
                   class="status-pill status-pill--button pos-command-settings-button"
                   :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
                   type="button"
-                  :title="settingsProfileMessage"
-                  :disabled="!settingsProfilePending"
+                  :title="settingsProfileActionDetail"
+                  :disabled="settingsProfileActionDisabled"
                   @click="applyPendingSettingsProfile"
                 >
                   <BookOpenCheck :size="18" aria-hidden="true" />
-                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                  {{ settingsProfilePending ? (canApplySettingsProfile ? '新設定檔' : '子機設定檔') : '設定檔' }}
                 </button>
                 <button class="primary-button queue-new-order-button" type="button" @click="addWaitlineEntry">
                   <UsersRound :size="22" aria-hidden="true" />
@@ -9926,12 +9969,12 @@ onBeforeUnmount(() => {
                   class="status-pill status-pill--button pos-command-settings-button"
                   :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
                   type="button"
-                  :title="settingsProfileMessage"
-                  :disabled="!settingsProfilePending"
+                  :title="settingsProfileActionDetail"
+                  :disabled="settingsProfileActionDisabled"
                   @click="applyPendingSettingsProfile"
                 >
                   <BookOpenCheck :size="18" aria-hidden="true" />
-                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                  {{ settingsProfilePending ? (canApplySettingsProfile ? '新設定檔' : '子機設定檔') : '設定檔' }}
                 </button>
                 <button class="primary-button queue-new-order-button" type="button" @click="startTakeoutOrder">
                   <ShoppingBag :size="22" aria-hidden="true" />
@@ -9945,12 +9988,12 @@ onBeforeUnmount(() => {
                   class="status-pill status-pill--button pos-command-settings-button"
                   :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
                   type="button"
-                  :title="settingsProfileMessage"
-                  :disabled="!settingsProfilePending"
+                  :title="settingsProfileActionDetail"
+                  :disabled="settingsProfileActionDisabled"
                   @click="applyPendingSettingsProfile"
                 >
                   <BookOpenCheck :size="18" aria-hidden="true" />
-                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                  {{ settingsProfilePending ? (canApplySettingsProfile ? '新設定檔' : '子機設定檔') : '設定檔' }}
                 </button>
                 <button class="primary-button queue-new-order-button" type="button" :disabled="isReservationLoading" @click="refreshReservations">
                   <RefreshCw :size="22" aria-hidden="true" />
@@ -9958,9 +10001,9 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <div v-else class="pos-command-status" aria-label="POS 狀態">
-                <span class="status-pill status-pill--neutral" :title="stationHeartbeatMessage">
+                <span class="status-pill status-pill--neutral" :title="stationOperationMessage">
                   <LockKeyhole :size="18" aria-hidden="true" />
-                  {{ stationClaimLabel }}
+                  {{ stationClaimLabel }} · {{ stationOperationModeLabel }}
                 </span>
                 <span
                   class="status-pill"
@@ -9974,12 +10017,12 @@ onBeforeUnmount(() => {
                   class="status-pill status-pill--button pos-command-settings-button"
                   :class="settingsProfilePending ? 'status-pill--warning' : 'status-pill--neutral'"
                   type="button"
-                  :title="settingsProfileMessage"
-                  :disabled="!settingsProfilePending"
+                  :title="settingsProfileActionDetail"
+                  :disabled="settingsProfileActionDisabled"
                   @click="applyPendingSettingsProfile"
                 >
                   <BookOpenCheck :size="18" aria-hidden="true" />
-                  {{ settingsProfilePending ? '新設定檔' : '設定檔' }}
+                  {{ settingsProfilePending ? (canApplySettingsProfile ? '新設定檔' : '子機設定檔') : '設定檔' }}
                 </button>
                 <span class="status-pill" :class="printStation.online ? 'status-pill--success' : 'status-pill--danger'">
                   <Printer :size="18" aria-hidden="true" />
@@ -13904,6 +13947,7 @@ onBeforeUnmount(() => {
             type="button"
             class="toolbox-card toolbox-card--status"
             aria-live="polite"
+            :disabled="stationOperationMode === 'child'"
             @click="handleToolboxTap"
           >
             <Settings2 :size="24" aria-hidden="true" />
@@ -13913,100 +13957,100 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="toolbox-card"
-            :class="{ 'toolbox-card--status': settingsProfilePending }"
-            :disabled="!settingsProfilePending"
+            :class="{ 'toolbox-card--status': settingsProfilePending && canApplySettingsProfile }"
+            :disabled="settingsProfileActionDisabled"
             @click="applyPendingSettingsProfile"
           >
             <BookOpenCheck :size="24" aria-hidden="true" />
-            <strong>{{ settingsProfilePending ? '套用新設定檔' : '設定檔已套用' }}</strong>
-            <span>{{ settingsProfileMessage }}</span>
+            <strong>{{ settingsProfileActionLabel }}</strong>
+            <span>{{ settingsProfileActionDetail }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('order')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('order')" @click="runToolboxAction('order')">
             <ShoppingCart :size="24" aria-hidden="true" />
             <strong>新增外帶</strong>
             <span>{{ workspaceTabSummaries.order }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('floor')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('floor')" @click="runToolboxAction('floor')">
             <LayoutDashboard :size="24" aria-hidden="true" />
             <strong>桌位地圖</strong>
             <span>{{ workspaceTabSummaries.floor }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('queue')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('queue')" @click="runToolboxAction('queue')">
             <ReceiptText :size="24" aria-hidden="true" />
             <strong>外帶 / 外送</strong>
             <span>{{ queueFilterNote }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('transactions')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('transactions')" @click="runToolboxAction('transactions')">
             <Search :size="24" aria-hidden="true" />
             <strong>交易查詢與作廢</strong>
             <span>{{ transactionLookupSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('reservations')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('reservations')" @click="runToolboxAction('reservations')">
             <CalendarDays :size="24" aria-hidden="true" />
             <strong>訂位管理</strong>
             <span>{{ workspaceTabSummaries.reservations }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('supply')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('supply')" @click="runToolboxAction('supply')">
             <Eye :size="24" aria-hidden="true" />
             <strong>供應狀態</strong>
             <span>{{ availableStationProducts }} 可售 · {{ stoppedStationProducts }} 暫停</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('inventory-management')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('inventory-management')" @click="runToolboxAction('inventory-management')">
             <PackageOpen :size="24" aria-hidden="true" />
             <strong>庫存管理</strong>
             <span>{{ inventoryManagementSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('printing')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('printing')" @click="runToolboxAction('printing')">
             <Printer :size="24" aria-hidden="true" />
             <strong>列印站</strong>
             <span>{{ printStation.online ? '在線' : '離線' }} · {{ printStation.host }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('closeout')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('closeout')" @click="runToolboxAction('closeout')">
             <WalletCards :size="24" aria-hidden="true" />
             <strong>班別關帳</strong>
             <span>{{ workspaceTabSummaries.closeout }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('cash-drawer')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('cash-drawer')" @click="runToolboxAction('cash-drawer')">
             <WalletCards :size="24" aria-hidden="true" />
             <strong>錢櫃管理</strong>
             <span>{{ cashDrawerSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('device-management')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('device-management')" @click="runToolboxAction('device-management')">
             <Printer :size="24" aria-hidden="true" />
             <strong>裝置管理</strong>
             <span>{{ deviceManagementSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('customer-management')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('customer-management')" @click="runToolboxAction('customer-management')">
             <UsersRound :size="24" aria-hidden="true" />
             <strong>顧客資訊管理</strong>
             <span>{{ customerManagementSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('current-sales')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('current-sales')" @click="runToolboxAction('current-sales')">
             <LayoutDashboard :size="24" aria-hidden="true" />
             <strong>目前營業概況</strong>
             <span>{{ currentSalesSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('label-management')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('label-management')" @click="runToolboxAction('label-management')">
             <Tags :size="24" aria-hidden="true" />
             <strong>標籤管理</strong>
             <span>{{ labelManagementSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('time-clock')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('time-clock')" @click="runToolboxAction('time-clock')">
             <Clock3 :size="24" aria-hidden="true" />
             <strong>員工打卡</strong>
             <span>{{ latestTimeClockEntry ? `${latestTimeClockEntry.staffName} ${latestTimeClockEntry.eventType === 'clock-in' ? '上班' : '下班'}` : '識別碼上下班' }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('system-info')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('system-info')" @click="runToolboxAction('system-info')">
             <Wifi :size="24" aria-hidden="true" />
             <strong>系統資訊</strong>
-            <span>{{ backendStatus.label }} · {{ stationClaimLabel }}</span>
+            <span>{{ backendStatus.label }} · {{ stationOperationModeLabel }}</span>
           </button>
-          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('admin')">
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" :disabled="toolboxActionDisabled('admin')" @click="runToolboxAction('admin')">
             <Settings2 :size="24" aria-hidden="true" />
             <strong>後台</strong>
             <span>商品 · 報表 · 權限</span>
           </button>
-          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" @click="runToolboxAction('online')">
+          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" :disabled="toolboxActionDisabled('online')" @click="runToolboxAction('online')">
             <ShoppingBag :size="24" aria-hidden="true" />
             <strong>線上點餐</strong>
             <span>顧客入口預覽</span>
@@ -14015,21 +14059,21 @@ onBeforeUnmount(() => {
             type="button"
             class="toolbox-card"
             :class="{ 'toolbox-card--status': onlineOrderingSettings.dineInTimeLimit.enabled }"
-            :disabled="isOnlineTimeLimitToggling"
+            :disabled="isOnlineTimeLimitToggling || stationOperationMode === 'child'"
             @click="toggleDineInTimeLimitFromToolbox"
           >
             <Clock3 :size="24" aria-hidden="true" />
             <strong>用餐與點餐限時</strong>
             <span>{{ isOnlineTimeLimitToggling ? onlineTimeLimitToggleMessage : dineInTimeLimitToolboxSummary }}</span>
           </button>
-          <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
+          <button type="button" class="toolbox-card" :disabled="toolboxActionDisabled('appearance')" @click="runToolboxAction('appearance')">
             <Settings2 :size="20" aria-hidden="true" />
             <strong>外觀設定</strong>
             <span>{{ appearancePreferenceSummary }}</span>
           </button>
         </div>
         <p v-if="activeToolboxPanel === 'home'" class="toolbox-status-message">
-          {{ onlineTimeLimitToggleMessage }}
+          {{ toolboxHomeStatusMessage }}
         </p>
 
         <section v-else-if="activeToolboxPanel === 'appearance'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
@@ -14715,11 +14759,11 @@ onBeforeUnmount(() => {
           <button
             class="secondary-button preference-reset-button"
             type="button"
-            :disabled="!settingsProfilePending"
+            :disabled="settingsProfileActionDisabled"
             @click="applyPendingSettingsProfile"
           >
             <BookOpenCheck :size="18" aria-hidden="true" />
-            {{ settingsProfilePending ? '套用新設定檔' : '沒有待套用設定檔' }}
+            {{ settingsProfilePending ? settingsProfileActionLabel : '沒有待套用設定檔' }}
           </button>
         </section>
         <section v-else-if="activeToolboxPanel === 'label-management'" class="toolbox-detail-panel label-management-panel" aria-labelledby="toolbox-title">

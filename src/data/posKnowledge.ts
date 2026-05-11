@@ -545,6 +545,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'pos-app-operation-mode',
+    category: 'register',
+    title: 'POS App 主機 / 子機模式',
+    summary: '對照 iCHEF POS App 運作模式，同一 Store ID 指定一台主機，其餘平板以子機模式使用並限制工具箱。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再到「iCHEF 補齊」設定「App 運作模式」。',
+      '填入主機 station id；子機 station id 以逗號分隔，預設最多 5 台，可依合約調整子機上限。',
+      '主機可套用新設定檔；子機會顯示主機資訊並禁止「套用新設定檔」。',
+      '子機工具箱僅保留交易查詢與作廢、錢櫃管理、裝置管理、小結與系統資訊，避免在子機執行主機才該處理的設定作業。',
+      '若尚未指定主機，本平板會視為主機相容模式，保留既有單機操作流程。',
+    ],
+    keywords: ['主機', '子機', 'App 運作模式', '套用新設定檔', '工具箱限制', 'station id', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'settings-profile-apply',
     category: 'register',
     title: '套用新設定檔',
@@ -552,11 +567,12 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     steps: [
       '後台或其他平板儲存 runtime 設定後，本平板 topbar 會顯示「新設定檔」。',
       '訂單、班別、工作站心跳與提醒仍持續同步；商品、線上、列印、桌況、權限、外觀與折扣 runtime 會保留目前已套用版本。',
-      '在確認現場可更新時，按 topbar、工具箱首頁或系統資訊裡的「套用新設定檔」。',
+      '在確認現場可更新時，於主機按 topbar、工具箱首頁或系統資訊裡的「套用新設定檔」。',
       '套用後本平板會保存新的設定檔快照，重開 App 仍以最後套用版本為準；fresh reinstall 會清除本機快照並以伺服器 runtime 重新建立已套用版本。',
+      '若本平板被設定為子機，按鈕會停用並提示改由主機套用，避免子機越權更新 runtime profile。',
       '若只是要檢查連線或拉取訂單，使用「重新同步」即可，不會強制套用待更新設定檔。',
     ],
-    keywords: ['設定檔', '套用新設定檔', 'runtime', '後台設定', '同步', 'iCHEF'],
+    keywords: ['設定檔', '套用新設定檔', 'runtime', '後台設定', '同步', '主機', '子機', 'iCHEF'],
     target: 'closeout',
   },
   {

@@ -646,6 +646,11 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
         paymentDeviceIds: [...book.paymentDeviceIds],
       })),
     },
+    appOperation: {
+      ...defaults.appOperation,
+      ...settings.appOperation,
+      childStationIds: [...(settings.appOperation?.childStationIds ?? [])],
+    },
     recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
     translations: settings.translations.map((translation) => ({ ...translation })),
     hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
@@ -2973,6 +2978,20 @@ const updateCheckoutCounterPaymentDevices = (
   value: string,
 ): void => {
   book.paymentDeviceIds = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))].slice(0, 20)
+}
+
+const appOperationChildStationText = (): string =>
+  engagementSettings.value.appOperation.childStationIds.join(', ')
+
+const updateAppOperationChildStations = (value: string): void => {
+  const hostStationId = engagementSettings.value.appOperation.hostStationId.trim()
+  const rawMaxChildStations = Number(engagementSettings.value.appOperation.maxChildStations)
+  const maxChildStations = Number.isFinite(rawMaxChildStations)
+    ? Math.min(Math.max(Math.trunc(rawMaxChildStations), 0), 20)
+    : 5
+  engagementSettings.value.appOperation.childStationIds = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))]
+    .filter((stationId) => stationId !== hostStationId)
+    .slice(0, maxChildStations)
 }
 
 const addSupplyWindow = (): void => {
@@ -5390,6 +5409,47 @@ const saveAccessControl = async (): Promise<void> => {
                   啟用
                 </label>
               </article>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>App 運作模式</strong>
+                <span>對齊 iCHEF POS 主機 / 子機：只有主機可套用新設定檔，子機工具箱限縮。</span>
+              </div>
+              <div class="admin-online-settings-grid">
+                <label>
+                  主機 station id
+                  <input
+                    v-model.trim="engagementSettings.appOperation.hostStationId"
+                    type="text"
+                    placeholder="留空代表目前平板可作為主機"
+                    @input="updateAppOperationChildStations(appOperationChildStationText())"
+                  />
+                </label>
+                <label>
+                  子機上限
+                  <input
+                    v-model.number="engagementSettings.appOperation.maxChildStations"
+                    type="number"
+                    min="0"
+                    max="20"
+                    step="1"
+                    @input="updateAppOperationChildStations(appOperationChildStationText())"
+                  />
+                </label>
+                <label class="wide-field">
+                  子機 station id
+                  <input
+                    :value="appOperationChildStationText()"
+                    type="text"
+                    placeholder="最多 5 台，逗號分隔；依合約可調整上限"
+                    @input="updateAppOperationChildStations(($event.target as HTMLInputElement).value)"
+                  />
+                </label>
+              </div>
+              <p class="panel-note">
+                iCHEF 同一 Store ID 僅一台 iPad 可作為主機；子機需連同一網路且 App 版本一致。本設定會讓非主機無法套用新設定檔，並在 POS 工具箱顯示子機限制。
+              </p>
             </div>
 
             <div class="admin-rule-scope">

@@ -47,6 +47,7 @@ import {
   finalizeCounterDraftOrder,
   fetchCashDrawerEvents,
   isPosApiConfigured,
+  normalizeEngagementSettings,
   normalizePaymentBreakdown,
   normalizePaymentSplits,
   releaseOrderClaim,
@@ -162,6 +163,7 @@ interface BackendStatus {
 }
 
 type SettingsProfileStatus = 'loading' | 'current' | 'pending' | 'local'
+type StationOperationMode = 'host' | 'child'
 
 interface StoredSettingsProfile {
   fingerprint: string
@@ -1294,6 +1296,35 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const onlineReminderAudioMessage = ref('')
   const stationClaimId = currentStationId()
   const stationClaimLabel = currentStationLabel()
+  const stationOperationMode = computed<StationOperationMode>(() => {
+    const hostStationId = engagementSettings.value.appOperation.hostStationId.trim()
+    if (!hostStationId) {
+      return 'host'
+    }
+
+    return hostStationId === stationClaimId ? 'host' : 'child'
+  })
+  const stationOperationModeLabel = computed(() => stationOperationMode.value === 'host' ? '主機' : '子機')
+  const canApplySettingsProfile = computed(() => stationOperationMode.value === 'host')
+  const stationOperationMessage = computed(() => {
+    const settings = engagementSettings.value.appOperation
+    const hostStationId = settings.hostStationId.trim()
+    const childCount = settings.childStationIds.length
+    const childLimitLabel = `${childCount}/${settings.maxChildStations} 台子機`
+
+    if (!hostStationId) {
+      return `未指定主機，${stationClaimLabel} 可套用新設定檔`
+    }
+
+    if (stationOperationMode.value === 'host') {
+      return `主機 ${stationClaimLabel} 可套用新設定檔 · ${childLimitLabel}`
+    }
+
+    const childRegistered = settings.childStationIds.includes(stationClaimId)
+    return childRegistered
+      ? `連線主機 ${hostStationId} · 子機不可套用新設定檔`
+      : `未列入子機清單，請以主機 ${hostStationId} 套用新設定檔`
+  })
   let queueSyncTimer: number | null = null
   let stationHeartbeatTimer: number | null = null
   let onlineReminderClockTimer: number | null = null
@@ -1366,14 +1397,15 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
+    const nextEngagementSettings = normalizeEngagementSettings(runtimeSettings.engagementSettings)
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
     discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
     posAppearanceSettings.value = runtimeSettings.posAppearance
     floorPlanSettings.value = runtimeSettings.floorPlan
-    engagementSettings.value = runtimeSettings.engagementSettings
+    engagementSettings.value = nextEngagementSettings
     accessPolicy.value = runtimeSettings.accessPolicy
     if (!savedCounterDraft) {
-      serviceFeeRate.value = serviceChargeRateForMode(runtimeSettings.engagementSettings.serviceCharge, serviceMode.value)
+      serviceFeeRate.value = serviceChargeRateForMode(nextEngagementSettings.serviceCharge, serviceMode.value)
     }
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
@@ -1453,6 +1485,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const applyPendingSettingsProfile = (): void => {
     if (!pendingRuntimeSettingsProfile.value || !pendingSettingsProfileFingerprint) {
       settingsProfileMessage.value = '目前沒有待套用的新設定檔'
+      return
+    }
+
+    if (!canApplySettingsProfile.value) {
+      settingsProfileMessage.value = `子機不可套用新設定檔，請改用主機：${engagementSettings.value.appOperation.hostStationId || '未指定'}`
       return
     }
 
@@ -4746,6 +4783,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     acceptOnlineOrderForStation,
     activeOnlineReminderOrders,
     backendStatus,
+    canApplySettingsProfile,
     cashDrawerEvents,
     cartLines,
     cartItemSubtotal,
@@ -4850,6 +4888,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     stationClaimId,
     stationClaimLabel,
     stationHeartbeatMessage,
+    stationOperationMessage,
+    stationOperationMode,
+    stationOperationModeLabel,
     togglingProductId,
     toggleCustomerNote,
     toggleLinePrintPaused,

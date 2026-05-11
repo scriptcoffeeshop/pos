@@ -2473,6 +2473,11 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
       },
     ],
   },
+  appOperation: {
+    hostStationId: '',
+    childStationIds: [],
+    maxChildStations: 5,
+  },
   electronicInvoice: {
     enabled: false,
     defaultIssueOnCheckout: true,
@@ -2584,6 +2589,23 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.checkoutCounters
     : defaults.checkoutCounters
   const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings['checkoutCounters']>
+  const rawAppOperation = settings.appOperation && typeof settings.appOperation === 'object'
+    ? settings.appOperation
+    : defaults.appOperation
+  const appOperation = rawAppOperation as Partial<CustomerEngagementSettings['appOperation']>
+  const appOperationHostStationId = sanitizeOnlineText(appOperation.hostStationId, '').slice(0, 80)
+  const appOperationMaxChildStations = clampRuntimeInteger(
+    appOperation.maxChildStations,
+    defaults.appOperation.maxChildStations,
+    0,
+    20,
+  )
+  const appOperationChildStationIds = Array.isArray(appOperation.childStationIds)
+    ? [...new Set(appOperation.childStationIds
+      .map((stationId) => sanitizeOnlineText(stationId, '').slice(0, 80))
+      .filter((stationId) => stationId && stationId !== appOperationHostStationId))]
+      .slice(0, appOperationMaxChildStations)
+    : defaults.appOperation.childStationIds
   const rawElectronicInvoice = settings.electronicInvoice && typeof settings.electronicInvoice === 'object'
     ? settings.electronicInvoice
     : defaults.electronicInvoice
@@ -2719,6 +2741,11 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       enabled: checkoutCounters.enabled === true,
       defaultBookId: sanitizeOnlineText(checkoutCounters.defaultBookId, defaults.checkoutCounters.defaultBookId).slice(0, 80) || defaults.checkoutCounters.defaultBookId,
       books: checkoutCounterBooks.length > 0 ? checkoutCounterBooks : defaults.checkoutCounters.books.map((book) => ({ ...book, stationIds: [...book.stationIds], paymentDeviceIds: [...book.paymentDeviceIds] })),
+    },
+    appOperation: {
+      hostStationId: appOperationHostStationId,
+      childStationIds: appOperationChildStationIds,
+      maxChildStations: appOperationMaxChildStations,
     },
     electronicInvoice: {
       enabled: electronicInvoice.enabled === true,
