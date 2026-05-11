@@ -3461,6 +3461,11 @@ const saveAccessControl = async (): Promise<void> => {
                 暫停供應至
                 <input v-model="product.soldOutUntilInput" type="datetime-local" />
               </label>
+
+              <label class="toggle-row">
+                <input v-model="product.futureOrderAvailable" type="checkbox" />
+                預約單可售
+              </label>
             </div>
 
             <details class="inventory-consumption-card">

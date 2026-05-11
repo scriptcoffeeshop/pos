@@ -358,6 +358,18 @@ interface ProductUpdateInput {
   futureOrderAvailable?: boolean;
 }
 
+interface ProductAvailabilityRow {
+  id: string;
+  sku: string;
+  name: string;
+  is_available: boolean;
+  online_visible: boolean;
+  qr_visible: boolean;
+  inventory_count: number | null;
+  sold_out_until: string | null;
+  future_order_available: boolean;
+}
+
 interface PrintStationSetting {
   id: string;
   name: string;
@@ -4066,6 +4078,10 @@ api.post("/orders", async (c) => {
     if (scheduleValidationError) {
       return c.json({ error: scheduleValidationError }, 409);
     }
+    const productAvailabilityError = await validateOnlineOrderProductAvailability(orderLines, orderSource, requestedFulfillmentAt);
+    if (productAvailabilityError) {
+      return c.json({ error: productAvailabilityError }, 409);
+    }
     const dineInTimeLimitError = validateQrDineInTimeLimit(input, orderSource, serviceMode, onlineOrdering);
     if (dineInTimeLimitError) {
       return c.json({ error: dineInTimeLimitError }, 409);
@@ -6318,6 +6334,136 @@ const validateOnlineRequestedFulfillmentAt = (
 
   if (!onlineScheduledWindowMatches(requestedFulfillmentAt, settings)) {
     return "Requested fulfillment time is outside scheduled order windows";
+  }
+
+  return null;
+};
+
+const taipeiDateKeyFor = (date: Date): string => {
+  const localDate = new Date(date.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  const year = localDate.getUTCFullYear();
+  const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const isFutureOnlineFulfillmentDay = (requestedFulfillmentAt: string | null, now = new Date()): boolean => {
+  if (!requestedFulfillmentAt) {
+    return false;
+  }
+
+  const requestedDate = new Date(requestedFulfillmentAt);
+  if (!Number.isFinite(requestedDate.getTime())) {
+    return false;
+  }
+
+  return taipeiDateKeyFor(requestedDate) > taipeiDateKeyFor(now);
+};
+
+interface OnlineOrderProductRef {
+  productId?: string;
+  productSku: string;
+  name: string;
+  comboChild: boolean;
+}
+
+const collectOnlineOrderProductRefs = (lines: OrderLineInput[]): OnlineOrderProductRef[] =>
+  lines.flatMap((line) => {
+    const refs: OnlineOrderProductRef[] = [{
+      productId: line.productId,
+      productSku: line.productSku,
+      name: line.name,
+      comboChild: false,
+    }];
+
+    for (const comboItem of line.comboItems ?? []) {
+      refs.push({
+        productId: comboItem.productId,
+        productSku: comboItem.productSku,
+        name: comboItem.name,
+        comboChild: true,
+      });
+    }
+
+    return refs;
+  });
+
+const loadProductsForOnlineOrder = async (
+  refs: OnlineOrderProductRef[],
+): Promise<{ products: ProductAvailabilityRow[]; error: string | null }> => {
+  const ids = [...new Set(refs.map((ref) => ref.productId).filter((id): id is string => Boolean(id)))];
+  const skus = [...new Set(refs.map((ref) => ref.productSku).filter(Boolean))];
+  const products: ProductAvailabilityRow[] = [];
+
+  if (ids.length > 0) {
+    const { data, error } = await supabase
+      .from("products")
+      .select(productSelect)
+      .in("id", ids);
+
+    if (error) {
+      return { products: [], error: error.message };
+    }
+
+    products.push(...((data ?? []) as ProductAvailabilityRow[]));
+  }
+
+  if (skus.length > 0) {
+    const { data, error } = await supabase
+      .from("products")
+      .select(productSelect)
+      .in("sku", skus);
+
+    if (error) {
+      return { products: [], error: error.message };
+    }
+
+    products.push(...((data ?? []) as ProductAvailabilityRow[]));
+  }
+
+  return { products, error: null };
+};
+
+const validateOnlineOrderProductAvailability = async (
+  lines: OrderLineInput[],
+  orderSource: OrderSource,
+  requestedFulfillmentAt: string | null,
+): Promise<string | null> => {
+  const refs = collectOnlineOrderProductRefs(lines);
+  const { products, error } = await loadProductsForOnlineOrder(refs);
+  if (error) {
+    return error;
+  }
+
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const productsBySku = new Map(products.map((product) => [product.sku, product]));
+  const futureFulfillmentDay = isFutureOnlineFulfillmentDay(requestedFulfillmentAt);
+  const now = Date.now();
+
+  for (const ref of refs) {
+    const product = (ref.productId ? productsById.get(ref.productId) : null) ?? productsBySku.get(ref.productSku);
+    if (!product) {
+      return `商品「${ref.name || ref.productSku}」不存在`;
+    }
+
+    const channelVisible = orderSource === "qr" ? product.qr_visible : product.online_visible;
+    if (!ref.comboChild && (!product.is_available || !channelVisible)) {
+      return `商品「${product.name}」目前未開放線上訂購`;
+    }
+
+    if (!product.is_available) {
+      return `商品「${product.name}」目前停售`;
+    }
+
+    if (product.inventory_count === 0) {
+      return `商品「${product.name}」今日庫存不足`;
+    }
+
+    const stoppedUntil = product.sold_out_until ? new Date(product.sold_out_until).getTime() : NaN;
+    const futureOrderAllowed = futureFulfillmentDay && product.future_order_available === true;
+    if (Number.isFinite(stoppedUntil) && stoppedUntil > now && !futureOrderAllowed) {
+      return `商品「${product.name}」目前暫停供應`;
+    }
   }
 
   return null;
