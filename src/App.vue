@@ -1188,7 +1188,7 @@ const orderPaymentSplitSummary = (order: PosOrder): string => {
   return `拆單 ${order.paymentSplits.length} 張 · 未結 ${openCount} 張 · 已結 ${formatCurrency(paidTotal)}`
 }
 
-const onlineMixedPaymentMethods = new Set<PaymentMethod>(['card', 'line-pay', 'jkopay'])
+const onlineMixedPaymentMethods = new Set<PaymentMethod>(['card', 'app91-card', 'line-pay', 'jkopay'])
 
 const makePaymentAllocation = (index: number, amount: number, method: PaymentMethod = paymentMethod.value): PaymentAllocation => ({
   id: `payment-${Date.now()}-${index + 1}`,
@@ -1272,7 +1272,7 @@ const resetPaymentBreakdown = (): void => {
 
 const updatePaymentAllocationMethod = (paymentId: string, event: Event): void => {
   const value = event.target instanceof HTMLSelectElement ? event.target.value : 'cash'
-  const method: PaymentMethod = value === 'card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
+  const method: PaymentMethod = value === 'card' || value === 'app91-card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
     ? value
     : 'cash'
   paymentBreakdown.value = paymentBreakdown.value.map((payment) =>
@@ -1364,7 +1364,7 @@ const resetPaymentSplits = (): void => {
 
 const updatePaymentSplitMethod = (splitId: string, event: Event): void => {
   const value = event.target instanceof HTMLSelectElement ? event.target.value : 'cash'
-  const method: PaymentMethod = value === 'card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
+  const method: PaymentMethod = value === 'card' || value === 'app91-card' || value === 'line-pay' || value === 'jkopay' || value === 'transfer'
     ? value
     : 'cash'
   paymentSplits.value = paymentSplits.value.map((split) =>
@@ -1501,6 +1501,7 @@ const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
 const paymentOptions: Array<{ value: PaymentMethod; label: string; visible: boolean }> = [
   { value: 'cash', label: '現金', visible: true },
   { value: 'card', label: '刷卡', visible: false },
+  { value: 'app91-card', label: '91APP 支付線上刷卡', visible: false },
   { value: 'line-pay', label: 'LINE Pay', visible: true },
   { value: 'jkopay', label: '街口', visible: true },
   { value: 'transfer', label: '轉帳', visible: false },
@@ -1523,6 +1524,7 @@ const serviceModeLabels: Record<ServiceMode, string> = {
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: '現金',
   card: '刷卡',
+  'app91-card': '91APP 支付線上刷卡',
   'line-pay': 'LINE Pay',
   jkopay: '街口',
   transfer: '轉帳',

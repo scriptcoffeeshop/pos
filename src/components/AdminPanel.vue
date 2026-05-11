@@ -407,6 +407,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
     { id: 'cash', label: '取餐時付款', enabled: true, opensCashDrawer: true },
     { id: 'card', label: '線上刷卡', enabled: false, opensCashDrawer: false },
+    { id: 'app91-card', label: '91APP 支付線上刷卡', enabled: false, opensCashDrawer: false },
     { id: 'transfer', label: '轉帳', enabled: false, opensCashDrawer: false },
   ],
   deliveryFeeAmount: 60,
@@ -1357,6 +1358,7 @@ const reportBreakdownLabel = (key: string): string => {
   const labels: Record<string, string> = {
     cash: '現金',
     card: '刷卡',
+    'app91-card': '91APP 支付線上刷卡',
     'line-pay': 'LINE Pay',
     jkopay: '街口',
     transfer: '轉帳',

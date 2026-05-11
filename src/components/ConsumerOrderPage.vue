@@ -88,9 +88,10 @@ const fallbackPaymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: 'jkopay', label: '街口' },
   { value: 'cash', label: '取餐時付款' },
   { value: 'card', label: '線上刷卡' },
+  { value: 'app91-card', label: '91APP 支付線上刷卡' },
   { value: 'transfer', label: '轉帳' },
 ]
-const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(['line-pay', 'jkopay', 'card'])
+const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(['line-pay', 'jkopay', 'card', 'app91-card'])
 const paymentAllowedForServiceMode = (method: PaymentMethod, mode: ServiceMode): boolean =>
   mode !== 'delivery' || deliveryOnlinePaymentMethods.has(method)
 const urlParams = new URLSearchParams(globalThis.location?.search ?? '')

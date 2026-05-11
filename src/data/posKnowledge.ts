@@ -92,7 +92,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     summary: '後台可設定內用掃碼先結或後結，QR 頁與 API 會套用同一份規則。',
     steps: [
       '到後台「線上點餐」的內用掃碼結帳模式選擇「先結」或「後結」，設定會寫入 `online_ordering.dineInCheckout`。',
-      '先結模式會要求 QR 內用客人先選 LINE Pay、街口或線上刷卡等線上付款方式，才可送出訂單。',
+      '先結模式會要求 QR 內用客人先選 LINE Pay、街口、線上刷卡或 91APP 支付線上刷卡等線上付款方式，才可送出訂單。',
       '後結模式會隱藏 QR 頁付款方式，訂單先以待收款進 POS，客人用餐完畢後再由店員結帳。',
       '結帳說明最多 500 字，會顯示在 QR/消費者結帳頁；統編與載具欄位仍由同一頁開關控制。',
       '`pos-api` 會重新讀取 runtime 驗證結帳模式，避免前端被繞過後用錯付款方式送單。',
@@ -541,7 +541,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     id: 'online-payment-modules',
     category: 'online',
     title: '線上支付模組設定',
-    summary: '後台可管理取餐時付款、LINE Pay、街口、線上刷卡與轉帳的顯示名稱、啟用狀態與順序。',
+    summary: '後台可管理取餐時付款、LINE Pay、街口、線上刷卡、91APP 支付線上刷卡與轉帳的顯示名稱、啟用狀態與順序。',
     steps: [
       '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
       '在「支付模組」區塊開關付款方式，必要時修改消費者看到的顯示名稱。',
@@ -550,7 +550,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
       '取餐時付款送單後會維持待收款，讓門市在 POS 現場完成結帳。',
       '停用付款方式後，消費者頁不再顯示；舊頁面或 API 繞過前端送出時也會被後端拒絕。',
     ],
-    keywords: ['支付模組', '付款方式', '錢櫃開關', '取餐時付款', 'LINE Pay', '街口', '線上刷卡', '轉帳', '排序', 'iCHEF'],
+    keywords: ['支付模組', '付款方式', '錢櫃開關', '取餐時付款', 'LINE Pay', '街口', '線上刷卡', '91APP', '轉帳', '排序', 'iCHEF'],
     target: 'admin',
   },
   {
@@ -561,7 +561,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     steps: [
       '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
       '在「外送規則」區塊設定外送費、外送最低金額、滿額免運與預計車程分鐘後儲存。',
-      '消費者選外送時，付款方式只會顯示 LINE Pay、街口與線上刷卡等線上付款，訂單合計會加入外送費。',
+      '消費者選外送時，付款方式只會顯示 LINE Pay、街口、線上刷卡與 91APP 支付線上刷卡等線上付款，訂單合計會加入外送費。',
       '外送最低金額未達時，消費者頁不得送出；即使用舊頁面或 API 繞過前端也會被後端拒絕。',
       'API 會依扣除折抵後的金額重新計算免運，並把外送費寫入 `orders.extra_fee_amount`。',
     ],
