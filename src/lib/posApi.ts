@@ -1208,6 +1208,8 @@ const normalizePrinterSettings = (value: unknown): PrinterSettings => {
         labelMode,
         categories: Array.isArray(rule.categories) ? [...rule.categories] : [],
         itemIds: Array.isArray(rule.itemIds) ? [...rule.itemIds] : [],
+        countExcludedCategories: Array.isArray(rule.countExcludedCategories) ? [...rule.countExcludedCategories] : [],
+        countExcludedItemIds: Array.isArray(rule.countExcludedItemIds) ? [...rule.countExcludedItemIds] : [],
       }
     }),
   }

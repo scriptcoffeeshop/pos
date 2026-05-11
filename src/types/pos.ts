@@ -285,6 +285,8 @@ export interface PrintRuleSetting {
   stationId: string
   categories: MenuCategory[]
   itemIds: string[]
+  countExcludedCategories: MenuCategory[]
+  countExcludedItemIds: string[]
   copies: number
   labelMode: PrintLabelMode
   enabled: boolean

@@ -356,6 +356,8 @@ interface PrintRuleSetting {
   stationId: string;
   categories: MenuCategory[];
   itemIds: string[];
+  countExcludedCategories: MenuCategory[];
+  countExcludedItemIds: string[];
   copies: number;
   labelMode: PrintLabelMode;
   enabled: boolean;
@@ -876,6 +878,8 @@ const defaultPrinterSettings: PrinterSettings = {
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
+      countExcludedCategories: [],
+      countExcludedItemIds: [],
       copies: 1,
       labelMode: "label",
       enabled: true,
@@ -887,6 +891,8 @@ const defaultPrinterSettings: PrinterSettings = {
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
+      countExcludedCategories: [],
+      countExcludedItemIds: [],
       copies: 1,
       labelMode: "label",
       enabled: true,
@@ -898,6 +904,8 @@ const defaultPrinterSettings: PrinterSettings = {
       stationId: "counter",
       categories: ["coffee", "tea", "food", "retail"],
       itemIds: [],
+      countExcludedCategories: [],
+      countExcludedItemIds: [],
       copies: 1,
       labelMode: "label",
       enabled: true,
@@ -7331,6 +7339,12 @@ const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterS
       const itemIds = Array.isArray(rule.itemIds)
         ? rule.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
         : [];
+      const countExcludedCategories = Array.isArray(rule.countExcludedCategories)
+        ? rule.countExcludedCategories.map(sanitizeMenuCategory).filter(Boolean)
+        : [];
+      const countExcludedItemIds = Array.isArray(rule.countExcludedItemIds)
+        ? rule.countExcludedItemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+        : [];
 
       return {
         ...rule,
@@ -7338,6 +7352,8 @@ const normalizePrinterSettingsForRuntime = (settings: PrinterSettings): PrinterS
         serviceMode,
         categories,
         itemIds,
+        countExcludedCategories,
+        countExcludedItemIds,
         labelMode: normalizePrintRuleLabelMode(labelMode, originalName),
       };
     })
@@ -7412,6 +7428,12 @@ const validatePrinterSettings = (input: unknown): {
     const itemIds = Array.isArray(entry.itemIds)
       ? entry.itemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
       : [];
+    const countExcludedCategories = Array.isArray(entry.countExcludedCategories)
+      ? entry.countExcludedCategories.map(sanitizeMenuCategory).filter(Boolean)
+      : [];
+    const countExcludedItemIds = Array.isArray(entry.countExcludedItemIds)
+      ? entry.countExcludedItemIds.map((itemId) => sanitizeIdentifier(itemId, "")).filter(Boolean)
+      : [];
     const name = sanitizeText(entry.name, `規則 ${index + 1}`);
     rules.push({
       id: sanitizeIdentifier(entry.id, `rule-${index + 1}`),
@@ -7420,6 +7442,8 @@ const validatePrinterSettings = (input: unknown): {
       stationId,
       categories,
       itemIds,
+      countExcludedCategories,
+      countExcludedItemIds,
       copies,
       labelMode: normalizePrintRuleLabelMode(labelMode, name),
       enabled: Boolean(entry.enabled),
