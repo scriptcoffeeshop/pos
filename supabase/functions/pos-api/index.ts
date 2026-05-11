@@ -45,7 +45,18 @@ interface OrderLineInput {
   unitPrice: number;
   quantity: number;
   options?: unknown[];
+  comboItems?: ComboLineItemInput[];
   printPaused?: boolean;
+}
+
+interface ComboLineItemInput {
+  groupId: string;
+  groupLabel: string;
+  productId: string;
+  productSku: string;
+  name: string;
+  quantity: number;
+  priceDelta: number;
 }
 
 interface CreateOrderInput {
@@ -432,6 +443,22 @@ interface OnlineMenuOptionGroup {
   choices: OnlineMenuOptionChoice[];
 }
 
+interface ComboProductChoice {
+  productId: string;
+  priceDelta: number;
+}
+
+interface ComboProductGroup {
+  id: string;
+  label: string;
+  requirement: string;
+  required: boolean;
+  min: number;
+  max: number;
+  allowRepeat: boolean;
+  choices: ComboProductChoice[];
+}
+
 interface OnlineMenuCategory {
   id: MenuCategory;
   label: string;
@@ -484,6 +511,7 @@ interface OnlineOrderingSettings {
   availableOptionChoices: OnlineMenuOptionChoice[];
   menuOptionGroups: OnlineMenuOptionGroup[];
   productOptionAssignments: Record<string, string[]>;
+  comboProductAssignments: Record<string, ComboProductGroup[]>;
   noteSupplyStatuses: Record<string, ProductSupplyStatus>;
 }
 
@@ -1015,6 +1043,7 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
+  comboProductAssignments: {},
   noteSupplyStatuses: {},
 };
 
@@ -3904,9 +3933,10 @@ api.post("/orders", async (c) => {
       unitPrice: line.unitPrice,
       quantity: line.quantity,
       options: line.options ?? [],
-	      printPaused: line.printPaused === true,
-	    })),
-	  });
+      comboItems: normalizeOrderComboItems(line.comboItems),
+      printPaused: line.printPaused === true,
+    })),
+  });
 
   if (orderError) {
     await couponClaim?.release();
@@ -4152,6 +4182,7 @@ api.post("/orders/:id/finalize", async (c) => {
       unitPrice: line.unitPrice,
       quantity: line.quantity,
       options: line.options ?? [],
+      comboItems: normalizeOrderComboItems(line.comboItems),
       printPaused: line.printPaused === true,
     })),
   });
@@ -5737,6 +5768,38 @@ const validateCounterDraftInput = (input: CreateOrderInput): string | null => {
   return null;
 };
 
+const normalizeOrderComboItems = (items: unknown): ComboLineItemInput[] => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const item = entry as Record<string, unknown>;
+    const productId = normalizeUuid(item.productId);
+    const productSku = sanitizeText(item.productSku, "").slice(0, 80);
+    const name = sanitizeText(item.name, "").slice(0, 120);
+    const quantity = Number(item.quantity);
+    const priceDelta = Number(item.priceDelta);
+    if (!productId || !productSku || !name || !Number.isInteger(quantity) || quantity <= 0) {
+      return [];
+    }
+
+    return [{
+      groupId: sanitizeText(item.groupId, "").slice(0, 80) || "combo",
+      groupLabel: sanitizeText(item.groupLabel, "").slice(0, 80) || "套餐",
+      productId,
+      productSku,
+      name,
+      quantity: Math.min(quantity, 99),
+      priceDelta: Number.isFinite(priceDelta) ? Math.trunc(priceDelta) : 0,
+    }];
+  }).slice(0, 80);
+};
+
 const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
   if (!Array.isArray(lines)) {
     return [];
@@ -5765,6 +5828,7 @@ const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
       unitPrice,
       quantity,
       options: Array.isArray(line.options) ? line.options.filter((option) => typeof option === "string").slice(0, 12) : [],
+      comboItems: normalizeOrderComboItems(line.comboItems),
       printPaused: line.printPaused === true,
     };
     if (productId) {
@@ -7696,6 +7760,90 @@ const normalizeProductOptionAssignments = (
   }, {});
 };
 
+const comboRequirementLabel = (required: boolean, min: number, max: number, allowRepeat: boolean): string => {
+  if (required) {
+    return min === max ? `必選 ${min} 份` : `必選 ${min}-${max} 份`;
+  }
+
+  return allowRepeat ? `選填最多 ${max} 份，可重複` : `選填最多 ${max} 份`;
+};
+
+const normalizeComboProductAssignments = (input: unknown): Record<string, ComboProductGroup[]> => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  return Object.entries(input as Record<string, unknown>).reduce<Record<string, ComboProductGroup[]>>(
+    (assignments, [productId, rawGroups]) => {
+      const normalizedProductId = sanitizeText(productId, "").slice(0, 80);
+      if (!normalizedProductId || !Array.isArray(rawGroups)) {
+        return assignments;
+      }
+
+      const seenGroupIds = new Set<string>();
+      const groups = rawGroups.flatMap((entry, groupIndex): ComboProductGroup[] => {
+        if (!entry || typeof entry !== "object") {
+          return [];
+        }
+
+        const group = entry as Partial<ComboProductGroup>;
+        const id = sanitizeText(group.id, `combo-${groupIndex + 1}`).slice(0, 80);
+        const label = sanitizeText(group.label, `套餐子項目 ${groupIndex + 1}`).slice(0, 80);
+        if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+          return [];
+        }
+
+        const seenChoiceIds = new Set<string>();
+        const choices = group.choices.flatMap((choiceEntry): ComboProductChoice[] => {
+          if (!choiceEntry || typeof choiceEntry !== "object") {
+            return [];
+          }
+
+          const choice = choiceEntry as Partial<ComboProductChoice>;
+          const choiceProductId = sanitizeText(choice.productId, "").slice(0, 80);
+          if (!choiceProductId || choiceProductId === normalizedProductId || seenChoiceIds.has(choiceProductId)) {
+            return [];
+          }
+
+          seenChoiceIds.add(choiceProductId);
+          const priceDelta = Number(choice.priceDelta);
+          return [{
+            productId: choiceProductId,
+            priceDelta: Number.isFinite(priceDelta) ? Math.trunc(priceDelta) : 0,
+          }];
+        }).slice(0, 40);
+
+        if (choices.length === 0) {
+          return [];
+        }
+
+        const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)));
+        const required = group.required !== false;
+        const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0;
+        const allowRepeat = group.allowRepeat === true;
+        seenGroupIds.add(id);
+
+        return [{
+          id,
+          label,
+          requirement: sanitizeText(group.requirement, comboRequirementLabel(required, min, max, allowRepeat)).slice(0, 80),
+          required,
+          min,
+          max,
+          allowRepeat,
+          choices,
+        }];
+      }).slice(0, 20);
+
+      if (groups.length > 0) {
+        assignments[normalizedProductId] = groups;
+      }
+      return assignments;
+    },
+    {},
+  );
+};
+
 const normalizeNoteSupplyStatuses = (input: unknown): Record<string, ProductSupplyStatus> => {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return {};
@@ -7799,6 +7947,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     availableOptionChoices,
     menuOptionGroups,
     productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    comboProductAssignments: normalizeComboProductAssignments(settings.comboProductAssignments),
     noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
   };
 };
@@ -8134,6 +8283,7 @@ const validateOnlineOrdering = (input: unknown): {
       availableOptionChoices,
       menuOptionGroups,
       productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+      comboProductAssignments: normalizeComboProductAssignments(settings.comboProductAssignments),
       noteSupplyStatuses: normalizeNoteSupplyStatuses(settings.noteSupplyStatuses),
     },
     error: null,

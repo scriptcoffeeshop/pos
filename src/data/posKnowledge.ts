@@ -71,6 +71,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'combo-product-management',
+    category: 'orders',
+    title: '套餐商品與子項目',
+    summary: '後台可把任一商品設為套餐，設定子項目、可選商品、多選與重複選擇規則。',
+    steps: [
+      '進入供應狀態的商品列，展開「套餐子項目」並按「新增套餐子項目」。',
+      '設定子項目名稱、必選、最多份數與是否可重複，再勾選此子項目可選的單點商品。',
+      '選擇可選商品旁的價差欄位可設定套餐加價；儲存後會寫入 `online_ordering.comboProductAssignments`。',
+      '櫃台 POS 與線上點餐都會先顯示套餐子項目選擇，符合必選與最多份數後才能加入訂單。',
+      '套餐選擇會寫進訂單明細與列印品項內容，列印規則也可用套餐內被選到的商品判斷符合品項。',
+    ],
+    keywords: ['套餐', '套餐商品', '套餐子項目', '多選', '重複選擇', '可選商品', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'payment-exception',
     category: 'payments',
     title: '收款、作廢與退款',

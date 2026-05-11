@@ -399,6 +399,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
+  comboProductAssignments: {},
   noteSupplyStatuses: {},
 })
 

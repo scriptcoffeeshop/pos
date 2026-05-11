@@ -32,6 +32,7 @@ import {
 import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
 import type {
   CartLine,
+  ComboProductGroup,
   CustomerDraft,
   DiscountApplication,
   DiscountSettings,
@@ -48,6 +49,7 @@ import type {
 type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
 type OptionSelectionMap = Record<string, string[]>
+type ComboSelectionMap = Record<string, Record<string, number>>
 
 const allCategoryOption: { value: 'all'; label: string } = { value: 'all', label: '全部' }
 const defaultCategoryOptions: Array<{ value: MenuCategory; label: string }> = [
@@ -105,6 +107,7 @@ const formError = ref('')
 const lastOrder = ref<PosOrder | null>(null)
 const optionPanelItem = ref<MenuItem | null>(null)
 const optionSelections = ref<OptionSelectionMap>({})
+const comboSelections = ref<ComboSelectionMap>({})
 const optionError = ref('')
 let onlineMenuSyncTimer: number | null = null
 let onlineRealtimeRefreshTimer: number | null = null
@@ -377,6 +380,10 @@ const optionGroupMap = computed(() =>
   new Map(onlineOrdering.value.menuOptionGroups.map((group) => [group.id, group])),
 )
 
+const menuProductById = computed(() =>
+  new Map(menuCatalog.value.map((product) => [product.id, product])),
+)
+
 const visibleChoicesForGroup = (group: OnlineMenuOptionGroup): OnlineMenuOptionGroup['choices'] =>
   group.choices.filter((choice) => {
     const status =
@@ -398,7 +405,16 @@ const optionGroupsForItem = (item: MenuItem): OnlineMenuOptionGroup[] =>
     .map(visibleOptionGroup)
     .filter((group) => group.choices.length > 0)
 
+const comboGroupsForItem = (item: MenuItem): ComboProductGroup[] =>
+  (onlineOrdering.value.comboProductAssignments[item.id] ?? [])
+    .map((group) => ({
+      ...group,
+      choices: group.choices.filter((choice) => menuProductById.value.has(choice.productId)),
+    }))
+    .filter((group) => group.choices.length > 0)
+
 const optionPanelGroups = computed(() => (optionPanelItem.value ? optionGroupsForItem(optionPanelItem.value) : []))
+const comboPanelGroups = computed(() => (optionPanelItem.value ? comboGroupsForItem(optionPanelItem.value) : []))
 
 const selectedOptionChoices = computed(() =>
   optionPanelGroups.value.flatMap((group) => {
@@ -413,16 +429,51 @@ const optionPriceAdjustment = computed(() =>
   selectedOptionChoices.value.reduce((total, entry) => total + (entry.choice.priceDelta ?? 0), 0),
 )
 
+const comboChoiceQuantity = (group: ComboProductGroup, productId: string): number =>
+  comboSelections.value[group.id]?.[productId] ?? 0
+
+const comboGroupSelectedCount = (group: ComboProductGroup): number =>
+  Object.values(comboSelections.value[group.id] ?? {}).reduce((total, quantity) => total + Math.max(0, Math.trunc(quantity)), 0)
+
+const comboChoiceProduct = (productId: string): MenuItem | null =>
+  menuProductById.value.get(productId) ?? null
+
+const selectedComboItems = computed(() =>
+  comboPanelGroups.value.flatMap((group) =>
+    Object.entries(comboSelections.value[group.id] ?? {}).flatMap(([productId, quantity]) => {
+      const normalizedQuantity = Math.max(0, Math.trunc(Number(quantity) || 0))
+      const choice = group.choices.find((entry) => entry.productId === productId)
+      const product = comboChoiceProduct(productId)
+      if (!choice || !product || normalizedQuantity <= 0) {
+        return []
+      }
+
+      return [{ group, choice, product, quantity: normalizedQuantity }]
+    }),
+  ),
+)
+
+const comboPriceAdjustment = computed(() =>
+  selectedComboItems.value.reduce((total, entry) => total + entry.choice.priceDelta * entry.quantity, 0),
+)
+
 const optionPanelUnitPrice = computed(() =>
-  optionPanelItem.value ? Math.max(0, optionPanelItem.value.price + optionPriceAdjustment.value) : 0,
+  optionPanelItem.value ? Math.max(0, optionPanelItem.value.price + optionPriceAdjustment.value + comboPriceAdjustment.value) : 0,
 )
 
 const selectedOptionLabels = computed(() =>
-  selectedOptionChoices.value.map((entry) =>
-    entry.choice.priceDelta && entry.choice.priceDelta > 0
-      ? `${entry.choice.label} +${formatCurrency(entry.choice.priceDelta)}`
-      : entry.choice.label,
-  ),
+  [
+    ...selectedOptionChoices.value.map((entry) =>
+      entry.choice.priceDelta && entry.choice.priceDelta > 0
+        ? `${entry.choice.label} +${formatCurrency(entry.choice.priceDelta)}`
+        : entry.choice.label,
+    ),
+    ...selectedComboItems.value.map((entry) => {
+      const quantityLabel = entry.quantity > 1 ? ` x${entry.quantity}` : ''
+      const priceLabel = entry.choice.priceDelta > 0 ? ` +${formatCurrency(entry.choice.priceDelta * entry.quantity)}` : ''
+      return `${entry.group.label}: ${entry.product.name}${quantityLabel}${priceLabel}`
+    }),
+  ],
 )
 
 const resetOptionSelections = (groups: OnlineMenuOptionGroup[]): OptionSelectionMap =>
@@ -435,12 +486,14 @@ const openOptionPanel = (item: MenuItem): void => {
   const groups = optionGroupsForItem(item)
   optionPanelItem.value = item
   optionSelections.value = resetOptionSelections(groups)
+  comboSelections.value = {}
   optionError.value = ''
 }
 
 const closeOptionPanel = (): void => {
   optionPanelItem.value = null
   optionSelections.value = {}
+  comboSelections.value = {}
   optionError.value = ''
 }
 
@@ -463,6 +516,51 @@ const toggleOptionChoice = (group: OnlineMenuOptionGroup, choiceId: string): voi
   optionError.value = ''
 }
 
+const setComboChoiceQuantity = (group: ComboProductGroup, productId: string, quantity: number): void => {
+  const currentGroupSelections = comboSelections.value[group.id] ?? {}
+  const currentQuantity = currentGroupSelections[productId] ?? 0
+  const nextQuantity = Math.max(0, Math.min(group.allowRepeat ? group.max : 1, Math.trunc(quantity)))
+  const nextGroupCount = comboGroupSelectedCount(group) - currentQuantity + nextQuantity
+  if (nextGroupCount > group.max) {
+    return
+  }
+
+  const nextGroupSelections = { ...currentGroupSelections }
+  if (nextQuantity > 0) {
+    nextGroupSelections[productId] = nextQuantity
+  } else {
+    delete nextGroupSelections[productId]
+  }
+
+  comboSelections.value = {
+    ...comboSelections.value,
+    [group.id]: nextGroupSelections,
+  }
+  optionError.value = ''
+}
+
+const toggleComboChoice = (group: ComboProductGroup, productId: string): void => {
+  const currentQuantity = comboChoiceQuantity(group, productId)
+  if (group.max === 1) {
+    comboSelections.value = {
+      ...comboSelections.value,
+      [group.id]: currentQuantity > 0 ? {} : { [productId]: 1 },
+    }
+    optionError.value = ''
+    return
+  }
+
+  setComboChoiceQuantity(group, productId, currentQuantity > 0 ? 0 : 1)
+}
+
+const incrementComboChoice = (group: ComboProductGroup, productId: string): void => {
+  setComboChoiceQuantity(group, productId, comboChoiceQuantity(group, productId) + 1)
+}
+
+const decrementComboChoice = (group: ComboProductGroup, productId: string): void => {
+  setComboChoiceQuantity(group, productId, comboChoiceQuantity(group, productId) - 1)
+}
+
 const validateOptionSelections = (): boolean => {
   for (const group of optionPanelGroups.value) {
     const selectedCount = optionSelections.value[group.id]?.length ?? 0
@@ -473,6 +571,19 @@ const validateOptionSelections = (): boolean => {
 
     if (selectedCount > group.max) {
       optionError.value = `「${group.label}」最多只能選 ${group.max} 個`
+      return false
+    }
+  }
+
+  for (const group of comboPanelGroups.value) {
+    const selectedCount = comboGroupSelectedCount(group)
+    if (group.required && selectedCount < group.min) {
+      optionError.value = `「${group.label}」尚未選擇完成`
+      return false
+    }
+
+    if (selectedCount > group.max) {
+      optionError.value = `「${group.label}」最多只能選 ${group.max} 份`
       return false
     }
   }
@@ -502,6 +613,19 @@ const addConfiguredLine = (item: MenuItem, options: string[], unitPrice: number)
     printLabel: item.printLabel,
   }
 
+  const comboItems = selectedComboItems.value.map((entry) => ({
+    groupId: entry.group.id,
+    groupLabel: entry.group.label,
+    productId: entry.product.id,
+    productSku: entry.product.sku,
+    name: entry.product.name,
+    quantity: entry.quantity,
+    priceDelta: entry.choice.priceDelta,
+  }))
+  if (comboItems.length > 0) {
+    nextLine.comboItems = comboItems
+  }
+
   cartLines.value.push(nextLine)
 }
 
@@ -511,7 +635,7 @@ const addItem = (item: MenuItem): void => {
     return
   }
 
-  if (optionGroupsForItem(item).length > 0) {
+  if (optionGroupsForItem(item).length > 0 || comboGroupsForItem(item).length > 0) {
     openOptionPanel(item)
     return
   }
@@ -1131,6 +1255,38 @@ watch(
                 </span>
                 <Check v-if="optionSelected(group.id, choice.id)" :size="18" aria-hidden="true" />
               </button>
+            </div>
+          </section>
+
+          <section v-for="group in comboPanelGroups" :key="group.id" class="consumer-option-group">
+            <div class="consumer-option-group-heading">
+              <h3>{{ group.label }}</h3>
+              <span>{{ group.requirement }}</span>
+            </div>
+            <div class="consumer-option-grid">
+              <div
+                v-for="choice in group.choices"
+                :key="`${group.id}-${choice.productId}`"
+                class="consumer-option-choice consumer-option-choice--combo"
+                :class="{ 'consumer-option-choice--active': comboChoiceQuantity(group, choice.productId) > 0 }"
+              >
+                <button type="button" class="consumer-option-choice-main" @click="toggleComboChoice(group, choice.productId)">
+                  <span>
+                    <strong>{{ comboChoiceProduct(choice.productId)?.name ?? choice.productId }}</strong>
+                    <small v-if="choice.priceDelta && choice.priceDelta > 0">+{{ formatCurrency(choice.priceDelta) }}</small>
+                  </span>
+                  <Check v-if="comboChoiceQuantity(group, choice.productId) > 0 && !(group.allowRepeat || group.max > 1)" :size="18" aria-hidden="true" />
+                </button>
+                <span v-if="group.allowRepeat || group.max > 1" class="consumer-option-stepper">
+                  <button type="button" title="減少套餐子項目" @click="decrementComboChoice(group, choice.productId)">
+                    <Minus :size="14" aria-hidden="true" />
+                  </button>
+                  <strong>{{ comboChoiceQuantity(group, choice.productId) }}</strong>
+                  <button type="button" title="增加套餐子項目" @click="incrementComboChoice(group, choice.productId)">
+                    <Plus :size="14" aria-hidden="true" />
+                  </button>
+                </span>
+              </div>
             </div>
           </section>
 
