@@ -257,6 +257,18 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 4. 嘗試用 API 或已開啟的舊頁面繞過前端送出 disabled service mode，`POST /orders` 應回覆 409。
 5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認後台服務方式開關仍從 `online_ordering` runtime 還原。
 
+## 內用掃碼用餐與點餐限時
+
+用餐限時與最後加點規則存在 `online_ordering.dineInTimeLimit`，對照 iCHEF 內用掃碼點餐的「用餐與點餐限時」。這不是 APK 本機設定；fresh reinstall 後仍應從 runtime 與訂單開單時間還原。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」設定用餐限時、最後加點與假日規則後儲存。
+2. 回 POS 工具箱，按「用餐與點餐限時」卡片切換功能狀態，確認另一台平板或後台重新載入後狀態同步。
+3. 在 APK 建立內用桌位單並列印或預覽「訂單 QR Code」，QR URL 應包含 `source=qr`、訂單、桌號與 `openedAt`。
+4. 用 QR 頁開啟點餐，確認顯示最後加點與用餐結束時間；未截止前可送 QR 加點單。
+5. 把 `openedAt` 改成已超過最後加點，或暫時把規則調短，確認 QR 頁停用送單，且繞過前端直接送 `POST /orders` 會回 409。
+6. 回 APK 桌位地圖，確認桌卡顯示剩餘/逾時時間；用餐結束後桌卡有鬧鐘式警示。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認規則、工具箱開關與桌位時間顯示都不依賴 fresh reinstall 前的本機資料。
+
 ## 線上預約訂單
 
 預約訂單規則存在 `online_ordering` runtime，對照 iCHEF 預約訂單設定的取餐時間範圍、時間間隔與最長可預約天數。這不是 APK 本機設定，fresh reinstall 後仍應從 runtime 還原。

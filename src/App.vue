@@ -50,6 +50,7 @@ import {
   type PosKnowledgeArticle,
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
+import { activeDineInTimeLimitRule, calculateDineInTimeLimitWindow } from './lib/dineInTimeLimit'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import { serviceChargeRateForMode } from './lib/serviceCharge'
 import {
@@ -191,6 +192,10 @@ interface FloorTableState {
   peopleLabel: string
   waitLabel: string
   stayLabel: string
+  timeLimitLabel: string
+  lastOrderLabel: string
+  isMealOver: boolean
+  isLastOrderOver: boolean
 }
 
 interface PosNotificationItem {
@@ -3765,6 +3770,8 @@ const waitlineDraft = ref({
 const activeFloorServiceView = ref<FloorServiceView>('dine-in')
 const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
+const onlineTimeLimitToggleMessage = ref('用餐與點餐限時會同步後台設定')
+const isOnlineTimeLimitToggling = ref(false)
 const timeClockStaffCode = ref('')
 const timeClockNote = ref('')
 const timeClockMessage = ref('輸入員工識別碼打卡')
@@ -4702,6 +4709,21 @@ const currentSalesModeRows = computed(() =>
 const currentSalesSummary = computed(() =>
   `餐期 ${currentSalesPeriodLabel.value} · 已結 ${formatCurrency(currentSalesPaidTotal.value)} · 未結 ${formatCurrency(currentSalesPendingTotal.value)}`,
 )
+const todayDineInTimeLimitRule = computed(() =>
+  activeDineInTimeLimitRule(onlineOrderingSettings.value.dineInTimeLimit, new Date(currentTime.value)),
+)
+const dineInTimeLimitToolboxSummary = computed(() => {
+  const rule = todayDineInTimeLimitRule.value
+  if (!onlineOrderingSettings.value.dineInTimeLimit.enabled) {
+    return `${rule.label} · 目前關閉`
+  }
+
+  if (rule.mealMinutes <= 0) {
+    return `${rule.label} · 不限時`
+  }
+
+  return `${rule.label} · 用餐 ${rule.mealMinutes} 分 · 最後加點 ${rule.lastOrderBeforeEndMinutes} 分前`
+})
 const enabledPrinterRuleCount = computed(() => printerSettings.value.rules.filter((rule) => rule.enabled).length)
 const enabledPrinterStationCount = computed(() => printerSettings.value.stations.filter((station) => station.enabled).length)
 const systemInfoItems = computed<SystemInfoItem[]>(() => [
@@ -4874,6 +4896,52 @@ const elapsedMinutesSince = (timestamp: string | null): number => {
   return Math.max(0, Math.floor((currentTime.value - startedAt) / 60_000))
 }
 const elapsedMinuteLabel = (timestamp: string | null): string => `${elapsedMinutesSince(timestamp)} min`
+const remainingMinutesUntil = (timestamp: string | null): number | null => {
+  if (!timestamp) {
+    return null
+  }
+
+  const target = new Date(timestamp).getTime()
+  if (!Number.isFinite(target)) {
+    return null
+  }
+
+  return Math.ceil((target - currentTime.value) / 60_000)
+}
+const dineInTimeLimitState = (order: PosOrder | null) =>
+  order
+    ? calculateDineInTimeLimitWindow(
+      onlineOrderingSettings.value.dineInTimeLimit,
+      order.createdAt,
+      currentTime.value,
+    )
+    : null
+const dineInTimeLimitLabel = (order: PosOrder | null): string => {
+  const state = dineInTimeLimitState(order)
+  if (!state || !state.mealEndsAt) {
+    return ''
+  }
+
+  const remaining = remainingMinutesUntil(state.mealEndsAt.toISOString())
+  if (remaining === null) {
+    return ''
+  }
+
+  return remaining > 0 ? `剩 ${remaining} min` : `逾時 ${Math.abs(remaining)} min`
+}
+const dineInLastOrderLabel = (order: PosOrder | null): string => {
+  const state = dineInTimeLimitState(order)
+  if (!state || !state.lastOrderAt) {
+    return ''
+  }
+
+  const remaining = remainingMinutesUntil(state.lastOrderAt.toISOString())
+  if (remaining === null) {
+    return ''
+  }
+
+  return remaining > 0 ? `加點 ${remaining} min` : '停止加點'
+}
 const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null): number => {
   if (!order) {
     return 0
@@ -4885,6 +4953,7 @@ const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null)
 const floorTableStates = computed<FloorTableState[]>(() =>
   activeFloorTables.value.map((table) => {
     const order = dineInOrderForTable(table.id)
+    const timeLimit = dineInTimeLimitState(order)
     const isLocked = Boolean(order && orderClaimedByOtherStation(order))
     const status: FloorTableState['status'] = !order
       ? 'empty'
@@ -4904,6 +4973,10 @@ const floorTableStates = computed<FloorTableState[]>(() =>
       peopleLabel: `${partySizeForTable(table, order)}/${table.capacity}`,
       waitLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
       stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
+      timeLimitLabel: dineInTimeLimitLabel(order),
+      lastOrderLabel: dineInLastOrderLabel(order),
+      isMealOver: timeLimit?.isMealOver ?? false,
+      isLastOrderOver: timeLimit?.isLastOrderOver ?? false,
     }
   }),
 )
@@ -7401,6 +7474,47 @@ const requireBackendEditMode = (actionLabel = '後台編輯'): boolean => {
   backendEditMessage.value = `${actionLabel}需先連點工具箱 6 下`
   openToolbox()
   return false
+}
+
+const toggleDineInTimeLimitFromToolbox = async (): Promise<void> => {
+  if (isOnlineTimeLimitToggling.value) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    onlineTimeLimitToggleMessage.value = '本機模式無法同步用餐限時狀態'
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageOnlineAvailability',
+      title: accessPermissionLabels.manageOnlineAvailability,
+      detail: '切換用餐與點餐限時會立即影響掃碼內用點餐頁是否可加點。',
+    },
+  ]))) {
+    return
+  }
+
+  isOnlineTimeLimitToggling.value = true
+  onlineTimeLimitToggleMessage.value = '同步用餐限時狀態中'
+
+  try {
+    const nextEnabled = !onlineOrderingSettings.value.dineInTimeLimit.enabled
+    const savedSettings = await updateAdminSetting<OnlineOrderingSettings>('online_ordering', {
+      ...onlineOrderingSettings.value,
+      dineInTimeLimit: {
+        ...onlineOrderingSettings.value.dineInTimeLimit,
+        enabled: nextEnabled,
+      },
+    })
+    onlineOrderingSettings.value = savedSettings
+    onlineTimeLimitToggleMessage.value = nextEnabled ? '用餐與點餐限時已開啟' : '用餐與點餐限時已關閉'
+  } catch (error) {
+    onlineTimeLimitToggleMessage.value = `用餐限時同步失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isOnlineTimeLimitToggling.value = false
+  }
 }
 
 const showToolboxHome = (): void => {
@@ -10085,6 +10199,7 @@ onBeforeUnmount(() => {
                               'floor-table-card--selected': selectedFloorTable?.table.id === state.table.id,
                               'floor-table-card--editable': backendEditModeEnabled,
                               'floor-table-card--dragging': floorTableDragState?.tableId === state.table.id,
+                              'floor-table-card--time-limit': state.isMealOver,
                             },
                           ]"
                           type="button"
@@ -10111,7 +10226,13 @@ onBeforeUnmount(() => {
                           </span>
                           <span v-if="state.order" class="floor-table-metrics">
                             <small v-if="floorDisplayPreferences.showUnsubmittedWait">{{ state.waitLabel }}</small>
-                            <small v-if="floorDisplayPreferences.showTableStay">{{ state.stayLabel }}</small>
+                            <small v-if="floorDisplayPreferences.showTableStay">
+                              {{ state.timeLimitLabel || state.stayLabel }}
+                            </small>
+                          </span>
+                          <span v-if="state.order && state.lastOrderLabel" class="floor-table-time-limit">
+                            <Clock3 :size="13" aria-hidden="true" />
+                            {{ state.lastOrderLabel }}
                           </span>
                         </button>
                         <div v-if="floorTableStates.length === 0" class="empty-state floor-empty-state floor-map-empty-state">
@@ -10139,6 +10260,10 @@ onBeforeUnmount(() => {
                             <Plus :size="16" aria-hidden="true" />
                           </button>
                         </div>
+                        <p v-if="selectedFloorTable.timeLimitLabel" class="floor-time-limit-note">
+                          <Clock3 :size="16" aria-hidden="true" />
+                          {{ selectedFloorTable.timeLimitLabel }} · {{ selectedFloorTable.lastOrderLabel }}
+                        </p>
                         <div class="floor-control-actions">
                           <button
                             v-if="selectedFloorTable.order"
@@ -13224,12 +13349,26 @@ onBeforeUnmount(() => {
             <strong>線上點餐</strong>
             <span>顧客入口預覽</span>
           </button>
+          <button
+            type="button"
+            class="toolbox-card"
+            :class="{ 'toolbox-card--status': onlineOrderingSettings.dineInTimeLimit.enabled }"
+            :disabled="isOnlineTimeLimitToggling"
+            @click="toggleDineInTimeLimitFromToolbox"
+          >
+            <Clock3 :size="24" aria-hidden="true" />
+            <strong>用餐與點餐限時</strong>
+            <span>{{ isOnlineTimeLimitToggling ? onlineTimeLimitToggleMessage : dineInTimeLimitToolboxSummary }}</span>
+          </button>
           <button type="button" class="toolbox-card" @click="runToolboxAction('appearance')">
             <Settings2 :size="20" aria-hidden="true" />
             <strong>外觀設定</strong>
             <span>{{ appearancePreferenceSummary }}</span>
           </button>
         </div>
+        <p v-if="activeToolboxPanel === 'home'" class="toolbox-status-message">
+          {{ onlineTimeLimitToggleMessage }}
+        </p>
 
         <section v-else-if="activeToolboxPanel === 'appearance'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <div class="preference-slider-list">

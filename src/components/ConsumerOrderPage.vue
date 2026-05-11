@@ -21,6 +21,7 @@ import {
   defaultDiscountSettings,
   normalizeDiscountSettings,
 } from '../lib/discounts'
+import { calculateDineInTimeLimitWindow } from '../lib/dineInTimeLimit'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
 import { calculateServiceChargeAmount, serviceChargeLabel, serviceChargeRateForMode } from '../lib/serviceCharge'
 import {
@@ -94,6 +95,8 @@ const paymentAllowedForServiceMode = (method: PaymentMethod, mode: ServiceMode):
   mode !== 'delivery' || deliveryOnlinePaymentMethods.has(method)
 const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
 const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
+const qrSessionOrderId = urlParams.get('order')?.trim() ?? ''
+const qrSessionStartedAt = urlParams.get('openedAt')?.trim() || urlParams.get('startedAt')?.trim() || ''
 const qrTableLabel = urlParams.get('table')?.trim() ?? ''
 
 const selectedCategory = ref<CategoryFilter>('all')
@@ -109,6 +112,7 @@ const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
 const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
 const isSubmitting = ref(false)
+const currentTime = ref(Date.now())
 const orderMessage = ref('讀取線上菜單中')
 const formError = ref('')
 const lastOrder = ref<PosOrder | null>(null)
@@ -119,6 +123,7 @@ const comboOptionSelections = ref<ComboOptionSelectionMap>({})
 const optionError = ref('')
 let onlineMenuSyncTimer: number | null = null
 let onlineRealtimeRefreshTimer: number | null = null
+let consumerClockTimer: number | null = null
 let onlineRealtimeUnsubscribe: (() => void) | null = null
 const customer = reactive<CustomerDraft>({
   memberId: null,
@@ -283,6 +288,32 @@ const deliveryFeeLabel = computed(() => {
 const requiresDeliveryAddress = computed(() => serviceMode.value === 'delivery')
 const serviceModeOpen = (mode: ServiceMode): boolean => onlineOrdering.value.serviceModeAvailability[mode] !== false
 const currentServiceModeOpen = computed(() => serviceModeOpen(serviceMode.value))
+const qrDineInTimeLimit = computed(() =>
+  consumerOrderSource === 'qr' && serviceMode.value === 'dine-in'
+    ? calculateDineInTimeLimitWindow(
+      onlineOrdering.value.dineInTimeLimit,
+      qrSessionStartedAt,
+      currentTime.value,
+    )
+    : null,
+)
+const qrDineInLastOrderBlocked = computed(() => qrDineInTimeLimit.value?.isLastOrderOver === true)
+const qrDineInTimeLimitDetail = computed(() => {
+  const limit = qrDineInTimeLimit.value
+  if (!limit) {
+    return ''
+  }
+
+  if (!limit.mealEndsAt || !limit.lastOrderAt) {
+    return `${limit.ruleLabel} · 不限時`
+  }
+
+  const mealEndsAt = limit.mealEndsAt.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+  const lastOrderAt = limit.lastOrderAt.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+  return limit.isLastOrderOver
+    ? `最後加點已截止 · 用餐至 ${mealEndsAt}`
+    : `最後加點 ${lastOrderAt} · 用餐至 ${mealEndsAt}`
+})
 const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(() => {
   const configuredMethods = onlineOrdering.value.paymentMethods
   if (configuredMethods.length === 0) {
@@ -298,19 +329,28 @@ const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(
     }))
 })
 const hasPaymentOptions = computed(() => paymentOptions.value.length > 0)
-const canOrderOnline = computed(() => onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value)
+const canOrderOnline = computed(() =>
+  onlineOrdering.value.enabled &&
+  currentServiceModeOpen.value &&
+  hasPaymentOptions.value &&
+  !qrDineInLastOrderBlocked.value,
+)
 const onlineStatusLabel = computed(() =>
-  onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value ? '開放接單' : '暫停接單',
+  onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value && !qrDineInLastOrderBlocked.value
+    ? '開放接單'
+    : '暫停接單',
 )
 const onlineStatusDetail = computed(() =>
   !onlineOrdering.value.enabled
     ? onlineOrdering.value.pauseMessage
     : currentServiceModeOpen.value
-      ? hasPaymentOptions.value
-        ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
-        : serviceMode.value === 'delivery'
-          ? '外送需啟用線上付款'
-          : '目前沒有開放付款方式'
+      ? qrDineInLastOrderBlocked.value
+        ? '已超過最後加點時間'
+        : hasPaymentOptions.value
+          ? `平均備餐 ${onlineOrdering.value.averagePrepMinutes} 分鐘`
+          : serviceMode.value === 'delivery'
+            ? '外送需啟用線上付款'
+            : '目前沒有開放付款方式'
       : `目前不開放${serviceModeLabels[serviceMode.value]}訂單`,
 )
 const requestedFulfillmentMinimum = computed(() => {
@@ -768,6 +808,11 @@ const addItem = (item: MenuItem): void => {
     return
   }
 
+  if (qrDineInLastOrderBlocked.value) {
+    formError.value = '已超過最後加點時間，請洽現場人員'
+    return
+  }
+
   if (optionGroupsForItem(item).length > 0 || comboGroupsForItem(item).length > 0) {
     openOptionPanel(item)
     return
@@ -973,6 +1018,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
     memberId: null,
     note: [qrTableLabel ? `桌位 ${qrTableLabel}` : '', customer.note.trim()].filter(Boolean).join(' · '),
+    qrSessionOrderId: qrSessionOrderId || null,
+    qrSessionStartedAt: qrSessionStartedAt || null,
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
     subtotal: cartTotal.value,
     orderLabels: [],
@@ -1031,6 +1078,9 @@ const scheduleOnlineRealtimeRefresh = (): void => {
 onMounted(() => {
   void loadOnlineMenu()
   onlineMenuSyncTimer = globalThis.setInterval(refreshOnlineMenuQuietly, 15_000)
+  consumerClockTimer = globalThis.setInterval(() => {
+    currentTime.value = Date.now()
+  }, 30_000)
   onlineRealtimeUnsubscribe = subscribeToPosRealtimeEvents({
     topics: ['runtime_settings', 'products'],
     onEvent: scheduleOnlineRealtimeRefresh,
@@ -1046,6 +1096,9 @@ onBeforeUnmount(() => {
   }
   if (onlineMenuSyncTimer !== null) {
     globalThis.clearInterval(onlineMenuSyncTimer)
+  }
+  if (consumerClockTimer !== null) {
+    globalThis.clearInterval(consumerClockTimer)
   }
   globalThis.removeEventListener('focus', refreshOnlineMenuQuietly)
 })
@@ -1103,6 +1156,10 @@ watch(
           <p class="consumer-status-line">
             <ShoppingBag :size="18" aria-hidden="true" />
             <span>{{ qrTableLabel ? `掃碼內用 · ${qrTableLabel}` : orderMessage }}</span>
+          </p>
+          <p v-if="qrDineInTimeLimitDetail" class="consumer-status-line consumer-status-line--limit">
+            <Clock3 :size="18" aria-hidden="true" />
+            <span>{{ qrDineInTimeLimitDetail }}</span>
           </p>
         </div>
         <button class="icon-button" type="button" title="餐廳資訊">

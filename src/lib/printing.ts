@@ -371,6 +371,7 @@ const orderQrUrl = (order: PosOrder): string => {
     view: 'order',
     source: 'qr',
     order: order.remoteId ?? order.id,
+    openedAt: order.createdAt,
   })
 
   if (order.mode === 'dine-in') {

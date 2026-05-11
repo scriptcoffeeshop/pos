@@ -123,6 +123,8 @@ export interface PosOrder {
   invoiceCarrierBarcode: string
   memberId: string | null
   note: string
+  qrSessionOrderId?: string | null
+  qrSessionStartedAt?: string | null
   lines: CartLine[]
   subtotal: number
   orderLabels: string[]
@@ -448,6 +450,21 @@ export interface OnlineScheduledOrderTimeWindow {
   allDay: boolean
 }
 
+export interface OnlineDineInTimeLimitRule {
+  id: string
+  label: string
+  days: number[]
+  mealMinutes: number
+  lastOrderBeforeEndMinutes: number
+}
+
+export interface OnlineDineInTimeLimitSettings {
+  enabled: boolean
+  mealMinutes: number
+  lastOrderBeforeEndMinutes: number
+  holidayRules: OnlineDineInTimeLimitRule[]
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -475,6 +492,7 @@ export interface OnlineOrderingSettings {
     stationId: string
     logoText: string
   }
+  dineInTimeLimit: OnlineDineInTimeLimitSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

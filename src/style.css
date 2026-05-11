@@ -2589,6 +2589,11 @@ h3 {
   box-shadow: 0 16px 28px rgba(24, 26, 27, 0.2);
 }
 
+.floor-table-card--time-limit {
+  outline: 4px solid rgba(184, 83, 42, 0.38);
+  outline-offset: 2px;
+}
+
 .floor-table-card-top,
 .floor-table-order,
 .floor-table-metrics {
@@ -2636,6 +2641,27 @@ h3 {
   color: #fff;
 }
 
+.floor-table-time-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(184, 83, 42, 0.16);
+  color: var(--amber);
+  font-size: 0.68rem;
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.floor-table-card--active .floor-table-time-limit,
+.floor-table-card--ready .floor-table-time-limit {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
 .floor-table-empty {
   display: grid;
   place-items: center;
@@ -2664,6 +2690,20 @@ h3 {
   background: var(--surface);
   padding: 12px;
   box-shadow: var(--shadow-tight);
+}
+
+.floor-time-limit-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(184, 83, 42, 0.24);
+  border-radius: var(--radius);
+  background: rgba(184, 83, 42, 0.1);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .floor-control-heading {
@@ -8444,6 +8484,13 @@ button.cart-line-summary:focus-visible {
   color: var(--primary-dark);
 }
 
+.toolbox-status-message {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
 .toolbox-detail-panel {
   display: grid;
   gap: 14px;
@@ -10418,6 +10465,7 @@ button.cart-line-summary:focus-visible {
 .admin-online-settings-grid label,
 .admin-payment-method-row label,
 .admin-schedule-window-row label,
+.admin-time-limit-rule-row label,
 .admin-special-date-grid label,
 .admin-member-create label,
 .admin-member-row label,
@@ -10449,6 +10497,7 @@ button.cart-line-summary:focus-visible {
 .admin-online-settings-grid textarea,
 .admin-payment-method-row input,
 .admin-schedule-window-row input,
+.admin-time-limit-rule-row input,
 .admin-special-date-grid input,
 .admin-special-date-grid select,
 .admin-member-create input,
@@ -11102,9 +11151,25 @@ button.cart-line-summary:focus-visible {
   gap: 10px;
 }
 
+.admin-time-limit-rule-list {
+  display: grid;
+  gap: 10px;
+}
+
 .admin-schedule-window-row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(84px, auto) 104px 104px minmax(230px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.admin-time-limit-rule-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 110px 110px minmax(230px, 1fr) auto;
   gap: 10px;
   align-items: end;
   padding: 10px;
@@ -11368,6 +11433,7 @@ button.cart-line-summary:focus-visible {
 .admin-online-settings-grid input:focus,
 .admin-online-settings-grid textarea:focus,
 .admin-schedule-window-row input:focus,
+.admin-time-limit-rule-row input:focus,
 .admin-member-create input:focus,
 .admin-member-row input:focus,
 .admin-station-row input:focus,
@@ -11928,6 +11994,7 @@ button.cart-line-summary:focus-visible {
   .admin-online-status-grid,
   .admin-online-settings-grid,
   .admin-schedule-window-row,
+  .admin-time-limit-rule-row,
   .admin-operation-summary,
   .admin-operation-row,
   .admin-station-grid,

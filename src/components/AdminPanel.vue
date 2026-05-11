@@ -23,6 +23,11 @@ import {
 import { computed, ref } from 'vue'
 import { categoryLabels } from '../data/menu'
 import { defaultDiscountSettings, normalizeDiscountSettings } from '../lib/discounts'
+import {
+  defaultDineInTimeLimitHolidayRule,
+  defaultDineInTimeLimitSettings,
+  normalizeDineInTimeLimitSettings,
+} from '../lib/dineInTimeLimit'
 import { formatCurrency } from '../lib/formatters'
 import {
   adjustMemberWallet,
@@ -69,6 +74,7 @@ import type {
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
+  OnlineDineInTimeLimitRule,
   OnlineScheduledOrderTimeWindow,
   PrinterSettings,
   PosAuditEvent,
@@ -407,6 +413,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     stationId: '',
     logoText: 'Script Coffee',
   },
+  dineInTimeLimit: defaultDineInTimeLimitSettings(),
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -449,6 +456,10 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...defaultOnlineOrderingSettings().sessionQrCode,
     ...(settings.sessionQrCode ?? {}),
   },
+  dineInTimeLimit: normalizeDineInTimeLimitSettings(
+    settings.dineInTimeLimit,
+    defaultOnlineOrderingSettings().dineInTimeLimit,
+  ),
   scheduledOrderTimeWindows: (
     settings.scheduledOrderTimeWindows ?? defaultOnlineOrderingSettings().scheduledOrderTimeWindows
   ).map((timeWindow) => ({ ...timeWindow, days: [...timeWindow.days] })),
@@ -2288,6 +2299,12 @@ const saveOnlineOrdering = async (): Promise<void> => {
             onlineOrdering.value.sessionQrCode.logoText.trim().slice(0, 40) ||
             defaultOnlineOrderingSettings().sessionQrCode.logoText,
         },
+        dineInTimeLimit: normalizeDineInTimeLimitSettings({
+          enabled: Boolean(onlineOrdering.value.dineInTimeLimit.enabled),
+          mealMinutes: onlineOrdering.value.dineInTimeLimit.mealMinutes,
+          lastOrderBeforeEndMinutes: onlineOrdering.value.dineInTimeLimit.lastOrderBeforeEndMinutes,
+          holidayRules: onlineOrdering.value.dineInTimeLimit.holidayRules,
+        }, defaultOnlineOrderingSettings().dineInTimeLimit),
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -2501,6 +2518,31 @@ const toggleScheduledOrderWindowDay = (timeWindow: OnlineScheduledOrderTimeWindo
   }
 
   timeWindow.days = [...daySet].sort((first, second) => first - second)
+}
+
+const addDineInTimeLimitHolidayRule = (): void => {
+  const nextRule = defaultDineInTimeLimitHolidayRule(onlineOrdering.value.dineInTimeLimit.holidayRules.length + 1)
+  onlineOrdering.value.dineInTimeLimit.holidayRules.push({
+    ...nextRule,
+    id: buildId('dine-holiday'),
+  })
+}
+
+const deleteDineInTimeLimitHolidayRule = (ruleId: string): void => {
+  onlineOrdering.value.dineInTimeLimit.holidayRules = onlineOrdering.value.dineInTimeLimit.holidayRules.filter(
+    (rule) => rule.id !== ruleId,
+  )
+}
+
+const toggleDineInTimeLimitHolidayDay = (rule: OnlineDineInTimeLimitRule, day: number): void => {
+  const daySet = new Set(rule.days)
+  if (daySet.has(day)) {
+    daySet.delete(day)
+  } else {
+    daySet.add(day)
+  }
+
+  rule.days = [...daySet].sort((first, second) => first - second)
 }
 
 const addOrderLabel = (): void => {
@@ -3259,6 +3301,11 @@ const saveAccessControl = async (): Promise<void> => {
             <strong>{{ onlineOrdering.sessionQrCode.autoPrint ? '自動列印' : '手動列印' }}</strong>
             <small>{{ stationNameForId(onlineOrdering.sessionQrCode.stationId) }}</small>
           </article>
+          <article>
+            <span>用餐限時</span>
+            <strong>{{ onlineOrdering.dineInTimeLimit.enabled ? `${onlineOrdering.dineInTimeLimit.mealMinutes} 分` : '未啟用' }}</strong>
+            <small>最後加點 {{ onlineOrdering.dineInTimeLimit.lastOrderBeforeEndMinutes }} 分鐘前</small>
+          </article>
         </div>
 
         <section class="admin-subpanel">
@@ -3314,6 +3361,10 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.sessionQrCode.autoPrint" type="checkbox" />
               建立內用訂單後自動列印 QR
             </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.dineInTimeLimit.enabled" type="checkbox" />
+              套用用餐與點餐限時
+            </label>
           </div>
 
           <div class="admin-online-settings-grid">
@@ -3363,6 +3414,69 @@ const saveAccessControl = async (): Promise<void> => {
               QR Logo 文字
               <input v-model="onlineOrdering.sessionQrCode.logoText" type="text" maxlength="40" />
             </label>
+            <label>
+              用餐限時分鐘
+              <input v-model.number="onlineOrdering.dineInTimeLimit.mealMinutes" type="number" min="0" max="720" step="5" />
+            </label>
+            <label>
+              最後加點
+              <input
+                v-model.number="onlineOrdering.dineInTimeLimit.lastOrderBeforeEndMinutes"
+                type="number"
+                min="0"
+                max="720"
+                step="5"
+              />
+              <small>用餐結束前 n 分鐘；0 代表同用餐結束</small>
+            </label>
+          </div>
+
+          <div class="admin-online-schedule-rules" aria-label="用餐與點餐限時">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Dine-in time limit</p>
+                <h3>用餐與點餐限時</h3>
+              </div>
+              <button class="utility-button" type="button" @click="addDineInTimeLimitHolidayRule">
+                <Plus :size="16" aria-hidden="true" />
+                新增假日規則
+              </button>
+            </div>
+            <div v-if="onlineOrdering.dineInTimeLimit.holidayRules.length" class="admin-time-limit-rule-list">
+              <article
+                v-for="rule in onlineOrdering.dineInTimeLimit.holidayRules"
+                :key="rule.id"
+                class="admin-time-limit-rule-row"
+              >
+                <label>
+                  名稱
+                  <input v-model="rule.label" type="text" maxlength="40" />
+                </label>
+                <label>
+                  用餐限時
+                  <input v-model.number="rule.mealMinutes" type="number" min="0" max="720" step="5" />
+                </label>
+                <label>
+                  最後加點
+                  <input v-model.number="rule.lastOrderBeforeEndMinutes" type="number" min="0" max="720" step="5" />
+                </label>
+                <div class="admin-weekday-toggle" aria-label="假日規則星期">
+                  <button
+                    v-for="day in weekdayOptions"
+                    :key="day.value"
+                    type="button"
+                    :class="{ 'admin-weekday-toggle--active': rule.days.includes(day.value) }"
+                    @click="toggleDineInTimeLimitHolidayDay(rule, day.value)"
+                  >
+                    {{ day.label }}
+                  </button>
+                </div>
+                <button class="icon-button" type="button" title="刪除假日規則" @click="deleteDineInTimeLimitHolidayRule(rule.id)">
+                  <Trash2 :size="18" aria-hidden="true" />
+                </button>
+              </article>
+            </div>
+            <p v-else class="panel-note">未設定假日規則時，每天都使用預設限時；用餐限時設為 0 代表不限時。</p>
           </div>
 
           <div class="admin-online-schedule-rules" aria-label="預約訂單設定">
