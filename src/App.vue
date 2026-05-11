@@ -6428,6 +6428,31 @@ const updateFloorTableNumber = (
   updateFloorTable(table.id, { [key]: Math.min(bounds.max, Math.max(bounds.min, Math.round(numberValue))) })
 }
 
+const autoPrintedSessionQrOrderIds = new Set<string>()
+
+const maybeAutoPrintSessionQrCode = async (orderId: string | null): Promise<void> => {
+  if (!orderId || autoPrintedSessionQrOrderIds.has(orderId)) {
+    return
+  }
+
+  const qrSettings = onlineOrderingSettings.value.sessionQrCode
+  if (!qrSettings.autoPrint) {
+    return
+  }
+
+  await nextTick()
+  const order = orderQueue.value.find((entry) => entry.id === orderId)
+  if (!order || order.mode !== 'dine-in') {
+    return
+  }
+
+  autoPrintedSessionQrOrderIds.add(orderId)
+  await printOrderQrCode(orderId, {
+    stationId: qrSettings.stationId,
+    logoText: qrSettings.logoText,
+  })
+}
+
 const nextFloorLabel = (): string => {
   for (let index = 1; index <= 12; index += 1) {
     const label = `${index}F`
@@ -6662,6 +6687,7 @@ const startDineInTableOrder = async (
   activeCartQuickEditor.value = null
   closeOptionPanel()
   setWorkspaceTab('order')
+  void maybeAutoPrintSessionQrCode(counterDraftOrderId.value)
 }
 
 const transferFloorTableOrder = async (

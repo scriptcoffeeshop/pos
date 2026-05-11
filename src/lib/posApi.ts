@@ -1375,6 +1375,11 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   deliveryMinimumSubtotal: 0,
   freeDeliveryThreshold: 0,
   deliveryTravelMinutes: 20,
+  sessionQrCode: {
+    autoPrint: false,
+    stationId: '',
+    logoText: 'Script Coffee',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1433,6 +1438,26 @@ const normalizeSupplyWindows = (value: unknown): SupplyPeriodRule[] => {
     seenWindowIds.add(id)
     return [{ id, label, days, start, end }]
   }).slice(0, 20)
+}
+
+const normalizeSessionQrCodeSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().sessionQrCode,
+): OnlineOrderingSettings['sessionQrCode'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['sessionQrCode']>
+  const logoText = typeof settings.logoText === 'string' && settings.logoText.trim()
+    ? settings.logoText.trim().slice(0, 40)
+    : defaults.logoText
+
+  return {
+    autoPrint: settings.autoPrint === true,
+    stationId: typeof settings.stationId === 'string' ? settings.stationId.trim().slice(0, 80) : defaults.stationId,
+    logoText,
+  }
 }
 
 const defaultReservationBusinessHours = (): ReservationBusinessHour[] =>
@@ -1888,6 +1913,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     deliveryMinimumSubtotal: clampRuntimeInteger(settings.deliveryMinimumSubtotal, defaults.deliveryMinimumSubtotal, 0, 999_999),
     freeDeliveryThreshold: clampRuntimeInteger(settings.freeDeliveryThreshold, defaults.freeDeliveryThreshold, 0, 999_999),
     deliveryTravelMinutes: clampRuntimeInteger(settings.deliveryTravelMinutes, defaults.deliveryTravelMinutes, 0, 180),
+    sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode, defaults.sessionQrCode),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

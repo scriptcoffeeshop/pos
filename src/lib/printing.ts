@@ -390,8 +390,10 @@ const orderQrUrl = (order: PosOrder): string => {
 export const buildOrderQrCodePayload = (
   order: PosOrder,
   station: PrintStation,
-  url = orderQrUrl(order),
+  options: { url?: string; logoText?: string } = {},
 ): string => {
+  const url = options.url ?? orderQrUrl(order)
+  const logoText = (options.logoText?.trim() || 'Script Coffee').slice(0, 40)
   const qrData = url.slice(0, 180)
 
   return [
@@ -400,7 +402,7 @@ export const buildOrderQrCodePayload = (
     '^H10',
     '^P1',
     '^S2',
-    `A20,18,0,3,1,1,N,"${escapeEzplText('Script Coffee QR')}"`,
+    `A20,18,0,3,1,1,N,"${escapeEzplText(`${logoText} QR`)}"`,
     `A20,52,0,2,1,1,N,"${escapeEzplText(order.id)}"`,
     `A20,78,0,2,1,1,N,"${escapeEzplText(`${order.customerName} ${order.mode}`)}"`,
     `W150,112,1,1,H,0,6,${qrData.length},0`,

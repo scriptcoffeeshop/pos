@@ -399,6 +399,7 @@ rtk npm run apk:install:fresh
 - 測會員優惠券時，使用券必須把 `member_coupons.status` 改成 `redeemed` 並記錄 `redeemed_order_id`；另一台平板不得重複使用同一張券，作廢或退款後才可退回 active。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
+- 測訂單 QR 自動列印時，後台「線上點餐」的開關、指定出單機與 Logo 文字應寫入 `online_ordering.sessionQrCode`；fresh reinstall 後建立內用桌位訂單仍應用同一設定建立 QR `print_jobs`，並由 APK `LanPrinter` 送到指定出單機。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。
 - 測線上支付模組時，付款方式顯示、名稱與順序應由 `online_ordering.paymentMethods` 控制；停用付款方式後，前端不顯示且 `POST /orders` 應拒絕。
 - 測線上外送規則時，外送費、外送最低金額、滿額免運與預計車程應由 `online_ordering` runtime 控制；外送不得顯示取餐時付款或轉帳，`POST /orders` 仍必須依 runtime 重新計算 `extra_fee_amount`。

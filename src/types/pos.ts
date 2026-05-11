@@ -470,6 +470,11 @@ export interface OnlineOrderingSettings {
   deliveryMinimumSubtotal: number
   freeDeliveryThreshold: number
   deliveryTravelMinutes: number
+  sessionQrCode: {
+    autoPrint: boolean
+    stationId: string
+    logoText: string
+  }
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

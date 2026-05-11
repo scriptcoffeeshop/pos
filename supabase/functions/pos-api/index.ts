@@ -509,6 +509,11 @@ interface OnlineOrderingSettings {
   deliveryMinimumSubtotal: number;
   freeDeliveryThreshold: number;
   deliveryTravelMinutes: number;
+  sessionQrCode: {
+    autoPrint: boolean;
+    stationId: string;
+    logoText: string;
+  };
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1058,6 +1063,11 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   deliveryMinimumSubtotal: 0,
   freeDeliveryThreshold: 0,
   deliveryTravelMinutes: 20,
+  sessionQrCode: {
+    autoPrint: false,
+    stationId: "",
+    logoText: "Script Coffee",
+  },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
   availableOptionChoices: [],
@@ -6238,6 +6248,19 @@ const normalizeOnlinePaymentMethods = (input: unknown): OnlinePaymentMethodSetti
   return normalized.length > 0 ? normalized : defaultOnlinePaymentMethods();
 };
 
+const normalizeSessionQrCodeSettings = (input: unknown): OnlineOrderingSettings["sessionQrCode"] => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.sessionQrCode };
+  }
+
+  const settings = input as Partial<OnlineOrderingSettings["sessionQrCode"]>;
+  return {
+    autoPrint: settings.autoPrint === true,
+    stationId: sanitizeText(settings.stationId, "").slice(0, 80),
+    logoText: sanitizeText(settings.logoText, defaultOnlineOrdering.sessionQrCode.logoText).slice(0, 40),
+  };
+};
+
 const normalizeScheduledOrderTimeWindows = (input: unknown): OnlineScheduledOrderTimeWindow[] => {
   if (!Array.isArray(input)) {
     return defaultScheduledOrderTimeWindows();
@@ -8038,6 +8061,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
       0,
       180,
     ),
+    sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8374,6 +8398,7 @@ const validateOnlineOrdering = (input: unknown): {
       deliveryMinimumSubtotal,
       freeDeliveryThreshold,
       deliveryTravelMinutes,
+      sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
       pauseMessage,
       menuCategories,
       availableOptionChoices,
