@@ -995,6 +995,34 @@ const formatAuditTime = (iso: string): string => {
   return Number.isNaN(date.getTime()) ? '時間未知' : auditTimeFormatter.format(date)
 }
 
+const couponStatusLabel = (coupon: MemberCoupon): string => {
+  if (coupon.status === 'redeemed') {
+    return '已使用'
+  }
+  if (coupon.status === 'expired') {
+    return '已過期'
+  }
+  return '可使用'
+}
+
+const couponMemberLabel = (coupon: MemberCoupon): string => {
+  if (!coupon.memberId) {
+    return '未綁定會員'
+  }
+  const member = members.value.find((entry) => entry.id === coupon.memberId)
+  return member ? `${member.displayName} · ${member.phone || member.lineUserId || '手動'}` : coupon.memberId.slice(0, 8)
+}
+
+const couponUsageLabel = (coupon: MemberCoupon): string => {
+  if (coupon.status !== 'redeemed') {
+    return coupon.expiresAt ? `到期 ${formatAuditTime(coupon.expiresAt)}` : '無到期日'
+  }
+  const redeemedAt = coupon.redeemedAt ? formatAuditTime(coupon.redeemedAt) : '時間未知'
+  const orderLabel = coupon.redeemedOrderId ? ` · 訂單 ${coupon.redeemedOrderId.slice(0, 8)}` : ''
+  const stationLabel = coupon.redemptionStationId ? ` · ${coupon.redemptionStationId}` : ''
+  return `使用 ${redeemedAt}${orderLabel}${stationLabel}`
+}
+
 const stationStatusLabel = (station: PosStationHeartbeat): string =>
   isStationOnline(station.lastSeenAt) ? '在線' : '離線'
 
@@ -3546,7 +3574,9 @@ const saveAccessControl = async (): Promise<void> => {
 
             <div class="admin-audit-meta admin-coupon-list">
               <span v-for="coupon in coupons.slice(0, 8)" :key="coupon.id">
-                {{ coupon.title }} · {{ coupon.code }} · {{ coupon.discountAmount > 0 ? formatCurrency(coupon.discountAmount) : `${coupon.discountPercent}%` }} · {{ coupon.status }}
+                {{ coupon.title }} · {{ coupon.code }} ·
+                {{ coupon.discountAmount > 0 ? formatCurrency(coupon.discountAmount) : `${coupon.discountPercent}%` }} ·
+                {{ couponStatusLabel(coupon) }} · {{ couponMemberLabel(coupon) }} · {{ couponUsageLabel(coupon) }}
               </span>
               <span v-if="coupons.length === 0">尚無優惠券</span>
             </div>

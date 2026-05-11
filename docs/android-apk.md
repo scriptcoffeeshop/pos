@@ -167,6 +167,17 @@ POS 操作權限對照 iCHEF 後台「帳號與權限」的操作驗證開關。
 6. 送單後在 APK 訂單中心展開訂單，確認 `discount_amount` 與合計一致；若用舊頁或 API 繞過前端，`pos-api` 仍應依 runtime 重新計算自動優惠。
 7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認優惠活動設定、POS 付款頁可用活動與線上訂單折扣都從 Supabase runtime 還原。
 
+## 會員優惠券兌換
+
+會員優惠券使用狀態對照 iCHEF「同會員同券只能使用 1 次」與「作廢使用優惠券訂單時退回優惠券」。狀態存在 Supabase `member_coupons`，APK fresh reinstall 後不得靠本機快取還原舊券。
+
+1. 在後台建立會員與 active 優惠券，或確認既有會員有 active 優惠券。
+2. 在 APK 與另一個瀏覽器工作站同時搜尋同一會員，兩邊付款頁應能看到同一張券。
+3. 在 APK 使用該券建立訂單；後台優惠券列表應顯示已使用、兌換時間、訂單與站台。
+4. 另一個工作站不重新整理直接用同一張券出單時，API 應回 409，POS 不得留下本機待同步單。
+5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，重新搜尋同會員時不得再看到已使用券。
+6. 對原訂單作廢或退款後，重新搜尋同會員，該券應回到 active 並可再次選用。
+
 ## 線上/掃碼新單背景提醒
 
 APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：
@@ -361,6 +372,7 @@ rtk npm run apk:install:fresh
 - 測工具箱顧客資訊管理時，搜尋、類型篩選、排序與新增顧客都應走 `GET/POST /admin/members`；新增後點餐頁 CRM 搜尋與後台會員錢包應看到同一位顧客，fresh reinstall 後不得靠本機快取顯示。
 - 測混合支付時，付款分配必須寫入 `orders.payment_breakdown`，交易明細張數必須寫入 `orders.transaction_receipt_count`；關帳付款方式金額要依分配後金額計算。
 - 測優惠活動時，後台規則必須寫入 `discount_settings` runtime；POS 與線上點餐需套用同一份計算器，外送門檻/免運與 `pos-api` 建單都要用折抵後金額重新驗證。
+- 測會員優惠券時，使用券必須把 `member_coupons.status` 改成 `redeemed` 並記錄 `redeemed_order_id`；另一台平板不得重複使用同一張券，作廢或退款後才可退回 active。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。
