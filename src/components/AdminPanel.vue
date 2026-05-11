@@ -1237,6 +1237,7 @@ const filteredProducts = computed(() => {
       keyword.length === 0 ||
       product.name.toLowerCase().includes(keyword) ||
       product.sku.toLowerCase().includes(keyword) ||
+      product.barcode.toLowerCase().includes(keyword) ||
       product.tagsText.toLowerCase().includes(keyword)
 
     return matchesCategory && matchesKeyword
@@ -2008,6 +2009,7 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
   adminMessage.value = `儲存 ${product.name}`
 
   const payload: ProductUpdateInput = {
+    barcode: product.barcode.trim().replace(/\s+/g, '').toUpperCase(),
     name: product.name,
     category: product.category,
     price: Number(product.price),
@@ -3445,11 +3447,11 @@ const saveAccessControl = async (): Promise<void> => {
           <div>
             <p class="eyebrow">Products</p>
             <h2>商品與前台顯示</h2>
-            <span class="panel-note">管理 POS、外帶外送與掃碼點餐的可見性</span>
+            <span class="panel-note">管理 POS、外帶外送、掃碼點餐與商品條碼</span>
           </div>
           <label class="search-box">
             <Search :size="18" aria-hidden="true" />
-            <input v-model="searchTerm" type="search" placeholder="搜尋商品或 SKU" />
+            <input v-model="searchTerm" type="search" placeholder="搜尋商品、SKU 或條碼" />
           </label>
         </div>
 
@@ -3473,7 +3475,7 @@ const saveAccessControl = async (): Promise<void> => {
                 <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
                 <div>
                   <strong>{{ product.name || '未命名商品' }}</strong>
-                  <span>{{ product.sku }}</span>
+                  <span>{{ product.sku }}<template v-if="product.barcode"> · 條碼 {{ product.barcode }}</template></span>
                 </div>
               </div>
 
@@ -3507,6 +3509,18 @@ const saveAccessControl = async (): Promise<void> => {
               <label>
                 價格
                 <input v-model.number="product.price" type="number" min="0" step="1" />
+              </label>
+
+              <label>
+                商品條碼
+                <input
+                  v-model.trim="product.barcode"
+                  type="text"
+                  maxlength="48"
+                  inputmode="text"
+                  autocomplete="off"
+                  placeholder="選填，不可重複"
+                />
               </label>
 
               <label>

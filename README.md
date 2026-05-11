@@ -5,6 +5,7 @@ Script Coffee POS 是門市平板點餐、線上訂單中樞與 GODEX DT2X 區�
 ## 初版範圍
 
 - App 主機 / 子機模式：2026-05-12 以 Safari / Computer Use 參照 iCHEF 官方「iCHEF POS App 運作模式」知識庫，確認同一 Store ID 僅一台 iPad 可作主機，子機需與主機同網路與同 App 版本，且子機不可執行「套用新設定檔登入」。Script Coffee POS 新增 `engagement_settings.appOperation`，後台「iCHEF 補齊」可設定主機 station id、子機清單與子機上限；前台會顯示目前是主機或子機，子機會停用「套用新設定檔」，並把工具箱限縮到交易查詢與作廢、錢櫃管理、裝置管理、小結與系統資訊。未指定主機時維持單機主機相容模式，不新增 migration。
+- 商品條碼點餐：2026-05-12 以 Safari / Computer Use 參照 iCHEF 官方「商品條碼點餐」知識庫，確認條碼需在後台商品管理手動設定、不可重複、上限 48 字元，支援半形英數字與 `-.$/+%:`，POS 點餐頁可用 iPad 相機或掃碼器掃描。Script Coffee POS 新增 `products.barcode`、格式檢查與非空唯一索引；後台「商品菜單」可設定與搜尋條碼，POS 點餐頁右上角新增條碼掃描入口，支援相機辨識的環境會開啟預覽，不支援時可直接用掃碼器輸入 Enter。掃到可售商品會直接加入票券；有必選註記或套餐時會開啟選項面板，停售、售完或暫停供應商品不會被條碼加入。
 - App 套用新設定檔：2026-05-12 以 Safari / Computer Use 參照 iCHEF 官方「App 套用新設定檔」知識庫，確認後台可先調整設定，POS 端只有選擇「套用新設定檔登入」時才更新。Script Coffee POS 會為每台平板保存已套用的 runtime 設定檔快照；偵測到後台 `runtime_settings` 有新版本時，訂單、班別與心跳仍照常同步，但商品/線上/列印/桌況/權限等 runtime 設定會先標示「新設定檔」並保留目前套用版本，操作員可在 topbar 或工具箱按「套用新設定檔」後一次套用最新設定。
 - 線上新單通知：對照 iCHEF POS「線上點餐功能設定」的每台 iPad 訂單通知，POS 桌位地圖右側新增「線上通知設定」。每台平板可獨立開關接收通知、提示音、服務方式與內用桌位範圍；未指定桌位時接收所有內用桌位。設定保存於 `online_ordering.notificationRouting`，前景提醒、Web 背景通知與 Android `OnlineOrderNotifier` / `OnlineOrderPollingService` 都會套用同一份 runtime，舊 runtime 由 `20260512163000_add_online_notification_routing_settings.sql` 補上預設空設定。
 - 線上僅菜單瀏覽模式：2026-05-12 以 Safari / Computer Use 觀察 iCHEF 後台「內用掃碼點餐」功能狀態，確認可切換為「無點餐功能，僅菜單瀏覽」。Script Coffee POS 以既有 `online_ordering.enabled=false` 對應此狀態，不新增 migration；後台線上點餐設定改以「功能狀態 / 僅菜單瀏覽」呈現，消費者線上/掃碼頁仍載入菜單與店家資訊，但送出按鈕會顯示「僅菜單瀏覽」且前端與 `pos-api` 都阻擋送單。

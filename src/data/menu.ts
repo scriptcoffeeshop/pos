@@ -1,6 +1,7 @@
 import type { MenuItem } from '../types/pos'
 
 const defaultChannelState = {
+  barcode: '',
   posVisible: true,
   onlineVisible: true,
   qrVisible: true,

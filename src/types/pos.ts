@@ -38,6 +38,7 @@ export interface SupplyPeriodRule {
 export interface MenuItem {
   id: string
   sku: string
+  barcode: string
   name: string
   category: MenuCategory
   price: number

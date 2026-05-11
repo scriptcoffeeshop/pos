@@ -727,6 +727,102 @@ button:disabled {
   width: min(360px, 44%);
 }
 
+.menu-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: min(430px, 48%);
+}
+
+.menu-heading-actions .menu-search-box {
+  width: min(360px, 100%);
+}
+
+.barcode-scan-button {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+}
+
+.barcode-scan-panel {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin: 10px 12px 0;
+  padding: 10px 52px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+
+.barcode-scan-main {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.barcode-scan-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: calc(var(--radius) - 2px);
+  background: #111827;
+  object-fit: cover;
+}
+
+.barcode-scan-form {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.barcode-scan-form label {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.barcode-scan-form input {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.barcode-scan-form button {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius);
+  padding: 0 16px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 950;
+}
+
+.barcode-scan-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.barcode-scan-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+}
+
 .menu-workarea {
   display: grid;
   grid-template-columns: 146px minmax(0, 1fr);
@@ -1334,6 +1430,10 @@ button:disabled {
 .pos-main-surface--ordering .menu-search-box {
   width: min(300px, 34%);
   background: var(--surface-raised);
+}
+
+.pos-main-surface--ordering .menu-heading-actions .menu-search-box {
+  width: min(300px, 100%);
 }
 
 .pos-main-surface--ordering .menu-workarea {
@@ -12723,6 +12823,18 @@ button.cart-line-summary:focus-visible {
 
   .menu-search-box {
     width: 100%;
+  }
+
+  .menu-heading-actions {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .barcode-scan-main,
+  .barcode-scan-form {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .ticket-topline > strong {

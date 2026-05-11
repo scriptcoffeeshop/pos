@@ -42,6 +42,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'product-barcode-ordering',
+    category: 'orders',
+    title: '商品條碼點餐',
+    summary: '後台可為商品設定唯一條碼，POS 點餐頁用掃碼器或相機掃描後直接把商品加入票券。',
+    steps: [
+      '到後台「商品菜單」設定商品條碼；條碼選填、不可重複，最多 48 字元。',
+      '條碼只支援半形英數字與 -.$/+%: 符號；後台儲存時會轉成大寫並寫入 Supabase `products.barcode`。',
+      '點餐頁右上角的條碼按鈕會開啟掃描面板；支援相機辨識的環境會顯示預覽，不支援時仍可用掃碼器直接輸入。',
+      '掃描到已設定條碼的商品後，無必選註記會直接加入票券；有必選註記或套餐設定時會開啟商品選項面板。',
+      '商品停售、售完或暫停供應時，即使掃到條碼也不會加入訂單。',
+    ],
+    keywords: ['商品條碼', '條碼點餐', '掃碼器', 'iPad 相機', '商品管理', '點餐頁', 'barcode', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',
