@@ -102,11 +102,12 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 
 1. 連點工具箱 6 下進入後台編輯模式，開啟供應狀態，選一個要當套餐主商品的商品。
 2. 在「套餐子項目」新增一組必選項，設定最少/最多選擇數量、是否允許重複選擇，加入兩個以上單點商品並設定其中一個加價。
-3. 回 POS 點該套餐主商品，確認必選子項目未選時無法加入訂單；選擇後票券會顯示子項目與加價後單價。
-4. 若子商品有可售庫存或自動耗料規則，出單或結帳後確認子商品庫存與 `inventory_records.consumption` 已更新。
-5. 到列印站設定只列印某個套餐子商品，建立含該子商品的套餐後確認 APK print job / preview 依子商品命中規則。
-6. 用另一台平板或 Web POS 展開同一張正式訂單，確認套餐子商品仍從 `order_items.combo_items` 還原。
-7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認套餐設定與既有訂單子商品仍從 Supabase 還原，不依賴 fresh reinstall 前的本機記憶體。
+3. 若可選子商品本身綁有註記群組，確認套餐面板會在該子商品底下顯示註記按鈕，必選子商品註記未選時不能加入訂單。
+4. 回 POS 點該套餐主商品，確認必選子項目未選時無法加入訂單；選擇後票券會顯示子項目、子商品註記與加價後單價。
+5. 若子商品有可售庫存、自動耗料規則或子商品註記耗料規則，出單或結帳後確認子商品庫存與 `inventory_records.consumption` 已更新。
+6. 到列印站設定只列印某個套餐子商品，建立含該子商品的套餐後確認 APK print job / preview 依子商品命中規則。
+7. 用另一台平板或 Web POS 展開同一張正式訂單，確認套餐子商品與子商品註記仍從 `order_items.combo_items` 還原。
+8. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認套餐設定與既有訂單子商品仍從 Supabase 還原，不依賴 fresh reinstall 前的本機記憶體。
 
 ## 付款拆單
 

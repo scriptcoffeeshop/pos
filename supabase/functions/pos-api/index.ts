@@ -57,6 +57,7 @@ interface ComboLineItemInput {
   name: string;
   quantity: number;
   priceDelta: number;
+  options: string[];
 }
 
 interface CreateOrderInput {
@@ -5796,6 +5797,12 @@ const normalizeOrderComboItems = (items: unknown): ComboLineItemInput[] => {
       name,
       quantity: Math.min(quantity, 99),
       priceDelta: Number.isFinite(priceDelta) ? Math.trunc(priceDelta) : 0,
+      options: Array.isArray(item.options)
+        ? item.options.flatMap((option) => {
+          const label = sanitizeText(option, "").slice(0, 120);
+          return label ? [label] : [];
+        }).slice(0, 12)
+        : [],
     }];
   }).slice(0, 80);
 };
