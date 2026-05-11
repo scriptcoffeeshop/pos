@@ -540,6 +540,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'online-menu-browse-mode',
+    category: 'online',
+    title: '僅菜單瀏覽模式',
+    summary: '對照 iCHEF 內用掃碼功能狀態，消費者頁可保留菜單瀏覽但不開放送單。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定。',
+      '關閉「消費者可送出訂單」後，後台功能狀態會顯示「僅菜單瀏覽」。',
+      '消費者線上/掃碼頁仍會載入可見商品、店家資訊與提醒事項，但送出按鈕會改成「僅菜單瀏覽」且不可送單。',
+      '公開建單 API 仍會用同一份 `online_ordering.enabled=false` 阻擋繞過前端的 online/qr 送單。',
+    ],
+    keywords: ['僅菜單瀏覽', '功能狀態', '無點餐功能', '內用掃碼', '線上點餐', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'online-store-profile',
     category: 'online',
     title: '店家營業資訊與封面',
