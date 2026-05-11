@@ -116,6 +116,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'online-benefits-onsite-payment',
+    category: 'online',
+    title: '優惠與點數現場付款',
+    summary: '線上訂單若套用優惠、點數或優惠券，付款方式會限制為現場付款並交由 POS 結帳。',
+    steps: [
+      'iCHEF 支付模組設定提醒，優惠活動與點數活動須讓消費者選擇現場付款，再於 POS 結帳操作。',
+      '線上頁套用自動優惠後，只保留「取餐時付款」付款方式，避免線上付款金額與現場折抵流程不一致。',
+      '若服務方式必須線上付款，例如外送或內用掃碼先結，頁面會阻擋送單並提示需調整服務方式或活動適用範圍。',
+      '`pos-api` 會重新檢查自動優惠、點數折抵與優惠券碼；若仍用非現場付款送出，API 會回 409。',
+    ],
+    keywords: ['優惠活動', '點數活動', '優惠券', '現場付款', '線上付款', '外送', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'online-comment-fields',
     category: 'online',
     title: '線上點餐備註欄位',

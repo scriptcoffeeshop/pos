@@ -286,6 +286,7 @@ const onlineDiscountCalculation = computed(() =>
 )
 const onlineDiscountApplications = computed<DiscountApplication[]>(() => onlineDiscountCalculation.value.applications)
 const onlineDiscountAmount = computed(() => onlineDiscountCalculation.value.total)
+const onlineBenefitsRequireOnsitePayment = computed(() => onlineDiscountAmount.value > 0)
 const serviceFeeLabel = computed(() => serviceChargeLabel(engagementSettings.value.serviceCharge))
 const serviceFeeAmount = computed(() => calculateServiceChargeAmount(
   engagementSettings.value.serviceCharge,
@@ -368,18 +369,29 @@ const paymentOptions = computed<Array<{ value: PaymentMethod; label: string }>>(
     return fallbackPaymentOptions
       .filter((method) => paymentAllowedForServiceMode(method.value, serviceMode.value))
       .filter((method) => !dineInCheckoutPrepaid.value || deliveryOnlinePaymentMethods.has(method.value))
+      .filter((method) => !onlineBenefitsRequireOnsitePayment.value || method.value === 'cash')
   }
 
   return configuredMethods
     .filter((method) => method.enabled)
     .filter((method) => paymentAllowedForServiceMode(method.id, serviceMode.value))
     .filter((method) => !dineInCheckoutPrepaid.value || deliveryOnlinePaymentMethods.has(method.id))
+    .filter((method) => !onlineBenefitsRequireOnsitePayment.value || method.id === 'cash')
     .map((method) => ({
       value: method.id,
       label: method.label.trim() || (fallbackPaymentOptions.find((fallback) => fallback.value === method.id)?.label ?? method.id),
     }))
 })
 const hasPaymentOptions = computed(() => !requiresPaymentSelection.value || paymentOptions.value.length > 0)
+const onlineBenefitPaymentError = computed(() => {
+  if (!requiresPaymentSelection.value || !onlineBenefitsRequireOnsitePayment.value || paymentOptions.value.length > 0) {
+    return null
+  }
+
+  return serviceMode.value === 'delivery'
+    ? '優惠活動須選擇現場付款，外送訂單目前需線上付款'
+    : '優惠活動須選擇現場付款，請洽門市人員'
+})
 const itemNotesVisible = computed(() => onlineOrdering.value.commentFields.itemNotes !== 'hidden')
 const orderNoteMode = computed(() => onlineOrdering.value.commentFields.orderNote)
 const orderNoteVisible = computed(() => orderNoteMode.value !== 'hidden')
@@ -510,6 +522,7 @@ const canSubmit = computed(() =>
   customer.phone.trim().length > 0 &&
   (!orderNoteRequired.value || customer.note.trim().length > 0) &&
   (!requiresPaymentSelection.value || paymentOptions.value.some((option) => option.value === paymentMethod.value)) &&
+  onlineBenefitPaymentError.value === null &&
   deliveryMinimumMet.value &&
   requestedFulfillmentError() === null &&
   cartAvailabilityError.value === null &&
@@ -1089,6 +1102,12 @@ const submitOnlineOrder = async (): Promise<void> => {
     return
   }
 
+  const benefitPaymentError = onlineBenefitPaymentError.value
+  if (benefitPaymentError) {
+    formError.value = benefitPaymentError
+    return
+  }
+
   if (requiresPaymentSelection.value && !paymentOptions.value.some((option) => option.value === paymentMethod.value)) {
     formError.value = '目前不開放這個付款方式'
     return
@@ -1614,6 +1633,7 @@ watch(
           {{ payment.label }}
         </button>
         <span v-if="paymentOptions.length === 0" class="panel-note">目前沒有開放付款方式</span>
+        <span v-else-if="onlineBenefitsRequireOnsitePayment" class="panel-note">優惠活動須選擇現場付款，於 POS 結帳時操作。</span>
       </div>
       <p v-else class="consumer-checkout-instructions">
         付款方式將保留為現場後結，店員可在 POS 訂單內完成收款。

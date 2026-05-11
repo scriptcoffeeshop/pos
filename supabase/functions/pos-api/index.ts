@@ -4426,6 +4426,14 @@ api.post("/orders", async (c) => {
       if (!paymentMethodEnabled) {
         return c.json({ error: "Selected payment method is disabled" }, 409);
       }
+      if (onlineBenefitsRequireOnsitePayment(input, discountRuntime.automaticDiscountAmount)) {
+        if (serviceMode === "delivery") {
+          return c.json({ error: "Discounts, points, or coupons require onsite payment; delivery orders require online payment" }, 409);
+        }
+        if (paymentMethod !== "cash") {
+          return c.json({ error: "Discounts, points, or coupons require onsite payment" }, 409);
+        }
+      }
       if (orderSource === "qr" && serviceMode === "dine-in" && !deliveryOnlinePaymentMethods.has(paymentMethod)) {
         return c.json({ error: "Dine-in prepaid checkout requires online payment" }, 409);
       }
@@ -6628,6 +6636,10 @@ const onlineDeliveryChargeableAmount = (input: CreateOrderInput): number =>
       clampNonNegativeInteger(input.discountAmount) -
       clampNonNegativeInteger(input.pointsRedeemed),
   );
+const onlineBenefitsRequireOnsitePayment = (input: CreateOrderInput, automaticDiscountAmount: number): boolean =>
+  automaticDiscountAmount > 0 ||
+  clampNonNegativeInteger(input.pointsRedeemed) > 0 ||
+  sanitizeText(input.couponCode, "").length > 0;
 const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSettings): number => {
   if (settings.freeDeliveryThreshold > 0 && subtotal >= settings.freeDeliveryThreshold) {
     return 0;
