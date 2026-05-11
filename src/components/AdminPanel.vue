@@ -33,6 +33,7 @@ import {
   defaultEngagementSettings,
   defaultFloorPlanSettings,
   fetchAdminAuditEvents,
+  fetchAdminCloseoutReportDeliveries,
   fetchAdminCoupons,
   fetchAdminDailyReport,
   fetchAdminInventory,
@@ -55,6 +56,7 @@ import {
 import type {
   AccessControlSettings,
   AdminPermission,
+  CloseoutReportDelivery,
   CustomerEngagementSettings,
   DailySalesReport,
   FloorPlanSettings,
@@ -219,6 +221,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'checkoutOrders', label: '結帳' },
   { value: 'adjustServiceCharges', label: '服務費/其他費用' },
   { value: 'applyManualDiscounts', label: '手動折扣' },
+  { value: 'sendDailyReports', label: '日結報表寄送' },
   { value: 'manageProducts', label: '商品' },
   { value: 'managePrinting', label: '出單' },
   { value: 'managePayments', label: '支付' },
@@ -238,6 +241,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
 const auditActionLabels: Record<string, string> = {
   'register.open': '開班',
   'register.close': '關班',
+  'register.close_report.delivery': '關帳信寄送',
   'register.cash_adjustment': '現金臨時收支',
   'employee.time_clock': '員工打卡',
   'product.update': '商品更新',
@@ -404,7 +408,10 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
 
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
-  staffAccounts: (settings.staffAccounts ?? []).map((staff) => ({ ...staff })),
+  staffAccounts: (settings.staffAccounts ?? []).map((staff) => ({
+    ...staff,
+    reportEmail: staff.reportEmail ?? '',
+  })),
   protectedPermissions: [...(settings.protectedPermissions ?? [])],
 })
 
@@ -519,6 +526,7 @@ const pendingBlacklistedReservationPhone = ref('')
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
 const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
+const closeoutReportDeliveries = ref<CloseoutReportDelivery[]>([])
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
@@ -529,6 +537,7 @@ const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
 const timeClockEntries = ref<StaffTimeClockEntry[]>([])
 const auditLimit = ref(50)
+const closeoutReportDeliveryLimit = ref(60)
 const paymentEventLimit = ref(50)
 const timeClockLimit = ref(80)
 const paymentProviderFilter = ref('all')
@@ -542,6 +551,7 @@ const isAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
+const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
 const isIchefLoading = ref(false)
 const isOperationLoading = ref(false)
@@ -654,6 +664,11 @@ const reportPeakHour = computed(() => {
 
   return [...report.hourly].sort((a, b) => b.total - a.total || b.count - a.count)[0] ?? null
 })
+const closeoutReportDeliverySummary = computed(() => ({
+  sent: closeoutReportDeliveries.value.filter((delivery) => delivery.status === 'sent').length,
+  queued: closeoutReportDeliveries.value.filter((delivery) => delivery.status === 'queued').length,
+  failed: closeoutReportDeliveries.value.filter((delivery) => delivery.status === 'failed').length,
+}))
 const onlineStationCount = computed(() =>
   stationHeartbeats.value.filter((station) => isStationOnline(station.lastSeenAt)).length,
 )
@@ -1004,6 +1019,29 @@ const reportBreakdownLabel = (key: string): string => {
 }
 
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
+
+const closeoutReportDeliveryStatusLabel = (delivery: CloseoutReportDelivery): string => {
+  const labels: Record<CloseoutReportDelivery['status'], string> = {
+    queued: '待寄送',
+    sent: '已寄送',
+    failed: '寄送失敗',
+    skipped: '已略過',
+  }
+
+  return labels[delivery.status]
+}
+
+const closeoutReportDeliveryStatusClass = (delivery: CloseoutReportDelivery): string => {
+  if (delivery.status === 'sent') {
+    return 'status-pill--success'
+  }
+
+  if (delivery.status === 'failed') {
+    return 'status-pill--danger'
+  }
+
+  return 'status-pill--neutral'
+}
 
 const csvCell = (value: unknown): string => {
   const text = value === null || value === undefined ? '' : String(value)
@@ -1358,6 +1396,7 @@ const loadAdminData = async (): Promise<void> => {
       blacklistRows,
       timeClockRows,
       inventory,
+      closeoutDeliveries,
     ] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
@@ -1371,6 +1410,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminReservationBlacklist(),
       fetchAdminTimeClockEntries(timeClockLimit.value),
       fetchAdminInventory(120),
+      fetchAdminCloseoutReportDeliveries(closeoutReportDeliveryLimit.value),
     ])
     productDrafts.value = products.map(toDraft)
     inventoryItems.value = inventory.items
@@ -1389,8 +1429,9 @@ const loadAdminData = async (): Promise<void> => {
     reservations.value = reservationRows
     reservationBlacklist.value = blacklistRows
     timeClockEntries.value = timeClockRows
+    closeoutReportDeliveries.value = closeoutDeliveries
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1498,6 +1539,20 @@ const loadDailyReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
   } finally {
     isReportLoading.value = false
+  }
+}
+
+const loadCloseoutReportDeliveries = async (): Promise<void> => {
+  isCloseoutReportDeliveryLoading.value = true
+  adminMessage.value = '讀取關帳信紀錄中'
+
+  try {
+    closeoutReportDeliveries.value = await fetchAdminCloseoutReportDeliveries(closeoutReportDeliveryLimit.value)
+    adminMessage.value = `已載入 ${closeoutReportDeliveries.value.length} 筆關帳信紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '關帳信紀錄讀取失敗'
+  } finally {
+    isCloseoutReportDeliveryLoading.value = false
   }
 }
 
@@ -2237,6 +2292,7 @@ const addStaffAccount = (): void => {
     staffCode: String(1000 + accessControl.value.staffAccounts.length),
     roleId: accessControl.value.roles[0]?.id ?? 'owner',
     active: true,
+    reportEmail: '',
   })
 }
 
@@ -2246,6 +2302,11 @@ const removeStaffAccount = (staffId: string): void => {
 
 const staffRoleName = (staff: StaffAccountSetting): string =>
   accessControl.value.roles.find((role) => role.id === staff.roleId)?.name ?? '未指定角色'
+
+const staffCanReceiveDailyReport = (staff: StaffAccountSetting): boolean =>
+  accessControl.value.roles
+    .find((role) => role.id === staff.roleId)
+    ?.permissions.includes('sendDailyReports') ?? false
 
 const hasPermission = (role: RoleSetting, permission: AdminPermission): boolean => role.permissions.includes(permission)
 
@@ -3531,6 +3592,14 @@ const saveAccessControl = async (): Promise<void> => {
               <RefreshCw :size="18" aria-hidden="true" />
               {{ isReportLoading ? '讀取中' : '刷新日報' }}
             </button>
+            <label class="admin-limit-field">
+              關帳信
+              <input v-model.number="closeoutReportDeliveryLimit" type="number" min="1" max="200" step="1" />
+            </label>
+            <button class="primary-button secondary-button" type="button" :disabled="isCloseoutReportDeliveryLoading" @click="loadCloseoutReportDeliveries">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isCloseoutReportDeliveryLoading ? '讀取中' : '刷新關帳信' }}
+            </button>
             <button class="primary-button secondary-button" type="button" :disabled="!dailyReport" @click="exportDailyReportCsv">
               <Download :size="18" aria-hidden="true" />
               匯出 CSV
@@ -3565,6 +3634,43 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ reportPeakHour ? `${reportPeakHour.count} 張 · ${formatCurrency(reportPeakHour.total)}` : '尚無資料' }}</small>
           </article>
         </div>
+
+        <section class="admin-subpanel admin-report-delivery-panel" aria-label="關帳信紀錄">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Closeout Email</p>
+              <h3>關帳信紀錄</h3>
+            </div>
+            <span class="panel-note">
+              已寄 {{ closeoutReportDeliverySummary.sent }} · 待寄 {{ closeoutReportDeliverySummary.queued }} · 失敗 {{ closeoutReportDeliverySummary.failed }}
+            </span>
+          </div>
+
+          <div class="admin-audit-list admin-report-delivery-list">
+            <article v-for="delivery in closeoutReportDeliveries" :key="delivery.id" class="admin-audit-row">
+              <header class="admin-row-header">
+                <div class="admin-audit-primary">
+                  <strong>{{ delivery.recipientName }} · {{ delivery.recipientEmail }}</strong>
+                  <span>{{ delivery.subject }}</span>
+                </div>
+                <time :datetime="delivery.createdAt">{{ formatAuditTime(delivery.createdAt) }}</time>
+              </header>
+              <div class="admin-audit-meta">
+                <span class="status-pill" :class="closeoutReportDeliveryStatusClass(delivery)">
+                  {{ closeoutReportDeliveryStatusLabel(delivery) }}
+                </span>
+                <span>{{ delivery.deliveryProvider }}</span>
+                <span>{{ delivery.sentAt ? `寄出 ${formatAuditTime(delivery.sentAt)}` : '尚未寄出' }}</span>
+                <span v-if="delivery.errorMessage">{{ delivery.errorMessage }}</span>
+              </div>
+            </article>
+
+            <div v-if="closeoutReportDeliveries.length === 0" class="empty-state">
+              <Search :size="24" aria-hidden="true" />
+              <span>尚無關帳信紀錄</span>
+            </div>
+          </div>
+        </section>
 
         <div v-if="dailyReport" class="admin-section-grid admin-report-sections">
           <section class="admin-subpanel">
@@ -4207,6 +4313,10 @@ const saveAccessControl = async (): Promise<void> => {
                   </option>
                 </select>
               </label>
+              <label v-if="staffCanReceiveDailyReport(staff)">
+                報表寄送 Email
+                <input v-model.trim="staff.reportEmail" type="email" autocomplete="email" />
+              </label>
               <label class="toggle-row">
                 <input v-model="staff.active" type="checkbox" />
                 啟用
@@ -4218,6 +4328,7 @@ const saveAccessControl = async (): Promise<void> => {
             <div class="admin-audit-meta">
               <span>{{ staffRoleName(staff) }}</span>
               <span>{{ staff.active ? '可打卡' : '已停用' }}</span>
+              <span>{{ staffCanReceiveDailyReport(staff) ? (staff.reportEmail || '未設定報表 Email') : '未開啟日結報表寄送' }}</span>
             </div>
           </article>
           <div v-if="accessControl.staffAccounts.length === 0" class="empty-state">

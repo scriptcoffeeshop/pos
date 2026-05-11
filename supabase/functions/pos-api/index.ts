@@ -375,6 +375,7 @@ type AdminPermission =
   | "checkoutOrders"
   | "adjustServiceCharges"
   | "applyManualDiscounts"
+  | "sendDailyReports"
   | "manageProducts"
   | "managePrinting"
   | "managePayments"
@@ -403,6 +404,7 @@ interface StaffAccountSetting {
   staffCode: string;
   roleId: string;
   active: boolean;
+  reportEmail: string;
 }
 
 interface AccessControlSettings {
@@ -655,6 +657,8 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") ??
   Deno.env.get("VITE_SUPABASE_URL");
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const paymentWebhookSecret = Deno.env.get("POS_PAYMENT_WEBHOOK_SECRET");
+const reportEmailFrom = Deno.env.get("POS_REPORT_EMAIL_FROM") ?? "";
+const resendApiKey = Deno.env.get("RESEND_API_KEY") ?? "";
 
 if (!supabaseUrl || !serviceRoleKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -694,6 +698,8 @@ const inventoryConsumptionRuleSelect =
   "id, subject_type, product_id, option_label, item_id, quantity, is_active, sort_order, created_at, updated_at";
 const registerSessionSelect =
   "id, status, opened_at, closed_at, opening_cash, closing_cash, expected_cash, cash_sales, non_cash_sales, pending_total, order_count, open_order_count, failed_payment_count, failed_print_count, voided_order_count, note";
+const closeoutReportDeliverySelect =
+  "id, register_session_id, recipient_staff_id, recipient_name, recipient_email, status, subject, delivery_provider, error_message, sent_at, created_at";
 const auditEventSelect =
   "id, action, order_id, register_session_id, station_id, actor, metadata, created_at";
 const cashDrawerEventSelect =
@@ -866,6 +872,7 @@ const defaultAccessControl: AccessControlSettings = {
         "checkoutOrders",
         "adjustServiceCharges",
         "applyManualDiscounts",
+        "sendDailyReports",
         "manageProducts",
         "managePrinting",
         "managePayments",
@@ -890,6 +897,7 @@ const defaultAccessControl: AccessControlSettings = {
       staffCode: "0000",
       roleId: "owner",
       active: true,
+      reportEmail: "",
     },
   ],
   protectedPermissions: [],
@@ -1948,6 +1956,34 @@ api.post("/register/close", async (c) => {
       operatorRoleName: staffRole?.name ?? staffAccount.roleId,
     },
   });
+
+  try {
+    const reportDeliverySummary = await queueCloseoutReportDeliveries(
+      { ...(data as RegisterSessionRow), ...summary },
+      staffAccount,
+      staffRole,
+    );
+    await writeAuditEvent({
+      action: "register.close_report.delivery",
+      registerSessionId: data.id,
+      stationId,
+      metadata: reportDeliverySummary,
+    });
+  } catch (error) {
+    await writeAuditEvent({
+      action: "register.close_report.delivery",
+      registerSessionId: data.id,
+      stationId,
+      metadata: {
+        total: 0,
+        sent: 0,
+        queued: 0,
+        failed: 1,
+        skipped: 0,
+        errorMessage: error instanceof Error ? error.message : "Closeout report delivery failed",
+      },
+    });
+  }
 
   try {
     return c.json({ session: await withRegisterAdjustmentSummary(data as RegisterSessionRow) });
@@ -3387,6 +3423,29 @@ api.get("/admin/audit-events", async (c) => {
   return c.json({ events: data });
 });
 
+api.get("/admin/closeout-report-deliveries", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const rawLimit = Number(c.req.query("limit") ?? 60);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200)
+    : 60;
+  const { data, error } = await supabase
+    .from("closeout_report_deliveries")
+    .select(closeoutReportDeliverySelect)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  return c.json({ deliveries: data });
+});
+
 api.get("/admin/payment-events", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -4394,6 +4453,22 @@ interface RegisterCashAdjustmentRow {
   created_at: string;
 }
 
+interface CloseoutReportDeliveryRow {
+  id: string;
+  register_session_id: string;
+  recipient_staff_id: string;
+  recipient_name: string;
+  recipient_email: string;
+  status: "queued" | "sent" | "failed" | "skipped";
+  subject: string;
+  body_text?: string | null;
+  body_html?: string | null;
+  delivery_provider: string;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
 interface StaffTimeClockEntryRow {
   id: string;
   staff_account_id: string;
@@ -4645,6 +4720,226 @@ const withRegisterAdjustmentSummary = async (
     ...session,
     ...adjustmentSummary,
     cash_adjustments: cashAdjustments,
+  };
+};
+
+const formatTaipeiDateTime = (value: string | null): string => {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const localDate = new Date(date.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  const year = localDate.getUTCFullYear();
+  const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(localDate.getUTCDate()).padStart(2, "0");
+  const hours = String(localDate.getUTCHours()).padStart(2, "0");
+  const minutes = String(localDate.getUTCMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+};
+
+const formatReportMoney = (value: number | null | undefined): string =>
+  `$${Math.round(Number(value) || 0).toLocaleString("zh-TW")}`;
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const buildCloseoutReportMessage = (
+  session: RegisterSessionRow,
+  operatorStaff: StaffAccountSetting,
+  operatorRole: RoleSetting | null,
+): { subject: string; bodyText: string; bodyHtml: string } => {
+  const closedAtLabel = formatTaipeiDateTime(session.closed_at);
+  const openedAtLabel = formatTaipeiDateTime(session.opened_at);
+  const subject = `Script Coffee 關帳紀錄 ${closedAtLabel || session.id.slice(0, 8)}`;
+  const rows: Array<[string, string]> = [
+    ["開班時間", openedAtLabel],
+    ["關帳時間", closedAtLabel],
+    ["操作員", `${operatorStaff.name} / ${operatorRole?.name ?? operatorStaff.roleId}`],
+    ["訂單數", `${session.order_count}`],
+    ["實收現金", formatReportMoney(session.cash_sales)],
+    ["非現金收入", formatReportMoney(session.non_cash_sales)],
+    ["現金收入調整", formatReportMoney(session.cash_adjustment_income)],
+    ["現金支出調整", formatReportMoney(session.cash_adjustment_expense)],
+    ["預期現金", formatReportMoney(session.expected_cash)],
+    ["實點現金", formatReportMoney(session.closing_cash)],
+    ["待收款", formatReportMoney(session.pending_total)],
+    ["未交付訂單", `${session.open_order_count}`],
+    ["付款異常", `${session.failed_payment_count}`],
+    ["列印異常", `${session.failed_print_count}`],
+    ["作廢單", `${session.voided_order_count}`],
+    ["備註", session.note || "無"],
+  ];
+
+  const bodyText = [
+    subject,
+    "",
+    ...rows.map(([label, value]) => `${label}: ${value}`),
+    "",
+    `Register session: ${session.id}`,
+  ].join("\n");
+  const bodyHtml = [
+    "<h1>關帳紀錄</h1>",
+    "<table>",
+    ...rows.map(([label, value]) =>
+      `<tr><th align="left">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`
+    ),
+    "</table>",
+    `<p>Register session: ${escapeHtml(session.id)}</p>`,
+  ].join("");
+
+  return { subject, bodyText, bodyHtml };
+};
+
+const loadCloseoutReportRecipients = async (): Promise<Array<{
+  staffAccount: StaffAccountSetting;
+  role: RoleSetting;
+}>> => {
+  const accessControl = await loadSetting<AccessControlSettings>("access_control", defaultAccessControl);
+  const normalizedAccessControl = validateAccessControl(accessControl).value ?? defaultAccessControl;
+  const rolesById = new Map(normalizedAccessControl.roles.map((role) => [role.id, role]));
+  const seenEmails = new Set<string>();
+
+  return normalizedAccessControl.staffAccounts.flatMap((staffAccount) => {
+    if (!staffAccount.active || !staffAccount.reportEmail || seenEmails.has(staffAccount.reportEmail)) {
+      return [];
+    }
+
+    const role = rolesById.get(staffAccount.roleId);
+    if (!role?.permissions.includes("sendDailyReports")) {
+      return [];
+    }
+
+    seenEmails.add(staffAccount.reportEmail);
+    return [{ staffAccount, role }];
+  });
+};
+
+const sendCloseoutReportEmail = async (
+  delivery: CloseoutReportDeliveryRow,
+  message: { bodyText: string; bodyHtml: string },
+): Promise<{ status: "sent" | "failed"; errorMessage: string | null }> => {
+  const from = normalizeReportEmail(reportEmailFrom);
+  if (!resendApiKey || !from) {
+    return { status: "failed", errorMessage: "Report email provider is not configured" };
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to: [delivery.recipient_email],
+        subject: delivery.subject,
+        text: message.bodyText,
+        html: message.bodyHtml,
+      }),
+    });
+
+    if (response.ok) {
+      return { status: "sent", errorMessage: null };
+    }
+
+    const payload = await response.text().catch(() => "");
+    return {
+      status: "failed",
+      errorMessage: `Resend ${response.status}: ${payload.slice(0, 240)}`,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      errorMessage: error instanceof Error ? error.message.slice(0, 240) : "Email delivery failed",
+    };
+  }
+};
+
+const queueCloseoutReportDeliveries = async (
+  session: RegisterSessionRow,
+  operatorStaff: StaffAccountSetting,
+  operatorRole: RoleSetting | null,
+): Promise<Record<string, unknown>> => {
+  const recipients = await loadCloseoutReportRecipients();
+  if (recipients.length === 0) {
+    return { total: 0, sent: 0, queued: 0, failed: 0, skipped: 0 };
+  }
+
+  const message = buildCloseoutReportMessage(session, operatorStaff, operatorRole);
+  const canSendEmail = Boolean(resendApiKey && normalizeReportEmail(reportEmailFrom));
+  const insertedRows = recipients.map(({ staffAccount }) => ({
+    register_session_id: session.id,
+    recipient_staff_id: staffAccount.id,
+    recipient_name: staffAccount.name,
+    recipient_email: staffAccount.reportEmail,
+    status: "queued",
+    subject: message.subject,
+    body_text: message.bodyText,
+    body_html: message.bodyHtml,
+    delivery_provider: canSendEmail ? "resend" : "manual",
+    error_message: canSendEmail ? null : "Report email provider is not configured",
+  }));
+
+  const { data, error } = await supabase
+    .from("closeout_report_deliveries")
+    .insert(insertedRows)
+    .select(closeoutReportDeliverySelect);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const deliveries = (data ?? []) as CloseoutReportDeliveryRow[];
+  if (!canSendEmail) {
+    return {
+      total: deliveries.length,
+      sent: 0,
+      queued: deliveries.length,
+      failed: 0,
+      skipped: 0,
+      provider: "manual",
+      reason: "Report email provider is not configured",
+    };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  for (const delivery of deliveries) {
+    const result = await sendCloseoutReportEmail(delivery, message);
+    if (result.status === "sent") {
+      sent += 1;
+    } else {
+      failed += 1;
+    }
+
+    await supabase
+      .from("closeout_report_deliveries")
+      .update({
+        status: result.status,
+        error_message: result.errorMessage,
+        sent_at: result.status === "sent" ? new Date().toISOString() : null,
+      })
+      .eq("id", delivery.id);
+  }
+
+  return {
+    total: deliveries.length,
+    sent,
+    queued: 0,
+    failed,
+    skipped: 0,
+    provider: "resend",
   };
 };
 
@@ -5325,6 +5620,7 @@ const knownPermissions: AdminPermission[] = [
   "checkoutOrders",
   "adjustServiceCharges",
   "applyManualDiscounts",
+  "sendDailyReports",
   "manageProducts",
   "managePrinting",
   "managePayments",
@@ -6374,6 +6670,13 @@ const normalizeStaffCode = (value: unknown): string =>
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
+const reportEmailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeReportEmail = (value: unknown): string => {
+  const email = typeof value === "string" ? value.trim().toLowerCase().slice(0, 254) : "";
+  return reportEmailPattern.test(email) ? email : "";
+};
+
 const sanitizeColor = (value: unknown, fallback = "#0f766e"): string =>
   typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
 
@@ -6671,6 +6974,7 @@ const validateAccessControl = (input: unknown): {
       const staffCode = normalizeStaffCode(entry.staffCode);
       const requestedRoleId = sanitizeIdentifier(entry.roleId, "");
       const roleId = roleIds.has(requestedRoleId) ? requestedRoleId : defaultRoleId;
+      const reportEmail = normalizeReportEmail(entry.reportEmail);
       if (!id || !name || !staffCode || seenStaffCodes.has(staffCode)) {
         return [];
       }
@@ -6682,6 +6986,7 @@ const validateAccessControl = (input: unknown): {
         staffCode,
         roleId,
         active: entry.active !== false,
+        reportEmail,
       }];
     }).slice(0, 80)
     : [{
@@ -6690,6 +6995,7 @@ const validateAccessControl = (input: unknown): {
       staffCode: "0000",
       roleId: defaultRoleId,
       active: true,
+      reportEmail: "",
     }];
 
   const protectedPermissions = Array.isArray(settings.protectedPermissions)

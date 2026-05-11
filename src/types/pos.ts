@@ -302,6 +302,7 @@ export type AdminPermission =
   | 'checkoutOrders'
   | 'adjustServiceCharges'
   | 'applyManualDiscounts'
+  | 'sendDailyReports'
   | 'manageProducts'
   | 'managePrinting'
   | 'managePayments'
@@ -330,6 +331,7 @@ export interface StaffAccountSetting {
   staffCode: string
   roleId: string
   active: boolean
+  reportEmail: string
 }
 
 export interface AccessControlSettings {
@@ -700,6 +702,22 @@ export interface PosAuditEvent {
   stationId: string
   actor: string
   metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export type CloseoutReportDeliveryStatus = 'queued' | 'sent' | 'failed' | 'skipped'
+
+export interface CloseoutReportDelivery {
+  id: string
+  registerSessionId: string
+  recipientStaffId: string
+  recipientName: string
+  recipientEmail: string
+  status: CloseoutReportDeliveryStatus
+  subject: string
+  deliveryProvider: string
+  errorMessage: string
+  sentAt: string | null
   createdAt: string
 }
 

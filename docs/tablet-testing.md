@@ -197,6 +197,18 @@ POS 操作權限驗證會把 iCHEF 後台式「需要驗證」開關保存在 `a
 6. 到後台「操作稽核」確認 `access.verify` 事件包含 permission、操作員與角色；關帳仍另有 `register.close` 操作員 metadata。
 7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認驗證開關、角色權限與員工識別碼仍由 Supabase runtime/API 還原。
 
+## 多平板關帳信 / 日結報表寄送
+
+關帳信收件人與 outbox 都走 `access_control` runtime、`closeout_report_deliveries` 與 `pos_audit_events`，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 平板 A 進入後台「權限」，建立或選擇一個角色並勾選「日結報表寄送」。
+2. 同一角色下的啟用員工列應出現「報表寄送 Email」，輸入測試信箱並儲存。
+3. 平板 B 重新載入後台資料，確認同一員工的收件信箱同步出現；若移除該角色的「日結報表寄送」，Email 欄位應隱藏但資料仍不落本機。
+4. 用有 `closeRegister` 權限的員工完成關帳，確認平板 A 後台「營運日報」的「關帳信紀錄」新增一筆。
+5. 平板 B 不重新安裝時刷新「營運日報」，確認看到同一 `closeout_report_deliveries` 紀錄與狀態。
+6. 到後台「操作稽核」確認有 `register.close_report.delivery`，metadata 應包含 total、sent、queued、failed 與 provider/reason。
+7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認關帳信紀錄仍從 Supabase 還原，不會因本機資料清除而消失。
+
 ## 多平板標籤管理
 
 工具箱標籤管理走 `engagement_settings.orderLabels` runtime，不應依賴 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

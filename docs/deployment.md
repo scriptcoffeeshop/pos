@@ -33,8 +33,10 @@ POS 後端會使用另一個全新的 Supabase 專案，不沿用咖啡訂購專
 - `SUPABASE_PROJECT_REF`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- optional `RESEND_API_KEY`
+- optional `POS_REPORT_EMAIL_FROM`
 
-`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 放 GitHub Secrets 或 `.env.supabase.local`。前端公開值使用 `.env.local` 與部署環境變數管理。
+`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 放 GitHub Secrets 或 `.env.supabase.local`。前端公開值使用 `.env.local` 與部署環境變數管理。關帳信即時寄送需要把 `RESEND_API_KEY` 與 `POS_REPORT_EMAIL_FROM` 設為 Supabase Secrets；未設定時只建立關帳信 outbox。
 
 目前已綁定 project ref：`uuzwcmceotooocyrtnao`。
 

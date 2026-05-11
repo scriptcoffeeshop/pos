@@ -49,6 +49,8 @@ import type {
   RegisterSession,
   CashDrawerDeliveryStatus,
   CashDrawerEvent,
+  CloseoutReportDelivery,
+  CloseoutReportDeliveryStatus,
   ReservationStatus,
   StaffTimeClockEntry,
   StaffPermissionVerification,
@@ -320,6 +322,20 @@ interface ApiAuditEvent {
   created_at: string
 }
 
+interface ApiCloseoutReportDelivery {
+  id: string
+  register_session_id: string
+  recipient_staff_id: string
+  recipient_name: string
+  recipient_email: string
+  status: CloseoutReportDeliveryStatus
+  subject: string
+  delivery_provider: string
+  error_message: string | null
+  sent_at: string | null
+  created_at: string
+}
+
 interface ApiPaymentEvent {
   id: string
   provider: string
@@ -402,6 +418,10 @@ interface ApiReservationBlacklistEntry {
 
 interface AuditEventsResponse {
   events: ApiAuditEvent[]
+}
+
+interface CloseoutReportDeliveriesResponse {
+  deliveries: ApiCloseoutReportDelivery[]
 }
 
 interface PaymentEventsResponse {
@@ -985,6 +1005,20 @@ const normalizeAuditEvent = (event: ApiAuditEvent): PosAuditEvent => ({
   createdAt: event.created_at,
 })
 
+const normalizeCloseoutReportDelivery = (delivery: ApiCloseoutReportDelivery): CloseoutReportDelivery => ({
+  id: delivery.id,
+  registerSessionId: delivery.register_session_id,
+  recipientStaffId: delivery.recipient_staff_id,
+  recipientName: delivery.recipient_name,
+  recipientEmail: delivery.recipient_email,
+  status: delivery.status,
+  subject: delivery.subject,
+  deliveryProvider: delivery.delivery_provider,
+  errorMessage: delivery.error_message ?? '',
+  sentAt: delivery.sent_at,
+  createdAt: delivery.created_at,
+})
+
 const normalizePaymentEvent = (event: ApiPaymentEvent): PosPaymentEvent => ({
   id: event.id,
   provider: event.provider,
@@ -1192,7 +1226,11 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
   return {
     roles,
     staffAccounts: Array.isArray(value.staffAccounts)
-      ? value.staffAccounts.map((staff) => ({ ...staff, active: staff.active !== false }))
+      ? value.staffAccounts.map((staff) => ({
+          ...staff,
+          active: staff.active !== false,
+          reportEmail: typeof staff.reportEmail === 'string' ? staff.reportEmail : '',
+        }))
       : fallbackRole
         ? [
             {
@@ -1201,6 +1239,7 @@ const normalizeAccessControlSettings = (value: unknown): AccessControlSettings =
               staffCode: '0000',
               roleId: fallbackRole.id,
               active: true,
+              reportEmail: '',
             },
           ]
         : [],
@@ -2398,6 +2437,14 @@ export const fetchAdminAuditEvents = async (limit = 50): Promise<PosAuditEvent[]
   const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`)
 
   return data.events.map(normalizeAuditEvent)
+}
+
+export const fetchAdminCloseoutReportDeliveries = async (limit = 60): Promise<CloseoutReportDelivery[]> => {
+  const rawLimit = Number.isFinite(limit) ? limit : 60
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 200)
+  const data = await request<CloseoutReportDeliveriesResponse>(`/admin/closeout-report-deliveries?limit=${cappedLimit}`)
+
+  return data.deliveries.map(normalizeCloseoutReportDelivery)
 }
 
 export const fetchAdminTimeClockEntries = async (limit = 80): Promise<StaffTimeClockEntry[]> => {

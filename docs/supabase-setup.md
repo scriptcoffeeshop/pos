@@ -22,9 +22,11 @@ VITE_POS_PRINTER_PORT=9100
 SUPABASE_PROJECT_REF=<project-ref>
 SUPABASE_ACCESS_TOKEN=<personal-access-token>
 SUPABASE_DB_PASSWORD=<database-password>
+RESEND_API_KEY=<optional-resend-api-key>
+POS_REPORT_EMAIL_FROM=pos@example.com
 ```
 
-正式部署時，後端三項請放 GitHub Secrets，不要提交到 git。
+正式部署時，Supabase token / DB password 放 GitHub Secrets；關帳信若要即時寄送，`RESEND_API_KEY` 與 `POS_REPORT_EMAIL_FROM` 應放 Supabase Secrets 或部署環境，不要提交到 git。未設定時仍會建立 `closeout_report_deliveries` 待寄送紀錄。
 
 ## 初始 schema 草案
 
@@ -124,6 +126,7 @@ SUPABASE_DB_PASSWORD=<database-password>
 - 外部金流回呼走 `POST /payments/webhook/:provider`，需 `X-POS-PAYMENT-WEBHOOK-SECRET`。後端以 `record_pos_payment_event()` 寫入 `payment_events` 並做冪等狀態轉換；重複 event 不會二次入帳，金額不符不會改單，退款回呼會寫入負數 `transaction_ledger`。
 - 收銀班別讀取走 `GET /register/current`；開班與關班走 `POST /register/open`、`POST /register/close`，前端會要求先進入後台編輯模式。
 - 收銀班別摘要會回傳未交付、付款異常、列印失敗與作廢單計數；開班中的摘要動態重算，關班時會寫回 `register_sessions` 作為當班快照。有未交付、付款異常或列印失敗時，`POST /register/close` 需帶 `force=true` 才會關班。關班也需帶 `staffCode`，後端會用 `access_control.staffAccounts` 驗證啟用員工，並在 `register.close` 操作稽核 metadata 保存操作員與角色。
+- 關帳後若 `access_control` 有啟用且具 `sendDailyReports` 權限、並設定 `reportEmail` 的員工，`POST /register/close` 會建立 `closeout_report_deliveries` 紀錄並寫入 `register.close_report.delivery` 稽核。Edge Function 設定 `RESEND_API_KEY` 與 `POS_REPORT_EMAIL_FROM` 時會嘗試即時寄送；未設定時保留 `queued` outbox。後台讀取走 `GET /admin/closeout-report-deliveries?limit=60`。
 - 後台商品管理走 `GET /admin/products`、`POST /admin/products`、`PATCH /admin/products/:id` 與 `DELETE /admin/products/:id`；`products.category` 已改為 text，因此工具箱可新增/刪除自訂分類並建立新品項。平板端新增/刪除商品或改商品供應狀態時，未成功寫入 API 不會視為完成，只保留舊本機資料作為離線 fallback。供應狀態的「線上停售」會寫入 `online_visible=false`、`qr_visible=false` 且保留 POS 可見，「全部停售」會寫入 `is_available=false` 且保留 POS 可見，改回正常供應會同步恢復 POS/線上/掃碼可見性。
 - 後台會員錢包走 `GET /admin/members`、`POST /admin/members` 與 `POST /admin/members/:id/wallet-adjustments`；建立會員與錢包調整都會同步寫入 `transaction_ledger` 與操作稽核。
 - 後台營運日報走 `GET /admin/reports/daily?date=YYYY-MM-DD`，以台灣日界線即時計算當日營收、付款方式、來源、服務方式、時段與熱門商品。
@@ -137,5 +140,6 @@ SUPABASE_DB_PASSWORD=<database-password>
 
 ```bash
 rtk supabase secrets set POS_PAYMENT_WEBHOOK_SECRET=<random-secret> --project-ref uuzwcmceotooocyrtnao
+rtk supabase secrets set RESEND_API_KEY=<resend-api-key> POS_REPORT_EMAIL_FROM=pos@example.com --project-ref uuzwcmceotooocyrtnao
 rtk npm run supabase:functions:deploy
 ```

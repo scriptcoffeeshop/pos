@@ -922,6 +922,7 @@ const accessPermissionLabels: Record<AdminPermission, string> = {
   checkoutOrders: '結帳',
   adjustServiceCharges: '服務費與其他費用',
   applyManualDiscounts: '手動折扣',
+  sendDailyReports: '日結報表寄送',
   manageProducts: '商品管理',
   managePrinting: '列印設定',
   managePayments: '支付設定',
