@@ -724,6 +724,9 @@ const getErrorMessage = (error: unknown): string => {
 
 const isInventoryError = (message: string): boolean => /inventory|Product not found|quantity/i.test(message)
 
+const isCouponRedemptionError = (message: string): boolean =>
+  /優惠券已使用|優惠券.*過期|優惠券.*不適用|coupon.*redeem|coupon.*used|coupon.*expired/i.test(message)
+
 const nextSequenceFromOrders = (orders: PosOrder[], dateKey = formatDateKey(new Date())): number => {
   const orderIdPattern = new RegExp(`^POS-${dateKey}-(\\d{3})$`)
   const maxSequence = orders.reduce((currentMax, order) => {
@@ -3806,6 +3809,21 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         }
         setBackendStatus('fallback', '庫存不足', `訂單未建立：${errorMessage}`)
         void refreshProductCatalog()
+        return null
+      }
+
+      if (isCouponRedemptionError(errorMessage)) {
+        if (existingOrder) {
+          replaceOrder(existingOrder.id, existingOrder)
+        } else {
+          orderQueue.value = orderQueue.value.filter((entry) => entry.id !== order.id)
+          if (!draftOrderId) {
+            nextSequence.value = Math.max(1, nextSequence.value - 1)
+          }
+        }
+        customer.availableCoupons = customer.availableCoupons.filter((coupon) => coupon.code !== couponCode.value.trim())
+        couponCode.value = ''
+        setBackendStatus('fallback', '優惠券不可用', `訂單未建立：${errorMessage}`)
         return null
       }
 

@@ -430,6 +430,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'member-coupon-redemption',
+    category: 'payments',
+    title: '會員優惠券兌換與退回',
+    summary: '會員優惠券使用狀態由資料庫共享，避免兩台平板重複使用同一張券。',
+    steps: [
+      '付款頁先搜尋會員，選擇該會員目前 active 的優惠券。',
+      '正式建單或草稿 finalize 時，API 會先把該券從 active 改為 redeemed，再把 `redeemed_order_id` 綁到訂單。',
+      '如果另一台平板已使用、券已過期或會員不符，訂單會被拒絕，不會留下本機待同步單。',
+      '未收款作廢或已收款退款後，API 會把該訂單使用的券退回 active。',
+      '後台券列表可查看可使用、已使用、已過期、綁定會員、使用時間、兌換訂單與站台。',
+    ],
+    keywords: ['優惠券', '會員券', '兌換', '已使用', '作廢退回', '退款退回', 'redeemed', 'member_coupons', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'online-scheduled-order-rules',
     category: 'online',
     title: '線上預約訂單設定',

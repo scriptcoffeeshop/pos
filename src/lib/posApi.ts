@@ -387,6 +387,9 @@ interface ApiMemberCoupon {
   discount_percent: number
   status: 'active' | 'redeemed' | 'expired'
   expires_at: string | null
+  redeemed_order_id?: string | null
+  redeemed_at?: string | null
+  redemption_station_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -1058,6 +1061,9 @@ const normalizeCoupon = (coupon: ApiMemberCoupon) => ({
   discountPercent: coupon.discount_percent,
   status: coupon.status,
   expiresAt: coupon.expires_at,
+  redeemedOrderId: coupon.redeemed_order_id ?? null,
+  redeemedAt: coupon.redeemed_at ?? null,
+  redemptionStationId: coupon.redemption_station_id ?? '',
   createdAt: coupon.created_at,
   updatedAt: coupon.updated_at,
 })

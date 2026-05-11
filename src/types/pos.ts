@@ -670,6 +670,9 @@ export interface MemberCoupon {
   discountPercent: number
   status: 'active' | 'redeemed' | 'expired'
   expiresAt: string | null
+  redeemedOrderId: string | null
+  redeemedAt: string | null
+  redemptionStationId: string
   createdAt: string
   updatedAt: string
 }

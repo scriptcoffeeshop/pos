@@ -732,7 +732,7 @@ const memberSelect =
 const transactionLedgerSelect =
   "id, member_id, order_id, entry_type, amount, balance_after, note, created_at";
 const memberCouponSelect =
-  "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, created_at, updated_at";
+  "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, redeemed_order_id, redeemed_at, redemption_station_id, created_at, updated_at";
 const reservationSelect =
   "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, note, created_at, updated_at";
 const reservationBlacklistSelect =
@@ -1210,6 +1210,178 @@ const clampIntegerRange = (value: unknown, fallback: number, min: number, max: n
   return Math.min(Math.max(Math.trunc(numberValue), min), max);
 };
 
+const normalizeCouponCode = (value: unknown): string =>
+  sanitizeText(value, "").toUpperCase().replace(/\s+/g, "").slice(0, 80);
+
+const couponUnavailableMessage = "優惠券已使用、過期或不適用此會員";
+
+const couponMatchesMember = (coupon: Record<string, unknown>, memberId: string | null): boolean => {
+  const couponMemberId = typeof coupon.member_id === "string" ? coupon.member_id : null;
+  if (couponMemberId === null) {
+    return memberId === null || memberId.length > 0;
+  }
+  return memberId === couponMemberId;
+};
+
+const expireCouponIfNeeded = async (coupon: Record<string, unknown>, now: Date): Promise<boolean> => {
+  const expiresAt = typeof coupon.expires_at === "string" ? new Date(coupon.expires_at) : null;
+  if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() > now.getTime()) {
+    return false;
+  }
+
+  await supabase
+    .from("member_coupons")
+    .update({ status: "expired" satisfies MemberCouponStatus })
+    .eq("id", coupon.id)
+    .eq("status", "active");
+
+  return true;
+};
+
+interface CouponRedemptionClaim {
+  code: string;
+  coupon: Record<string, unknown>;
+  release: () => Promise<void>;
+  attachOrder: (orderId: string) => Promise<string | null>;
+}
+
+const claimCouponForOrderInput = async (
+  input: CreateOrderInput,
+  stationId: string,
+): Promise<{ claim: CouponRedemptionClaim | null; error: string | null }> => {
+  const code = normalizeCouponCode(input.couponCode);
+  if (!code) {
+    return { claim: null, error: null };
+  }
+
+  const memberId = normalizeUuid(input.memberId);
+  const { data: candidates, error } = await supabase
+    .from("member_coupons")
+    .select(memberCouponSelect)
+    .eq("code", code)
+    .eq("status", "active")
+    .order("member_id", { ascending: true, nullsFirst: false })
+    .limit(20);
+
+  if (error) {
+    return { claim: null, error: error.message };
+  }
+
+  const coupon = (candidates ?? []).find((entry) => couponMatchesMember(entry, memberId));
+  if (!coupon) {
+    return { claim: null, error: couponUnavailableMessage };
+  }
+
+  const now = new Date();
+  if (await expireCouponIfNeeded(coupon, now)) {
+    return { claim: null, error: couponUnavailableMessage };
+  }
+
+  const claimedAt = now.toISOString();
+  const { data: claimedCoupon, error: claimError } = await supabase
+    .from("member_coupons")
+    .update({
+      status: "redeemed" satisfies MemberCouponStatus,
+      redeemed_at: claimedAt,
+      redeemed_order_id: null,
+      redemption_station_id: stationId,
+    })
+    .eq("id", coupon.id)
+    .eq("status", "active")
+    .select(memberCouponSelect)
+    .maybeSingle();
+
+  if (claimError) {
+    return { claim: null, error: claimError.message };
+  }
+  if (!claimedCoupon) {
+    return { claim: null, error: couponUnavailableMessage };
+  }
+
+  input.couponCode = code;
+  const release = async (): Promise<void> => {
+    await supabase
+      .from("member_coupons")
+      .update({
+        status: "active" satisfies MemberCouponStatus,
+        redeemed_at: null,
+        redeemed_order_id: null,
+        redemption_station_id: "",
+      })
+      .eq("id", claimedCoupon.id)
+      .eq("status", "redeemed")
+      .is("redeemed_order_id", null);
+  };
+
+  const attachOrder = async (orderId: string): Promise<string | null> => {
+    const { error: attachError } = await supabase
+      .from("member_coupons")
+      .update({
+        redeemed_order_id: orderId,
+        redeemed_at: claimedAt,
+        redemption_station_id: stationId,
+      })
+      .eq("id", claimedCoupon.id)
+      .eq("status", "redeemed");
+
+    return attachError?.message ?? null;
+  };
+
+  return {
+    claim: {
+      code,
+      coupon: claimedCoupon,
+      release,
+      attachOrder,
+    },
+    error: null,
+  };
+};
+
+const restoreCouponRedemptionForOrder = async (
+  order: Record<string, unknown>,
+  stationId: string,
+): Promise<{ restored: boolean; error: string | null }> => {
+  const orderId = typeof order.id === "string" ? order.id : "";
+  const code = normalizeCouponCode(order.coupon_code);
+  if (!orderId || !code) {
+    return { restored: false, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from("member_coupons")
+    .update({
+      status: "active" satisfies MemberCouponStatus,
+      redeemed_order_id: null,
+      redeemed_at: null,
+      redemption_station_id: "",
+    })
+    .eq("code", code)
+    .eq("status", "redeemed")
+    .eq("redeemed_order_id", orderId)
+    .select(memberCouponSelect)
+    .maybeSingle();
+
+  if (error) {
+    return { restored: false, error: error.message };
+  }
+
+  if (data) {
+    await writeAuditEvent({
+      action: "member.coupon.restore",
+      orderId,
+      stationId,
+      metadata: {
+        code,
+        couponId: data.id,
+        title: data.title,
+      },
+    });
+  }
+
+  return { restored: Boolean(data), error: null };
+};
+
 const normalizePaymentSplits = (input: unknown): Array<Record<string, unknown>> => {
   if (!Array.isArray(input)) {
     return [];
@@ -1277,7 +1449,7 @@ const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, u
   extra_fee_amount: clampNonNegativeInteger(input.extraFeeAmount),
   discount_amount: clampNonNegativeInteger(input.discountAmount),
   points_redeemed: clampNonNegativeInteger(input.pointsRedeemed),
-  coupon_code: sanitizeText(input.couponCode, "").slice(0, 80),
+  coupon_code: normalizeCouponCode(input.couponCode),
   payment_splits: normalizePaymentSplits(input.paymentSplits),
   payment_breakdown: normalizePaymentBreakdown(input.paymentBreakdown),
   transaction_receipt_count: clampIntegerRange(input.transactionReceiptCount, 0, 0, 10),
@@ -3688,6 +3860,13 @@ api.post("/orders", async (c) => {
     }
   }
 
+  const couponClaimResult = await claimCouponForOrderInput(input, stationId);
+  if (couponClaimResult.error) {
+    const status = couponClaimResult.error === couponUnavailableMessage ? 409 : 500;
+    return c.json({ error: couponClaimResult.error }, status);
+  }
+  const couponClaim = couponClaimResult.claim;
+
   const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
     p_order_number: input.orderNumber,
     p_source: orderSource,
@@ -3712,13 +3891,20 @@ api.post("/orders", async (c) => {
 	  });
 
   if (orderError) {
+    await couponClaim?.release();
     const status = /inventory|Product not found|quantity/i.test(orderError.message) ? 409 : 500;
     return c.json({ error: orderError.message }, status);
   }
 
   const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(orderId), input);
   if (savedOrderError) {
+    await couponClaim?.release();
     return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  const couponAttachError = await couponClaim?.attachOrder(String(savedOrder.id));
+  if (couponAttachError) {
+    return c.json({ error: couponAttachError }, 500);
   }
 
   await writeAuditEvent({
@@ -3738,6 +3924,13 @@ api.post("/orders", async (c) => {
 	        name: application.campaignName,
 	        amount: application.amount,
 	      })),
+	      redeemedCoupon: couponClaim
+	        ? {
+	          id: couponClaim.coupon.id,
+	          code: couponClaim.code,
+	          title: couponClaim.coupon.title,
+	        }
+	        : null,
 	    },
 	  });
 
@@ -3917,6 +4110,12 @@ api.post("/orders/:id/finalize", async (c) => {
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderLines = input.lines ?? [];
   const discountRuntime = await applyRuntimeDiscountsToInput(input, "counter");
+  const couponClaimResult = await claimCouponForOrderInput(input, stationId);
+  if (couponClaimResult.error) {
+    const status = couponClaimResult.error === couponUnavailableMessage ? 409 : 500;
+    return c.json({ error: couponClaimResult.error }, status);
+  }
+  const couponClaim = couponClaimResult.claim;
   const { data: finalizedOrderId, error: finalizeError } = await supabase.rpc("finalize_pos_order", {
     p_order_id: current.data.id,
     p_service_mode: input.serviceMode ?? "takeout",
@@ -3940,13 +4139,20 @@ api.post("/orders/:id/finalize", async (c) => {
   });
 
   if (finalizeError) {
+    await couponClaim?.release();
     const status = /inventory|Product not found|quantity|finalized/i.test(finalizeError.message) ? 409 : 500;
     return c.json({ error: finalizeError.message }, status);
   }
 
   const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(finalizedOrderId), input);
   if (savedOrderError) {
+    await couponClaim?.release();
     return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  const couponAttachError = await couponClaim?.attachOrder(String(savedOrder.id));
+  if (couponAttachError) {
+    return c.json({ error: couponAttachError }, 500);
   }
 
   await writeAuditEvent({
@@ -3959,6 +4165,13 @@ api.post("/orders/:id/finalize", async (c) => {
 	      lineCount: orderLines.length,
 	      paymentStatus: savedOrder.payment_status,
 	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+	      redeemedCoupon: couponClaim
+	        ? {
+	          id: couponClaim.coupon.id,
+	          code: couponClaim.code,
+	          title: couponClaim.coupon.title,
+	        }
+	        : null,
 	    },
 	  });
 
@@ -4321,6 +4534,11 @@ api.post("/orders/:id/void", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
+  const couponRestore = await restoreCouponRedemptionForOrder(savedOrder as Record<string, unknown>, stationId);
+  if (couponRestore.error) {
+    return c.json({ error: couponRestore.error }, 500);
+  }
+
   await writeAuditEvent({
     action: "order.void",
     orderId: savedOrder.id,
@@ -4329,6 +4547,7 @@ api.post("/orders/:id/void", async (c) => {
       orderNumber: savedOrder.order_number,
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
+      restoredCoupon: couponRestore.restored,
     },
   });
 
@@ -4369,6 +4588,11 @@ api.post("/orders/:id/refund", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
+  const couponRestore = await restoreCouponRedemptionForOrder(savedOrder as Record<string, unknown>, stationId);
+  if (couponRestore.error) {
+    return c.json({ error: couponRestore.error }, 500);
+  }
+
   await writeAuditEvent({
     action: "order.refund",
     orderId: savedOrder.id,
@@ -4378,6 +4602,7 @@ api.post("/orders/:id/refund", async (c) => {
       refundAmount: savedOrder.subtotal,
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
+      restoredCoupon: couponRestore.restored,
     },
   });
 

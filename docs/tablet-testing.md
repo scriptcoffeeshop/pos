@@ -175,6 +175,17 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 6. 用舊頁或測試 API 繞過前端送出同一單，`POST /orders` 仍應依 runtime 重新計算自動優惠與外送門檻。
 7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認優惠活動設定、付款頁折扣與既有訂單折抵都從 Supabase runtime/API 還原。
 
+## 多平板會員優惠券兌換
+
+會員優惠券使用狀態寫入 Supabase `member_coupons.status`、`redeemed_order_id`、`redeemed_at` 與 `redemption_station_id`，對照 iCHEF 同會員同券只能使用 1 次、作廢訂單退回已使用券的規則。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 在後台建立一位會員與一張 active 優惠券，或使用既有 active 優惠券。
+2. 平板 A 與平板 B 同時在付款頁搜尋同一會員，確認兩邊都能看到同一張未使用券。
+3. 平板 A 使用該券完成出單或結帳，確認後台優惠券列表顯示已使用、使用時間、兌換訂單與站台。
+4. 平板 B 不重新整理直接嘗試用同一張券出單，`POST /orders` 或 finalize 應回 409，POS 不得把該筆訂單留下成本機待同步。
+5. 平板 B 重新搜尋會員後，不應再看到該張 active 券；fresh reinstall APK 或清除瀏覽器資料後也不得恢復顯示。
+6. 從訂單中心對平板 A 建立的未收款單作廢，或對已收款單退款，確認同一張券回到 active，另一台平板重新搜尋會員後可再次選用。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
