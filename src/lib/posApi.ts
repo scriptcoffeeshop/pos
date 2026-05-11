@@ -1454,6 +1454,11 @@ const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
 const sanitizeColor = (value: unknown, fallback = '#0f766e'): string =>
   typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
 
+const runtimeTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/
+
+const normalizeRuntimeTime = (value: unknown, fallback: string): string =>
+  typeof value === 'string' && runtimeTimePattern.test(value) ? value : fallback
+
 const normalizeNumber = (value: unknown, fallback = 0): number => {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? Math.trunc(numberValue) : fallback
@@ -2475,6 +2480,13 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     defaultPrintPaper: true,
     uploadDeadlineHours: 48,
   },
+  workflowAlerts: {
+    todayOrderStartTime: '00:00',
+    todayOrderEndTime: '23:59',
+    fulfillmentDueSoonMinutes: 15,
+    defaultTakeoutPickupMinutes: 5,
+    takeoutLoopEnabled: false,
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2555,6 +2567,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.electronicInvoice
     : defaults.electronicInvoice
   const electronicInvoice = rawElectronicInvoice as Partial<CustomerEngagementSettings['electronicInvoice']>
+  const rawWorkflowAlerts = settings.workflowAlerts && typeof settings.workflowAlerts === 'object'
+    ? settings.workflowAlerts
+    : defaults.workflowAlerts
+  const workflowAlerts = rawWorkflowAlerts as Partial<CustomerEngagementSettings['workflowAlerts']>
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
       const book = entry && typeof entry === 'object' ? entry as Partial<CustomerEngagementSettings['checkoutCounters']['books'][number]> : null
@@ -2685,6 +2701,23 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
       allowManualIssueToggle: electronicInvoice.allowManualIssueToggle !== false,
       defaultPrintPaper: electronicInvoice.defaultPrintPaper !== false,
       uploadDeadlineHours: Math.min(Math.max(normalizeNumber(electronicInvoice.uploadDeadlineHours, defaults.electronicInvoice.uploadDeadlineHours), 1), 168),
+    },
+    workflowAlerts: {
+      todayOrderStartTime: normalizeRuntimeTime(workflowAlerts.todayOrderStartTime, defaults.workflowAlerts.todayOrderStartTime),
+      todayOrderEndTime: normalizeRuntimeTime(workflowAlerts.todayOrderEndTime, defaults.workflowAlerts.todayOrderEndTime),
+      fulfillmentDueSoonMinutes: clampRuntimeInteger(
+        workflowAlerts.fulfillmentDueSoonMinutes,
+        defaults.workflowAlerts.fulfillmentDueSoonMinutes,
+        0,
+        1440,
+      ),
+      defaultTakeoutPickupMinutes: clampRuntimeInteger(
+        workflowAlerts.defaultTakeoutPickupMinutes,
+        defaults.workflowAlerts.defaultTakeoutPickupMinutes,
+        0,
+        86400,
+      ),
+      takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
     },
     recommendations,
     translations,

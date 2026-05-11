@@ -629,6 +629,10 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       ...defaults.electronicInvoice,
       ...settings.electronicInvoice,
     },
+    workflowAlerts: {
+      ...defaults.workflowAlerts,
+      ...settings.workflowAlerts,
+    },
     checkoutCounters: {
       ...defaults.checkoutCounters,
       ...settings.checkoutCounters,
@@ -4650,6 +4654,55 @@ const saveAccessControl = async (): Promise<void> => {
 
             <p class="panel-note">
               本專案先保存發票需求、載具/捐贈碼、狀態與 48 小時上傳期限；正式財政部加值中心串接需另接服務憑證。
+            </p>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">Workflow</p>
+                <h3>店面流程與外帶設定</h3>
+              </div>
+              <SlidersHorizontal :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label>
+                今日訂單開始時間
+                <input v-model="engagementSettings.workflowAlerts.todayOrderStartTime" type="time" />
+              </label>
+              <label>
+                今日訂單結束時間
+                <input v-model="engagementSettings.workflowAlerts.todayOrderEndTime" type="time" />
+              </label>
+              <label>
+                到點提醒提前分鐘
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.fulfillmentDueSoonMinutes"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                />
+              </label>
+              <label>
+                預設外帶取餐時間（分）
+                <input
+                  v-model.number="engagementSettings.workflowAlerts.defaultTakeoutPickupMinutes"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  step="1"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.workflowAlerts.takeoutLoopEnabled" type="checkbox" />
+                外帶循環模式
+              </label>
+            </div>
+
+            <p class="panel-note">
+              訂單工作區的今日/未來/過去篩選會依開始與結束時間切分；外帶草稿會預帶取餐時間，外帶循環會在送單或結帳後開下一張外帶單。
             </p>
           </section>
 

@@ -825,6 +825,13 @@ interface CustomerEngagementSettings {
     defaultPrintPaper: boolean;
     uploadDeadlineHours: number;
   };
+  workflowAlerts: {
+    todayOrderStartTime: string;
+    todayOrderEndTime: string;
+    fulfillmentDueSoonMinutes: number;
+    defaultTakeoutPickupMinutes: number;
+    takeoutLoopEnabled: boolean;
+  };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
@@ -1350,6 +1357,13 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     defaultPrintPaper: true,
     uploadDeadlineHours: 48,
   },
+  workflowAlerts: {
+    todayOrderStartTime: "00:00",
+    todayOrderEndTime: "23:59",
+    fulfillmentDueSoonMinutes: 15,
+    defaultTakeoutPickupMinutes: 5,
+    takeoutLoopEnabled: false,
+  },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
     { id: "food-pairing", trigger: "morning", title: "早餐搭配", productIds: [], enabled: true },
@@ -1473,6 +1487,11 @@ const clampIntegerRange = (value: unknown, fallback: number, min: number, max: n
   }
   return Math.min(Math.max(Math.trunc(numberValue), min), max);
 };
+
+const runtimeTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+const normalizeRuntimeTime = (value: unknown, fallback: string): string =>
+  typeof value === "string" && runtimeTimePattern.test(value) ? value : fallback;
 
 const normalizeCouponCode = (value: unknown): string =>
   sanitizeText(value, "").toUpperCase().replace(/\s+/g, "").slice(0, 80);
@@ -9625,6 +9644,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.electronicInvoice
     : defaultEngagementSettings.electronicInvoice;
   const electronicInvoice = rawElectronicInvoice as Partial<CustomerEngagementSettings["electronicInvoice"]>;
+  const rawWorkflowAlerts = settings.workflowAlerts && typeof settings.workflowAlerts === "object"
+    ? settings.workflowAlerts
+    : defaultEngagementSettings.workflowAlerts;
+  const workflowAlerts = rawWorkflowAlerts as Partial<CustomerEngagementSettings["workflowAlerts"]>;
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
       if (!entry || typeof entry !== "object") {
@@ -9801,6 +9824,29 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         1,
         168,
       ),
+    },
+    workflowAlerts: {
+      todayOrderStartTime: normalizeRuntimeTime(
+        workflowAlerts.todayOrderStartTime,
+        defaultEngagementSettings.workflowAlerts.todayOrderStartTime,
+      ),
+      todayOrderEndTime: normalizeRuntimeTime(
+        workflowAlerts.todayOrderEndTime,
+        defaultEngagementSettings.workflowAlerts.todayOrderEndTime,
+      ),
+      fulfillmentDueSoonMinutes: clampIntegerRange(
+        workflowAlerts.fulfillmentDueSoonMinutes,
+        defaultEngagementSettings.workflowAlerts.fulfillmentDueSoonMinutes,
+        0,
+        1440,
+      ),
+      defaultTakeoutPickupMinutes: clampIntegerRange(
+        workflowAlerts.defaultTakeoutPickupMinutes,
+        defaultEngagementSettings.workflowAlerts.defaultTakeoutPickupMinutes,
+        0,
+        86400,
+      ),
+      takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
     },
     recommendations,
     translations,

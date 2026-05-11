@@ -392,7 +392,7 @@ const productSupplyStatusValues: ProductSupplyStatus[] = ['normal', 'online-stop
 const orderSwipeActionWidth = 208
 const defaultSwipeActionWidth = 104
 const swipeActionThreshold = 72
-const fulfillmentAlertWindowMinutes = 15
+const defaultFulfillmentAlertWindowMinutes = 15
 const backendEditTapTarget = 6
 const backendEditTapWindowMs = 3000
 const toolboxDragThreshold = 6
@@ -2647,6 +2647,43 @@ const orderSequenceLabel = (orderId: string | null): string => {
 }
 
 const currentTime = ref(Date.now())
+const fulfillmentAlertWindowMinutes = computed(() => {
+  const rawMinutes = Number(engagementSettings.value.workflowAlerts.fulfillmentDueSoonMinutes)
+  const minutes = Number.isFinite(rawMinutes) ? Math.trunc(rawMinutes) : defaultFulfillmentAlertWindowMinutes
+  return Math.min(Math.max(minutes, 0), 1440)
+})
+const workflowTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/
+const workflowTimeToMinutes = (value: string, fallback: number): number => {
+  if (!workflowTimePattern.test(value)) {
+    return fallback
+  }
+
+  const [rawHours, rawMinutes] = value.split(':')
+  return Number(rawHours) * 60 + Number(rawMinutes)
+}
+const localDateAtWorkflowMinute = (date: Date, minutes: number, endOfMinute = false): Date => {
+  const next = new Date(date)
+  next.setHours(Math.floor(minutes / 60), minutes % 60, endOfMinute ? 59 : 0, endOfMinute ? 999 : 0)
+  return next
+}
+const queueTodayWindow = computed(() => {
+  const settings = engagementSettings.value.workflowAlerts
+  const startMinutes = workflowTimeToMinutes(settings.todayOrderStartTime, 0)
+  const endMinutes = workflowTimeToMinutes(settings.todayOrderEndTime, 23 * 60 + 59)
+  const now = new Date(currentTime.value)
+  const start = localDateAtWorkflowMinute(now, startMinutes)
+  const end = localDateAtWorkflowMinute(now, endMinutes, true)
+
+  if (endMinutes < startMinutes) {
+    if (currentTime.value <= end.getTime()) {
+      start.setDate(start.getDate() - 1)
+    } else {
+      end.setDate(end.getDate() + 1)
+    }
+  }
+
+  return { start: start.getTime(), end: end.getTime() }
+})
 const workspaceTabLabels: Record<WorkspaceTab, string> = {
   floor: '桌位地圖',
   order: '點餐',
@@ -2725,11 +2762,16 @@ const queueSourceFilterOptions: Array<{ value: QueueSourceFilter; label: string 
   { value: 'online', label: '線上' },
   { value: 'qr', label: '掃碼' },
 ]
-const queueFulfillmentFilterLabels: Record<QueueFulfillmentFilter, string> = {
-  all: '全部時段',
-  overdue: '已逾時',
-  'due-soon': `${fulfillmentAlertWindowMinutes} 分內`,
-  scheduled: '已排程',
+const queueFulfillmentFilterLabel = (value: QueueFulfillmentFilter): string => {
+  if (value === 'due-soon') {
+    return `${fulfillmentAlertWindowMinutes.value} 分內`
+  }
+
+  return {
+    all: '全部時段',
+    overdue: '已逾時',
+    scheduled: '已排程',
+  }[value]
 }
 const queueSortOptions: Array<{ value: QueueSortMode; label: string }> = [
   { value: 'fulfillment-asc', label: '取餐/送達時間早到晚' },
@@ -2807,9 +2849,10 @@ const defaultReservationDraft = (): ReservationDraft => ({
   note: '',
   assignedTableIds: [],
 })
-const orderDateKey = (order: PosOrder): string | null => {
+const orderQueueDateTimestamp = (order: PosOrder): number | null => {
   const orderDate = new Date(order.requestedFulfillmentAt ?? order.createdAt)
-  return Number.isFinite(orderDate.getTime()) ? formatDateKey(orderDate) : null
+  const timestamp = orderDate.getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
 }
 const orderFulfillmentTimestamp = (order: PosOrder): number | null => {
   if (!order.requestedFulfillmentAt) {
@@ -2833,7 +2876,7 @@ const orderFulfillmentUrgency = (order: PosOrder): FulfillmentUrgency => {
     return 'overdue'
   }
 
-  const dueSoonThreshold = now + fulfillmentAlertWindowMinutes * 60 * 1000
+  const dueSoonThreshold = now + fulfillmentAlertWindowMinutes.value * 60 * 1000
   return timestamp <= dueSoonThreshold ? 'soon' : 'scheduled'
 }
 const orderMatchesQueueDate = (order: PosOrder): boolean => {
@@ -2841,21 +2884,21 @@ const orderMatchesQueueDate = (order: PosOrder): boolean => {
     return true
   }
 
-  const todayKey = formatDateKey(new Date(currentTime.value))
-  const dateKey = orderDateKey(order)
-  if (!dateKey) {
+  const timestamp = orderQueueDateTimestamp(order)
+  if (timestamp === null) {
     return queueDateFilter.value === 'older'
   }
 
+  const todayWindow = queueTodayWindow.value
   if (queueDateFilter.value === 'today') {
-    return dateKey === todayKey
+    return timestamp >= todayWindow.start && timestamp <= todayWindow.end
   }
 
   if (queueDateFilter.value === 'future') {
-    return dateKey > todayKey
+    return timestamp > todayWindow.end
   }
 
-  return dateKey < todayKey
+  return timestamp < todayWindow.start
 }
 const orderMatchesQueueService = (order: PosOrder): boolean =>
   queueServiceFilter.value === 'all' || order.mode === queueServiceFilter.value
@@ -2987,7 +3030,7 @@ const queueFulfillmentFilterOptions = computed(() => {
   const baseOrders = queueBaseOrders.value
   return queueFulfillmentFilterValues.map((value) => ({
     value,
-    label: queueFulfillmentFilterLabels[value],
+    label: queueFulfillmentFilterLabel(value),
     count: value === 'all'
       ? baseOrders.length
       : baseOrders.filter((order) => {
@@ -3024,7 +3067,7 @@ const queueFulfillmentAlertTitle = computed(() => {
     return `${queueFulfillmentAlert.value.overdueCount} 張訂單已超過取餐/送達時間`
   }
 
-  return `${queueFulfillmentAlert.value.dueSoonCount} 張訂單 ${fulfillmentAlertWindowMinutes} 分鐘內到點`
+  return `${queueFulfillmentAlert.value.dueSoonCount} 張訂單 ${fulfillmentAlertWindowMinutes.value} 分鐘內到點`
 })
 const queuePendingPaymentOrders = computed(() =>
   pendingOrders.value.filter((order) => order.paymentStatus === 'pending'),
@@ -3040,7 +3083,7 @@ const queueTaskActions = computed<QueueTaskAction[]>(() => [
     id: 'fulfillment-alerts',
     label: '到點/逾時',
     detail: queueFulfillmentAlert.value.count > 0
-      ? `逾時 ${queueFulfillmentAlert.value.overdueCount} · ${fulfillmentAlertWindowMinutes} 分內 ${queueFulfillmentAlert.value.dueSoonCount}`
+      ? `逾時 ${queueFulfillmentAlert.value.overdueCount} · ${fulfillmentAlertWindowMinutes.value} 分內 ${queueFulfillmentAlert.value.dueSoonCount}`
       : '目前無到點訂單',
     count: queueFulfillmentAlert.value.count,
     actionLabel: queueFulfillmentAlert.value.count > 0 ? '處理' : '查看',
@@ -5951,6 +5994,13 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
       }
     }
 
+    if (order.mode === 'takeout' && engagementSettings.value.workflowAlerts.takeoutLoopEnabled) {
+      expandedOrderId.value = null
+      await startCounterDraft('takeout')
+      setWorkspaceTab('order')
+      return
+    }
+
     expandedOrderId.value = order.id
     if (order.mode === 'dine-in') {
       const tableId = tableIdFromOrder(order)
@@ -6054,7 +6104,7 @@ const fulfillmentUrgencyLabel = (order: PosOrder): string => {
   }
 
   if (urgency === 'soon') {
-    return `${fulfillmentAlertWindowMinutes} 分內`
+    return `${fulfillmentAlertWindowMinutes.value} 分內`
   }
 
   if (urgency === 'scheduled') {
