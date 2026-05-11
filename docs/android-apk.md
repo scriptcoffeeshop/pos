@@ -247,6 +247,17 @@ Web 版沒有原生背景輪詢能力，會在 Browser Notification API 已授�
 5. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認同一筆訂單仍能從 Supabase 載回統編與載具，欄位開關與結帳說明也仍從 runtime 還原。
 6. 輸入非 8 碼統編或超過 32 字元的載具時，消費者頁應先阻擋；若繞過前端，`pos-api` 與資料庫 constraint 也應拒絕。
 
+## 內用掃碼結帳流程
+
+內用掃碼結帳模式存在 `online_ordering.dineInCheckout`，對照 iCHEF 後台「內用掃碼點餐 > 結帳流程」的「先結 / 後結」。這不是 APK 本機設定；fresh reinstall 後仍應從 runtime 還原。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「線上點餐」將「內用掃碼結帳模式」切成「後結」，填入最多 500 字的結帳說明後儲存。
+2. 在 APK 建立內用桌位單並列印或預覽「訂單 QR Code」，用 QR 頁開啟點餐，確認結帳區顯示後結說明且不顯示付款方式按鈕。
+3. 後結模式送出 QR 內用單後，POS 訂單應以現場待收款進入；繞過前端送單時，`pos-api` 也應把付款方式覆寫成 `cash`、付款狀態覆寫成 `pending`。
+4. 回後台「線上點餐」切成「先結」後重新整理 QR 頁，確認只顯示 LINE Pay、街口與線上刷卡等線上付款方式，不顯示取餐時付款或轉帳。
+5. 先結模式下嘗試用舊頁或 API 送出 `cash` / `bank_transfer`，`POST /orders` 應回覆 409，不得寫入訂單。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認結帳模式、結帳說明與 QR 頁付款行為仍從 `online_ordering` runtime 還原。
+
 ## 線上服務方式開關
 
 自取、內用掃碼與外送的送單狀態存在 `online_ordering.serviceModeAvailability`，對照 iCHEF 可在 POS 或後台臨時調整營業狀態的流程。這不是 APK 本機開關，fresh reinstall 後仍應從 runtime 還原。
@@ -410,6 +421,7 @@ rtk npm run apk:install:fresh
 - 測優惠活動時，後台規則必須寫入 `discount_settings` runtime；POS 與線上點餐需套用同一份計算器，外送門檻/免運與 `pos-api` 建單都要用折抵後金額重新驗證。
 - 測會員優惠券時，使用券必須把 `member_coupons.status` 改成 `redeemed` 並記錄 `redeemed_order_id`；另一台平板不得重複使用同一張券，作廢或退款後才可退回 active。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
+- 測內用掃碼結帳流程時，`online_ordering.dineInCheckout` 應控制先結/後結；後結 QR 內用頁不得顯示付款方式且 API 會寫入現場待收款，先結 QR 內用頁只能顯示線上付款且 API 必須拒絕現場付款。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測訂單 QR 自動列印時，後台「線上點餐」的開關、指定出單機與 Logo 文字應寫入 `online_ordering.sessionQrCode`；fresh reinstall 後建立內用桌位訂單仍應用同一設定建立 QR `print_jobs`，並由 APK `LanPrinter` 送到指定出單機。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。

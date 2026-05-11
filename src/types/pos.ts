@@ -15,6 +15,7 @@ export type ReservationStatus = 'booked' | 'reminded' | 'confirmed' | 'seated' |
 export type HardwareDeviceKind = 'bluetooth-scanner' | 'payment-qr' | 'cash-drawer' | 'ipad-qr-print'
 export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
 export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
+export type OnlineDineInCheckoutMode = 'prepaid' | 'postpaid'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
@@ -465,6 +466,10 @@ export interface OnlineDineInTimeLimitSettings {
   holidayRules: OnlineDineInTimeLimitRule[]
 }
 
+export interface OnlineDineInCheckoutSettings {
+  mode: OnlineDineInCheckoutMode
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -493,6 +498,7 @@ export interface OnlineOrderingSettings {
     logoText: string
   }
   dineInTimeLimit: OnlineDineInTimeLimitSettings
+  dineInCheckout: OnlineDineInCheckoutSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]

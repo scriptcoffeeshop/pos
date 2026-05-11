@@ -24,6 +24,7 @@ type MemberCouponStatus = "active" | "redeemed" | "expired";
 type HardwareDeviceKind = "bluetooth-scanner" | "payment-qr" | "cash-drawer" | "ipad-qr-print";
 type OnlineOrderReminderStatus = "active" | "snoozed" | "seen";
 type OnlineOrderReminderAction = "snooze" | "seen" | "accepted" | "rejected";
+type OnlineDineInCheckoutMode = "prepaid" | "postpaid";
 type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
 type InventoryConsumptionSubject = "product" | "option";
 
@@ -500,6 +501,10 @@ interface OnlineDineInTimeLimitSettings {
   holidayRules: OnlineDineInTimeLimitRule[];
 }
 
+interface OnlineDineInCheckoutSettings {
+  mode: OnlineDineInCheckoutMode;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -532,6 +537,7 @@ interface OnlineOrderingSettings {
     logoText: string;
   };
   dineInTimeLimit: OnlineDineInTimeLimitSettings;
+  dineInCheckout: OnlineDineInCheckoutSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
   availableOptionChoices: OnlineMenuOptionChoice[];
@@ -1091,6 +1097,9 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     mealMinutes: 120,
     lastOrderBeforeEndMinutes: 0,
     holidayRules: [],
+  },
+  dineInCheckout: {
+    mode: "postpaid",
   },
   pauseMessage: "目前暫停線上點餐，請稍後再試",
   menuCategories: [],
@@ -3952,12 +3961,24 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
     }
-    const paymentMethod = input.paymentMethod ?? "cash";
-    const paymentMethodEnabled = onlineOrdering.paymentMethods.some((method) =>
-      method.id === paymentMethod && method.enabled
-    );
-    if (!paymentMethodEnabled) {
-      return c.json({ error: "Selected payment method is disabled" }, 409);
+    const qrDineInPostpaid =
+      orderSource === "qr" &&
+      serviceMode === "dine-in" &&
+      onlineOrdering.dineInCheckout.mode !== "prepaid";
+    const paymentMethod = qrDineInPostpaid ? "cash" : input.paymentMethod ?? "cash";
+    if (qrDineInPostpaid) {
+      input.paymentMethod = "cash";
+      input.paymentStatus = "pending";
+    } else {
+      const paymentMethodEnabled = onlineOrdering.paymentMethods.some((method) =>
+        method.id === paymentMethod && method.enabled
+      );
+      if (!paymentMethodEnabled) {
+        return c.json({ error: "Selected payment method is disabled" }, 409);
+      }
+      if (orderSource === "qr" && serviceMode === "dine-in" && !deliveryOnlinePaymentMethods.has(paymentMethod)) {
+        return c.json({ error: "Dine-in prepaid checkout requires online payment" }, 409);
+      }
     }
     const chargeableSubtotal = onlineDeliveryChargeableAmount(input);
     if (serviceMode === "delivery") {
@@ -6289,6 +6310,17 @@ const normalizeSessionQrCodeSettings = (input: unknown): OnlineOrderingSettings[
   };
 };
 
+const normalizeDineInCheckoutSettings = (input: unknown): OnlineDineInCheckoutSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.dineInCheckout };
+  }
+
+  const settings = input as Partial<OnlineDineInCheckoutSettings>;
+  return {
+    mode: settings.mode === "prepaid" ? "prepaid" : "postpaid",
+  };
+};
+
 const normalizeDineInTimeLimitDays = (input: unknown, fallback: number[] = []): number[] => {
   if (!Array.isArray(input)) {
     return [...fallback];
@@ -8166,7 +8198,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     checkoutInstructions: sanitizeText(
       settings.checkoutInstructions,
       defaultOnlineOrdering.checkoutInstructions,
-    ).slice(0, 240),
+    ).slice(0, 500),
     showTaxIdField: settings.showTaxIdField === true,
     showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
     paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
@@ -8196,6 +8228,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     ),
     sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
     dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
+    dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
     availableOptionChoices,
@@ -8497,7 +8530,7 @@ const validateOnlineOrdering = (input: unknown): {
   const checkoutInstructions = sanitizeText(
     settings.checkoutInstructions,
     defaultOnlineOrdering.checkoutInstructions,
-  ).slice(0, 240);
+  ).slice(0, 500);
   const notificationRepeatMode: OnlineNotificationRepeatMode =
     settings.notificationRepeatMode === "once" || settings.notificationRepeatMode === "continuous"
       ? settings.notificationRepeatMode
@@ -8534,6 +8567,7 @@ const validateOnlineOrdering = (input: unknown): {
       deliveryTravelMinutes,
       sessionQrCode: normalizeSessionQrCodeSettings(settings.sessionQrCode),
       dineInTimeLimit: normalizeDineInTimeLimitSettings(settings.dineInTimeLimit),
+      dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout),
       pauseMessage,
       menuCategories,
       availableOptionChoices,
