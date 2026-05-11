@@ -125,6 +125,11 @@ interface UpdateStatusInput {
   stationId?: string;
 }
 
+interface UpdateOrderItemFulfillmentInput {
+  fulfilled?: boolean;
+  stationId?: string;
+}
+
 interface UpdatePaymentInput {
   paymentStatus: PaymentStatus;
   stationId?: string;
@@ -5190,6 +5195,85 @@ api.patch("/orders/:id/status", async (c) => {
     metadata: {
       orderNumber: savedOrder.order_number,
       status: input.status,
+    },
+  });
+
+  return c.json({ order: savedOrder });
+});
+
+api.patch("/orders/:id/items/:itemId/fulfillment", async (c) => {
+  const orderId = c.req.param("id");
+  const itemId = c.req.param("itemId");
+  const input = await c.req.json<UpdateOrderItemFulfillmentInput>();
+  const stationId = sanitizeStationId(input.stationId);
+
+  if (!stationId) {
+    return c.json({ error: "stationId is required" }, 400);
+  }
+
+  if (typeof input.fulfilled !== "boolean") {
+    return c.json({ error: "fulfilled must be a boolean" }, 400);
+  }
+
+  const now = new Date();
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .update(buildClaimPayload(stationId, now))
+    .eq("id", orderId)
+    .neq("status", "served")
+    .neq("status", "failed")
+    .neq("status", "voided")
+    .or(buildLeaseAvailableFilter(stationId, now))
+    .select("id, order_number")
+    .maybeSingle();
+
+  if (orderError) {
+    return c.json({ error: orderError.message }, 500);
+  }
+
+  if (!order) {
+    return claimConflictResponse(c, orderId, stationId);
+  }
+
+  const fulfillmentPayload = input.fulfilled
+    ? {
+      fulfilled_at: now.toISOString(),
+      fulfilled_by_station_id: stationId,
+    }
+    : {
+      fulfilled_at: null,
+      fulfilled_by_station_id: "",
+    };
+
+  const { data: item, error: itemError } = await supabase
+    .from("order_items")
+    .update(fulfillmentPayload)
+    .eq("id", itemId)
+    .eq("order_id", order.id)
+    .select("id")
+    .maybeSingle();
+
+  if (itemError) {
+    return c.json({ error: itemError.message }, 500);
+  }
+
+  if (!item) {
+    return c.json({ error: "Order item not found" }, 404);
+  }
+
+  const { data: savedOrder, error: savedOrderError } = await loadOrder(order.id);
+  if (savedOrderError) {
+    return c.json({ error: savedOrderError.message }, 500);
+  }
+
+  await writeAuditEvent({
+    action: "order.item.fulfillment",
+    orderId: order.id,
+    stationId,
+    metadata: {
+      orderNumber: order.order_number,
+      orderItemId: itemId,
+      fulfilled: input.fulfilled,
     },
   });
 

@@ -71,6 +71,9 @@ export interface CartLine {
   prepStation?: string
   printLabel?: boolean
   printPaused?: boolean
+  orderItemId?: string
+  fulfilledAt?: string | null
+  fulfilledByStationId?: string
 }
 
 export interface ComboLineItem {

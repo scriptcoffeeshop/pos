@@ -884,6 +884,7 @@ const {
   updateConfiguredLine,
   openRegisterSessionForStation,
   updateOrderFloorAssignmentForStation,
+  updateOrderItemFulfillment,
   updateOrderStatus,
   updatePaymentStatus,
   updateProductSupplyStatus,
@@ -6926,6 +6927,46 @@ const orderSwipeCompleteAction = (order: PosOrder): void => {
   openSwipeKey.value = null
 }
 
+const orderItemFulfillmentActive = (order: PosOrder): boolean =>
+  engagementSettings.value.workflowAlerts.fulfillmentConfirmationEnabled &&
+  order.lines.length > 0 &&
+  !['served', 'failed', 'voided'].includes(order.status)
+
+const orderFulfilledLineCount = (order: PosOrder): number =>
+  order.lines.filter((line) => Boolean(line.fulfilledAt)).length
+
+const orderFulfillmentProgressLabel = (order: PosOrder): string =>
+  `${orderFulfilledLineCount(order)}/${order.lines.length} 出餐`
+
+const orderFulfillmentComplete = (order: PosOrder): boolean =>
+  order.lines.length > 0 && order.lines.every((line) => Boolean(line.fulfilledAt))
+
+const orderItemFulfillmentDisabled = (order: PosOrder, line: CartLine): boolean =>
+  !orderItemFulfillmentActive(order) ||
+  !line.orderItemId ||
+  orderClaimedByOtherStation(order)
+
+const toggleOrderItemFulfillmentAction = async (order: PosOrder, line: CartLine): Promise<void> => {
+  if (orderItemFulfillmentDisabled(order, line) || !line.orderItemId) {
+    return
+  }
+
+  const nextFulfilled = !line.fulfilledAt
+  const updatedOrder = await updateOrderItemFulfillment(order.id, line.orderItemId, nextFulfilled)
+  if (!updatedOrder) {
+    return
+  }
+
+  if (orderFulfillmentComplete(updatedOrder) && updatedOrder.status !== 'ready') {
+    await updateOrderStatusWithWorkflow(updatedOrder.id, 'ready')
+    return
+  }
+
+  if (!nextFulfilled && updatedOrder.status === 'ready') {
+    await updateOrderStatusWithWorkflow(updatedOrder.id, 'preparing')
+  }
+}
+
 const setQuickDispatchCutoffNow = (): void => {
   quickDispatchCutoffInput.value = localDateTimeInputValue(new Date(currentTime.value))
 }
@@ -12618,6 +12659,14 @@ onBeforeUnmount(() => {
                               <CircleAlert :size="13" aria-hidden="true" />
                               {{ warning }}
                             </span>
+                            <span
+                              v-if="orderItemFulfillmentActive(order)"
+                              class="fulfillment-chip"
+                              :class="orderFulfillmentComplete(order) ? 'fulfillment-chip--ready' : 'fulfillment-chip--warning'"
+                            >
+                              <CheckCircle2 :size="13" aria-hidden="true" />
+                              {{ orderFulfillmentProgressLabel(order) }}
+                            </span>
                             <span class="status-chip" :class="statusClass(order.status)">{{ statusLabels[order.status] }}</span>
                           </div>
                           <div class="order-row-meta">
@@ -12766,12 +12815,27 @@ onBeforeUnmount(() => {
                               <strong>{{ order.note || '無' }}</strong>
                             </div>
                             <div class="order-detail-lines">
-                              <article v-for="line in order.lines" :key="`${order.id}-${line.itemId}`">
+                              <article
+                                v-for="line in order.lines"
+                                :key="`${order.id}-${line.orderItemId ?? line.itemId}`"
+                                :class="{ 'order-detail-line--fulfillment': engagementSettings.workflowAlerts.fulfillmentConfirmationEnabled }"
+                              >
                                 <div>
                                   <strong>{{ line.name }}</strong>
                                   <span>{{ line.options.join(' / ') || '標準' }}</span>
                                 </div>
                                 <span>x{{ line.quantity }}</span>
+                                <button
+                                  v-if="engagementSettings.workflowAlerts.fulfillmentConfirmationEnabled"
+                                  class="line-fulfillment-button"
+                                  :class="{ 'line-fulfillment-button--done': line.fulfilledAt }"
+                                  type="button"
+                                  :disabled="orderItemFulfillmentDisabled(order, line)"
+                                  @click.stop="toggleOrderItemFulfillmentAction(order, line)"
+                                >
+                                  <CheckCircle2 :size="15" aria-hidden="true" />
+                                  {{ line.fulfilledAt ? '已出餐' : '待出餐' }}
+                                </button>
                                 <strong>{{ formatCurrency(line.unitPrice * line.quantity) }}</strong>
                               </article>
                             </div>
