@@ -1174,6 +1174,19 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintAt: null,
   })
 
+  const manualPrintStationFor = (stationId = ''): PrintStation => {
+    const settings = currentPrinterSettings()
+    const station = stationId
+      ? settings.stations.find((entry) => entry.id === stationId && entry.enabled)
+      : null
+
+    if (station) {
+      return printStationFromSetting(station)
+    }
+
+    return { ...printStation }
+  }
+
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
     discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
@@ -3274,6 +3287,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderId: string,
     buildPayload: (order: PosOrder, station: PrintStation) => string,
     label: string,
+    options: { stationId?: string } = {},
   ): Promise<void> => {
     if (printingOrderId.value) {
       return
@@ -3296,10 +3310,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     printingOrderId.value = orderId
     const claimedOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
-    const station = { ...printStation }
+    const station = manualPrintStationFor(options.stationId)
     const payload = buildPayload(claimedOrder, station)
     lastPrintPreview.value = [`JOB ${label}`, `ORDER ${claimedOrder.id}`, `PRINTER ${station.name}`, payload].join('\n')
-    printStation.lastPrintAt = new Date().toISOString()
+    if (!station.id || station.id === printStation.id) {
+      printStation.lastPrintAt = new Date().toISOString()
+    }
 
     const createdPrintJobs: PrintJob[] = []
     let jobStatus: PrintStatus = 'queued'
@@ -3354,8 +3370,20 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
-  const printOrderQrCode = (orderId: string): Promise<void> =>
-    printManualOrderPayload(orderId, buildOrderQrCodePayload, '訂單 QR Code')
+  const printOrderQrCode = (
+    orderId: string,
+    options: { stationId?: string; logoText?: string } = {},
+  ): Promise<void> => {
+    const payloadOptions = options.logoText ? { logoText: options.logoText } : {}
+    const printOptions = options.stationId ? { stationId: options.stationId } : {}
+
+    return printManualOrderPayload(
+      orderId,
+      (order, station) => buildOrderQrCodePayload(order, station, payloadOptions),
+      '訂單 QR Code',
+      printOptions,
+    )
+  }
 
   const printCustomerReceipt = (orderId: string): Promise<void> =>
     printManualOrderPayload(orderId, buildCustomerReceiptPayload, '顧客聯')

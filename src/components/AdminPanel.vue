@@ -402,6 +402,11 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   deliveryMinimumSubtotal: 0,
   freeDeliveryThreshold: 0,
   deliveryTravelMinutes: 20,
+  sessionQrCode: {
+    autoPrint: false,
+    stationId: '',
+    logoText: 'Script Coffee',
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -440,6 +445,10 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
     ...settings.serviceModeAvailability,
   },
   paymentMethods: (settings.paymentMethods ?? defaultOnlineOrderingSettings().paymentMethods).map((method) => ({ ...method })),
+  sessionQrCode: {
+    ...defaultOnlineOrderingSettings().sessionQrCode,
+    ...(settings.sessionQrCode ?? {}),
+  },
   scheduledOrderTimeWindows: (
     settings.scheduledOrderTimeWindows ?? defaultOnlineOrderingSettings().scheduledOrderTimeWindows
   ).map((timeWindow) => ({ ...timeWindow, days: [...timeWindow.days] })),
@@ -760,6 +769,9 @@ const stationOptions = computed(() => {
     },
   ]
 })
+
+const stationNameForId = (stationId: string): string =>
+  stationOptions.value.find((station) => station.id === stationId)?.name ?? '目前出單機'
 
 const activePrintRuleCategoryIds = ref<Record<string, MenuCategory>>({})
 const activePrintRuleCountCategoryIds = ref<Record<string, MenuCategory>>({})
@@ -2269,6 +2281,13 @@ const saveOnlineOrdering = async (): Promise<void> => {
         ),
         freeDeliveryThreshold: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.freeDeliveryThreshold) || 0), 0), 999_999),
         deliveryTravelMinutes: Math.min(Math.max(Math.trunc(Number(onlineOrdering.value.deliveryTravelMinutes) || 0), 0), 180),
+        sessionQrCode: {
+          autoPrint: Boolean(onlineOrdering.value.sessionQrCode.autoPrint),
+          stationId: onlineOrdering.value.sessionQrCode.stationId.trim().slice(0, 80),
+          logoText:
+            onlineOrdering.value.sessionQrCode.logoText.trim().slice(0, 40) ||
+            defaultOnlineOrderingSettings().sessionQrCode.logoText,
+        },
         pauseMessage: onlineOrdering.value.pauseMessage.trim() || defaultOnlineOrderingSettings().pauseMessage,
         menuCategories: onlineOrdering.value.menuCategories,
         availableOptionChoices: onlineOrdering.value.availableOptionChoices,
@@ -3235,6 +3254,11 @@ const saveAccessControl = async (): Promise<void> => {
             <strong>{{ onlineOrdering.acceptanceRequired ? '平板確認' : '自動入列' }}</strong>
             <small>{{ onlineOrdering.acceptWithoutPrinting ? '接單不自動出單' : '接單後依列印站規則' }}</small>
           </article>
+          <article>
+            <span>訂單 QR Code</span>
+            <strong>{{ onlineOrdering.sessionQrCode.autoPrint ? '自動列印' : '手動列印' }}</strong>
+            <small>{{ stationNameForId(onlineOrdering.sessionQrCode.stationId) }}</small>
+          </article>
         </div>
 
         <section class="admin-subpanel">
@@ -3286,6 +3310,10 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.showCarrierBarcodeField" type="checkbox" />
               結帳顯示載具條碼
             </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.sessionQrCode.autoPrint" type="checkbox" />
+              建立內用訂單後自動列印 QR
+            </label>
           </div>
 
           <div class="admin-online-settings-grid">
@@ -3321,6 +3349,19 @@ const saveAccessControl = async (): Promise<void> => {
                 maxlength="240"
                 placeholder="例如：如需統編或手機條碼請於結帳時填寫，門市會依資料開立。"
               />
+            </label>
+            <label>
+              訂單 QR 出單機
+              <select v-model="onlineOrdering.sessionQrCode.stationId">
+                <option value="">目前出單機</option>
+                <option v-for="station in stationOptions" :key="`session-qr-${station.id}`" :value="station.id">
+                  {{ station.name }}
+                </option>
+              </select>
+            </label>
+            <label>
+              QR Logo 文字
+              <input v-model="onlineOrdering.sessionQrCode.logoText" type="text" maxlength="40" />
             </label>
           </div>
 
