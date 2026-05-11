@@ -32,6 +32,7 @@ import type {
   OnlineMenuOptionChoice,
   OnlineMenuOptionGroup,
   OnlineNotificationRepeatMode,
+  OnlineServiceModeAvailability,
   OnlineOrderReminderAction,
   OnlineOrderReminderState,
   OnlineOrderReminderStatus,
@@ -1406,6 +1407,9 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     noticeExpanded: false,
     coverImageDataUrls: [],
   },
+  notificationRouting: {
+    stations: [],
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1586,6 +1590,83 @@ const normalizeOnlineStoreProfileSettings = (
     noticeExpanded: settings.noticeExpanded === true,
     coverImageDataUrls: normalizeImageDataUrls(settings.coverImageDataUrls),
   }
+}
+
+const normalizeOnlineNotificationServiceModes = (value: unknown): OnlineServiceModeAvailability => {
+  const settings = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Partial<OnlineServiceModeAvailability>)
+    : {}
+
+  return serviceModes.reduce<OnlineServiceModeAvailability>((availability, mode) => {
+    availability[mode] = settings[mode] !== false
+    return availability
+  }, {
+    'dine-in': true,
+    takeout: true,
+    delivery: true,
+  })
+}
+
+const normalizeOnlineNotificationRoutingSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().notificationRouting,
+): OnlineOrderingSettings['notificationRouting'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      stations: defaults.stations.map((station) => ({
+        ...station,
+        serviceModes: { ...station.serviceModes },
+        tableIds: [...station.tableIds],
+      })),
+    }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['notificationRouting']>
+  const seenStationIds = new Set<string>()
+  const stations = Array.isArray(settings.stations)
+    ? settings.stations.flatMap((entry): OnlineOrderingSettings['notificationRouting']['stations'] => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return []
+      }
+
+      const station = entry as Partial<OnlineOrderingSettings['notificationRouting']['stations'][number]>
+      const stationId = typeof station.stationId === 'string' ? station.stationId.trim().slice(0, 80) : ''
+      if (!stationId || seenStationIds.has(stationId)) {
+        return []
+      }
+
+      seenStationIds.add(stationId)
+      const stationLabel =
+        typeof station.stationLabel === 'string' && station.stationLabel.trim().length > 0
+          ? station.stationLabel.trim().slice(0, 80)
+          : stationId
+      const notificationRepeatMode = notificationRepeatModes.has(station.notificationRepeatMode as OnlineNotificationRepeatMode)
+        ? (station.notificationRepeatMode as OnlineNotificationRepeatMode)
+        : defaultOnlineOrderingSettings().notificationRepeatMode
+      const notificationVolume = Number.isFinite(station.notificationVolume)
+        ? Math.min(Math.max(Math.trunc(Number(station.notificationVolume)), 0), 100)
+        : defaultOnlineOrderingSettings().notificationVolume
+      const tableIds = Array.isArray(station.tableIds)
+        ? [...new Set(station.tableIds
+          .map((tableId) => typeof tableId === 'string' ? tableId.trim().toUpperCase().slice(0, 12) : '')
+          .filter(Boolean))]
+          .slice(0, 80)
+        : []
+
+      return [{
+        stationId,
+        stationLabel,
+        enabled: station.enabled !== false,
+        serviceModes: normalizeOnlineNotificationServiceModes(station.serviceModes),
+        tableIds,
+        soundEnabled: station.soundEnabled !== false,
+        notificationRepeatMode,
+        notificationVolume,
+      }]
+    }).slice(0, 32)
+    : []
+
+  return { stations }
 }
 
 const defaultReservationBusinessHours = (): ReservationBusinessHour[] =>
@@ -2047,6 +2128,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode, defaults.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile, defaults.storeProfile),
+    notificationRouting: normalizeOnlineNotificationRoutingSettings(
+      settings.notificationRouting,
+      defaults.notificationRouting,
+    ),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

@@ -87,6 +87,7 @@ import type {
   InventoryRecordAction,
   MenuCategory,
   MenuItem,
+  OnlineNotificationStationSettings,
   OnlineOrderingSettings,
   OrderSource,
   OrderStatus,
@@ -782,6 +783,7 @@ const {
   counterDraftStartedAt,
   createProductForStation,
   createRegisterCashAdjustmentForStation,
+  currentOnlineNotificationSettings,
   couponCode,
   customer,
   customerHasNote,
@@ -848,6 +850,7 @@ const {
   serviceFeeRate,
   selectedDiscountCampaignIds,
   saveCounterOrder,
+  saveCurrentStationOnlineNotificationSettings,
   setItemQuantity,
   setLineQuantity,
   startCounterDraft,
@@ -5233,6 +5236,75 @@ const floorNotificationItems = computed<PosNotificationItem[]>(() => [
     target: 'printing',
   },
 ])
+const onlineNotificationRoutingSaving = ref(false)
+const onlineNotificationRoutingMessage = ref('')
+const currentOnlineNotificationTableIdSet = computed(() =>
+  new Set(currentOnlineNotificationSettings.value.tableIds.map((tableId) => tableId.toUpperCase())),
+)
+const currentOnlineNotificationTableSummary = computed(() =>
+  currentOnlineNotificationSettings.value.tableIds.length === 0
+    ? '所有內用桌位'
+    : `${currentOnlineNotificationSettings.value.tableIds.length} 桌`,
+)
+const saveOnlineNotificationRoutingPatch = async (
+  patch: Partial<OnlineNotificationStationSettings>,
+  message: string,
+): Promise<void> => {
+  onlineNotificationRoutingSaving.value = true
+  onlineNotificationRoutingMessage.value = '正在儲存通知設定'
+  try {
+    await saveCurrentStationOnlineNotificationSettings(patch)
+    onlineNotificationRoutingMessage.value = message
+  } catch (error) {
+    onlineNotificationRoutingMessage.value = `通知設定儲存失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    onlineNotificationRoutingSaving.value = false
+  }
+}
+const toggleOnlineNotificationEnabled = (): void => {
+  void saveOnlineNotificationRoutingPatch(
+    { enabled: !currentOnlineNotificationSettings.value.enabled },
+    currentOnlineNotificationSettings.value.enabled ? '此平板已暫停通知' : '此平板已開啟通知',
+  )
+}
+const toggleOnlineNotificationSound = (): void => {
+  void saveOnlineNotificationRoutingPatch(
+    { soundEnabled: !currentOnlineNotificationSettings.value.soundEnabled },
+    currentOnlineNotificationSettings.value.soundEnabled ? '此平板已關閉提示音' : '此平板已開啟提示音',
+  )
+}
+const toggleOnlineNotificationServiceMode = (mode: ServiceMode): void => {
+  const nextEnabled = currentOnlineNotificationSettings.value.serviceModes[mode] === false
+  void saveOnlineNotificationRoutingPatch(
+    {
+      serviceModes: {
+        ...currentOnlineNotificationSettings.value.serviceModes,
+        [mode]: nextEnabled,
+      },
+    },
+    `${serviceModeLabels[mode]}通知已${nextEnabled ? '開啟' : '關閉'}`,
+  )
+}
+const updateOnlineNotificationRepeatMode = (value: string): void => {
+  void saveOnlineNotificationRoutingPatch(
+    { notificationRepeatMode: value === 'once' ? 'once' : 'continuous' },
+    '此平板提示聲模式已更新',
+  )
+}
+const updateOnlineNotificationVolume = (value: string): void => {
+  const notificationVolume = Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100)
+  void saveOnlineNotificationRoutingPatch({ notificationVolume }, `此平板提示音量已調整為 ${notificationVolume}%`)
+}
+const toggleOnlineNotificationTable = (tableId: string): void => {
+  const normalizedTableId = tableId.toUpperCase()
+  const nextTableIds = currentOnlineNotificationTableIdSet.value.has(normalizedTableId)
+    ? currentOnlineNotificationSettings.value.tableIds.filter((id) => id.toUpperCase() !== normalizedTableId)
+    : [...currentOnlineNotificationSettings.value.tableIds, normalizedTableId]
+  void saveOnlineNotificationRoutingPatch({ tableIds: nextTableIds }, '此平板內用桌位通知範圍已更新')
+}
+const clearOnlineNotificationTables = (): void => {
+  void saveOnlineNotificationRoutingPatch({ tableIds: [] }, '此平板會接收所有內用桌位通知')
+}
 const registerVariance = computed(() => {
   if (!registerSession.value) {
     return 0
@@ -10558,6 +10630,97 @@ onBeforeUnmount(() => {
                             <small>{{ item.summary }}</small>
                           </button>
                         </div>
+                      </section>
+
+                      <section class="floor-control-block floor-online-routing-block">
+                        <div class="floor-control-heading">
+                          <div>
+                            <span>線上通知設定</span>
+                            <strong>{{ currentOnlineNotificationSettings.stationLabel }}</strong>
+                          </div>
+                          <Bell :size="18" aria-hidden="true" />
+                        </div>
+                        <div class="floor-routing-toggle-row">
+                          <button
+                            type="button"
+                            :class="{ 'floor-routing-chip--active': currentOnlineNotificationSettings.enabled }"
+                            :disabled="onlineNotificationRoutingSaving"
+                            @click="toggleOnlineNotificationEnabled"
+                          >
+                            {{ currentOnlineNotificationSettings.enabled ? '接收通知' : '暫停此平板' }}
+                          </button>
+                          <button
+                            type="button"
+                            :class="{ 'floor-routing-chip--active': currentOnlineNotificationSettings.soundEnabled }"
+                            :disabled="onlineNotificationRoutingSaving"
+                            @click="toggleOnlineNotificationSound"
+                          >
+                            {{ currentOnlineNotificationSettings.soundEnabled ? '提示音' : '靜音' }}
+                          </button>
+                        </div>
+                        <div class="floor-routing-toggle-row" aria-label="通知服務方式">
+                          <button
+                            v-for="mode in serviceModeValues"
+                            :key="`notification-mode-${mode}`"
+                            type="button"
+                            :class="{ 'floor-routing-chip--active': currentOnlineNotificationSettings.serviceModes[mode] !== false }"
+                            :disabled="onlineNotificationRoutingSaving"
+                            @click="toggleOnlineNotificationServiceMode(mode)"
+                          >
+                            {{ serviceModeLabels[mode] }}
+                          </button>
+                        </div>
+                        <div class="floor-routing-sound-grid">
+                          <label>
+                            提示聲
+                            <select
+                              :value="currentOnlineNotificationSettings.notificationRepeatMode"
+                              :disabled="onlineNotificationRoutingSaving"
+                              @change="updateOnlineNotificationRepeatMode(($event.target as HTMLSelectElement).value)"
+                            >
+                              <option value="continuous">連續提醒</option>
+                              <option value="once">只播放一次</option>
+                            </select>
+                          </label>
+                          <label>
+                            音量 {{ currentOnlineNotificationSettings.notificationVolume }}%
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              step="5"
+                              :value="currentOnlineNotificationSettings.notificationVolume"
+                              :disabled="onlineNotificationRoutingSaving"
+                              @change="updateOnlineNotificationVolume(($event.target as HTMLInputElement).value)"
+                            />
+                          </label>
+                        </div>
+                        <div class="floor-routing-table-heading">
+                          <span>內用桌位通知</span>
+                          <strong>{{ currentOnlineNotificationTableSummary }}</strong>
+                          <button
+                            type="button"
+                            :disabled="onlineNotificationRoutingSaving || currentOnlineNotificationSettings.tableIds.length === 0"
+                            @click="clearOnlineNotificationTables"
+                          >
+                            全部
+                          </button>
+                        </div>
+                        <div class="floor-routing-table-list" aria-label="指定內用桌位通知">
+                          <button
+                            v-for="table in activeFloorTables"
+                            :key="`notification-table-${table.id}`"
+                            type="button"
+                            :class="{ 'floor-routing-chip--active': currentOnlineNotificationTableIdSet.has(table.id.toUpperCase()) }"
+                            :disabled="onlineNotificationRoutingSaving"
+                            @click="toggleOnlineNotificationTable(table.id)"
+                          >
+                            {{ table.label }}
+                          </button>
+                        </div>
+                        <small v-if="onlineNotificationRoutingMessage" class="floor-routing-message">
+                          {{ onlineNotificationRoutingMessage }}
+                        </small>
                       </section>
                     </aside>
                   </div>

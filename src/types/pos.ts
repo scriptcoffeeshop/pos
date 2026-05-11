@@ -494,6 +494,21 @@ export interface OnlineStoreProfileSettings {
   coverImageDataUrls: string[]
 }
 
+export interface OnlineNotificationStationSettings {
+  stationId: string
+  stationLabel: string
+  enabled: boolean
+  serviceModes: OnlineServiceModeAvailability
+  tableIds: string[]
+  soundEnabled: boolean
+  notificationRepeatMode: OnlineNotificationRepeatMode
+  notificationVolume: number
+}
+
+export interface OnlineNotificationRoutingSettings {
+  stations: OnlineNotificationStationSettings[]
+}
+
 export interface OnlineOrderingSettings {
   enabled: boolean
   serviceModeAvailability: OnlineServiceModeAvailability
@@ -526,6 +541,7 @@ export interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings
   tableQrCode: OnlineTableQrCodeSettings
   storeProfile: OnlineStoreProfileSettings
+  notificationRouting: OnlineNotificationRoutingSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]
   availableOptionChoices: OnlineMenuOptionChoice[]
