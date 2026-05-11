@@ -823,6 +823,12 @@ export interface ServiceChargeSettings {
   excludedItemIds: string[]
 }
 
+export interface PosAppOperationSettings {
+  hostStationId: string
+  childStationIds: string[]
+  maxChildStations: number
+}
+
 export interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[]
   customerTypes: string[]
@@ -831,6 +837,7 @@ export interface CustomerEngagementSettings {
   productTotalDisplay: ProductTotalDisplaySettings
   loyaltyPoints: LoyaltyPointSettings
   checkoutCounters: CheckoutCounterSettings
+  appOperation: PosAppOperationSettings
   electronicInvoice: ElectronicInvoiceSettings
   workflowAlerts: WorkflowAlertSettings
   orderPageDisplay: OrderPageDisplaySettings

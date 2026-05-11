@@ -818,6 +818,11 @@ interface CustomerEngagementSettings {
     defaultBookId: string;
     books: CheckoutCounterBookSetting[];
   };
+  appOperation: {
+    hostStationId: string;
+    childStationIds: string[];
+    maxChildStations: number;
+  };
   electronicInvoice: {
     enabled: boolean;
     defaultIssueOnCheckout: boolean;
@@ -1370,6 +1375,11 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
         enabled: true,
       },
     ],
+  },
+  appOperation: {
+    hostStationId: "",
+    childStationIds: [],
+    maxChildStations: 5,
   },
   electronicInvoice: {
     enabled: false,
@@ -9682,6 +9692,23 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.checkoutCounters
     : defaultEngagementSettings.checkoutCounters;
   const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings["checkoutCounters"]>;
+  const rawAppOperation = settings.appOperation && typeof settings.appOperation === "object"
+    ? settings.appOperation
+    : defaultEngagementSettings.appOperation;
+  const appOperation = rawAppOperation as Partial<CustomerEngagementSettings["appOperation"]>;
+  const appOperationHostStationId = sanitizeText(appOperation.hostStationId, "").slice(0, 80);
+  const appOperationMaxChildStations = clampIntegerRange(
+    appOperation.maxChildStations,
+    defaultEngagementSettings.appOperation.maxChildStations,
+    0,
+    20,
+  );
+  const appOperationChildStationIds = Array.isArray(appOperation.childStationIds)
+    ? [...new Set(appOperation.childStationIds
+      .map((stationId) => sanitizeText(stationId, "").slice(0, 80))
+      .filter((stationId) => stationId && stationId !== appOperationHostStationId))]
+      .slice(0, appOperationMaxChildStations)
+    : defaultEngagementSettings.appOperation.childStationIds;
   const rawElectronicInvoice = settings.electronicInvoice && typeof settings.electronicInvoice === "object"
     ? settings.electronicInvoice
     : defaultEngagementSettings.electronicInvoice;
@@ -9858,6 +9885,11 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
             stationIds: [...book.stationIds],
             paymentDeviceIds: [...book.paymentDeviceIds],
           })),
+    },
+    appOperation: {
+      hostStationId: appOperationHostStationId,
+      childStationIds: appOperationChildStationIds,
+      maxChildStations: appOperationMaxChildStations,
     },
     electronicInvoice: {
       enabled: electronicInvoice.enabled === true,
