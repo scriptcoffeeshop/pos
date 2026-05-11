@@ -601,6 +601,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'member-loyalty-points',
+    category: 'payments',
+    title: '會員點數活動',
+    summary: '點數規則存於 iCHEF 補齊設定，結帳會由資料庫流水扣點、累點與退款回補。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟後台「iCHEF 補齊」。',
+      '在「優惠券 / 點數折抵」設定是否啟用點數、是否累點/折抵、消費金額換 1 點、最低折抵與單筆上限。',
+      'POS 付款頁套用會員後，點數折抵欄會依會員餘額、訂單金額與 runtime 規則顯示可折抵點數與本單可得點數。',
+      '正式建單或草稿 finalize 時，API 會先用 `member_points_ledger` 原子扣點，成功後綁訂單並累點。',
+      '未收款作廢或已收款退款後，API 會依尚未反轉的點數流水回補折抵點並反轉本單累點。',
+    ],
+    keywords: ['點數', '會員點數', '累點', '折抵', '退款回補', 'member_points_ledger', 'loyaltyPoints', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'online-scheduled-order-rules',
     category: 'online',
     title: '線上預約訂單設定',

@@ -619,6 +619,10 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       excludedCategories: [...(settings.productTotalDisplay?.excludedCategories ?? [])],
       excludedItemIds: [...(settings.productTotalDisplay?.excludedItemIds ?? [])],
     },
+    loyaltyPoints: {
+      ...defaults.loyaltyPoints,
+      ...settings.loyaltyPoints,
+    },
     recommendations: settings.recommendations.map((rule) => ({ ...rule, productIds: [...rule.productIds] })),
     translations: settings.translations.map((translation) => ({ ...translation })),
     hardwareDevices: settings.hardwareDevices.map((device) => ({ ...device })),
@@ -4591,6 +4595,37 @@ const saveAccessControl = async (): Promise<void> => {
               </div>
               <Wallet :size="22" aria-hidden="true" />
             </div>
+
+            <div class="admin-online-settings-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.loyaltyPoints.enabled" type="checkbox" />
+                啟用點數活動
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.loyaltyPoints.earningEnabled" type="checkbox" />
+                結帳累點
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.loyaltyPoints.redeemEnabled" type="checkbox" />
+                結帳折抵
+              </label>
+              <label>
+                消費金額 / 1 點
+                <input v-model.number="engagementSettings.loyaltyPoints.spendAmountPerPoint" type="number" min="1" max="9999" step="1" />
+              </label>
+              <label>
+                最低折抵點數
+                <input v-model.number="engagementSettings.loyaltyPoints.minimumRedeemPoints" type="number" min="0" max="999999" step="1" />
+              </label>
+              <label>
+                單筆折抵上限
+                <input v-model.number="engagementSettings.loyaltyPoints.maximumRedeemPointsPerOrder" type="number" min="0" max="999999" step="1" />
+              </label>
+            </div>
+
+            <p class="panel-note">
+              0 代表不限制單筆折抵上限；正式結帳會由 POS API 原子扣點與累點，作廢/退款會依點數流水回補。
+            </p>
 
             <div class="admin-online-settings-grid">
               <label>

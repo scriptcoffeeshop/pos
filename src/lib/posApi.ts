@@ -2422,6 +2422,14 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     excludedCategories: [],
     excludedItemIds: [],
   },
+  loyaltyPoints: {
+    enabled: true,
+    earningEnabled: true,
+    redeemEnabled: true,
+    spendAmountPerPoint: 100,
+    minimumRedeemPoints: 1,
+    maximumRedeemPointsPerOrder: 0,
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2490,6 +2498,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.productTotalDisplay
     : defaults.productTotalDisplay
   const productTotalDisplay = rawProductTotalDisplay as Partial<CustomerEngagementSettings['productTotalDisplay']>
+  const rawLoyaltyPoints = settings.loyaltyPoints && typeof settings.loyaltyPoints === 'object'
+    ? settings.loyaltyPoints
+    : defaults.loyaltyPoints
+  const loyaltyPoints = rawLoyaltyPoints as Partial<CustomerEngagementSettings['loyaltyPoints']>
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index) => {
       const rule = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['recommendations'][number] : null
@@ -2576,6 +2588,14 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         ? [...new Set(productTotalDisplay.excludedItemIds.filter((itemId): itemId is string => typeof itemId === 'string'))]
           .slice(0, 200)
         : defaults.productTotalDisplay.excludedItemIds,
+    },
+    loyaltyPoints: {
+      enabled: loyaltyPoints.enabled !== false,
+      earningEnabled: loyaltyPoints.earningEnabled !== false,
+      redeemEnabled: loyaltyPoints.redeemEnabled !== false,
+      spendAmountPerPoint: Math.min(Math.max(normalizeNumber(loyaltyPoints.spendAmountPerPoint, defaults.loyaltyPoints.spendAmountPerPoint), 1), 9999),
+      minimumRedeemPoints: Math.min(Math.max(normalizeNumber(loyaltyPoints.minimumRedeemPoints, defaults.loyaltyPoints.minimumRedeemPoints), 0), 999_999),
+      maximumRedeemPointsPerOrder: Math.min(Math.max(normalizeNumber(loyaltyPoints.maximumRedeemPointsPerOrder, defaults.loyaltyPoints.maximumRedeemPointsPerOrder), 0), 999_999),
     },
     recommendations,
     translations,
