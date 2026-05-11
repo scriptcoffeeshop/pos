@@ -404,9 +404,9 @@ const canOrderOnline = computed(() =>
   !qrDineInLastOrderBlocked.value,
 )
 const onlineStatusLabel = computed(() =>
-  onlineOrdering.value.enabled && currentServiceModeOpen.value && hasPaymentOptions.value && !qrDineInLastOrderBlocked.value
-    ? '開放接單'
-    : '暫停接單',
+  onlineOrdering.value.enabled
+    ? (currentServiceModeOpen.value && hasPaymentOptions.value && !qrDineInLastOrderBlocked.value ? '開放接單' : '暫停接單')
+    : '僅菜單瀏覽',
 )
 const onlineStatusDetail = computed(() =>
   !onlineOrdering.value.enabled
@@ -1063,7 +1063,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
     menuCatalog.value = products
     orderMessage.value = onlineOrdering.value.enabled
       ? (products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放')
-      : onlineOrdering.value.pauseMessage
+      : `僅菜單瀏覽 · ${onlineOrdering.value.pauseMessage}`
   } catch (error) {
     onlineOrdering.value = defaultOnlineOrderingSettings()
     engagementSettings.value = defaultEngagementSettings()
@@ -1624,7 +1624,7 @@ watch(
       <button class="primary-button consumer-submit-button" type="button" :disabled="!canSubmit" @click="submitOnlineOrder">
         <TicketCheck v-if="!isSubmitting" :size="20" aria-hidden="true" />
         <Clock3 v-else :size="20" aria-hidden="true" />
-        {{ isSubmitting ? '送出中' : (canOrderOnline ? '送出訂單' : '暫停接單') }}
+        {{ isSubmitting ? '送出中' : (canOrderOnline ? '送出訂單' : (onlineOrdering.enabled ? '暫停接單' : '僅菜單瀏覽')) }}
       </button>
 
       <article v-if="lastOrder" class="consumer-confirmation">

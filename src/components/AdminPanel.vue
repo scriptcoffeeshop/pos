@@ -3682,9 +3682,9 @@ const saveAccessControl = async (): Promise<void> => {
 
         <div class="admin-online-status-grid">
           <article>
-            <span>接單狀態</span>
-            <strong>{{ onlineOrdering.enabled ? '開放接單' : '暫停接單' }}</strong>
-            <small>{{ onlineOrdering.enabled ? '消費者可送出新訂單' : '消費者頁會保留菜單但阻擋下單' }}</small>
+            <span>功能狀態</span>
+            <strong>{{ onlineOrdering.enabled ? '可掃碼點餐' : '僅菜單瀏覽' }}</strong>
+            <small>{{ onlineOrdering.enabled ? '消費者可送出新訂單' : '消費者頁保留菜單瀏覽但不開放送單' }}</small>
           </article>
           <article>
             <span>店家營業資訊</span>
@@ -3749,7 +3749,7 @@ const saveAccessControl = async (): Promise<void> => {
           <div class="admin-online-toggle-grid">
             <label class="toggle-row">
               <input v-model="onlineOrdering.enabled" type="checkbox" />
-              線上點餐總開關
+              消費者可送出訂單
             </label>
             <label class="toggle-row">
               <input v-model="onlineOrdering.serviceModeAvailability.takeout" type="checkbox" />
@@ -3853,7 +3853,7 @@ const saveAccessControl = async (): Promise<void> => {
               <small>顯示於消費者訂單備註欄位。</small>
             </label>
             <label class="wide-field">
-              暫停接單提示
+              僅菜單瀏覽提示
               <input v-model="onlineOrdering.pauseMessage" type="text" maxlength="120" />
             </label>
             <label class="wide-field">
