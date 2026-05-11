@@ -423,6 +423,14 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
     logoDataUrl: '',
   },
+  storeProfile: {
+    name: 'Script Coffee',
+    phone: '',
+    address: '',
+    notice: '',
+    noticeExpanded: false,
+    coverImageDataUrls: [],
+  },
   dineInTimeLimit: defaultDineInTimeLimitSettings(),
   dineInCheckout: {
     mode: 'postpaid',
@@ -488,6 +496,25 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
       typeof settings.tableQrCode?.logoDataUrl === 'string' && settings.tableQrCode.logoDataUrl.startsWith('data:image/')
         ? settings.tableQrCode.logoDataUrl.slice(0, 120_000)
         : '',
+  },
+  storeProfile: {
+    ...defaultOnlineOrderingSettings().storeProfile,
+    ...(settings.storeProfile ?? {}),
+    name:
+      typeof settings.storeProfile?.name === 'string' && settings.storeProfile.name.trim().length > 0
+        ? settings.storeProfile.name.trim().slice(0, 60)
+        : defaultOnlineOrderingSettings().storeProfile.name,
+    phone: typeof settings.storeProfile?.phone === 'string' ? settings.storeProfile.phone.trim().slice(0, 32) : '',
+    address:
+      typeof settings.storeProfile?.address === 'string' ? settings.storeProfile.address.trim().slice(0, 160) : '',
+    notice: typeof settings.storeProfile?.notice === 'string' ? settings.storeProfile.notice.trim().slice(0, 3000) : '',
+    noticeExpanded: settings.storeProfile?.noticeExpanded === true,
+    coverImageDataUrls: Array.isArray(settings.storeProfile?.coverImageDataUrls)
+      ? settings.storeProfile.coverImageDataUrls
+        .filter((imageUrl): imageUrl is string => typeof imageUrl === 'string' && imageUrl.startsWith('data:image/'))
+        .map((imageUrl) => imageUrl.slice(0, 600_000))
+        .slice(0, 4)
+      : [],
   },
   dineInTimeLimit: normalizeDineInTimeLimitSettings(
     settings.dineInTimeLimit,
@@ -677,6 +704,7 @@ const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
 const tableQrDownloadMessage = ref('')
+const onlineStoreProfileMessage = ref('')
 
 const visibleProducts = computed(() => productDrafts.value.filter((product) => product.available && product.posVisible).length)
 const onlineProducts = computed(() => productDrafts.value.filter((product) => product.onlineVisible || product.qrVisible).length)
@@ -2399,6 +2427,70 @@ const handleTableQrLogoUpload = (event: Event): void => {
   reader.readAsDataURL(file)
 }
 
+const removeStoreCoverImage = (imageIndex: number): void => {
+  onlineOrdering.value.storeProfile.coverImageDataUrls = onlineOrdering.value.storeProfile.coverImageDataUrls.filter(
+    (_imageUrl, index) => index !== imageIndex,
+  )
+  onlineStoreProfileMessage.value = '店家封面圖片已移除，儲存線上設定後會同步。'
+}
+
+const handleStoreCoverImageUpload = (event: Event): void => {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  if (files.length === 0) {
+    return
+  }
+
+  const existingImages = onlineOrdering.value.storeProfile.coverImageDataUrls
+  const availableSlots = Math.max(0, 4 - existingImages.length)
+  if (availableSlots === 0) {
+    onlineStoreProfileMessage.value = '最多可上傳 4 張店家封面圖片。'
+    input.value = ''
+    return
+  }
+
+  const selectedFiles = files.slice(0, availableSlots)
+  if (selectedFiles.some((file) => !['image/jpeg', 'image/png'].includes(file.type))) {
+    onlineStoreProfileMessage.value = '店家封面圖片請使用 JPG 或 PNG。'
+    input.value = ''
+    return
+  }
+
+  Promise.all(
+    selectedFiles.map((file) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = typeof reader.result === 'string' ? reader.result : ''
+          if (!result.startsWith('data:image/')) {
+            reject(new Error('圖片讀取失敗，請重新選擇 JPG 或 PNG。'))
+            return
+          }
+
+          if (result.length > 600_000) {
+            reject(new Error('單張封面圖片過大，請壓縮後再上傳。'))
+            return
+          }
+
+          resolve(result)
+        }
+        reader.onerror = () => reject(new Error('圖片讀取失敗，請重新選擇 JPG 或 PNG。'))
+        reader.readAsDataURL(file)
+      }),
+    ),
+  )
+    .then((imageUrls) => {
+      onlineOrdering.value.storeProfile.coverImageDataUrls = [...existingImages, ...imageUrls].slice(0, 4)
+      onlineStoreProfileMessage.value = `已載入 ${imageUrls.length} 張封面圖片，儲存線上設定後會同步。`
+    })
+    .catch((error) => {
+      onlineStoreProfileMessage.value = error instanceof Error ? error.message : '店家封面圖片讀取失敗'
+    })
+    .finally(() => {
+      input.value = ''
+    })
+}
+
 const saveOnlineOrdering = async (): Promise<void> => {
   savingSettingKey.value = 'online_ordering'
   adminMessage.value = '儲存線上點餐設定'
@@ -2467,6 +2559,19 @@ const saveOnlineOrdering = async (): Promise<void> => {
           logoDataUrl: onlineOrdering.value.tableQrCode.logoDataUrl.startsWith('data:image/')
             ? onlineOrdering.value.tableQrCode.logoDataUrl.slice(0, 120_000)
             : '',
+        },
+        storeProfile: {
+          name:
+            onlineOrdering.value.storeProfile.name.trim().slice(0, 60) ||
+            defaultOnlineOrderingSettings().storeProfile.name,
+          phone: onlineOrdering.value.storeProfile.phone.trim().slice(0, 32),
+          address: onlineOrdering.value.storeProfile.address.trim().slice(0, 160),
+          notice: onlineOrdering.value.storeProfile.notice.trim().slice(0, 3000),
+          noticeExpanded: Boolean(onlineOrdering.value.storeProfile.noticeExpanded),
+          coverImageDataUrls: onlineOrdering.value.storeProfile.coverImageDataUrls
+            .filter((imageUrl) => imageUrl.startsWith('data:image/'))
+            .map((imageUrl) => imageUrl.slice(0, 600_000))
+            .slice(0, 4),
         },
         dineInTimeLimit: normalizeDineInTimeLimitSettings({
           enabled: Boolean(onlineOrdering.value.dineInTimeLimit.enabled),
@@ -3465,6 +3570,11 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ onlineOrdering.enabled ? '消費者可送出新訂單' : '消費者頁會保留菜單但阻擋下單' }}</small>
           </article>
           <article>
+            <span>店家營業資訊</span>
+            <strong>{{ onlineOrdering.storeProfile.name }}</strong>
+            <small>{{ onlineOrdering.storeProfile.coverImageDataUrls.length }} 張封面圖</small>
+          </article>
+          <article>
             <span>平均備餐</span>
             <strong>{{ onlineOrdering.averagePrepMinutes }} 分</strong>
             <small>顯示於消費者頁並作為預約最早時間參考</small>
@@ -3718,6 +3828,68 @@ const saveAccessControl = async (): Promise<void> => {
               </article>
             </div>
             <p v-else class="panel-note">尚未建立桌位，請先到桌位地圖後台編輯模式新增桌位。</p>
+          </div>
+
+          <div class="admin-online-store-profile" aria-label="店家營業資訊">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Store profile</p>
+                <h3>店家營業資訊</h3>
+                <span class="panel-note">顯示於內用掃碼與線上點餐頁，對齊 iCHEF 店家資訊、提醒事項與封面圖片。</span>
+              </div>
+            </div>
+            <div class="admin-online-settings-grid">
+              <label>
+                店家名稱
+                <input v-model="onlineOrdering.storeProfile.name" type="text" maxlength="60" />
+                <small>中文建議 10 字以內，英數建議 15 字元以內。</small>
+              </label>
+              <label>
+                聯絡電話
+                <input v-model="onlineOrdering.storeProfile.phone" type="tel" maxlength="32" />
+              </label>
+              <label class="wide-field">
+                店家地址
+                <input v-model="onlineOrdering.storeProfile.address" type="text" maxlength="160" />
+              </label>
+              <label class="wide-field">
+                提醒事項
+                <textarea
+                  v-model="onlineOrdering.storeProfile.notice"
+                  rows="4"
+                  maxlength="3000"
+                  placeholder="例如：尖峰時段餐點需等候，請依現場叫號取餐。"
+                />
+                <small>{{ onlineOrdering.storeProfile.notice.length }}/3000，未開啟顯示全文時預設只顯示前 3 行。</small>
+              </label>
+              <label class="toggle-row wide-field">
+                <input v-model="onlineOrdering.storeProfile.noticeExpanded" type="checkbox" />
+                提醒事項預設顯示全文
+              </label>
+              <label class="wide-field">
+                店家封面圖片
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  multiple
+                  :disabled="onlineOrdering.storeProfile.coverImageDataUrls.length >= 4"
+                  @change="handleStoreCoverImageUpload"
+                />
+                <small>建議 750x400px 以上 JPG/PNG，最多 4 張；多張會在消費者頁輪播。</small>
+              </label>
+            </div>
+            <p v-if="onlineStoreProfileMessage" class="admin-inline-note">{{ onlineStoreProfileMessage }}</p>
+            <div v-if="onlineOrdering.storeProfile.coverImageDataUrls.length" class="admin-store-cover-list">
+              <article
+                v-for="(imageUrl, index) in onlineOrdering.storeProfile.coverImageDataUrls"
+                :key="`${imageUrl.slice(0, 36)}-${index}`"
+                class="admin-store-cover-row"
+              >
+                <img :src="imageUrl" alt="" />
+                <span>封面 {{ index + 1 }}</span>
+                <button class="utility-button" type="button" @click="removeStoreCoverImage(index)">移除</button>
+              </article>
+            </div>
           </div>
 
           <div class="admin-online-schedule-rules" aria-label="用餐與點餐限時">

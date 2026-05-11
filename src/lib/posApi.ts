@@ -1398,6 +1398,14 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
     logoDataUrl: '',
   },
+  storeProfile: {
+    name: 'Script Coffee',
+    phone: '',
+    address: '',
+    notice: '',
+    noticeExpanded: false,
+    coverImageDataUrls: [],
+  },
   pauseMessage: '目前暫停線上點餐，請稍後再試',
   menuCategories: [],
   availableOptionChoices: [],
@@ -1544,6 +1552,39 @@ const normalizeTableQrCodeSettings = (
       typeof settings.logoDataUrl === 'string' && settings.logoDataUrl.startsWith('data:image/')
         ? settings.logoDataUrl.slice(0, 120_000)
         : '',
+  }
+}
+
+const normalizeImageDataUrls = (value: unknown, limit = 4): string[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.startsWith('data:image/'))
+    .map((entry) => entry.slice(0, 600_000))
+    .slice(0, limit)
+}
+
+const normalizeOnlineStoreProfileSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().storeProfile,
+): OnlineOrderingSettings['storeProfile'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults, coverImageDataUrls: [...defaults.coverImageDataUrls] }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['storeProfile']>
+  return {
+    name:
+      typeof settings.name === 'string' && settings.name.trim().length > 0
+        ? settings.name.trim().slice(0, 60)
+        : defaults.name,
+    phone: typeof settings.phone === 'string' ? settings.phone.trim().slice(0, 32) : defaults.phone,
+    address: typeof settings.address === 'string' ? settings.address.trim().slice(0, 160) : defaults.address,
+    notice: typeof settings.notice === 'string' ? settings.notice.trim().slice(0, 3000) : defaults.notice,
+    noticeExpanded: settings.noticeExpanded === true,
+    coverImageDataUrls: normalizeImageDataUrls(settings.coverImageDataUrls),
   }
 }
 
@@ -2005,6 +2046,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     dineInCheckout: normalizeDineInCheckoutSettings(settings.dineInCheckout, defaults.dineInCheckout),
     commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode, defaults.tableQrCode),
+    storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile, defaults.storeProfile),
     pauseMessage:
       typeof settings.pauseMessage === 'string' && settings.pauseMessage.trim().length > 0
         ? settings.pauseMessage.trim().slice(0, 120)

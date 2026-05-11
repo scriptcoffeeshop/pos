@@ -115,6 +115,8 @@ const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
 const isSubmitting = ref(false)
 const currentTime = ref(Date.now())
+const storeCoverIndex = ref(0)
+const storeNoticeExpanded = ref(false)
 const orderMessage = ref('讀取線上菜單中')
 const formError = ref('')
 const lastOrder = ref<PosOrder | null>(null)
@@ -127,6 +129,7 @@ const itemNoteDraft = ref('')
 let onlineMenuSyncTimer: number | null = null
 let onlineRealtimeRefreshTimer: number | null = null
 let consumerClockTimer: number | null = null
+let storeCoverCarouselTimer: number | null = null
 let onlineRealtimeUnsubscribe: (() => void) | null = null
 const customer = reactive<CustomerDraft>({
   memberId: null,
@@ -237,6 +240,24 @@ const menuGroups = computed(() =>
     }))
     .filter((group) => group.items.length > 0),
 )
+
+const onlineStoreProfile = computed(() => onlineOrdering.value.storeProfile)
+const onlineStoreName = computed(() => onlineStoreProfile.value.name.trim() || 'Script Coffee')
+const onlineStorePhone = computed(() => onlineStoreProfile.value.phone.trim())
+const onlineStoreAddress = computed(() => onlineStoreProfile.value.address.trim())
+const onlineStoreNotice = computed(() => onlineStoreProfile.value.notice.trim())
+const onlineStoreCoverImages = computed(() =>
+  onlineStoreProfile.value.coverImageDataUrls.filter((imageUrl) => imageUrl.startsWith('data:image/')).slice(0, 4),
+)
+const activeStoreCoverImage = computed(() => {
+  const images = onlineStoreCoverImages.value
+  if (images.length === 0) {
+    return ''
+  }
+
+  return images[storeCoverIndex.value % images.length] ?? images[0] ?? ''
+})
+const storeNoticeOpen = computed(() => onlineStoreProfile.value.noticeExpanded || storeNoticeExpanded.value)
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
@@ -1127,6 +1148,11 @@ onMounted(() => {
   consumerClockTimer = globalThis.setInterval(() => {
     currentTime.value = Date.now()
   }, 30_000)
+  storeCoverCarouselTimer = globalThis.setInterval(() => {
+    if (onlineStoreCoverImages.value.length > 1) {
+      storeCoverIndex.value = (storeCoverIndex.value + 1) % onlineStoreCoverImages.value.length
+    }
+  }, 5_000)
   onlineRealtimeUnsubscribe = subscribeToPosRealtimeEvents({
     topics: ['runtime_settings', 'products'],
     onEvent: scheduleOnlineRealtimeRefresh,
@@ -1145,6 +1171,9 @@ onBeforeUnmount(() => {
   }
   if (consumerClockTimer !== null) {
     globalThis.clearInterval(consumerClockTimer)
+  }
+  if (storeCoverCarouselTimer !== null) {
+    globalThis.clearInterval(storeCoverCarouselTimer)
   }
   globalThis.removeEventListener('focus', refreshOnlineMenuQuietly)
 })
@@ -1187,18 +1216,44 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => onlineStoreProfile.value.notice,
+  () => {
+    storeNoticeExpanded.value = false
+  },
+)
+
+watch(
+  () => onlineStoreCoverImages.value.length,
+  (coverImageCount) => {
+    if (coverImageCount === 0) {
+      storeCoverIndex.value = 0
+      return
+    }
+
+    storeCoverIndex.value = storeCoverIndex.value % coverImageCount
+  },
+)
 </script>
 
 <template>
   <section class="consumer-shell" aria-label="線上點餐">
     <section class="consumer-storefront">
-      <div class="consumer-cover" aria-hidden="true">
-        <img :src="brandLogoSrc" alt="" />
+      <div class="consumer-cover" :class="{ 'consumer-cover--photo': activeStoreCoverImage }" aria-hidden="true">
+        <img :src="activeStoreCoverImage || brandLogoSrc" alt="" />
+        <div v-if="onlineStoreCoverImages.length > 1" class="consumer-cover-dots">
+          <span
+            v-for="(_imageUrl, index) in onlineStoreCoverImages"
+            :key="`cover-dot-${index}`"
+            :class="{ 'consumer-cover-dot--active': index === storeCoverIndex % onlineStoreCoverImages.length }"
+          />
+        </div>
       </div>
 
       <div class="consumer-store-info">
         <div>
-          <h2>Script Coffee</h2>
+          <h2>{{ onlineStoreName }}</h2>
           <p class="consumer-status-line">
             <Clock3 :size="18" aria-hidden="true" />
             <strong>{{ onlineStatusLabel }}</strong>
@@ -1212,6 +1267,25 @@ watch(
             <Clock3 :size="18" aria-hidden="true" />
             <span>{{ qrDineInTimeLimitDetail }}</span>
           </p>
+          <p v-if="onlineStorePhone || onlineStoreAddress" class="consumer-status-line">
+            <Info :size="18" aria-hidden="true" />
+            <span>{{ [onlineStorePhone, onlineStoreAddress].filter(Boolean).join(' · ') }}</span>
+          </p>
+          <div
+            v-if="onlineStoreNotice"
+            class="consumer-store-notice"
+            :class="{ 'consumer-store-notice--clamped': !storeNoticeOpen }"
+          >
+            <p>{{ onlineStoreNotice }}</p>
+            <button
+              v-if="!onlineStoreProfile.noticeExpanded"
+              class="text-button"
+              type="button"
+              @click="storeNoticeExpanded = !storeNoticeExpanded"
+            >
+              {{ storeNoticeExpanded ? '收合提醒事項' : '展開提醒事項' }}
+            </button>
+          </div>
         </div>
         <button class="icon-button" type="button" title="餐廳資訊">
           <Info :size="20" aria-hidden="true" />
