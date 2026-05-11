@@ -17,6 +17,9 @@ export type OnlineOrderReminderStatus = 'active' | 'snoozed' | 'seen'
 export type OnlineOrderReminderAction = 'snooze' | 'seen' | 'accepted' | 'rejected'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 export type InventoryConsumptionSubject = 'product' | 'option'
+export type DiscountCampaignKind = 'automatic' | 'manual'
+export type DiscountCampaignScope = 'whole-order' | 'categories' | 'products'
+export type DiscountValueType = 'amount' | 'percentage'
 
 export interface SupplyPeriodRule {
   id: string
@@ -441,6 +444,50 @@ export interface OnlineOrderingSettings {
   noteSupplyStatuses: Record<string, ProductSupplyStatus>
 }
 
+export interface DiscountCampaignSchedule {
+  enabled: boolean
+  days: number[]
+  start: string
+  end: string
+  allDay: boolean
+}
+
+export interface DiscountCampaignUsage {
+  posEnabled: boolean
+  posAutoApply: boolean
+  onlineEnabled: boolean
+  requiresVerification: boolean
+}
+
+export interface DiscountCampaign {
+  id: string
+  name: string
+  kind: DiscountCampaignKind
+  scope: DiscountCampaignScope
+  valueType: DiscountValueType
+  discountValue: number
+  minimumSubtotal: number
+  enabled: boolean
+  sortOrder: number
+  serviceModes: ServiceMode[]
+  categories: MenuCategory[]
+  productIds: string[]
+  schedule: DiscountCampaignSchedule
+  usage: DiscountCampaignUsage
+}
+
+export interface DiscountSettings {
+  campaigns: DiscountCampaign[]
+}
+
+export interface DiscountApplication {
+  campaignId: string
+  campaignName: string
+  amount: number
+  kind: DiscountCampaignKind
+  valueType: DiscountValueType
+}
+
 export interface PosAppearanceSettings {
   interfaceScale: number
   densityScale: number
@@ -581,6 +628,7 @@ export interface PosAdminSettings {
   printerSettings: PrinterSettings
   accessControl: AccessControlSettings
   onlineOrdering: OnlineOrderingSettings
+  discountSettings: DiscountSettings
   posAppearance: PosAppearanceSettings
   floorPlan: FloorPlanSettings
   engagementSettings: CustomerEngagementSettings

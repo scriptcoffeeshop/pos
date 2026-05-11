@@ -2,6 +2,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
+import {
+  calculateDiscountApplications,
+  defaultDiscountSettings,
+  normalizeDiscountSettings,
+} from '../lib/discounts'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
 import {
   clearOnlineOrderNotifier,
@@ -98,6 +103,9 @@ import type {
   RegisterSession,
   ServiceMode,
   CustomerEngagementSettings,
+  DiscountApplication,
+  DiscountCampaign,
+  DiscountSettings,
 } from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
@@ -154,6 +162,8 @@ interface CounterDraftState {
   serviceFeeRate: number
   extraFeeAmount: number
   discountAmount: number
+  selectedDiscountCampaignIds: string[]
+  disabledAutomaticDiscountCampaignIds: string[]
   pointsRedeemed: number
   couponCode: string
   paymentSplits: PaymentSplit[]
@@ -339,6 +349,12 @@ const readCounterDraft = (): CounterDraftState | null => {
       discountAmount: Number.isFinite(parsed.discountAmount)
         ? Math.max(0, Math.trunc(Number(parsed.discountAmount)))
         : 0,
+      selectedDiscountCampaignIds: Array.isArray(parsed.selectedDiscountCampaignIds)
+        ? parsed.selectedDiscountCampaignIds.filter((campaignId): campaignId is string => typeof campaignId === 'string').slice(0, 20)
+        : [],
+      disabledAutomaticDiscountCampaignIds: Array.isArray(parsed.disabledAutomaticDiscountCampaignIds)
+        ? parsed.disabledAutomaticDiscountCampaignIds.filter((campaignId): campaignId is string => typeof campaignId === 'string').slice(0, 20)
+        : [],
       pointsRedeemed: Number.isFinite(parsed.pointsRedeemed)
         ? Math.max(0, Math.trunc(Number(parsed.pointsRedeemed)))
         : 0,
@@ -371,6 +387,8 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.serviceFeeRate > 0 ||
       draft.extraFeeAmount > 0 ||
       draft.discountAmount > 0 ||
+      draft.selectedDiscountCampaignIds.length > 0 ||
+      draft.disabledAutomaticDiscountCampaignIds.length > 0 ||
       draft.pointsRedeemed > 0 ||
       draft.couponCode.trim().length > 0 ||
       draft.paymentSplits.length > 0 ||
@@ -976,6 +994,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const serviceFeeRate = ref(savedCounterDraft?.serviceFeeRate ?? 0)
   const extraFeeAmount = ref(savedCounterDraft?.extraFeeAmount ?? 0)
   const discountAmount = ref(savedCounterDraft?.discountAmount ?? 0)
+  const selectedDiscountCampaignIds = ref<string[]>(savedCounterDraft?.selectedDiscountCampaignIds ?? [])
+  const disabledAutomaticDiscountCampaignIds = ref<string[]>(savedCounterDraft?.disabledAutomaticDiscountCampaignIds ?? [])
   const pointsRedeemed = ref(savedCounterDraft?.pointsRedeemed ?? 0)
   const couponCode = ref(savedCounterDraft?.couponCode ?? '')
   const paymentSplits = ref<PaymentSplit[]>(savedCounterDraft?.paymentSplits ?? [])
@@ -1032,6 +1052,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   })
   const printerSettings = ref<PrinterSettings>(buildDefaultPrinterSettings(printStation))
   const onlineOrderingSettings = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+  const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
   const posAppearanceSettings = ref<PosAppearanceSettings>(defaultPosAppearanceSettings())
   const floorPlanSettings = ref<FloorPlanSettings>(defaultFloorPlanSettings())
   const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
@@ -1097,6 +1118,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const applyRuntimeSettings = (runtimeSettings: RuntimeSettings): void => {
     onlineOrderingSettings.value = runtimeSettings.onlineOrdering
+    discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
     posAppearanceSettings.value = runtimeSettings.posAppearance
     floorPlanSettings.value = runtimeSettings.floorPlan
     engagementSettings.value = runtimeSettings.engagementSettings
@@ -1488,13 +1510,35 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const serviceFeeAmount = computed(() =>
     Math.max(0, Math.round(cartItemSubtotal.value * Math.min(Math.max(serviceFeeRate.value, 0), 30) / 100)),
   )
+  const selectedDiscountCampaignIdSet = computed(() => new Set(selectedDiscountCampaignIds.value))
+  const availableDiscountCampaigns = computed<DiscountCampaign[]>(() =>
+    discountSettings.value.campaigns.filter((campaign) =>
+      campaign.enabled &&
+      campaign.usage.posEnabled &&
+      campaign.serviceModes.includes(serviceMode.value),
+    ),
+  )
+  const discountCalculation = computed(() =>
+    calculateDiscountApplications(discountSettings.value, {
+      lines: cartLines.value,
+      serviceMode: serviceMode.value,
+      channel: 'pos',
+      selectedCampaignIds: selectedDiscountCampaignIds.value,
+      disabledCampaignIds: disabledAutomaticDiscountCampaignIds.value,
+    }),
+  )
+  const discountCampaignApplications = computed<DiscountApplication[]>(() => discountCalculation.value.applications)
+  const automaticDiscountAmount = computed(() => discountCalculation.value.total)
+  const totalDiscountAmount = computed(() =>
+    Math.max(0, Math.trunc(discountAmount.value || 0)) + automaticDiscountAmount.value,
+  )
   const cartTotal = computed(() =>
     Math.max(
       0,
       cartItemSubtotal.value +
         serviceFeeAmount.value +
         Math.max(0, Math.trunc(extraFeeAmount.value || 0)) -
-        Math.max(0, Math.trunc(discountAmount.value || 0)) -
+        totalDiscountAmount.value -
         Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
     ),
   )
@@ -1557,6 +1601,25 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderLabels.value = [...orderLabels.value, labelId].slice(0, 12)
   }
 
+  const toggleDiscountCampaign = (campaignId: string): void => {
+    const campaign = availableDiscountCampaigns.value.find((entry) => entry.id === campaignId)
+    if (campaign?.kind === 'automatic' && campaign.usage.posAutoApply) {
+      if (disabledAutomaticDiscountCampaignIds.value.includes(campaignId)) {
+        disabledAutomaticDiscountCampaignIds.value = disabledAutomaticDiscountCampaignIds.value.filter((id) => id !== campaignId)
+        return
+      }
+      disabledAutomaticDiscountCampaignIds.value = [...disabledAutomaticDiscountCampaignIds.value, campaignId].slice(0, 20)
+      return
+    }
+
+    if (selectedDiscountCampaignIdSet.value.has(campaignId)) {
+      selectedDiscountCampaignIds.value = selectedDiscountCampaignIds.value.filter((id) => id !== campaignId)
+      return
+    }
+
+    selectedDiscountCampaignIds.value = [...selectedDiscountCampaignIds.value, campaignId].slice(0, 20)
+  }
+
   const rememberRecentItem = (itemId: string): void => {
     recentItemIds.value = [itemId, ...recentItemIds.value.filter((entry) => entry !== itemId)].slice(0, 6)
     writeRecentItemIds(recentItemIds.value)
@@ -1582,6 +1645,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     serviceFeeRate.value = engagementSettings.value.defaultServiceFeeRate
     extraFeeAmount.value = 0
     discountAmount.value = 0
+    selectedDiscountCampaignIds.value = []
+    disabledAutomaticDiscountCampaignIds.value = []
     pointsRedeemed.value = 0
     couponCode.value = ''
     paymentSplits.value = []
@@ -1851,7 +1916,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       serviceFeeRate: Math.min(Math.max(Math.trunc(serviceFeeRate.value || 0), 0), 30),
       serviceFeeAmount: serviceFeeAmount.value,
       extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
-      discountAmount: Math.max(0, Math.trunc(discountAmount.value || 0)),
+      discountAmount: totalDiscountAmount.value,
       pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
@@ -1888,6 +1953,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       serviceFeeRate,
       extraFeeAmount,
       discountAmount,
+      selectedDiscountCampaignIds,
+      disabledAutomaticDiscountCampaignIds,
       pointsRedeemed,
       couponCode,
       paymentSplits,
@@ -1906,6 +1973,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         serviceFeeRate: serviceFeeRate.value,
         extraFeeAmount: extraFeeAmount.value,
         discountAmount: discountAmount.value,
+        selectedDiscountCampaignIds: [...selectedDiscountCampaignIds.value],
+        disabledAutomaticDiscountCampaignIds: [...disabledAutomaticDiscountCampaignIds.value],
         pointsRedeemed: pointsRedeemed.value,
         couponCode: couponCode.value,
         paymentSplits: normalizePaymentSplits(paymentSplits.value),
@@ -3588,7 +3657,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       serviceFeeRate: Math.min(Math.max(Math.trunc(serviceFeeRate.value || 0), 0), 30),
       serviceFeeAmount: serviceFeeAmount.value,
       extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
-      discountAmount: Math.max(0, Math.trunc(discountAmount.value || 0)),
+      discountAmount: totalDiscountAmount.value,
       pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
@@ -4017,6 +4086,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartItemSubtotal,
     cartQuantity,
     cartTotal,
+    availableDiscountCampaigns,
+    automaticDiscountAmount,
     clearCart,
     clearCustomerMember,
     closeRegisterSessionForStation,
@@ -4026,6 +4097,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customerHasNote,
     deletingPrintJobId,
     discountAmount,
+    discountCampaignApplications,
+    discountSettings,
+    disabledAutomaticDiscountCampaignIds,
+    selectedDiscountCampaignIds,
     accessPolicy,
     engagementSettings,
     extraFeeAmount,
@@ -4101,6 +4176,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     toggleCustomerNote,
     toggleLinePrintPaused,
     toggleOrderLabel,
+    toggleDiscountCampaign,
+    totalDiscountAmount,
     applyCustomerMember,
     couponCode,
     unconfirmedOnlineOrders,

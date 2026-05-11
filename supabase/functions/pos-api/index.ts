@@ -16,7 +16,7 @@ type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
 type CashDrawerDeliveryStatus = "sent" | "preview" | "failed";
 type PrintLabelMode = "receipt" | "label" | "both";
-type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "pos_appearance" | "floor_plan" | "engagement_settings";
+type AdminSettingKey = "printer_settings" | "access_control" | "online_ordering" | "discount_settings" | "pos_appearance" | "floor_plan" | "engagement_settings";
 type ProductChannel = "pos" | "online" | "qr";
 type ReservationStatus = "booked" | "reminded" | "confirmed" | "seated" | "cancelled" | "no_show";
 type MemberCouponStatus = "active" | "redeemed" | "expired";
@@ -40,6 +40,7 @@ interface SupplyWindowRule {
 interface OrderLineInput {
   productId?: string;
   productSku: string;
+  category?: MenuCategory;
   name: string;
   unitPrice: number;
   quantity: number;
@@ -482,6 +483,54 @@ interface OnlineOrderingSettings {
   menuOptionGroups: OnlineMenuOptionGroup[];
   productOptionAssignments: Record<string, string[]>;
   noteSupplyStatuses: Record<string, ProductSupplyStatus>;
+}
+
+type DiscountCampaignKind = "automatic" | "manual";
+type DiscountCampaignScope = "whole-order" | "categories" | "products";
+type DiscountValueType = "amount" | "percentage";
+
+interface DiscountCampaignSchedule {
+  enabled: boolean;
+  days: number[];
+  start: string;
+  end: string;
+  allDay: boolean;
+}
+
+interface DiscountCampaignUsage {
+  posEnabled: boolean;
+  posAutoApply: boolean;
+  onlineEnabled: boolean;
+  requiresVerification: boolean;
+}
+
+interface DiscountCampaign {
+  id: string;
+  name: string;
+  kind: DiscountCampaignKind;
+  scope: DiscountCampaignScope;
+  valueType: DiscountValueType;
+  discountValue: number;
+  minimumSubtotal: number;
+  enabled: boolean;
+  sortOrder: number;
+  serviceModes: ServiceMode[];
+  categories: MenuCategory[];
+  productIds: string[];
+  schedule: DiscountCampaignSchedule;
+  usage: DiscountCampaignUsage;
+}
+
+interface DiscountSettings {
+  campaigns: DiscountCampaign[];
+}
+
+interface DiscountApplication {
+  campaignId: string;
+  campaignName: string;
+  amount: number;
+  kind: DiscountCampaignKind;
+  valueType: DiscountValueType;
 }
 
 interface PosAppearanceSettings {
@@ -954,6 +1003,40 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   menuOptionGroups: [],
   productOptionAssignments: {},
   noteSupplyStatuses: {},
+};
+
+const defaultDiscountSchedule = (): DiscountCampaignSchedule => ({
+  enabled: false,
+  days: [1, 2, 3, 4, 5, 6, 0],
+  start: "00:00",
+  end: "23:59",
+  allDay: true,
+});
+
+const defaultDiscountSettings: DiscountSettings = {
+  campaigns: [
+    {
+      id: "manual-discount",
+      name: "手動折扣",
+      kind: "manual",
+      scope: "whole-order",
+      valueType: "amount",
+      discountValue: 0,
+      minimumSubtotal: 0,
+      enabled: true,
+      sortOrder: 1,
+      serviceModes: ["dine-in", "takeout", "delivery"],
+      categories: [],
+      productIds: [],
+      schedule: defaultDiscountSchedule(),
+      usage: {
+        posEnabled: true,
+        posAutoApply: false,
+        onlineEnabled: false,
+        requiresVerification: true,
+      },
+    },
+  ],
 };
 
 const defaultPosAppearance: PosAppearanceSettings = {
@@ -1478,6 +1561,10 @@ api.get("/settings/runtime", async (c) => {
     "online_ordering",
     defaultOnlineOrdering,
   );
+  const discountSettings = await loadSetting<DiscountSettings>(
+    "discount_settings",
+    defaultDiscountSettings,
+  );
   const posAppearance = await loadSetting<PosAppearanceSettings>(
     "pos_appearance",
     defaultPosAppearance,
@@ -1499,6 +1586,7 @@ api.get("/settings/runtime", async (c) => {
   return c.json({
     printerSettings: normalizePrinterSettingsForRuntime(printerSettings),
     onlineOrdering: normalizeOnlineOrderingForRuntime(onlineOrdering),
+    discountSettings: normalizeDiscountSettingsForRuntime(discountSettings),
     posAppearance: normalizePosAppearanceForRuntime(posAppearance),
     floorPlan: normalizeFloorPlanForRuntime(floorPlan),
     engagementSettings: normalizeEngagementSettingsForRuntime(engagementSettings),
@@ -3383,7 +3471,7 @@ api.get("/admin/settings", async (c) => {
   const { data, error } = await supabase
     .from("pos_settings")
     .select("key, value")
-    .in("key", ["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan", "engagement_settings"]);
+    .in("key", ["printer_settings", "access_control", "online_ordering", "discount_settings", "pos_appearance", "floor_plan", "engagement_settings"]);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -3503,7 +3591,7 @@ api.patch("/admin/settings/:key", async (c) => {
   }
 
   const key = c.req.param("key") as AdminSettingKey;
-  if (!["printer_settings", "access_control", "online_ordering", "pos_appearance", "floor_plan", "engagement_settings"].includes(key)) {
+  if (!["printer_settings", "access_control", "online_ordering", "discount_settings", "pos_appearance", "floor_plan", "engagement_settings"].includes(key)) {
     return c.json({ error: "Invalid setting key" }, 400);
   }
 
@@ -3563,6 +3651,7 @@ api.post("/orders", async (c) => {
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
+  const discountRuntime = await applyRuntimeDiscountsToInput(input, orderSource);
   if (orderSource === "online" || orderSource === "qr") {
     const rawOnlineOrdering = await loadSetting<OnlineOrderingSettings>(
       "online_ordering",
@@ -3618,9 +3707,9 @@ api.post("/orders", async (c) => {
       unitPrice: line.unitPrice,
       quantity: line.quantity,
       options: line.options ?? [],
-      printPaused: line.printPaused === true,
-    })),
-  });
+	      printPaused: line.printPaused === true,
+	    })),
+	  });
 
   if (orderError) {
     const status = /inventory|Product not found|quantity/i.test(orderError.message) ? 409 : 500;
@@ -3640,11 +3729,17 @@ api.post("/orders", async (c) => {
       orderNumber: savedOrder.order_number,
       subtotal: savedOrder.subtotal,
       lineCount: orderLines.length,
-      paymentStatus: savedOrder.payment_status,
-      deliveryAddress: savedOrder.delivery_address,
-      requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
-    },
-  });
+	      paymentStatus: savedOrder.payment_status,
+	      deliveryAddress: savedOrder.delivery_address,
+	      requestedFulfillmentAt: savedOrder.requested_fulfillment_at,
+	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+	      discountCampaigns: discountRuntime.applications.map((application) => ({
+	        id: application.campaignId,
+	        name: application.campaignName,
+	        amount: application.amount,
+	      })),
+	    },
+	  });
 
   return c.json({ order: savedOrder }, 201);
 });
@@ -3661,6 +3756,7 @@ api.post("/orders/drafts", async (c) => {
   const draftLines = normalizeDraftOrderLines(input.lines ?? []);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  const discountRuntime = await applyRuntimeDiscountsToInput(input, "counter");
   const existing = await loadOrderByNumber(input.orderNumber);
   if (existing.error) {
     return c.json({ error: existing.error.message }, 500);
@@ -3712,11 +3808,12 @@ api.post("/orders/drafts", async (c) => {
     orderId: result.data.id,
     stationId,
     metadata: {
-      orderNumber: result.data.order_number,
-      subtotal: result.data.subtotal,
-      draftLineCount: draftLines.length,
-    },
-  });
+	      orderNumber: result.data.order_number,
+	      subtotal: result.data.subtotal,
+	      draftLineCount: draftLines.length,
+	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+	    },
+	  });
 
   return c.json({ order: result.data }, existing.data ? 200 : 201);
 });
@@ -3758,6 +3855,7 @@ api.patch("/orders/:id/draft", async (c) => {
   const draftLines = normalizeDraftOrderLines(input.lines ?? []);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
+  await applyRuntimeDiscountsToInput(input, "counter");
   const { data, error } = await supabase
     .from("orders")
     .update({
@@ -3818,6 +3916,7 @@ api.post("/orders/:id/finalize", async (c) => {
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderLines = input.lines ?? [];
+  const discountRuntime = await applyRuntimeDiscountsToInput(input, "counter");
   const { data: finalizedOrderId, error: finalizeError } = await supabase.rpc("finalize_pos_order", {
     p_order_id: current.data.id,
     p_service_mode: input.serviceMode ?? "takeout",
@@ -3856,11 +3955,12 @@ api.post("/orders/:id/finalize", async (c) => {
     stationId,
     metadata: {
       orderNumber: savedOrder.order_number,
-      subtotal: savedOrder.subtotal,
-      lineCount: orderLines.length,
-      paymentStatus: savedOrder.payment_status,
-    },
-  });
+	      subtotal: savedOrder.subtotal,
+	      lineCount: orderLines.length,
+	      paymentStatus: savedOrder.payment_status,
+	      automaticDiscountAmount: discountRuntime.automaticDiscountAmount,
+	    },
+	  });
 
   return c.json({ order: savedOrder });
 });
@@ -5414,8 +5514,10 @@ const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
     }
 
     const productId = normalizeUuid(line.productId) ?? undefined;
+    const category = sanitizeText(line.category, "").slice(0, 80);
     const normalizedLine: OrderLineInput = {
       productSku,
+      ...(category ? { category } : {}),
       name,
       unitPrice,
       quantity,
@@ -5455,6 +5557,180 @@ const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSe
     return 0;
   }
   return settings.deliveryFeeAmount;
+};
+const normalizeDiscountDays = (input: unknown): number[] => {
+  if (!Array.isArray(input)) {
+    return [1, 2, 3, 4, 5, 6, 0];
+  }
+  const days = [...new Set(input.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))];
+  return days.length > 0 ? days : [1, 2, 3, 4, 5, 6, 0];
+};
+const normalizeDiscountCampaigns = (input: unknown): DiscountCampaign[] => {
+  if (!Array.isArray(input)) {
+    return defaultDiscountSettings.campaigns;
+  }
+
+  const seen = new Set<string>();
+  const campaigns = input.flatMap((entry, index): DiscountCampaign[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const campaign = entry as Partial<DiscountCampaign>;
+    const id = sanitizeText(campaign.id, `discount-${index + 1}`).replace(/\s+/g, "-").slice(0, 80);
+    const name = sanitizeText(campaign.name, index === 0 ? "手動折扣" : `優惠活動 ${index + 1}`).slice(0, 80);
+    if (!id || !name || seen.has(id)) {
+      return [];
+    }
+    seen.add(id);
+
+    const valueType: DiscountValueType = campaign.valueType === "percentage" ? "percentage" : "amount";
+    const rawSchedule = campaign.schedule && typeof campaign.schedule === "object" ? campaign.schedule : defaultDiscountSchedule();
+    const rawUsage = campaign.usage && typeof campaign.usage === "object" ? campaign.usage : {};
+    const serviceModeList = Array.isArray(campaign.serviceModes)
+      ? [...new Set(campaign.serviceModes.filter((mode): mode is ServiceMode => serviceModes.includes(mode as ServiceMode)))]
+      : serviceModes;
+
+    return [{
+      id,
+      name,
+      kind: campaign.kind === "automatic" ? "automatic" : "manual",
+      scope: campaign.scope === "categories" || campaign.scope === "products" ? campaign.scope : "whole-order",
+      valueType,
+      discountValue: valueType === "percentage"
+        ? clampIntegerRange(campaign.discountValue, 0, 0, 100)
+        : clampIntegerRange(campaign.discountValue, 0, 0, 999_999),
+      minimumSubtotal: clampIntegerRange(campaign.minimumSubtotal, 0, 0, 999_999),
+      enabled: campaign.enabled !== false,
+      sortOrder: clampIntegerRange(campaign.sortOrder, index + 1, 1, 999),
+      serviceModes: serviceModeList.length > 0 ? serviceModeList : serviceModes,
+      categories: Array.isArray(campaign.categories)
+        ? [...new Set(campaign.categories.map((category) => sanitizeText(category, "").slice(0, 80)).filter(Boolean))].slice(0, 40)
+        : [],
+      productIds: Array.isArray(campaign.productIds)
+        ? [...new Set(campaign.productIds.map((productId) => sanitizeText(productId, "").slice(0, 80)).filter(Boolean))].slice(0, 120)
+        : [],
+      schedule: {
+        enabled: rawSchedule.enabled === true,
+        days: normalizeDiscountDays(rawSchedule.days),
+        start: typeof rawSchedule.start === "string" && onlineTimePattern.test(rawSchedule.start) ? rawSchedule.start : "00:00",
+        end: typeof rawSchedule.end === "string" && onlineTimePattern.test(rawSchedule.end) ? rawSchedule.end : "23:59",
+        allDay: rawSchedule.allDay !== false,
+      },
+      usage: {
+        posEnabled: (rawUsage as Partial<DiscountCampaignUsage>).posEnabled !== false,
+        posAutoApply: (rawUsage as Partial<DiscountCampaignUsage>).posAutoApply === true,
+        onlineEnabled: (rawUsage as Partial<DiscountCampaignUsage>).onlineEnabled === true,
+        requiresVerification: (rawUsage as Partial<DiscountCampaignUsage>).requiresVerification === true,
+      },
+    }];
+  });
+
+  return (campaigns.length > 0 ? campaigns : defaultDiscountSettings.campaigns)
+    .sort((first, second) => first.sortOrder - second.sortOrder || first.name.localeCompare(second.name));
+};
+const normalizeDiscountSettingsForRuntime = (input: unknown): DiscountSettings => {
+  if (!input || typeof input !== "object") {
+    return defaultDiscountSettings;
+  }
+  const settings = input as Partial<DiscountSettings>;
+  return { campaigns: normalizeDiscountCampaigns(settings.campaigns) };
+};
+const lineSubtotal = (line: OrderLineInput): number =>
+  clampNonNegativeInteger(line.unitPrice) * clampNonNegativeInteger(line.quantity);
+const discountScheduleMatches = (campaign: DiscountCampaign, now: Date): boolean => {
+  if (!campaign.schedule.enabled) {
+    return true;
+  }
+  const taipeiNow = new Date(now.getTime() + reportTimezoneOffsetMinutes * 60_000);
+  const day = taipeiNow.getUTCDay();
+  if (!campaign.schedule.days.includes(day)) {
+    return false;
+  }
+  if (campaign.schedule.allDay) {
+    return true;
+  }
+  const minutes = taipeiNow.getUTCHours() * 60 + taipeiNow.getUTCMinutes();
+  const start = timeToMinutes(campaign.schedule.start);
+  const end = timeToMinutes(campaign.schedule.end);
+  return start <= end ? minutes >= start && minutes <= end : minutes >= start || minutes <= end;
+};
+const discountCampaignBaseSubtotal = (campaign: DiscountCampaign, lines: OrderLineInput[]): number => {
+  if (campaign.scope === "categories") {
+    const categories = new Set(campaign.categories);
+    return lines.reduce((total, line) => total + (line.category && categories.has(line.category) ? lineSubtotal(line) : 0), 0);
+  }
+
+  if (campaign.scope === "products") {
+    const productIds = new Set(campaign.productIds);
+    return lines.reduce((total, line) => total + (line.productId && productIds.has(line.productId) ? lineSubtotal(line) : 0), 0);
+  }
+
+  return lines.reduce((total, line) => total + lineSubtotal(line), 0);
+};
+const calculateDiscountApplications = (
+  settings: DiscountSettings,
+  input: { lines: OrderLineInput[]; serviceMode: ServiceMode; channel: "pos" | "online"; now: Date },
+): { applications: DiscountApplication[]; total: number } => {
+  let remainingSubtotal = input.lines.reduce((total, line) => total + lineSubtotal(line), 0);
+  const applications: DiscountApplication[] = [];
+
+  for (const campaign of settings.campaigns) {
+    const channelEnabled = input.channel === "online"
+      ? campaign.kind === "automatic" && campaign.usage.onlineEnabled
+      : campaign.kind === "automatic" && campaign.usage.posEnabled && campaign.usage.posAutoApply;
+    if (
+      !campaign.enabled ||
+      !campaign.serviceModes.includes(input.serviceMode) ||
+      !channelEnabled ||
+      !discountScheduleMatches(campaign, input.now)
+    ) {
+      continue;
+    }
+
+    const baseSubtotal = discountCampaignBaseSubtotal(campaign, input.lines);
+    if (baseSubtotal <= 0 || baseSubtotal < campaign.minimumSubtotal || remainingSubtotal <= 0) {
+      continue;
+    }
+
+    const rawAmount = campaign.valueType === "percentage"
+      ? Math.round(baseSubtotal * campaign.discountValue / 100)
+      : campaign.discountValue;
+    const amount = Math.min(Math.max(0, rawAmount), remainingSubtotal);
+    if (amount <= 0) {
+      continue;
+    }
+
+    remainingSubtotal = Math.max(0, remainingSubtotal - amount);
+    applications.push({
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      amount,
+      kind: campaign.kind,
+      valueType: campaign.valueType,
+    });
+  }
+
+  return {
+    applications,
+    total: applications.reduce((total, application) => total + application.amount, 0),
+  };
+};
+const applyRuntimeDiscountsToInput = async (
+  input: CreateOrderInput,
+  orderSource: OrderSource,
+): Promise<{ automaticDiscountAmount: number; applications: DiscountApplication[] }> => {
+  const rawSettings = await loadSetting<DiscountSettings>("discount_settings", defaultDiscountSettings);
+  const settings = normalizeDiscountSettingsForRuntime(rawSettings);
+  const serviceMode = input.serviceMode ?? "takeout";
+  const calculation = calculateDiscountApplications(settings, {
+    lines: input.lines ?? [],
+    serviceMode,
+    channel: orderSource === "online" || orderSource === "qr" ? "online" : "pos",
+    now: new Date(),
+  });
+  input.discountAmount = Math.max(clampNonNegativeInteger(input.discountAmount), calculation.total);
+  return { automaticDiscountAmount: calculation.total, applications: calculation.applications };
 };
 const onlineOrderLeadMinutes = (serviceMode: ServiceMode, settings: OnlineOrderingSettings): number =>
   settings.averagePrepMinutes + (serviceMode === "delivery" ? settings.deliveryTravelMinutes : 0);
@@ -7743,11 +8019,22 @@ const validateEngagementSettings = (input: unknown): {
   return { value: normalizeEngagementSettingsForRuntime(input), error: null };
 };
 
+const validateDiscountSettings = (input: unknown): {
+  value: DiscountSettings | null;
+  error: string | null;
+} => {
+  if (!input || typeof input !== "object") {
+    return { value: null, error: "discount_settings must be an object" };
+  }
+
+  return { value: normalizeDiscountSettingsForRuntime(input), error: null };
+};
+
 const validateAdminSetting = (
   key: AdminSettingKey,
   input: unknown,
 ): {
-  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | PosAppearanceSettings | FloorPlanSettings | CustomerEngagementSettings | null;
+  value: PrinterSettings | AccessControlSettings | OnlineOrderingSettings | DiscountSettings | PosAppearanceSettings | FloorPlanSettings | CustomerEngagementSettings | null;
   error: string | null;
 } => {
   if (key === "printer_settings") {
@@ -7756,6 +8043,10 @@ const validateAdminSetting = (
 
   if (key === "online_ordering") {
     return validateOnlineOrdering(input);
+  }
+
+  if (key === "discount_settings") {
+    return validateDiscountSettings(input);
   }
 
   if (key === "pos_appearance") {

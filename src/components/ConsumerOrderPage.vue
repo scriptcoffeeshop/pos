@@ -16,6 +16,11 @@ import {
 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { categoryLabels, menuItems } from '../data/menu'
+import {
+  calculateDiscountApplications,
+  defaultDiscountSettings,
+  normalizeDiscountSettings,
+} from '../lib/discounts'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
 import {
   createOrder,
@@ -28,6 +33,8 @@ import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
 import type {
   CartLine,
   CustomerDraft,
+  DiscountApplication,
+  DiscountSettings,
   MenuCategory,
   MenuItem,
   OnlineMenuCategory,
@@ -89,6 +96,7 @@ const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 const menuCatalog = ref<MenuItem[]>([])
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
 const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
 const isSubmitting = ref(false)
@@ -213,6 +221,16 @@ const menuGroups = computed(() =>
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
+const onlineDiscountCalculation = computed(() =>
+  calculateDiscountApplications(discountSettings.value, {
+    lines: cartLines.value,
+    serviceMode: serviceMode.value,
+    channel: 'online',
+  }),
+)
+const onlineDiscountApplications = computed<DiscountApplication[]>(() => onlineDiscountCalculation.value.applications)
+const onlineDiscountAmount = computed(() => onlineDiscountCalculation.value.total)
+const deliveryChargeableSubtotal = computed(() => Math.max(0, cartTotal.value - onlineDiscountAmount.value))
 const scheduledOrderIntervalMinutes = computed(() =>
   Math.min(Math.max(Math.trunc(onlineOrdering.value.scheduledOrderIntervalMinutes || 15), 5), 120),
 )
@@ -220,7 +238,9 @@ const scheduledOrderMaxDays = computed(() =>
   Math.min(Math.max(Math.trunc(onlineOrdering.value.scheduledOrderMaxDays || 1), 1), 60),
 )
 const deliveryMinimumSubtotal = computed(() => Math.max(0, Math.trunc(onlineOrdering.value.deliveryMinimumSubtotal || 0)))
-const deliveryMinimumMet = computed(() => serviceMode.value !== 'delivery' || cartTotal.value >= deliveryMinimumSubtotal.value)
+const deliveryMinimumMet = computed(() =>
+  serviceMode.value !== 'delivery' || deliveryChargeableSubtotal.value >= deliveryMinimumSubtotal.value,
+)
 const deliveryFeeAmount = computed(() => {
   if (serviceMode.value !== 'delivery') {
     return 0
@@ -228,9 +248,9 @@ const deliveryFeeAmount = computed(() => {
 
   const fee = Math.max(0, Math.trunc(onlineOrdering.value.deliveryFeeAmount || 0))
   const freeThreshold = Math.max(0, Math.trunc(onlineOrdering.value.freeDeliveryThreshold || 0))
-  return freeThreshold > 0 && cartTotal.value >= freeThreshold ? 0 : fee
+  return freeThreshold > 0 && deliveryChargeableSubtotal.value >= freeThreshold ? 0 : fee
 })
-const orderTotal = computed(() => cartTotal.value + deliveryFeeAmount.value)
+const orderTotal = computed(() => Math.max(0, cartTotal.value + deliveryFeeAmount.value - onlineDiscountAmount.value))
 const deliveryFeeLabel = computed(() => {
   if (serviceMode.value !== 'delivery') {
     return ''
@@ -609,6 +629,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
   try {
     if (!isPosApiConfigured) {
       onlineOrdering.value = defaultOnlineOrderingSettings()
+      discountSettings.value = defaultDiscountSettings()
       menuCatalog.value = onlineFallbackMenu()
       orderMessage.value = '線上菜單預覽'
       return
@@ -619,12 +640,14 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
       fetchProducts('online'),
     ])
     onlineOrdering.value = runtimeSettings.onlineOrdering
+    discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
     menuCatalog.value = products
     orderMessage.value = onlineOrdering.value.enabled
       ? (products.length > 0 ? `${products.length} 個品項開放線上點餐` : '線上菜單尚未開放')
       : onlineOrdering.value.pauseMessage
   } catch (error) {
     onlineOrdering.value = defaultOnlineOrderingSettings()
+    discountSettings.value = defaultDiscountSettings()
     menuCatalog.value = onlineFallbackMenu()
     orderMessage.value = error instanceof Error ? `菜單同步失敗：${error.message}` : '菜單同步失敗'
   } finally {
@@ -696,7 +719,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     serviceFeeRate: 0,
     serviceFeeAmount: 0,
     extraFeeAmount: deliveryFeeAmount.value,
-    discountAmount: 0,
+    discountAmount: onlineDiscountAmount.value,
     pointsRedeemed: 0,
     couponCode: '',
     paymentSplits: [],
@@ -965,6 +988,15 @@ watch(
         <div v-if="serviceMode === 'delivery'">
           <span>{{ deliveryFeeLabel }}</span>
           <strong>{{ formatCurrency(deliveryFeeAmount) }}</strong>
+        </div>
+        <div v-if="onlineDiscountAmount > 0">
+          <span>優惠活動</span>
+          <strong>-{{ formatCurrency(onlineDiscountAmount) }}</strong>
+        </div>
+        <div v-if="onlineDiscountApplications.length > 0" class="consumer-discount-list">
+          <span v-for="application in onlineDiscountApplications" :key="application.campaignId">
+            {{ application.campaignName }}
+          </span>
         </div>
         <div class="consumer-checkout-summary-total">
           <span>合計</span>
