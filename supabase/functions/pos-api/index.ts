@@ -372,6 +372,9 @@ type AdminPermission =
   | "deleteOrders"
   | "deleteOrderItems"
   | "useVariablePriceNotes"
+  | "checkoutOrders"
+  | "adjustServiceCharges"
+  | "applyManualDiscounts"
   | "manageProducts"
   | "managePrinting"
   | "managePayments"
@@ -860,6 +863,9 @@ const defaultAccessControl: AccessControlSettings = {
         "deleteOrders",
         "deleteOrderItems",
         "useVariablePriceNotes",
+        "checkoutOrders",
+        "adjustServiceCharges",
+        "applyManualDiscounts",
         "manageProducts",
         "managePrinting",
         "managePayments",
@@ -5316,6 +5322,9 @@ const knownPermissions: AdminPermission[] = [
   "deleteOrders",
   "deleteOrderItems",
   "useVariablePriceNotes",
+  "checkoutOrders",
+  "adjustServiceCharges",
+  "applyManualDiscounts",
   "manageProducts",
   "managePrinting",
   "managePayments",
