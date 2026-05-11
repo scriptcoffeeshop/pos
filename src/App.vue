@@ -68,8 +68,10 @@ import {
   updateAdminReservation,
   updateAdminSetting,
   updateInventoryItem,
+  verifyAccessPermission,
 } from './lib/posApi'
 import type {
+  AdminPermission,
   CartLine,
   FloorDisplayPreferences,
   FloorLevelSetting,
@@ -226,6 +228,16 @@ interface SwipeState {
   startY: number
   currentX: number
   hasPointerCapture: boolean
+}
+
+interface ProtectedPermissionStep {
+  permission: AdminPermission
+  title: string
+  detail: string
+}
+
+interface AccessVerificationPrompt extends ProtectedPermissionStep {
+  resolve: (verified: boolean) => void
 }
 
 interface ToolboxPosition {
@@ -735,6 +747,7 @@ const {
   acceptOnlineOrderForStation,
   acknowledgeOnlineOrderReminders,
   activeOnlineReminderOrders,
+  accessPolicy,
   backendStatus,
   applyCustomerMember,
   cashDrawerEvents,
@@ -756,7 +769,6 @@ const {
   customer,
   customerHasNote,
   deletingPrintJobId,
-  decreaseLine,
   deleteOrderFromQueue,
   deleteProductForStation,
   deletePrintJobForOrder,
@@ -836,6 +848,11 @@ const {
   voidOrderForStation,
 } = usePosSession({ autoLoad: !isConsumerDomain })
 
+const accessVerificationPrompt = ref<AccessVerificationPrompt | null>(null)
+const accessVerificationCode = ref('')
+const accessVerificationError = ref('')
+const isAccessVerifying = ref(false)
+
 const crmSearchTerm = ref('')
 const crmMatches = ref<PosMember[]>([])
 const isCrmSearching = ref(false)
@@ -894,6 +911,113 @@ const filteredCustomerManagementMembers = computed(() => {
 const customerManagementSummary = computed(() =>
   `${customerManagementMembers.value.length} 位顧客 · ${customerManagementTypes.value.length} 類型`,
 )
+
+const accessPermissionLabels: Record<AdminPermission, string> = {
+  openOrders: '開單',
+  sendOrdersToKitchen: '出單至廚房',
+  transferOrders: '轉單',
+  deleteOrders: '刪單',
+  deleteOrderItems: '刪品項',
+  useVariablePriceNotes: '使用變價註記',
+  manageProducts: '商品管理',
+  managePrinting: '列印設定',
+  managePayments: '支付設定',
+  manageReports: '報表',
+  manageCustomers: '顧客資訊',
+  manageAccess: '權限設定',
+  manageOnlineOrders: '線上接單',
+  cancelOnlineOrders: '取消線上訂單',
+  manageOnlineAvailability: '線上點餐營業狀態',
+  manageReservations: '訂位管理',
+  manageCashDrawer: '錢櫃管理',
+  voidOrders: '作廢訂單',
+  refundOrders: '退款',
+  closeRegister: '關帳',
+}
+
+const protectedPermissionIds = computed(() => new Set(accessPolicy.value.protectedPermissions))
+
+const permissionRequiresVerification = (permission: AdminPermission): boolean =>
+  protectedPermissionIds.value.has(permission)
+
+const requestAccessVerification = (step: ProtectedPermissionStep): Promise<boolean> => {
+  if (!isPosApiConfigured) {
+    accessVerificationError.value = '權限驗證需要連線到 POS API'
+    return Promise.resolve(false)
+  }
+
+  if (accessVerificationPrompt.value) {
+    return Promise.resolve(false)
+  }
+
+  accessVerificationCode.value = ''
+  accessVerificationError.value = ''
+
+  return new Promise((resolve) => {
+    accessVerificationPrompt.value = { ...step, resolve }
+  })
+}
+
+const cancelAccessVerification = (): void => {
+  if (isAccessVerifying.value) {
+    return
+  }
+
+  const prompt = accessVerificationPrompt.value
+  accessVerificationPrompt.value = null
+  accessVerificationCode.value = ''
+  accessVerificationError.value = ''
+  prompt?.resolve(false)
+}
+
+const submitAccessVerification = async (): Promise<void> => {
+  const prompt = accessVerificationPrompt.value
+  if (!prompt || isAccessVerifying.value) {
+    return
+  }
+
+  const staffCode = accessVerificationCode.value.trim().replace(/\s+/g, '')
+  if (!staffCode) {
+    accessVerificationError.value = '請輸入員工識別碼'
+    return
+  }
+
+  isAccessVerifying.value = true
+  accessVerificationError.value = ''
+  try {
+    await verifyAccessPermission(prompt.permission, staffCode)
+    accessVerificationPrompt.value = null
+    accessVerificationCode.value = ''
+    prompt.resolve(true)
+  } catch (error) {
+    accessVerificationError.value = error instanceof Error ? error.message : '權限驗證失敗'
+  } finally {
+    isAccessVerifying.value = false
+  }
+}
+
+const verifyProtectedPermissions = async (steps: ProtectedPermissionStep[]): Promise<boolean> => {
+  const requested = new Set<AdminPermission>()
+  for (const step of steps) {
+    if (requested.has(step.permission) || !permissionRequiresVerification(step.permission)) {
+      continue
+    }
+
+    requested.add(step.permission)
+    const verified = await requestAccessVerification(step)
+    if (!verified) {
+      return false
+    }
+  }
+
+  return true
+}
+
+const openOrderPermissionStep = (detail: string): ProtectedPermissionStep => ({
+  permission: 'openOrders',
+  title: accessPermissionLabels.openOrders,
+  detail,
+})
 
 const inventoryActionLabels: Record<InventoryRecordAction, string> = {
   purchase: '進貨',
@@ -4611,17 +4735,64 @@ const committedQuantityFromInput = (event: Event): number => {
   return quantity ?? 0
 }
 
+const deleteOrderItemPermissionStep = (detail = '刪除訂單品項前需驗證員工識別碼。'): ProtectedPermissionStep => ({
+  permission: 'deleteOrderItems',
+  title: accessPermissionLabels.deleteOrderItems,
+  detail,
+})
+
+const setProductQuantityAction = async (item: MenuItem, quantity: number): Promise<void> => {
+  const currentQuantity = cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0
+  if (currentQuantity > 0 && quantity <= 0) {
+    const verified = await verifyProtectedPermissions([
+      deleteOrderItemPermissionStep(`從目前票券刪除「${item.name}」前需驗證員工識別碼。`),
+    ])
+    if (!verified) {
+      return
+    }
+  }
+
+  setItemQuantity(item, quantity)
+}
+
+const decreaseProductLineAction = async (item: MenuItem): Promise<void> => {
+  await setProductQuantityAction(item, Math.max(0, lineQuantityByItem(item.id) - 1))
+}
+
 const updateProductQuantityInput = (item: MenuItem, event: Event): void => {
   const quantity = quantityFromInput(event)
   if (quantity === null) {
     return
   }
 
-  setItemQuantity(item, quantity)
+  void setProductQuantityAction(item, quantity)
 }
 
 const commitProductQuantityInput = (item: MenuItem, event: Event): void => {
-  setItemQuantity(item, committedQuantityFromInput(event))
+  void setProductQuantityAction(item, committedQuantityFromInput(event))
+}
+
+const setCartLineQuantityAction = async (itemId: string, quantity: number): Promise<void> => {
+  const line = cartLines.value.find((entry) => entry.itemId === itemId)
+  if (line && line.quantity > 0 && quantity <= 0) {
+    const verified = await verifyProtectedPermissions([
+      deleteOrderItemPermissionStep(`從目前票券刪除「${line.name}」前需驗證員工識別碼。`),
+    ])
+    if (!verified) {
+      return
+    }
+  }
+
+  setLineQuantity(itemId, quantity)
+}
+
+const decreaseCartLineAction = async (itemId: string): Promise<void> => {
+  const line = cartLines.value.find((entry) => entry.itemId === itemId)
+  if (!line) {
+    return
+  }
+
+  await setCartLineQuantityAction(itemId, line.quantity - 1)
 }
 
 const updateCartQuantityInput = (itemId: string, event: Event): void => {
@@ -4630,11 +4801,11 @@ const updateCartQuantityInput = (itemId: string, event: Event): void => {
     return
   }
 
-  setLineQuantity(itemId, quantity)
+  void setCartLineQuantityAction(itemId, quantity)
 }
 
 const commitCartQuantityInput = (itemId: string, event: Event): void => {
-  setLineQuantity(itemId, committedQuantityFromInput(event))
+  void setCartLineQuantityAction(itemId, committedQuantityFromInput(event))
 }
 
 const blurQuantityInput = (event: KeyboardEvent): void => {
@@ -4676,7 +4847,13 @@ const closeOptionPanel = (): void => {
   resetOptionSelections()
 }
 
-const clearTicketDraft = (): void => {
+const clearTicketDraft = async (): Promise<void> => {
+  if (cartLines.value.length > 0 && !(await verifyProtectedPermissions([
+    deleteOrderItemPermissionStep('清空目前票券會刪除所有品項，需驗證員工識別碼。'),
+  ]))) {
+    return
+  }
+
   clearCart()
   closeOptionPanel()
 }
@@ -4750,7 +4927,7 @@ const missingRequiredOptionGroup = (): MenuOptionGroup | null =>
     return group.required && selectedCount < group.min
   }) ?? null
 
-const confirmMenuOptions = (): boolean => {
+const confirmMenuOptions = async (): Promise<boolean> => {
   const item = activeOptionItem.value
   if (!item) {
     return true
@@ -4759,6 +4936,16 @@ const confirmMenuOptions = (): boolean => {
   const missingGroup = missingRequiredOptionGroup()
   if (missingGroup) {
     optionWarning.value = `「${missingGroup.label}」尚未選擇完成`
+    return false
+  }
+
+  if (selectedOptionDetails.value.priceDelta !== 0 && !(await verifyProtectedPermissions([
+    {
+      permission: 'useVariablePriceNotes',
+      title: accessPermissionLabels.useVariablePriceNotes,
+      detail: `「${item.name}」套用會改變價格的註記前需驗證員工識別碼。`,
+    },
+  ]))) {
     return false
   }
 
@@ -4771,12 +4958,46 @@ const confirmMenuOptions = (): boolean => {
   return true
 }
 
+const ticketActionPermissionSteps = (action: TicketAction): ProtectedPermissionStep[] => {
+  const steps: ProtectedPermissionStep[] = [
+    openOrderPermissionStep('建立或更新門市訂單前需驗證員工識別碼。'),
+  ]
+
+  if (action === 'print' || action === 'checkout-print') {
+    steps.push({
+      permission: 'sendOrdersToKitchen',
+      title: accessPermissionLabels.sendOrdersToKitchen,
+      detail: '送出廚房出單前需驗證員工識別碼。',
+    })
+  }
+
+  return steps
+}
+
+const printOrderAction = async (order: PosOrder): Promise<void> => {
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'sendOrdersToKitchen',
+      title: accessPermissionLabels.sendOrdersToKitchen,
+      detail: `${compactOrderId(order.id)} 出單至廚房前需驗證員工識別碼。`,
+    },
+  ]))) {
+    return
+  }
+
+  await printOrder(order.id)
+}
+
 const handleTicketAction = async (action: TicketAction): Promise<void> => {
   if (ticketActionDisabled()) {
     return
   }
 
-  if (activeOptionItem.value && !confirmMenuOptions()) {
+  if (activeOptionItem.value && !(await confirmMenuOptions())) {
+    return
+  }
+
+  if (!(await verifyProtectedPermissions(ticketActionPermissionSteps(action)))) {
     return
   }
 
@@ -5090,8 +5311,20 @@ const orderSwipeDeleteLabel = (order: PosOrder): string => {
 const orderSwipeDeleteDisabled = (order: PosOrder): boolean =>
   !orderCanBeDeletedFromQueue(order) || voidingOrderId.value === order.id
 
-const orderSwipeDeleteAction = (order: PosOrder): void => {
+const orderSwipeDeleteAction = async (order: PosOrder): Promise<void> => {
   if (orderSwipeDeleteDisabled(order)) {
+    return
+  }
+
+  const isOnlineOrder = order.source === 'online' || order.source === 'qr'
+  const verified = await verifyProtectedPermissions([
+    {
+      permission: isOnlineOrder ? 'cancelOnlineOrders' : 'deleteOrders',
+      title: isOnlineOrder ? accessPermissionLabels.cancelOnlineOrders : accessPermissionLabels.deleteOrders,
+      detail: `${compactOrderId(order.id)} ${isOnlineOrder ? '取消線上訂單' : '刪除訂單'}前需驗證員工識別碼。`,
+    },
+  ])
+  if (!verified) {
     return
   }
 
@@ -5101,6 +5334,17 @@ const orderSwipeDeleteAction = (order: PosOrder): void => {
 
 const executeQueueAdminAction = async (kind: QueueAdminActionKind, order: PosOrder): Promise<void> => {
   const label = queueAdminActionLabel(kind)
+  const verified = await verifyProtectedPermissions([
+    {
+      permission: kind === 'void' ? 'voidOrders' : 'refundOrders',
+      title: kind === 'void' ? accessPermissionLabels.voidOrders : accessPermissionLabels.refundOrders,
+      detail: `${compactOrderId(order.id)} ${label}前需驗證員工識別碼。`,
+    },
+  ])
+  if (!verified) {
+    return
+  }
+
   queueActionMessage.value = `${order.id} ${label}處理中`
   openSwipeKey.value = null
 
@@ -5137,6 +5381,17 @@ const requestQueueAdminAction = (kind: QueueAdminActionKind, order: PosOrder): v
 
 const executeTransactionAdminAction = async (kind: QueueAdminActionKind, order: PosOrder): Promise<void> => {
   const label = queueAdminActionLabel(kind)
+  const verified = await verifyProtectedPermissions([
+    {
+      permission: kind === 'void' ? 'voidOrders' : 'refundOrders',
+      title: kind === 'void' ? accessPermissionLabels.voidOrders : accessPermissionLabels.refundOrders,
+      detail: `${compactOrderId(order.id)} ${label}前需驗證員工識別碼。`,
+    },
+  ])
+  if (!verified) {
+    return
+  }
+
   transactionLookupMessage.value = `${compactOrderId(order.id)} ${label}處理中`
 
   if (kind === 'void') {
@@ -5636,6 +5891,12 @@ const startDineInTableOrder = async (
   table: DiningTableDefinition,
   options: { partySize?: number; waitlineEntry?: WaitlineEntry } = {},
 ): Promise<void> => {
+  if (!(await verifyProtectedPermissions([
+    openOrderPermissionStep(`為 ${floorLabelForTable(table)} ${table.label} 建立內用訂單前需驗證員工識別碼。`),
+  ]))) {
+    return
+  }
+
   await startCounterDraft('dine-in')
   const partySize = Math.min(table.capacity, Math.max(1, options.partySize ?? floorPartySizes.value[table.id] ?? 1))
   floorPartySizes.value = {
@@ -5661,6 +5922,16 @@ const transferFloorTableOrder = async (
   targetTable: DiningTableDefinition,
 ): Promise<void> => {
   if (!state.order || orderClaimedByOtherStation(state.order)) {
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'transferOrders',
+      title: accessPermissionLabels.transferOrders,
+      detail: `將 ${state.table.label} 訂單轉到 ${targetTable.label} 前需驗證員工識別碼。`,
+    },
+  ]))) {
     return
   }
 
@@ -6014,6 +6285,12 @@ const startWaitlinePreorder = async (entry: WaitlineEntry): Promise<void> => {
   if (counterDraftOrderId.value) {
     floorPlanSyncMessage.value = '目前已有編輯中的票券，請先完成或返回該票券'
     setWorkspaceTab('order')
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    openOrderPermissionStep(`為候位 ${entry.name || entry.id} 建立提前點餐單前需驗證員工識別碼。`),
+  ]))) {
     return
   }
 
@@ -6945,7 +7222,7 @@ const runToolboxAction = (action: ToolboxAction): void => {
   }
 
   if (action === 'order') {
-    startTakeoutOrder()
+    void startTakeoutOrder()
   }
 
   if (action === 'queue') {
@@ -7203,6 +7480,16 @@ const markOnlineReminderReadFromDetail = (order: PosOrder): void => {
 }
 
 const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageOnlineOrders',
+      title: accessPermissionLabels.manageOnlineOrders,
+      detail: `${compactOrderId(order.id)} 接單並出單至廚房前需驗證員工識別碼。`,
+    },
+  ]))) {
+    return
+  }
+
   const accepted = await acceptOnlineOrderForStation(order.id)
   if (accepted) {
     if (activeOnlineReminderDetailId.value === order.id) {
@@ -7217,6 +7504,16 @@ const acceptOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
 }
 
 const rejectOnlineReminderOrder = async (order: PosOrder): Promise<void> => {
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'cancelOnlineOrders',
+      title: accessPermissionLabels.cancelOnlineOrders,
+      detail: `${compactOrderId(order.id)} 拒絕接單前需驗證員工識別碼。`,
+    },
+  ]))) {
+    return
+  }
+
   const rejected = await rejectOnlineOrderForStation(order.id)
   if (rejected) {
     if (activeOnlineReminderDetailId.value === order.id) {
@@ -7301,8 +7598,14 @@ const runQueueTaskAction = (action: QueueTaskAction): void => {
   setWorkspaceTab('queue')
 }
 
-const startTakeoutOrder = (): void => {
-  void startCounterDraft('takeout')
+const startTakeoutOrder = async (): Promise<void> => {
+  if (!(await verifyProtectedPermissions([
+    openOrderPermissionStep('建立外帶訂單前需驗證員工識別碼。'),
+  ]))) {
+    return
+  }
+
+  await startCounterDraft('takeout')
   activeCartQuickEditor.value = null
   closeOptionPanel()
   setWorkspaceTab('order')
@@ -7792,6 +8095,16 @@ const createRegisterCashAdjustmentAction = async (): Promise<void> => {
     return
   }
 
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageCashDrawer',
+      title: accessPermissionLabels.manageCashDrawer,
+      detail: '登記現金臨時收支前需驗證員工識別碼。',
+    },
+  ]))) {
+    return
+  }
+
   const created = await createRegisterCashAdjustmentForStation(
     registerCashAdjustmentKind.value,
     registerCashAdjustmentAmount.value,
@@ -7809,6 +8122,16 @@ const createRegisterCashAdjustmentAction = async (): Promise<void> => {
 const openCashDrawerAction = async (): Promise<void> => {
   if (!requireBackendEditMode('開啟錢櫃')) {
     cashDrawerActionMessage.value = '開啟錢櫃需先進入後台編輯模式'
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageCashDrawer',
+      title: accessPermissionLabels.manageCashDrawer,
+      detail: '手動開啟錢櫃前需驗證員工識別碼。',
+    },
+  ]))) {
     return
   }
 
@@ -8384,7 +8707,7 @@ onBeforeUnmount(() => {
                         </p>
                       </div>
                       <div class="quantity-stepper" :aria-label="`${line.name} 數量`">
-                        <button type="button" title="減少" @click.stop="decreaseLine(line.itemId)">
+                        <button type="button" title="減少" @click.stop="decreaseCartLineAction(line.itemId)">
                           <Minus :size="16" aria-hidden="true" />
                         </button>
                         <input
@@ -8617,7 +8940,7 @@ onBeforeUnmount(() => {
                               type="button"
                               title="減少數量"
                               :disabled="lineQuantityByItem(item.id) === 0"
-                              @click="decreaseLine(item.id)"
+                              @click="decreaseProductLineAction(item)"
                             >
                               <Minus :size="15" aria-hidden="true" />
                             </button>
@@ -10145,7 +10468,7 @@ onBeforeUnmount(() => {
                               class="order-action--print"
                               type="button"
                               :disabled="printingOrderId === order.id || orderClaimedByOtherStation(order)"
-                              @click="printOrder(order.id)"
+                              @click="printOrderAction(order)"
                             >
                               <Printer :size="16" aria-hidden="true" />
                               {{ printActionLabel(order) }}
@@ -10923,7 +11246,7 @@ onBeforeUnmount(() => {
                     class="active-order-print-button"
                     type="button"
                     :disabled="printingOrderId === activeOrder.id || orderClaimedByOtherStation(activeOrder)"
-                    @click="printOrder(activeOrder.id)"
+                    @click="printOrderAction(activeOrder)"
                   >
                     <Printer :size="16" aria-hidden="true" />
                     {{ printingOrderId === activeOrder.id ? '出單中' : '立即出單' }}
@@ -10960,6 +11283,59 @@ onBeforeUnmount(() => {
             </section>
           </section>
         </section>
+
+        <div
+          v-if="accessVerificationPrompt"
+          class="utility-modal-backdrop access-verification-backdrop"
+          @click.self="cancelAccessVerification"
+        >
+          <section
+            class="utility-modal access-verification-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="access-verification-title"
+          >
+            <header class="utility-modal-header">
+              <div>
+                <p class="eyebrow">Access</p>
+                <h2 id="access-verification-title">{{ accessVerificationPrompt.title }}</h2>
+              </div>
+              <button class="icon-button" type="button" title="取消驗證" @click="cancelAccessVerification">
+                <X :size="20" aria-hidden="true" />
+              </button>
+            </header>
+
+            <div class="access-verification-body">
+              <LockKeyhole :size="28" aria-hidden="true" />
+              <p>{{ accessVerificationPrompt.detail }}</p>
+              <label>
+                員工識別碼
+                <input
+                  v-model="accessVerificationCode"
+                  type="password"
+                  inputmode="numeric"
+                  autocomplete="off"
+                  placeholder="請輸入識別碼"
+                  @keydown.enter="submitAccessVerification"
+                  @keydown.escape="cancelAccessVerification"
+                />
+              </label>
+              <p v-if="accessVerificationError" class="access-verification-error" role="alert">
+                {{ accessVerificationError }}
+              </p>
+            </div>
+
+            <footer class="access-verification-actions">
+              <button type="button" class="secondary-button" :disabled="isAccessVerifying" @click="cancelAccessVerification">
+                取消
+              </button>
+              <button type="button" class="primary-button" :disabled="isAccessVerifying" @click="submitAccessVerification">
+                <LockKeyhole :size="18" aria-hidden="true" />
+                {{ isAccessVerifying ? '驗證中' : '確認權限' }}
+              </button>
+            </footer>
+          </section>
+        </div>
 
         <div
           v-if="onlineReminderDetailOrder"

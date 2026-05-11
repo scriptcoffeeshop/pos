@@ -110,7 +110,7 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 
 ## 關帳員工識別碼
 
-關帳對照 iCHEF「開始關帳」第一步，必須記錄操作員。員工識別碼來自後台「權限」的 `access_control.staffAccounts`，不是 APK 本機資料。
+關帳對照 iCHEF「開始關帳」第一步，必須記錄操作員。員工識別碼來自後台「權限」的 `access_control.staffAccounts`，並會檢查角色是否有 `closeRegister` 權限，不是 APK 本機資料。
 
 1. 連點工具箱 6 下進入後台編輯模式，確認後台「權限」至少有一個啟用員工；預設店主識別碼為 `0000`。
 2. 在關帳頁開班後準備關班，先不要填員工識別碼，確認按關班會提示「請輸入員工識別碼」且不會送出關班。
@@ -118,6 +118,18 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 4. 輸入啟用員工識別碼後關班；若有未交付、付款異常或列印失敗，需另勾選強制關班。
 5. 回後台「操作稽核」確認 `register.close` metadata 具有操作員姓名、員工識別碼、角色、實點現金、預期現金與異常數。
 6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認關班結果與操作稽核仍從 Supabase 還原，不依賴本機資料。
+
+## POS 操作權限驗證
+
+POS 操作權限對照 iCHEF 後台「帳號與權限」的操作驗證開關。`access_control.protectedPermissions` 會保存在 Supabase runtime；APK 只從 `/settings/runtime` 取得低敏感的 `accessPolicy`，真正驗證會呼叫 `POST /access/verify` 並由後端比對員工識別碼與角色權限。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「權限」新增一位測試員工，建立一個不含 `deleteOrderItems` 或 `sendOrdersToKitchen` 的角色。
+2. 在「操作驗證開關」勾選「出單至廚房」「刪品項」「刪單」「取消線上訂單」「錢櫃」等測試項目並儲存。
+3. 回 POS 建立草稿單，按「出單」或刪除購物車品項，確認出現員工識別碼視窗。
+4. 輸入無此權限的員工識別碼，確認操作被拒絕且訂單/品項狀態不改變；輸入具備權限的識別碼後操作才繼續。
+5. 測外帶/外送訂單左滑刪除、線上新單接單/拒絕、作廢/退款與工具箱錢櫃管理，確認被保護操作都使用同一個驗證 modal。
+6. 到後台「操作稽核」確認可看到 `access.verify`，metadata 應包含 permission、操作員姓名與角色。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認操作驗證開關仍從 `access_control` runtime 還原，且不依賴 fresh reinstall 前的本機記憶體。
 
 ## 混合支付與交易明細
 
@@ -317,7 +329,8 @@ rtk npm run apk:install:fresh
 - 測線上訂位容量時，需檢查同時段 booked/reminded/confirmed/seated 訂位與 assigned table，而不是只看總人數欄位；沒有 assigned table 的舊訂位會以人數保守占用容量。
 - 測 POS 訂位管理時，新增訂位、修改時間/桌位/人數/訂位人資訊、已發送提醒、已保留訂位、取消、未出席、自動未出席與帶位開單都應透過 `/admin/reservations` 寫入；帶位開單後的內用草稿單會進既有訂單草稿資料流，fresh reinstall 後訂位狀態不得回到 booked。
 - 測付款拆單時，子單必須寫入 `orders.payment_splits`；另一台平板、App 重開與 fresh reinstall 都要看到同一子單數、未結張數、付款方式與已結狀態。
-- 測關帳員工識別碼時，`POST /register/close` 必須帶 `staffCode` 並由 `access_control.staffAccounts` 驗證啟用員工；操作員資料應只出現在 `pos_audit_events.register.close` metadata，不應保存在 APK localStorage。
+- 測關帳員工識別碼時，`POST /register/close` 必須帶 `staffCode`，並由 `access_control.staffAccounts` 驗證啟用員工與 `closeRegister` 角色權限；操作員資料應只出現在 `pos_audit_events.register.close` metadata，不應保存在 APK localStorage。
+- 測 POS 操作權限驗證時，`access_control.protectedPermissions` 必須由 `/settings/runtime` 同步成低敏感 `accessPolicy`；被保護操作要呼叫 `/access/verify`，無權限員工不得通過，fresh reinstall 後不得靠本機記憶體保存驗證開關。
 - 測工具箱標籤管理時，新增、改名、調整顏色或刪除標籤後必須寫入 `engagement_settings.orderLabels`；點餐頁標籤列與送出後的 `orders.order_labels` 應跟同一份設定一致，fresh reinstall 後不得靠本機快取顯示。
 - 測工具箱裝置管理時，出單機清單應來自 `printer_settings.stations`，刷卡/掃碼/錢櫃外設應來自 `engagement_settings.hardwareDevices`，未印出單據應來自訂單 `print_jobs`；取消未印出單據後 fresh reinstall 不得再次看到已刪除的 print jobs。
 - 測工具箱顧客資訊管理時，搜尋、類型篩選、排序與新增顧客都應走 `GET/POST /admin/members`；新增後點餐頁 CRM 搜尋與後台會員錢包應看到同一位顧客，fresh reinstall 後不得靠本機快取顯示。

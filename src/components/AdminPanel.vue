@@ -210,13 +210,25 @@ const labelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
 ]
 
 const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
+  { value: 'openOrders', label: '開單' },
+  { value: 'sendOrdersToKitchen', label: '出單至廚房' },
+  { value: 'transferOrders', label: '轉單' },
+  { value: 'deleteOrders', label: '刪單' },
+  { value: 'deleteOrderItems', label: '刪品項' },
+  { value: 'useVariablePriceNotes', label: '變價註記' },
   { value: 'manageProducts', label: '商品' },
   { value: 'managePrinting', label: '出單' },
   { value: 'managePayments', label: '支付' },
   { value: 'manageReports', label: '報表' },
   { value: 'manageCustomers', label: '顧客' },
   { value: 'manageAccess', label: '權限' },
+  { value: 'manageOnlineOrders', label: '線上接單' },
+  { value: 'cancelOnlineOrders', label: '取消線上訂單' },
+  { value: 'manageOnlineAvailability', label: '線上營業狀態' },
+  { value: 'manageReservations', label: '訂位' },
+  { value: 'manageCashDrawer', label: '錢櫃' },
   { value: 'voidOrders', label: '作廢' },
+  { value: 'refundOrders', label: '退款' },
   { value: 'closeRegister', label: '關帳' },
 ]
 
@@ -316,6 +328,7 @@ const emptyPrinterSettings = (): PrinterSettings => ({
 const emptyAccessControl = (): AccessControlSettings => ({
   roles: [],
   staffAccounts: [],
+  protectedPermissions: [],
 })
 
 const weekdayOptions = [
@@ -389,6 +402,7 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
   roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
   staffAccounts: (settings.staffAccounts ?? []).map((staff) => ({ ...staff })),
+  protectedPermissions: [...(settings.protectedPermissions ?? [])],
 })
 
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
@@ -2232,6 +2246,9 @@ const staffRoleName = (staff: StaffAccountSetting): string =>
 
 const hasPermission = (role: RoleSetting, permission: AdminPermission): boolean => role.permissions.includes(permission)
 
+const permissionRequiresStaffCode = (permission: AdminPermission): boolean =>
+  accessControl.value.protectedPermissions.includes(permission)
+
 const togglePermission = (role: RoleSetting, permission: AdminPermission): void => {
   if (hasPermission(role, permission)) {
     role.permissions = role.permissions.filter((entry) => entry !== permission)
@@ -2239,6 +2256,15 @@ const togglePermission = (role: RoleSetting, permission: AdminPermission): void 
   }
 
   role.permissions = [...role.permissions, permission]
+}
+
+const toggleProtectedPermission = (permission: AdminPermission): void => {
+  if (permissionRequiresStaffCode(permission)) {
+    accessControl.value.protectedPermissions = accessControl.value.protectedPermissions.filter((entry) => entry !== permission)
+    return
+  }
+
+  accessControl.value.protectedPermissions = [...accessControl.value.protectedPermissions, permission]
 }
 
 const saveAccessControl = async (): Promise<void> => {
@@ -4123,6 +4149,31 @@ const saveAccessControl = async (): Promise<void> => {
               </label>
             </div>
           </article>
+        </div>
+
+        <div class="panel-heading admin-subheading">
+          <div>
+            <p class="eyebrow">POS Verification</p>
+            <h3>操作驗證開關</h3>
+            <span class="panel-note">開啟後，平板執行該操作時會要求員工識別碼，並檢查所屬角色是否有權限</span>
+          </div>
+        </div>
+
+        <div class="admin-protected-permission-grid">
+          <label
+            v-for="permission in permissionOptions"
+            :key="`protected-${permission.value}`"
+            class="toggle-row permission-toggle admin-protected-permission"
+          >
+            <input
+              type="checkbox"
+              :checked="permissionRequiresStaffCode(permission.value)"
+              @change="toggleProtectedPermission(permission.value)"
+            />
+            <KeyRound :size="16" aria-hidden="true" />
+            <span>{{ permission.label }}</span>
+            <small>{{ permissionRequiresStaffCode(permission.value) ? '需要驗證' : '無須驗證' }}</small>
+          </label>
         </div>
 
         <div class="panel-heading admin-subheading">
