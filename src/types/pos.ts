@@ -786,6 +786,21 @@ export interface WorkflowAlertSettings {
   fulfillmentDueSoonMinutes: number
   defaultTakeoutPickupMinutes: number
   fulfillmentConfirmationEnabled: boolean
+  scheduledPickupReminderEnabled: boolean
+  waitlineWaitWarningEnabled: boolean
+  waitlineWaitWarningMinutes: number
+  dineInUnprintedWarningEnabled: boolean
+  dineInUnprintedWarningMinutes: number
+  dineInFulfillmentWarningEnabled: boolean
+  dineInFulfillmentWarningMinutes: number
+  dineInDwellWarningEnabled: boolean
+  dineInDwellWarningMinutes: number
+  takeoutUnprintedWarningEnabled: boolean
+  takeoutUnprintedWarningMinutes: number
+  takeoutFulfillmentWarningEnabled: boolean
+  takeoutFulfillmentWarningMinutes: number
+  takeoutWaitWarningEnabled: boolean
+  takeoutWaitWarningMinutes: number
   takeoutLoopEnabled: boolean
   dineInAutoExitEnabled: boolean
   takeoutAutoExitEnabled: boolean

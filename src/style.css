@@ -2601,6 +2601,11 @@ h3 {
   outline-offset: 2px;
 }
 
+.floor-table-card--workflow-warning {
+  outline: 4px solid rgba(184, 83, 42, 0.34);
+  outline-offset: 2px;
+}
+
 .floor-table-card-top,
 .floor-table-order,
 .floor-table-metrics {
@@ -3023,6 +3028,11 @@ h3 {
   background: var(--surface-muted);
 }
 
+.waitline-row--warning {
+  border-color: rgba(184, 83, 42, 0.45);
+  background: var(--danger-soft);
+}
+
 .waitline-row strong,
 .waitline-row span {
   display: block;
@@ -3046,6 +3056,41 @@ h3 {
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.waitline-warning-status,
+.floor-table-warning,
+.floor-workflow-warning-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--danger);
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.waitline-warning-status {
+  margin-top: 4px;
+}
+
+.floor-table-warning {
+  justify-content: center;
+  min-width: 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floor-workflow-warning-note {
+  width: 100%;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid rgba(184, 83, 42, 0.35);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
 }
 
 .waitline-actions {
@@ -6053,6 +6098,28 @@ button.cart-line-summary:focus-visible {
   border-color: #dfc58e;
   background: var(--amber-soft);
   color: var(--amber);
+}
+
+.workflow-warning-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #e4b1aa;
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.workflow-warning-chip svg,
+.waitline-warning-status svg,
+.floor-table-warning svg,
+.floor-workflow-warning-note svg {
+  flex: 0 0 auto;
 }
 
 .order-row-meta {
