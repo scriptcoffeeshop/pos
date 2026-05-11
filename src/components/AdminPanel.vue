@@ -464,6 +464,12 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
     ...settings,
     orderLabels: settings.orderLabels.map((label) => ({ ...label })),
     customerTypes: [...settings.customerTypes],
+    serviceCharge: {
+      ...defaults.serviceCharge,
+      ...settings.serviceCharge,
+      excludedCategories: [...(settings.serviceCharge?.excludedCategories ?? [])],
+      excludedItemIds: [...(settings.serviceCharge?.excludedItemIds ?? [])],
+    },
     productTotalDisplay: {
       ...defaults.productTotalDisplay,
       ...settings.productTotalDisplay,
@@ -830,6 +836,26 @@ const productTotalCategoryFullyExcluded = (category: MenuCategory): boolean => {
 const productTotalItemExcluded = (product: ProductDraft): boolean =>
   engagementSettings.value.productTotalDisplay.excludedCategories.includes(product.category) ||
   engagementSettings.value.productTotalDisplay.excludedItemIds.includes(product.id)
+const activeServiceChargeCategory = ref<MenuCategory>(menuCategoryOptions[0]?.value ?? 'coffee')
+const selectServiceChargeCategory = (category: MenuCategory): void => {
+  activeServiceChargeCategory.value = category
+}
+const serviceChargeProductOptions = computed<ProductDraft[]>(() =>
+  sortedPrintRuleProducts.value.filter((product) => product.category === activeServiceChargeCategory.value),
+)
+const serviceChargeCategoryFullyExcluded = (category: MenuCategory): boolean => {
+  const settings = engagementSettings.value.serviceCharge
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  if (categoryProductIds.length === 0) {
+    return settings.excludedCategories.includes(category)
+  }
+
+  const excludedItemIds = new Set(settings.excludedItemIds)
+  return settings.excludedCategories.includes(category) || categoryProductIds.every((itemId) => excludedItemIds.has(itemId))
+}
+const serviceChargeItemExcluded = (product: ProductDraft): boolean =>
+  engagementSettings.value.serviceCharge.excludedCategories.includes(product.category) ||
+  engagementSettings.value.serviceCharge.excludedItemIds.includes(product.id)
 const normalizePrintRuleFullCategories = (rule: PrintRuleSetting): void => {
   const itemIds = new Set(rule.itemIds ?? [])
   const categories = new Set(rule.categories)
@@ -868,6 +894,25 @@ const normalizePrintRuleCountFullCategories = (rule: PrintRuleSetting): void => 
 }
 const normalizeProductTotalFullCategories = (): void => {
   const settings = engagementSettings.value.productTotalDisplay
+  const itemIds = new Set(settings.excludedItemIds)
+  const categories = new Set(settings.excludedCategories)
+  for (const category of menuCategoryOptions.map((option) => option.value)) {
+    const categoryProductIds = printRuleProductIdsForCategory(category)
+    if (categoryProductIds.length === 0 || !categoryProductIds.every((itemId) => itemIds.has(itemId))) {
+      continue
+    }
+
+    categories.add(category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+  }
+
+  settings.excludedCategories = [...categories]
+  settings.excludedItemIds = [...itemIds]
+}
+const normalizeServiceChargeFullCategories = (): void => {
+  const settings = engagementSettings.value.serviceCharge
   const itemIds = new Set(settings.excludedItemIds)
   const categories = new Set(settings.excludedCategories)
   for (const category of menuCategoryOptions.map((option) => option.value)) {
@@ -2085,6 +2130,54 @@ const toggleProductTotalItem = (itemId: string): void => {
   itemIds.add(product.id)
   settings.excludedItemIds = [...itemIds]
   normalizeProductTotalFullCategories()
+}
+
+const toggleServiceChargeCategory = (category: MenuCategory): void => {
+  selectServiceChargeCategory(category)
+  const settings = engagementSettings.value.serviceCharge
+  const categoryProductIds = printRuleProductIdsForCategory(category)
+  const itemIds = new Set(settings.excludedItemIds)
+  if (serviceChargeCategoryFullyExcluded(category)) {
+    settings.excludedCategories = settings.excludedCategories.filter((entry) => entry !== category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+    settings.excludedItemIds = [...itemIds]
+    return
+  }
+
+  settings.excludedCategories = [...new Set([...settings.excludedCategories, category])]
+  for (const itemId of categoryProductIds) {
+    itemIds.delete(itemId)
+  }
+  settings.excludedItemIds = [...itemIds]
+}
+
+const toggleServiceChargeItem = (itemId: string): void => {
+  const product = sortedPrintRuleProducts.value.find((entry) => entry.id === itemId)
+  if (!product) {
+    return
+  }
+
+  const settings = engagementSettings.value.serviceCharge
+  const itemIds = new Set(settings.excludedItemIds)
+  if (serviceChargeItemExcluded(product)) {
+    if (settings.excludedCategories.includes(product.category)) {
+      settings.excludedCategories = settings.excludedCategories.filter((entry) => entry !== product.category)
+      for (const categoryItemId of printRuleProductIdsForCategory(product.category)) {
+        if (categoryItemId !== product.id) {
+          itemIds.add(categoryItemId)
+        }
+      }
+    }
+    itemIds.delete(product.id)
+    settings.excludedItemIds = [...itemIds]
+    return
+  }
+
+  itemIds.add(product.id)
+  settings.excludedItemIds = [...itemIds]
+  normalizeServiceChargeFullCategories()
 }
 
 const savePrinterSettings = async (): Promise<void> => {
@@ -4159,7 +4252,30 @@ const saveAccessControl = async (): Promise<void> => {
 
             <div class="admin-online-settings-grid">
               <label>
-                預設服務費 %
+                服務費名稱
+                <input v-model="engagementSettings.serviceCharge.label" type="text" />
+              </label>
+              <label>
+                內用服務費 %
+                <input v-model.number="engagementSettings.serviceCharge.dineInRate" type="number" min="0" max="30" />
+              </label>
+              <label>
+                外帶服務費 %
+                <input v-model.number="engagementSettings.serviceCharge.takeoutRate" type="number" min="0" max="30" />
+              </label>
+              <label>
+                外送服務費 %
+                <input v-model.number="engagementSettings.serviceCharge.deliveryRate" type="number" min="0" max="30" />
+              </label>
+              <label>
+                折扣計算
+                <select v-model="engagementSettings.serviceCharge.discountBasis">
+                  <option value="before-discount">折扣前</option>
+                  <option value="after-discount">折扣後</option>
+                </select>
+              </label>
+              <label>
+                舊版預設服務費 %
                 <input v-model.number="engagementSettings.defaultServiceFeeRate" type="number" min="0" max="30" />
               </label>
               <label>
@@ -4170,6 +4286,65 @@ const saveAccessControl = async (): Promise<void> => {
                   @input="updateEngagementCustomerTypes"
                 />
               </label>
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.serviceCharge.enabled" type="checkbox" />
+                啟用服務費
+              </label>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>服務費不計算分類</strong>
+                <span>分類文字只切換下方品項，方框才會整類排除。</span>
+              </div>
+              <div class="admin-toggle-grid">
+                <div
+                  v-for="category in menuCategoryOptions"
+                  :key="`service-charge-category-${category.value}`"
+                  class="toggle-row admin-rule-category-row"
+                  :class="{
+                    'toggle-row--active': serviceChargeCategoryFullyExcluded(category.value),
+                    'toggle-row--focused': activeServiceChargeCategory === category.value,
+                  }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="serviceChargeCategoryFullyExcluded(category.value)"
+                    @click.stop
+                    @change="toggleServiceChargeCategory(category.value)"
+                  />
+                  <button class="admin-rule-category-button" type="button" @click="selectServiceChargeCategory(category.value)">
+                    {{ category.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="admin-rule-scope">
+              <div>
+                <strong>服務費不計算指定品項</strong>
+                <span>{{ categoryLabels[activeServiceChargeCategory] ?? activeServiceChargeCategory }} 品項可單獨調整。</span>
+              </div>
+              <div class="admin-rule-item-grid">
+                <label
+                  v-for="product in serviceChargeProductOptions"
+                  :key="`service-charge-item-${product.id}`"
+                  class="toggle-row"
+                  :class="{ 'toggle-row--active': serviceChargeItemExcluded(product) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="serviceChargeItemExcluded(product)"
+                    @change="toggleServiceChargeItem(product.id)"
+                  />
+                  <span>{{ product.name }}</span>
+                  <small>{{ categoryLabels[product.category] ?? product.category }}</small>
+                </label>
+              </div>
+              <p v-if="serviceChargeProductOptions.length === 0" class="panel-note">此分類尚無商品。</p>
             </div>
 
             <div class="admin-rule-scope">

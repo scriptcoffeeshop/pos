@@ -652,10 +652,24 @@ export interface ProductTotalDisplaySettings {
   excludedItemIds: string[]
 }
 
+export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
+
+export interface ServiceChargeSettings {
+  enabled: boolean
+  label: string
+  dineInRate: number
+  takeoutRate: number
+  deliveryRate: number
+  discountBasis: ServiceChargeDiscountBasis
+  excludedCategories: MenuCategory[]
+  excludedItemIds: string[]
+}
+
 export interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[]
   customerTypes: string[]
   defaultServiceFeeRate: number
+  serviceCharge: ServiceChargeSettings
   productTotalDisplay: ProductTotalDisplaySettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]

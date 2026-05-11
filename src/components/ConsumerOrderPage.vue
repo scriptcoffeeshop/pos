@@ -22,18 +22,22 @@ import {
   normalizeDiscountSettings,
 } from '../lib/discounts'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
+import { calculateServiceChargeAmount, serviceChargeLabel, serviceChargeRateForMode } from '../lib/serviceCharge'
 import {
   createOrder,
+  defaultEngagementSettings,
   defaultOnlineOrderingSettings,
   fetchProducts,
   fetchRuntimeSettings,
   isPosApiConfigured,
+  normalizeEngagementSettings,
 } from '../lib/posApi'
 import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
 import type {
   CartLine,
   ComboProductGroup,
   CustomerDraft,
+  CustomerEngagementSettings,
   DiscountApplication,
   DiscountSettings,
   MenuCategory,
@@ -100,6 +104,7 @@ const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
 const menuCatalog = ref<MenuItem[]>([])
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
 const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
 const cartLines = ref<CartLine[]>([])
 const isLoading = ref(true)
@@ -236,6 +241,13 @@ const onlineDiscountCalculation = computed(() =>
 )
 const onlineDiscountApplications = computed<DiscountApplication[]>(() => onlineDiscountCalculation.value.applications)
 const onlineDiscountAmount = computed(() => onlineDiscountCalculation.value.total)
+const serviceFeeLabel = computed(() => serviceChargeLabel(engagementSettings.value.serviceCharge))
+const serviceFeeAmount = computed(() => calculateServiceChargeAmount(
+  engagementSettings.value.serviceCharge,
+  cartLines.value,
+  serviceMode.value,
+  onlineDiscountAmount.value,
+))
 const deliveryChargeableSubtotal = computed(() => Math.max(0, cartTotal.value - onlineDiscountAmount.value))
 const scheduledOrderIntervalMinutes = computed(() =>
   Math.min(Math.max(Math.trunc(onlineOrdering.value.scheduledOrderIntervalMinutes || 15), 5), 120),
@@ -256,7 +268,7 @@ const deliveryFeeAmount = computed(() => {
   const freeThreshold = Math.max(0, Math.trunc(onlineOrdering.value.freeDeliveryThreshold || 0))
   return freeThreshold > 0 && deliveryChargeableSubtotal.value >= freeThreshold ? 0 : fee
 })
-const orderTotal = computed(() => Math.max(0, cartTotal.value + deliveryFeeAmount.value - onlineDiscountAmount.value))
+const orderTotal = computed(() => Math.max(0, cartTotal.value + serviceFeeAmount.value + deliveryFeeAmount.value - onlineDiscountAmount.value))
 const deliveryFeeLabel = computed(() => {
   if (serviceMode.value !== 'delivery') {
     return ''
@@ -874,6 +886,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
   try {
     if (!isPosApiConfigured) {
       onlineOrdering.value = defaultOnlineOrderingSettings()
+      engagementSettings.value = defaultEngagementSettings()
       discountSettings.value = defaultDiscountSettings()
       menuCatalog.value = onlineFallbackMenu()
       orderMessage.value = '線上菜單預覽'
@@ -885,6 +898,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
       fetchProducts('online'),
     ])
     onlineOrdering.value = runtimeSettings.onlineOrdering
+    engagementSettings.value = normalizeEngagementSettings(runtimeSettings.engagementSettings)
     discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
     menuCatalog.value = products
     orderMessage.value = onlineOrdering.value.enabled
@@ -892,6 +906,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
       : onlineOrdering.value.pauseMessage
   } catch (error) {
     onlineOrdering.value = defaultOnlineOrderingSettings()
+    engagementSettings.value = defaultEngagementSettings()
     discountSettings.value = defaultDiscountSettings()
     menuCatalog.value = onlineFallbackMenu()
     orderMessage.value = error instanceof Error ? `菜單同步失敗：${error.message}` : '菜單同步失敗'
@@ -961,8 +976,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
     subtotal: cartTotal.value,
     orderLabels: [],
-    serviceFeeRate: 0,
-    serviceFeeAmount: 0,
+    serviceFeeRate: serviceChargeRateForMode(engagementSettings.value.serviceCharge, serviceMode.value),
+    serviceFeeAmount: serviceFeeAmount.value,
     extraFeeAmount: deliveryFeeAmount.value,
     discountAmount: onlineDiscountAmount.value,
     pointsRedeemed: 0,
@@ -1233,6 +1248,10 @@ watch(
         <div v-if="serviceMode === 'delivery'">
           <span>{{ deliveryFeeLabel }}</span>
           <strong>{{ formatCurrency(deliveryFeeAmount) }}</strong>
+        </div>
+        <div v-if="serviceFeeAmount > 0">
+          <span>{{ serviceFeeLabel }}</span>
+          <strong>{{ formatCurrency(serviceFeeAmount) }}</strong>
         </div>
         <div v-if="onlineDiscountAmount > 0">
           <span>優惠活動</span>

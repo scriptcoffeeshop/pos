@@ -3,6 +3,11 @@ import { menuItems } from '../data/menu'
 import { initialOrders } from '../data/orders'
 import { formatDateKey } from '../lib/formatters'
 import {
+  calculateServiceChargeAmount,
+  serviceChargeLabel,
+  serviceChargeRateForMode,
+} from '../lib/serviceCharge'
+import {
   calculateDiscountApplications,
   defaultDiscountSettings,
   normalizeDiscountSettings,
@@ -1171,8 +1176,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     floorPlanSettings.value = runtimeSettings.floorPlan
     engagementSettings.value = runtimeSettings.engagementSettings
     accessPolicy.value = runtimeSettings.accessPolicy
-    if (!savedCounterDraft && runtimeSettings.engagementSettings.defaultServiceFeeRate > 0) {
-      serviceFeeRate.value = runtimeSettings.engagementSettings.defaultServiceFeeRate
+    if (!savedCounterDraft) {
+      serviceFeeRate.value = serviceChargeRateForMode(runtimeSettings.engagementSettings.serviceCharge, serviceMode.value)
     }
     printerSettings.value = runtimeSettings.printerSettings.stations.length > 0
       ? runtimeSettings.printerSettings
@@ -1555,9 +1560,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const cartItemSubtotal = computed(() =>
     cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0),
   )
-  const serviceFeeAmount = computed(() =>
-    Math.max(0, Math.round(cartItemSubtotal.value * Math.min(Math.max(serviceFeeRate.value, 0), 30) / 100)),
-  )
+  const activeServiceChargeSettings = computed(() => engagementSettings.value.serviceCharge)
+  const serviceFeeLabel = computed(() => serviceChargeLabel(activeServiceChargeSettings.value))
   const selectedDiscountCampaignIdSet = computed(() => new Set(selectedDiscountCampaignIds.value))
   const availableDiscountCampaigns = computed<DiscountCampaign[]>(() =>
     discountSettings.value.campaigns.filter((campaign) =>
@@ -1580,6 +1584,18 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const totalDiscountAmount = computed(() =>
     Math.max(0, Math.trunc(discountAmount.value || 0)) + automaticDiscountAmount.value,
   )
+  const serviceFeeAmount = computed(() => calculateServiceChargeAmount(
+    {
+      ...activeServiceChargeSettings.value,
+      enabled: serviceFeeRate.value > 0,
+      dineInRate: serviceFeeRate.value,
+      takeoutRate: serviceFeeRate.value,
+      deliveryRate: serviceFeeRate.value,
+    },
+    cartLines.value,
+    serviceMode.value,
+    totalDiscountAmount.value,
+  ))
   const cartTotal = computed(() =>
     Math.max(
       0,
@@ -1707,7 +1723,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
   const resetOrderAdjustments = (): void => {
     orderLabels.value = []
-    serviceFeeRate.value = engagementSettings.value.defaultServiceFeeRate
+    serviceFeeRate.value = serviceChargeRateForMode(engagementSettings.value.serviceCharge, serviceMode.value)
     extraFeeAmount.value = 0
     discountAmount.value = 0
     selectedDiscountCampaignIds.value = []
@@ -1803,6 +1819,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       setBackendStatus('fallback', '草稿同步失敗', `${order.id} 先保留在本機：${getErrorMessage(error)}`)
     }
   }
+
+  watch(serviceMode, (nextMode, previousMode) => {
+    const previousDefaultRate = serviceChargeRateForMode(engagementSettings.value.serviceCharge, previousMode)
+    if (serviceFeeRate.value === previousDefaultRate || serviceFeeRate.value === engagementSettings.value.defaultServiceFeeRate) {
+      serviceFeeRate.value = serviceChargeRateForMode(engagementSettings.value.serviceCharge, nextMode)
+    }
+  })
 
   const noteTokensFromText = (value: string): string[] =>
     value
@@ -4278,6 +4301,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     selectedCategory,
     serviceMode,
     serviceFeeAmount,
+    serviceFeeLabel,
     serviceFeeRate,
     saveCounterOrder,
     setItemQuantity,

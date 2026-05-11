@@ -651,6 +651,19 @@ interface SupplyRulesSettings {
   defaultWindows?: SupplyWindowRule[];
 }
 
+type ServiceChargeDiscountBasis = "before-discount" | "after-discount";
+
+interface ServiceChargeSettings {
+  enabled: boolean;
+  label: string;
+  dineInRate: number;
+  takeoutRate: number;
+  deliveryRate: number;
+  discountBasis: ServiceChargeDiscountBasis;
+  excludedCategories: MenuCategory[];
+  excludedItemIds: string[];
+}
+
 interface ReservationBusinessHour {
   id: string;
   day: number;
@@ -694,6 +707,7 @@ interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[];
   customerTypes: string[];
   defaultServiceFeeRate: number;
+  serviceCharge: ServiceChargeSettings;
   productTotalDisplay: {
     enabled: boolean;
     excludedCategories: MenuCategory[];
@@ -1129,6 +1143,16 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
   ],
   customerTypes: ["一般顧客", "常客", "VIP", "員工"],
   defaultServiceFeeRate: 0,
+  serviceCharge: {
+    enabled: false,
+    label: "服務費",
+    dineInRate: 0,
+    takeoutRate: 0,
+    deliveryRate: 0,
+    discountBasis: "before-discount",
+    excludedCategories: [],
+    excludedItemIds: [],
+  },
   productTotalDisplay: {
     enabled: true,
     excludedCategories: [],
@@ -3881,6 +3905,10 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.enabled) {
       return c.json({ error: onlineOrdering.pauseMessage }, 409);
     }
+    const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+      "engagement_settings",
+      defaultEngagementSettings,
+    ));
     const serviceMode = input.serviceMode ?? "takeout";
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
@@ -3902,6 +3930,8 @@ api.post("/orders", async (c) => {
       }
       input.extraFeeAmount = calculateOnlineDeliveryFee(chargeableSubtotal, onlineOrdering);
     }
+    input.serviceFeeRate = serviceChargeRateForMode(engagementSettings.serviceCharge, serviceMode);
+    input.serviceFeeAmount = calculateOrderServiceCharge(input, engagementSettings.serviceCharge, serviceMode);
     const scheduleValidationError = validateOnlineRequestedFulfillmentAt(requestedFulfillmentAt, serviceMode, onlineOrdering);
     if (scheduleValidationError) {
       return c.json({ error: scheduleValidationError }, 409);
@@ -5871,6 +5901,45 @@ const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSe
     return 0;
   }
   return settings.deliveryFeeAmount;
+};
+const serviceChargeRateForMode = (settings: ServiceChargeSettings, serviceMode: ServiceMode): number => {
+  if (!settings.enabled) {
+    return 0;
+  }
+  const rate = serviceMode === "dine-in"
+    ? settings.dineInRate
+    : serviceMode === "delivery"
+      ? settings.deliveryRate
+      : settings.takeoutRate;
+  return Math.min(Math.max(Math.trunc(Number(rate) || 0), 0), 30);
+};
+const serviceChargeLineSubtotal = (line: OrderLineInput, settings: ServiceChargeSettings): number => {
+  const excludedCategories = new Set(settings.excludedCategories);
+  const excludedItemIds = new Set(settings.excludedItemIds);
+  if (
+    (line.category && excludedCategories.has(line.category)) ||
+    (line.productId && excludedItemIds.has(line.productId)) ||
+    excludedItemIds.has(line.productSku)
+  ) {
+    return 0;
+  }
+  return clampNonNegativeInteger(line.unitPrice) * clampNonNegativeInteger(line.quantity);
+};
+const calculateOrderServiceCharge = (
+  input: CreateOrderInput,
+  settings: ServiceChargeSettings,
+  serviceMode: ServiceMode,
+): number => {
+  const rate = serviceChargeRateForMode(settings, serviceMode);
+  if (rate <= 0) {
+    return 0;
+  }
+
+  const subtotal = (input.lines ?? []).reduce((total, line) => total + serviceChargeLineSubtotal(line, settings), 0);
+  const discountOffset = settings.discountBasis === "after-discount"
+    ? Math.min(clampNonNegativeInteger(input.discountAmount), subtotal)
+    : 0;
+  return Math.max(0, Math.round(Math.max(0, subtotal - discountOffset) * rate / 100));
 };
 const normalizeDiscountDays = (input: unknown): number[] => {
   if (!Array.isArray(input)) {
@@ -8317,6 +8386,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeText(type, "").slice(0, 40)).filter(Boolean))].slice(0, 16)
     : defaultEngagementSettings.customerTypes;
+  const legacyServiceRate = Math.min(Math.max(Math.trunc(Number(settings.defaultServiceFeeRate) || 0), 0), 30);
+  const rawServiceCharge = settings.serviceCharge && typeof settings.serviceCharge === "object"
+    ? settings.serviceCharge as Partial<ServiceChargeSettings>
+    : defaultEngagementSettings.serviceCharge;
   const rawProductTotalDisplay = settings.productTotalDisplay && typeof settings.productTotalDisplay === "object"
     ? settings.productTotalDisplay
     : defaultEngagementSettings.productTotalDisplay;
@@ -8396,7 +8469,21 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
   return {
     orderLabels: orderLabels.length > 0 ? orderLabels : defaultEngagementSettings.orderLabels,
     customerTypes: customerTypes.length > 0 ? customerTypes : defaultEngagementSettings.customerTypes,
-    defaultServiceFeeRate: Math.min(Math.max(Math.trunc(Number(settings.defaultServiceFeeRate) || 0), 0), 30),
+    defaultServiceFeeRate: legacyServiceRate,
+    serviceCharge: {
+      enabled: rawServiceCharge.enabled === true || legacyServiceRate > 0,
+      label: sanitizeText(rawServiceCharge.label, defaultEngagementSettings.serviceCharge.label).slice(0, 40) || defaultEngagementSettings.serviceCharge.label,
+      dineInRate: Math.min(Math.max(Math.trunc(Number(rawServiceCharge.dineInRate) || legacyServiceRate), 0), 30),
+      takeoutRate: Math.min(Math.max(Math.trunc(Number(rawServiceCharge.takeoutRate) || 0), 0), 30),
+      deliveryRate: Math.min(Math.max(Math.trunc(Number(rawServiceCharge.deliveryRate) || 0), 0), 30),
+      discountBasis: rawServiceCharge.discountBasis === "after-discount" ? "after-discount" : "before-discount",
+      excludedCategories: Array.isArray(rawServiceCharge.excludedCategories)
+        ? [...new Set(rawServiceCharge.excludedCategories.filter((category): category is MenuCategory => typeof category === "string"))].slice(0, 40)
+        : defaultEngagementSettings.serviceCharge.excludedCategories,
+      excludedItemIds: Array.isArray(rawServiceCharge.excludedItemIds)
+        ? [...new Set(rawServiceCharge.excludedItemIds.filter((itemId): itemId is string => typeof itemId === "string"))].slice(0, 200)
+        : defaultEngagementSettings.serviceCharge.excludedItemIds,
+    },
     productTotalDisplay: {
       enabled: productTotalDisplay.enabled !== false,
       excludedCategories: Array.isArray(productTotalDisplay.excludedCategories)

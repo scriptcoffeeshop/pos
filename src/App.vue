@@ -51,6 +51,7 @@ import {
   type PosKnowledgeCategory,
 } from './data/posKnowledge'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
+import { serviceChargeRateForMode } from './lib/serviceCharge'
 import {
   createAdminReservation,
   createAdminMember,
@@ -837,6 +838,7 @@ const {
   sendPrinterHealthcheck,
   serviceMode,
   serviceFeeAmount,
+  serviceFeeLabel,
   serviceFeeRate,
   selectedDiscountCampaignIds,
   saveCounterOrder,
@@ -5577,7 +5579,7 @@ const ticketActionPermissionSteps = (action: TicketAction): ProtectedPermissionS
     })
   }
 
-  const defaultServiceFeeRate = Math.max(0, Math.trunc(Number(engagementSettings.value.defaultServiceFeeRate) || 0))
+  const defaultServiceFeeRate = serviceChargeRateForMode(engagementSettings.value.serviceCharge, serviceMode.value)
   const currentServiceFeeRate = Math.max(0, Math.trunc(Number(serviceFeeRate.value) || 0))
   const currentExtraFeeAmount = Math.max(0, Math.trunc(Number(extraFeeAmount.value) || 0))
   if (
@@ -10789,7 +10791,7 @@ onBeforeUnmount(() => {
 
                   <div class="payment-adjustment-grid" aria-label="費用與折抵">
                     <label>
-                      服務費 %
+                      {{ serviceFeeLabel }} %
                       <input v-model.number="serviceFeeRate" type="number" min="0" max="30" step="1" />
                     </label>
                     <label>
@@ -10825,7 +10827,7 @@ onBeforeUnmount(() => {
                       <strong>{{ formatCurrency(cartItemSubtotal) }}</strong>
                     </article>
                     <article>
-                      <span>服務費</span>
+                      <span>{{ serviceFeeLabel }}</span>
                       <strong>{{ formatCurrency(serviceFeeAmount) }}</strong>
                     </article>
                     <article>
