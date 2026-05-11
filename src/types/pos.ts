@@ -726,6 +726,15 @@ export interface ProductTotalDisplaySettings {
   excludedItemIds: string[]
 }
 
+export interface LoyaltyPointSettings {
+  enabled: boolean
+  earningEnabled: boolean
+  redeemEnabled: boolean
+  spendAmountPerPoint: number
+  minimumRedeemPoints: number
+  maximumRedeemPointsPerOrder: number
+}
+
 export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
 
 export interface ServiceChargeSettings {
@@ -745,6 +754,7 @@ export interface CustomerEngagementSettings {
   defaultServiceFeeRate: number
   serviceCharge: ServiceChargeSettings
   productTotalDisplay: ProductTotalDisplaySettings
+  loyaltyPoints: LoyaltyPointSettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

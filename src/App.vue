@@ -822,7 +822,10 @@ const {
   paymentSplits,
   pendingOrders,
   posAppearanceSettings,
+  pointRedemptionLimit,
   pointsRedeemed,
+  effectivePointsRedeemed,
+  memberPointsEarned,
   printCustomerReceipt,
   printTransactionDetail,
   printOrder,
@@ -5853,7 +5856,7 @@ const ticketActionPermissionSteps = (action: TicketAction): ProtectedPermissionS
   }
 
   const manualDiscountAmount = Math.max(0, Math.trunc(Number(discountAmount.value) || 0))
-  const manualPointsRedeemed = Math.max(0, Math.trunc(Number(pointsRedeemed.value) || 0))
+  const manualPointsRedeemed = Math.max(0, Math.trunc(Number(effectivePointsRedeemed.value) || 0))
   if (
     (action === 'checkout-print' || action === 'checkout-only') &&
     (manualDiscountAmount > 0 || manualPointsRedeemed > 0 || Boolean(couponCode.value) || protectedDiscountCampaignAdjusted.value)
@@ -11253,7 +11256,10 @@ onBeforeUnmount(() => {
                     </label>
                     <label>
                       點數折抵
-                      <input v-model.number="pointsRedeemed" type="number" min="0" :max="customer.pointsBalance" step="1" />
+                      <input v-model.number="pointsRedeemed" type="number" min="0" :max="pointRedemptionLimit" step="1" :disabled="pointRedemptionLimit === 0" />
+                      <small>
+                        {{ customer.memberId ? `可折 ${pointRedemptionLimit} 點，本單得 ${memberPointsEarned} 點` : '套用會員後可折抵' }}
+                      </small>
                     </label>
                     <label class="wide-field">
                       優惠券
@@ -11286,6 +11292,10 @@ onBeforeUnmount(() => {
                     <article>
                       <span>總折抵</span>
                       <strong>-{{ formatCurrency(totalDiscountAmount) }}</strong>
+                    </article>
+                    <article>
+                      <span>點數</span>
+                      <strong>-{{ formatCurrency(effectivePointsRedeemed) }}</strong>
                     </article>
                     <article>
                       <span>顧客</span>

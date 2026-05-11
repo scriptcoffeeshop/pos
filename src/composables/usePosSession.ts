@@ -1731,14 +1731,48 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     serviceMode.value,
     totalDiscountAmount.value,
   ))
-  const cartTotal = computed(() =>
+  const loyaltyPointSettings = computed(() => engagementSettings.value.loyaltyPoints)
+  const cartTotalBeforePoints = computed(() =>
     Math.max(
       0,
       cartItemSubtotal.value +
         serviceFeeAmount.value +
         Math.max(0, Math.trunc(extraFeeAmount.value || 0)) -
-        totalDiscountAmount.value -
-        Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+        totalDiscountAmount.value,
+    ),
+  )
+  const pointRedemptionLimit = computed(() => {
+    const settings = loyaltyPointSettings.value
+    if (!customer.memberId || !settings.enabled || !settings.redeemEnabled) {
+      return 0
+    }
+
+    const balanceLimit = Math.max(0, Math.trunc(Number(customer.pointsBalance) || 0))
+    const orderLimit = Math.min(balanceLimit, cartTotalBeforePoints.value)
+    const cappedLimit = settings.maximumRedeemPointsPerOrder > 0
+      ? Math.min(orderLimit, settings.maximumRedeemPointsPerOrder)
+      : orderLimit
+
+    return cappedLimit >= settings.minimumRedeemPoints ? cappedLimit : 0
+  })
+  const effectivePointsRedeemed = computed(() => {
+    const settings = loyaltyPointSettings.value
+    const requestedPoints = Math.max(0, Math.trunc(Number(pointsRedeemed.value) || 0))
+    const cappedPoints = Math.min(requestedPoints, pointRedemptionLimit.value)
+    return cappedPoints >= settings.minimumRedeemPoints ? cappedPoints : 0
+  })
+  const memberPointsEarned = computed(() => {
+    const settings = loyaltyPointSettings.value
+    if (!customer.memberId || !settings.enabled || !settings.earningEnabled) {
+      return 0
+    }
+
+    return Math.max(0, Math.floor(Math.max(0, cartTotalBeforePoints.value - effectivePointsRedeemed.value) / settings.spendAmountPerPoint))
+  })
+  const cartTotal = computed(() =>
+    Math.max(
+      0,
+      cartTotalBeforePoints.value - effectivePointsRedeemed.value,
     ),
   )
 
@@ -1962,6 +1996,16 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   })
 
+  watch([pointsRedeemed, pointRedemptionLimit, loyaltyPointSettings], ([requestedPoints, limit, settings]) => {
+    const normalizedPoints = Math.max(0, Math.trunc(Number(requestedPoints) || 0))
+    const cappedPoints = normalizedPoints >= settings.minimumRedeemPoints
+      ? Math.min(normalizedPoints, limit)
+      : 0
+    if (pointsRedeemed.value !== cappedPoints) {
+      pointsRedeemed.value = cappedPoints
+    }
+  })
+
   const noteTokensFromText = (value: string): string[] =>
     value
       .split(/[、，,]/)
@@ -2140,12 +2184,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       serviceFeeAmount: serviceFeeAmount.value,
       extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
       discountAmount: totalDiscountAmount.value,
-      pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+      pointsRedeemed: effectivePointsRedeemed.value,
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
       paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
       transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0))),
-      memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
+      memberPointsEarned: memberPointsEarned.value,
       paymentMethod: paymentMethod.value,
       paymentStatus: nextPaymentStatus,
       claimedBy: currentOrder.claimedBy ?? stationClaimId,
@@ -2198,7 +2242,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         discountAmount: discountAmount.value,
         selectedDiscountCampaignIds: [...selectedDiscountCampaignIds.value],
         disabledAutomaticDiscountCampaignIds: [...disabledAutomaticDiscountCampaignIds.value],
-        pointsRedeemed: pointsRedeemed.value,
+        pointsRedeemed: effectivePointsRedeemed.value,
         couponCode: couponCode.value,
         paymentSplits: normalizePaymentSplits(paymentSplits.value),
         paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
@@ -3930,12 +3974,12 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       serviceFeeAmount: serviceFeeAmount.value,
       extraFeeAmount: Math.max(0, Math.trunc(extraFeeAmount.value || 0)),
       discountAmount: totalDiscountAmount.value,
-      pointsRedeemed: Math.max(0, Math.trunc(pointsRedeemed.value || 0)),
+      pointsRedeemed: effectivePointsRedeemed.value,
       couponCode: couponCode.value.trim(),
       paymentSplits: normalizePaymentSplits(paymentSplits.value),
       paymentBreakdown: normalizePaymentBreakdown(paymentBreakdown.value),
       transactionReceiptCount: Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0))),
-      memberPointsEarned: Math.max(0, Math.floor(cartTotal.value / 100)),
+      memberPointsEarned: memberPointsEarned.value,
       paymentMethod: paymentMethod.value,
       paymentStatus,
       status: existingOrder?.status ?? 'new',
@@ -4373,7 +4417,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartItemSubtotal,
     cartQuantity,
     cartProductTotalQuantity,
+    cartTotalBeforePoints,
     cartTotal,
+    effectivePointsRedeemed,
     availableDiscountCampaigns,
     automaticDiscountAmount,
     clearCart,
@@ -4430,7 +4476,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     transactionReceiptCount,
     pendingOrders,
     posAppearanceSettings,
+    pointRedemptionLimit,
     pointsRedeemed,
+    memberPointsEarned,
     printCustomerReceipt,
     printTransactionDetail,
     printOrder,

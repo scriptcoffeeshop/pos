@@ -799,6 +799,14 @@ interface CustomerEngagementSettings {
     excludedCategories: MenuCategory[];
     excludedItemIds: string[];
   };
+  loyaltyPoints: {
+    enabled: boolean;
+    earningEnabled: boolean;
+    redeemEnabled: boolean;
+    spendAmountPerPoint: number;
+    minimumRedeemPoints: number;
+    maximumRedeemPointsPerOrder: number;
+  };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
@@ -1283,6 +1291,14 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     excludedCategories: [],
     excludedItemIds: [],
   },
+  loyaltyPoints: {
+    enabled: true,
+    earningEnabled: true,
+    redeemEnabled: true,
+    spendAmountPerPoint: 100,
+    minimumRedeemPoints: 1,
+    maximumRedeemPointsPerOrder: 0,
+  },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
     { id: "food-pairing", trigger: "morning", title: "早餐搭配", productIds: [], enabled: true },
@@ -1535,6 +1551,126 @@ const claimCouponForOrderInput = async (
   };
 };
 
+interface MemberPointClaim {
+  pointsRedeemed: number;
+  pointsEarned: number;
+  release: () => Promise<void>;
+  finalize: (orderId: string) => Promise<string | null>;
+}
+
+const orderPayableTotalBeforePoints = (input: CreateOrderInput): number =>
+  Math.max(
+    0,
+    (input.lines ?? []).reduce((total, line) => total + lineSubtotal(line), 0) +
+      clampNonNegativeInteger(input.serviceFeeAmount) +
+      clampNonNegativeInteger(input.extraFeeAmount) -
+      clampNonNegativeInteger(input.discountAmount),
+  );
+
+const normalizeMemberPointsForOrderInput = (
+  input: CreateOrderInput,
+  settings: CustomerEngagementSettings["loyaltyPoints"],
+): { memberId: string | null; requestedPointsRedeemed: number; pointsRedeemed: number; pointsEarned: number } => {
+  const memberId = normalizeUuid(input.memberId);
+  const totalBeforePoints = orderPayableTotalBeforePoints(input);
+  const requestedPointsRedeemed = clampNonNegativeInteger(input.pointsRedeemed);
+  let pointsRedeemed = requestedPointsRedeemed;
+
+  if (
+    !memberId ||
+    !settings.enabled ||
+    !settings.redeemEnabled ||
+    pointsRedeemed < settings.minimumRedeemPoints
+  ) {
+    pointsRedeemed = 0;
+  }
+
+  if (settings.maximumRedeemPointsPerOrder > 0) {
+    pointsRedeemed = Math.min(pointsRedeemed, settings.maximumRedeemPointsPerOrder);
+  }
+
+  pointsRedeemed = Math.min(pointsRedeemed, totalBeforePoints);
+  const payableTotal = Math.max(0, totalBeforePoints - pointsRedeemed);
+  const pointsEarned = memberId && settings.enabled && settings.earningEnabled
+    ? Math.floor(payableTotal / settings.spendAmountPerPoint)
+    : 0;
+
+  input.memberId = memberId;
+  input.pointsRedeemed = pointsRedeemed;
+  input.memberPointsEarned = pointsEarned;
+  input.subtotal = payableTotal;
+
+  return { memberId, requestedPointsRedeemed, pointsRedeemed, pointsEarned };
+};
+
+const claimMemberPointsForOrderInput = async (
+  input: CreateOrderInput,
+  stationId: string,
+): Promise<{ claim: MemberPointClaim | null; error: string | null }> => {
+  const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  ));
+  const { memberId, requestedPointsRedeemed, pointsRedeemed, pointsEarned } = normalizeMemberPointsForOrderInput(input, engagementSettings.loyaltyPoints);
+  if (requestedPointsRedeemed > pointsRedeemed) {
+    return { claim: null, error: "pointsRedeemed exceeds the current loyalty point rule" };
+  }
+
+  if (!memberId || (pointsRedeemed <= 0 && pointsEarned <= 0)) {
+    return { claim: null, error: null };
+  }
+
+  let redemptionLedgerId: string | null = null;
+  if (pointsRedeemed > 0) {
+    const { data, error } = await supabase.rpc("redeem_pos_member_points", {
+      p_member_id: memberId,
+      p_points: pointsRedeemed,
+      p_station_id: stationId,
+      p_note: "POS point redemption",
+    });
+
+    if (error) {
+      return { claim: null, error: error.message };
+    }
+    redemptionLedgerId = typeof data === "string" ? data : null;
+  }
+
+  const release = async (): Promise<void> => {
+    if (!redemptionLedgerId) {
+      return;
+    }
+
+    await supabase.rpc("release_pos_member_point_redemption", {
+      p_ledger_id: redemptionLedgerId,
+      p_station_id: stationId,
+      p_note: "POS order creation failed",
+    });
+  };
+
+  const finalize = async (orderId: string): Promise<string | null> => {
+    const { error } = await supabase.rpc("finalize_pos_member_points", {
+      p_redemption_ledger_id: redemptionLedgerId,
+      p_order_id: orderId,
+      p_member_id: memberId,
+      p_points_earned: pointsEarned,
+      p_station_id: stationId,
+      p_note: "POS checkout",
+    });
+
+    return error?.message ?? null;
+  };
+
+  return {
+    claim: {
+      pointsRedeemed,
+      pointsEarned,
+      release,
+      finalize,
+    },
+    error: null,
+  };
+};
+
 const restoreCouponRedemptionForOrder = async (
   order: Record<string, unknown>,
   stationId: string,
@@ -1577,6 +1713,27 @@ const restoreCouponRedemptionForOrder = async (
   }
 
   return { restored: Boolean(data), error: null };
+};
+
+const restoreMemberPointsForOrder = async (
+  orderId: string,
+  stationId: string,
+): Promise<{ pointsDelta: number; error: string | null }> => {
+  if (!orderId) {
+    return { pointsDelta: 0, error: null };
+  }
+
+  const { data, error } = await supabase.rpc("restore_pos_member_points_for_order", {
+    p_order_id: orderId,
+    p_station_id: stationId,
+    p_note: "POS order reversal",
+  });
+
+  if (error) {
+    return { pointsDelta: 0, error: error.message };
+  }
+
+  return { pointsDelta: Number(data ?? 0), error: null };
 };
 
 const normalizePaymentSplits = (input: unknown): Array<Record<string, unknown>> => {
@@ -4094,6 +4251,13 @@ api.post("/orders", async (c) => {
     return c.json({ error: couponClaimResult.error }, status);
   }
   const couponClaim = couponClaimResult.claim;
+  const pointClaimResult = await claimMemberPointsForOrderInput(input, stationId);
+  if (pointClaimResult.error) {
+    await couponClaim?.release();
+    const status = /Insufficient|not found|points/i.test(pointClaimResult.error) ? 409 : 500;
+    return c.json({ error: pointClaimResult.error }, status);
+  }
+  const pointClaim = pointClaimResult.claim;
 
   const { data: orderId, error: orderError } = await supabase.rpc("create_pos_order", {
     p_order_number: input.orderNumber,
@@ -4121,6 +4285,7 @@ api.post("/orders", async (c) => {
 
   if (orderError) {
     await couponClaim?.release();
+    await pointClaim?.release();
     const status = /inventory|Product not found|quantity/i.test(orderError.message) ? 409 : 500;
     return c.json({ error: orderError.message }, status);
   }
@@ -4128,12 +4293,22 @@ api.post("/orders", async (c) => {
   const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(orderId), input);
   if (savedOrderError) {
     await couponClaim?.release();
+    await pointClaim?.release();
     return c.json({ error: savedOrderError.message }, 500);
   }
 
   const couponAttachError = await couponClaim?.attachOrder(String(savedOrder.id));
   if (couponAttachError) {
+    await pointClaim?.release();
+    await couponClaim?.release();
     return c.json({ error: couponAttachError }, 500);
+  }
+
+  const pointFinalizeError = await pointClaim?.finalize(String(savedOrder.id));
+  if (pointFinalizeError) {
+    await restoreCouponRedemptionForOrder(savedOrder as Record<string, unknown>, stationId);
+    await pointClaim?.release();
+    return c.json({ error: pointFinalizeError }, 500);
   }
 
   await writeAuditEvent({
@@ -4160,6 +4335,12 @@ api.post("/orders", async (c) => {
 	          title: couponClaim.coupon.title,
 	        }
 	        : null,
+        loyaltyPoints: pointClaim
+          ? {
+            redeemed: pointClaim.pointsRedeemed,
+            earned: pointClaim.pointsEarned,
+          }
+          : null,
 	    },
 	  });
 
@@ -4345,6 +4526,13 @@ api.post("/orders/:id/finalize", async (c) => {
     return c.json({ error: couponClaimResult.error }, status);
   }
   const couponClaim = couponClaimResult.claim;
+  const pointClaimResult = await claimMemberPointsForOrderInput(input, stationId);
+  if (pointClaimResult.error) {
+    await couponClaim?.release();
+    const status = /Insufficient|not found|points/i.test(pointClaimResult.error) ? 409 : 500;
+    return c.json({ error: pointClaimResult.error }, status);
+  }
+  const pointClaim = pointClaimResult.claim;
   const { data: finalizedOrderId, error: finalizeError } = await supabase.rpc("finalize_pos_order", {
     p_order_id: current.data.id,
     p_service_mode: input.serviceMode ?? "takeout",
@@ -4370,6 +4558,7 @@ api.post("/orders/:id/finalize", async (c) => {
 
   if (finalizeError) {
     await couponClaim?.release();
+    await pointClaim?.release();
     const status = /inventory|Product not found|quantity|finalized/i.test(finalizeError.message) ? 409 : 500;
     return c.json({ error: finalizeError.message }, status);
   }
@@ -4377,12 +4566,22 @@ api.post("/orders/:id/finalize", async (c) => {
   const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(finalizedOrderId), input);
   if (savedOrderError) {
     await couponClaim?.release();
+    await pointClaim?.release();
     return c.json({ error: savedOrderError.message }, 500);
   }
 
   const couponAttachError = await couponClaim?.attachOrder(String(savedOrder.id));
   if (couponAttachError) {
+    await pointClaim?.release();
+    await couponClaim?.release();
     return c.json({ error: couponAttachError }, 500);
+  }
+
+  const pointFinalizeError = await pointClaim?.finalize(String(savedOrder.id));
+  if (pointFinalizeError) {
+    await restoreCouponRedemptionForOrder(savedOrder as Record<string, unknown>, stationId);
+    await pointClaim?.release();
+    return c.json({ error: pointFinalizeError }, 500);
   }
 
   await writeAuditEvent({
@@ -4402,6 +4601,12 @@ api.post("/orders/:id/finalize", async (c) => {
 	          title: couponClaim.coupon.title,
 	        }
 	        : null,
+        loyaltyPoints: pointClaim
+          ? {
+            redeemed: pointClaim.pointsRedeemed,
+            earned: pointClaim.pointsEarned,
+          }
+          : null,
 	    },
 	  });
 
@@ -4768,6 +4973,10 @@ api.post("/orders/:id/void", async (c) => {
   if (couponRestore.error) {
     return c.json({ error: couponRestore.error }, 500);
   }
+  const pointRestore = await restoreMemberPointsForOrder(String(savedOrder.id), stationId);
+  if (pointRestore.error) {
+    return c.json({ error: pointRestore.error }, 500);
+  }
 
   await writeAuditEvent({
     action: "order.void",
@@ -4778,6 +4987,7 @@ api.post("/orders/:id/void", async (c) => {
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
       restoredCoupon: couponRestore.restored,
+      restoredPointDelta: pointRestore.pointsDelta,
     },
   });
 
@@ -4822,6 +5032,10 @@ api.post("/orders/:id/refund", async (c) => {
   if (couponRestore.error) {
     return c.json({ error: couponRestore.error }, 500);
   }
+  const pointRestore = await restoreMemberPointsForOrder(String(savedOrder.id), stationId);
+  if (pointRestore.error) {
+    return c.json({ error: pointRestore.error }, 500);
+  }
 
   await writeAuditEvent({
     action: "order.refund",
@@ -4833,6 +5047,7 @@ api.post("/orders/:id/refund", async (c) => {
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
       restoredCoupon: couponRestore.restored,
+      restoredPointDelta: pointRestore.pointsDelta,
     },
   });
 
@@ -9018,6 +9233,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.productTotalDisplay
     : defaultEngagementSettings.productTotalDisplay;
   const productTotalDisplay = rawProductTotalDisplay as Partial<CustomerEngagementSettings["productTotalDisplay"]>;
+  const rawLoyaltyPoints = settings.loyaltyPoints && typeof settings.loyaltyPoints === "object"
+    ? settings.loyaltyPoints
+    : defaultEngagementSettings.loyaltyPoints;
+  const loyaltyPoints = rawLoyaltyPoints as Partial<CustomerEngagementSettings["loyaltyPoints"]>;
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index): RecommendationRule[] => {
       if (!entry || typeof entry !== "object") {
@@ -9116,6 +9335,29 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
       excludedItemIds: Array.isArray(productTotalDisplay.excludedItemIds)
         ? [...new Set(productTotalDisplay.excludedItemIds.filter((itemId): itemId is string => typeof itemId === "string"))].slice(0, 200)
         : defaultEngagementSettings.productTotalDisplay.excludedItemIds,
+    },
+    loyaltyPoints: {
+      enabled: loyaltyPoints.enabled !== false,
+      earningEnabled: loyaltyPoints.earningEnabled !== false,
+      redeemEnabled: loyaltyPoints.redeemEnabled !== false,
+      spendAmountPerPoint: clampIntegerRange(
+        loyaltyPoints.spendAmountPerPoint,
+        defaultEngagementSettings.loyaltyPoints.spendAmountPerPoint,
+        1,
+        9999,
+      ),
+      minimumRedeemPoints: clampIntegerRange(
+        loyaltyPoints.minimumRedeemPoints,
+        defaultEngagementSettings.loyaltyPoints.minimumRedeemPoints,
+        0,
+        999_999,
+      ),
+      maximumRedeemPointsPerOrder: clampIntegerRange(
+        loyaltyPoints.maximumRedeemPointsPerOrder,
+        defaultEngagementSettings.loyaltyPoints.maximumRedeemPointsPerOrder,
+        0,
+        999_999,
+      ),
     },
     recommendations,
     translations,
