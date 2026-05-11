@@ -3709,7 +3709,7 @@ const saveAccessControl = async (): Promise<void> => {
           <article>
             <span>接單流程</span>
             <strong>{{ onlineOrdering.acceptanceRequired ? '平板確認' : '自動入列' }}</strong>
-            <small>{{ onlineOrdering.acceptWithoutPrinting ? '接單不自動出單' : '接單後依列印站規則' }}</small>
+            <small>{{ onlineOrdering.acceptWithoutPrinting ? '可接受但不出單' : '接單後依列印站規則' }}</small>
           </article>
           <article>
             <span>訂單 QR Code</span>
@@ -3777,7 +3777,7 @@ const saveAccessControl = async (): Promise<void> => {
             </label>
             <label class="toggle-row">
               <input v-model="onlineOrdering.acceptWithoutPrinting" type="checkbox" />
-              接單時不自動出單
+              接單時可接受但不出單
             </label>
             <label class="toggle-row">
               <input v-model="onlineOrdering.showTaxIdField" type="checkbox" />

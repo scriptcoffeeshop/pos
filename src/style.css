@@ -4991,6 +4991,11 @@ button.cart-line-summary:focus-visible {
   color: white;
 }
 
+.online-reminder-accept-secondary-button {
+  background: var(--surface-raised);
+  color: var(--primary);
+}
+
 .online-reminder-item-actions button:disabled,
 .online-order-detail-actions button:disabled,
 .online-order-notification button:disabled {
@@ -5171,7 +5176,7 @@ button.cart-line-summary:focus-visible {
   bottom: calc(28px * var(--pos-density-scale));
   z-index: 90;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   width: min(620px, calc(100vw - 56px));
   gap: 10px;
@@ -5215,6 +5220,14 @@ button.cart-line-summary:focus-visible {
 
 .online-order-notification small {
   color: var(--ink);
+}
+
+.online-order-notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 360px;
 }
 
 .online-order-notification button {
@@ -12001,6 +12014,10 @@ button.cart-line-summary:focus-visible {
     bottom: 14px;
     width: auto;
     grid-template-columns: 1fr;
+  }
+
+  .online-order-notification-actions {
+    max-width: none;
   }
 
   .online-order-detail-summary {
