@@ -47,6 +47,7 @@ import {
   finalizeCounterDraftOrder,
   fetchCashDrawerEvents,
   isPosApiConfigured,
+  mergeOrderIntoOrder,
   normalizeEngagementSettings,
   normalizePaymentBreakdown,
   normalizePaymentSplits,
@@ -3568,6 +3569,82 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const partySizeFromOrderNote = (order: PosOrder): number => {
+    const partyToken = noteTokensFromText(order.note).find((token) => /^\d+\s*人$/.test(token))
+    const partySize = Number(partyToken?.match(/^(\d+)/)?.[1] ?? 1)
+    return Number.isFinite(partySize) ? Math.min(99, Math.max(1, Math.trunc(partySize))) : 1
+  }
+
+  const noteTokenValue = (order: PosOrder, pattern: RegExp): string => {
+    for (const token of noteTokensFromText(order.note)) {
+      const match = token.match(pattern)
+      if (match?.[1]) {
+        return match[1].trim()
+      }
+    }
+
+    return ''
+  }
+
+  const preservedDineInNotes = (order: PosOrder): string[] =>
+    noteTokensFromText(order.note).filter((token) =>
+      !/^樓層\s*\S+/i.test(token) &&
+      !/^桌位\s*\S+/i.test(token) &&
+      !/^\d+\s*人$/.test(token) &&
+      !/^併單\s+/i.test(token) &&
+      !/^已併入\s+/i.test(token),
+    )
+
+  const mergedDineInNote = (targetOrder: PosOrder, sourceOrder: PosOrder): string => {
+    const targetFloor = noteTokenValue(targetOrder, /^樓層\s*(\S+)/i)
+    const targetTable = noteTokenValue(targetOrder, /^桌位\s*(\S+)/i)
+    const preservedNotes = [
+      ...preservedDineInNotes(targetOrder),
+      ...preservedDineInNotes(sourceOrder),
+    ].filter((note, index, notes) => notes.indexOf(note) === index)
+
+    return [
+      targetFloor ? `樓層 ${targetFloor}` : '',
+      targetTable ? `桌位 ${targetTable}` : '',
+      `${partySizeFromOrderNote(targetOrder) + partySizeFromOrderNote(sourceOrder)} 人`,
+      `併單 ${sourceOrder.id}`,
+      ...preservedNotes,
+    ].filter(Boolean).join('、').slice(0, 500)
+  }
+
+  const mergeStatus = (targetStatus: OrderStatus, sourceStatus: OrderStatus): OrderStatus => {
+    if (targetStatus === 'ready' || sourceStatus === 'ready') {
+      return 'ready'
+    }
+    if (targetStatus === 'preparing' || sourceStatus === 'preparing') {
+      return 'preparing'
+    }
+
+    return 'new'
+  }
+
+  const cloneCartLine = (line: CartLine): CartLine => ({
+    ...line,
+    options: [...line.options],
+    ...(line.comboItems ? { comboItems: line.comboItems.map((item) => ({ ...item, options: [...(item.options ?? [])] })) } : {}),
+  })
+
+  const localMergedOrder = (targetOrder: PosOrder, sourceOrder: PosOrder): PosOrder => ({
+    ...targetOrder,
+    lines: [...targetOrder.lines.map(cloneCartLine), ...sourceOrder.lines.map(cloneCartLine)],
+    subtotal: targetOrder.subtotal + sourceOrder.subtotal,
+    serviceFeeAmount: targetOrder.serviceFeeAmount + sourceOrder.serviceFeeAmount,
+    extraFeeAmount: targetOrder.extraFeeAmount + sourceOrder.extraFeeAmount,
+    discountAmount: targetOrder.discountAmount + sourceOrder.discountAmount,
+    pointsRedeemed: targetOrder.pointsRedeemed + sourceOrder.pointsRedeemed,
+    memberPointsEarned: targetOrder.memberPointsEarned + sourceOrder.memberPointsEarned,
+    orderLabels: [...new Set([...targetOrder.orderLabels, ...sourceOrder.orderLabels])],
+    memberId: targetOrder.memberId ?? sourceOrder.memberId,
+    note: mergedDineInNote(targetOrder, sourceOrder),
+    status: mergeStatus(targetOrder.status, sourceOrder.status),
+    printJobs: mergePrintJobs(targetOrder, sourceOrder.printJobs),
+  })
+
   const updateOrderFloorAssignmentForStation = async (
     orderId: string,
     tableLabel: string,
@@ -3611,9 +3688,64 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         printStatus: persistedOrder.printStatus === 'skipped' ? optimisticOrder.printStatus : persistedOrder.printStatus,
       })
       setBackendStatus('connected', '桌位已同步', `${orderId} 已移至 ${tableLabel}`)
+      await printOrder(orderId, 'move')
     } catch (error) {
       replaceOrder(orderId, previousOrder)
       setBackendStatus('fallback', '移桌失敗', `${orderId} 移桌同步失敗：${getErrorMessage(error)}`)
+    }
+  }
+
+  const mergeOrderIntoOrderForStation = async (sourceOrderId: string, targetOrderId: string): Promise<boolean> => {
+    if (sourceOrderId === targetOrderId) {
+      return false
+    }
+
+    const sourceOrder = orderQueue.value.find((entry) => entry.id === sourceOrderId)
+    const targetOrder = orderQueue.value.find((entry) => entry.id === targetOrderId)
+    if (!sourceOrder || !targetOrder) {
+      return false
+    }
+
+    if (orderClaimedByOtherStation(sourceOrder) || orderClaimedByOtherStation(targetOrder)) {
+      const lockedOrder = orderClaimedByOtherStation(sourceOrder) ? sourceOrder : targetOrder
+      setBackendStatus('fallback', '訂單已鎖定', `${lockedOrder.id} 目前由 ${lockedOrder.claimedBy} 處理`)
+      return false
+    }
+
+    if (sourceOrder.mode !== 'dine-in' || targetOrder.mode !== 'dine-in') {
+      setBackendStatus('fallback', '併單失敗', '只有內用桌位訂單可以併單')
+      return false
+    }
+
+    const previousSource = { ...sourceOrder, lines: sourceOrder.lines.map(cloneCartLine), printJobs: [...sourceOrder.printJobs] }
+    const previousTarget = { ...targetOrder, lines: targetOrder.lines.map(cloneCartLine), printJobs: [...targetOrder.printJobs] }
+    const optimisticOrder = localMergedOrder(targetOrder, sourceOrder)
+    replaceOrder(targetOrderId, optimisticOrder)
+    removeOrderFromQueue(sourceOrderId)
+
+    if (!isPosApiConfigured || !sourceOrder.remoteId || !targetOrder.remoteId) {
+      setBackendStatus('fallback', '本機併單', `${sourceOrderId} 已併入 ${targetOrderId}，等待 API 連線後同步`)
+      return true
+    }
+
+    try {
+      const persistedOrder = await mergeOrderIntoOrder(sourceOrder, targetOrder)
+      replaceOrder(targetOrderId, {
+        ...persistedOrder,
+        printStatus: persistedOrder.printStatus === 'skipped' ? optimisticOrder.printStatus : persistedOrder.printStatus,
+      })
+      setBackendStatus('connected', '併單已同步', `${sourceOrderId} 已併入 ${targetOrderId}`)
+      void loadRegisterSession()
+      await printOrder(persistedOrder.id, 'merge')
+      return true
+    } catch (error) {
+      orderQueue.value = [
+        previousSource,
+        ...orderQueue.value.filter((order) => order.id !== previousSource.id),
+      ].map((order) => (order.id === previousTarget.id ? previousTarget : order))
+      replaceOrder(previousTarget.id, previousTarget)
+      setBackendStatus('fallback', '併單失敗', `${sourceOrderId} 併入 ${targetOrderId} 失敗：${getErrorMessage(error)}`)
+      return false
     }
   }
 
@@ -3732,8 +3864,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     lastPrintPreview.value = printPlan.preview
 
     if (printPlan.jobs.length === 0) {
-      const nextOrder = { ...claimedOrder, printStatus: 'skipped' as const }
-      replaceOrder(order.id, nextOrder)
+      if (printTiming === 'order' || printTiming === 'reprint') {
+        const nextOrder = { ...claimedOrder, printStatus: 'skipped' as const }
+        replaceOrder(order.id, nextOrder)
+      }
       setBackendStatus('connected', '出單略過', printPlan.skippedReason ?? '沒有建立列印任務')
       printingOrderId.value = null
       return
@@ -4837,6 +4971,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     loadCounterOrderForEditing,
     loadCashDrawerEvents,
     loadRegisterSession,
+    mergeOrderIntoOrderForStation,
     markOnlineOrderRemindersSeen,
     orderQueue,
     orderPendingSync,

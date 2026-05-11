@@ -57,6 +57,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'dine-in-transfer-merge',
+    category: 'orders',
+    title: '移桌與併單',
+    summary: '桌位地圖可把內用訂單移到空桌，也可將兩張桌位訂單合併成同一張結帳金額。',
+    steps: [
+      '在桌位地圖點選有進行中訂單的桌卡，右側會顯示「移桌」與「併單」快捷區。',
+      '「移桌」只列出空桌；點目標桌後會保留品項、金額與原備註，並改寫樓層、桌位與人數。',
+      '「併單」列出其他進行中內用訂單；點目標桌後來源訂單會併入目標訂單並從桌況移除。',
+      '併單後訂單品項、金額、服務費、折扣、點數與訂單標籤會合併，來客數會加總到目標桌。',
+      '若出單規則勾選「移桌」或「併單」時機，操作完成後會自動產生對應單據。',
+    ],
+    keywords: ['移桌', '併單', '合併訂單', '桌位', '來客數', '出單時機', 'iCHEF'],
+    target: 'floor',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',

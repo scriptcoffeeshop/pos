@@ -18,6 +18,8 @@ const defaultPrintRuleTimings: PrintRuleTiming[] = ['order', 'reprint']
 const printRuleTimingLabels: Record<PrintRuleTiming, string> = {
   order: '出單',
   reprint: '重印',
+  move: '移桌',
+  merge: '併單',
 }
 
 export interface PrintPayloadJob {
@@ -162,7 +164,7 @@ const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {
 const timingsForRule = (rule: PrintRuleSetting): PrintRuleTiming[] => {
   const timings = Array.isArray(rule.timings) ? rule.timings : []
   const normalized = timings.filter((timing): timing is PrintRuleTiming =>
-    timing === 'order' || timing === 'reprint',
+    timing === 'order' || timing === 'reprint' || timing === 'move' || timing === 'merge',
   )
   return normalized.length > 0 ? [...new Set(normalized)] : defaultPrintRuleTimings
 }

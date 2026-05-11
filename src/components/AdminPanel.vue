@@ -232,9 +232,11 @@ const labelModeOptions: Array<{ value: PrintLabelMode; label: string }> = [
 const printRuleTimingOptions: Array<{ value: PrintRuleTiming; label: string }> = [
   { value: 'order', label: '出單' },
   { value: 'reprint', label: '重印' },
+  { value: 'move', label: '移桌' },
+  { value: 'merge', label: '併單' },
 ]
 
-const defaultPrintRuleTimings: PrintRuleTiming[] = printRuleTimingOptions.map((option) => option.value)
+const defaultPrintRuleTimings: PrintRuleTiming[] = ['order', 'reprint']
 
 const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'openOrders', label: '開單' },

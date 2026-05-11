@@ -1264,7 +1264,7 @@ const normalizePrintRuleTimings = (timings: unknown): PrintRuleTiming[] => {
   }
 
   const normalized = timings.filter((timing): timing is PrintRuleTiming =>
-    timing === 'order' || timing === 'reprint',
+    timing === 'order' || timing === 'reprint' || timing === 'move' || timing === 'merge',
   )
   return normalized.length > 0 ? [...new Set(normalized)] : defaultPrintRuleTimings
 }
@@ -3720,6 +3720,21 @@ export const updateOrderFloorAssignment = async (
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/floor`, {
     method: 'PATCH',
     body: JSON.stringify({ ...input, stationId: currentStationId() }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const mergeOrderIntoOrder = async (
+  sourceOrder: PosOrder,
+  targetOrder: PosOrder,
+): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${sourceOrder.remoteId ?? sourceOrder.id}/merge`, {
+    method: 'POST',
+    body: JSON.stringify({
+      targetOrderId: targetOrder.remoteId ?? targetOrder.id,
+      stationId: currentStationId(),
+    }),
   })
 
   return normalizeOrder(data.order)
