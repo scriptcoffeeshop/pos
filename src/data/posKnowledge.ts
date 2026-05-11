@@ -104,6 +104,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'manual-item-notes',
+    category: 'orders',
+    title: '商品文字註記與加減價',
+    summary: '點餐明細可加入臨時文字註記，也可對單一品項手動加價或減價。',
+    steps: [
+      '有必選註記的商品會先開啟選項面板；一般商品加入票券後，點票券上的品項名稱也可進入同一面板。',
+      '在「文字註記與加減價」輸入文字註記，會以「文字註記：內容」保存到品項 options。',
+      '輸入「+ 加價」或「- 減價」會改變該品項單價；減價不可超過品項金額。',
+      '若後台把「變價註記」列為保護操作，加減價在加入或更新品項前會要求員工識別碼。',
+      '正式出單或結帳後，文字註記與調整後單價會寫進 Supabase 訂單明細，換平板或 fresh reinstall 後仍由 API 還原。',
+    ],
+    keywords: ['文字註記', '加價', '減價', '變價註記', '商品註記', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'payment-exception',
     category: 'payments',
     title: '收款、作廢與退款',

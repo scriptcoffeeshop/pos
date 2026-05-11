@@ -109,6 +109,17 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 7. 用另一台平板或 Web POS 展開同一張正式訂單，確認套餐子商品與子商品註記仍從 `order_items.combo_items` 還原。
 8. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認套餐設定與既有訂單子商品仍從 Supabase 還原，不依賴 fresh reinstall 前的本機記憶體。
 
+## 商品文字註記與加減價
+
+商品文字註記與臨時加減價對照 iCHEF「商品加減價與註記」流程。這些資料保存於訂單明細 `options` 與 `unit_price`，不是 APK 本機資料。
+
+1. 在 POS 加入一個一般商品，點票券上的品項名稱開啟選項面板。
+2. 輸入「文字註記」，再輸入 `+ 加價` 或 `- 減價`，確認單價與票券註記即時更新。
+3. 若後台「權限」把「變價註記」設為需要驗證，加入或更新含加減價的品項前應跳出員工識別碼驗證。
+4. 減價輸入超過品項金額時，APK 應阻擋更新並顯示錯誤。
+5. 出單或結帳後，換另一台平板或 Web POS 展開訂單，確認文字註記與調整後單價仍由 Supabase 訂單明細還原。
+6. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認既有訂單的文字註記與加減價不依賴 fresh reinstall 前的本機記憶體。
+
 ## 付款拆單
 
 付款拆單對照 iCHEF「拆單各付各或均分」流程。子單資料寫入 Supabase `orders.payment_splits`，不是 APK 本機資料；fresh reinstall 後應仍從訂單欄位還原。
