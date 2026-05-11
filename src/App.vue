@@ -4695,6 +4695,34 @@ const updateOrderStatusWithWorkflow = async (orderId: string, status: OrderStatu
   }
 }
 
+const printStatusAllowsFulfillmentAutoReady = (order: PosOrder): boolean =>
+  order.printStatus === 'queued' || order.printStatus === 'printed'
+
+const shouldFulfillmentAutoReadyOrder = (order: PosOrder): boolean =>
+  !engagementSettings.value.workflowAlerts.fulfillmentConfirmationEnabled &&
+  (order.status === 'new' || order.status === 'preparing') &&
+  printStatusAllowsFulfillmentAutoReady(order)
+
+const applyFulfillmentAutoReady = async (orderId: string): Promise<void> => {
+  const latestOrder = orderQueue.value.find((entry) => entry.id === orderId)
+  if (!latestOrder || !shouldFulfillmentAutoReadyOrder(latestOrder)) {
+    return
+  }
+
+  await updateOrderStatusWithWorkflow(latestOrder.id, 'ready')
+}
+
+const printOrderWithWorkflow = async (
+  order: PosOrder,
+  timing?: PrintRuleTiming,
+): Promise<void> => {
+  const printTiming = timing ?? (order.printJobs.length > 0 ? 'reprint' : 'order')
+  await printOrder(order.id, printTiming)
+  if (printTiming === 'order') {
+    await applyFulfillmentAutoReady(order.id)
+  }
+}
+
 const collectOrderPaymentAction = async (
   order: PosOrder,
   options: { skipVerification?: boolean } = {},
@@ -5995,7 +6023,7 @@ const printOrderAction = async (order: PosOrder): Promise<void> => {
     return
   }
 
-  await printOrder(order.id)
+  await printOrderWithWorkflow(order)
 }
 
 const handleTicketAction = async (action: TicketAction): Promise<void> => {
@@ -6025,7 +6053,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
     }
 
     if (action === 'checkout-print' || action === 'print') {
-      await printOrder(order.id, 'order')
+      await printOrderWithWorkflow(order, 'order')
     }
 
     if (action === 'checkout-print' || action === 'checkout-only') {
@@ -8588,6 +8616,9 @@ const acceptOnlineReminderOrder = async (order: PosOrder, printAfterAccept: bool
 
   const accepted = await acceptOnlineOrderForStation(order.id, { printAfterAccept })
   if (accepted) {
+    if (printAfterAccept) {
+      await applyFulfillmentAutoReady(order.id)
+    }
     if (activeOnlineReminderDetailId.value === order.id) {
       closeOnlineReminderDetail()
     }

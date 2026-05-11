@@ -785,6 +785,7 @@ export interface WorkflowAlertSettings {
   todayOrderEndTime: string
   fulfillmentDueSoonMinutes: number
   defaultTakeoutPickupMinutes: number
+  fulfillmentConfirmationEnabled: boolean
   takeoutLoopEnabled: boolean
   dineInAutoExitEnabled: boolean
   takeoutAutoExitEnabled: boolean
