@@ -60,9 +60,20 @@ export interface CartLine {
   unitPrice: number
   quantity: number
   options: string[]
+  comboItems?: ComboLineItem[]
   prepStation?: string
   printLabel?: boolean
   printPaused?: boolean
+}
+
+export interface ComboLineItem {
+  groupId: string
+  groupLabel: string
+  productId: string
+  productSku: string
+  name: string
+  quantity: number
+  priceDelta: number
 }
 
 export interface PaymentSplit {
@@ -391,6 +402,24 @@ export interface OnlineMenuOptionGroup {
   choices: OnlineMenuOptionChoice[]
 }
 
+export interface ComboProductChoice {
+  productId: string
+  priceDelta: number
+}
+
+export interface ComboProductGroup {
+  id: string
+  label: string
+  requirement: string
+  required: boolean
+  min: number
+  max: number
+  allowRepeat: boolean
+  choices: ComboProductChoice[]
+}
+
+export type ComboProductAssignments = Record<string, ComboProductGroup[]>
+
 export interface OnlineMenuCategory {
   id: MenuCategory
   label: string
@@ -443,6 +472,7 @@ export interface OnlineOrderingSettings {
   availableOptionChoices: OnlineMenuOptionChoice[]
   menuOptionGroups: OnlineMenuOptionGroup[]
   productOptionAssignments: Record<string, string[]>
+  comboProductAssignments: ComboProductAssignments
   noteSupplyStatuses: Record<string, ProductSupplyStatus>
 }
 

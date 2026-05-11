@@ -78,6 +78,7 @@ import type {
   AccessControlPolicy,
   CashDrawerDeliveryStatus,
   CashDrawerEvent,
+  ComboLineItem,
   CustomerDraft,
   MenuCategory,
   MenuItem,
@@ -265,6 +266,39 @@ const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
     options: Array.isArray(entry.options)
       ? entry.options.filter((option): option is string => typeof option === 'string')
       : [],
+  }
+
+  const comboItems = Array.isArray(entry.comboItems)
+    ? entry.comboItems.flatMap((item): ComboLineItem[] => {
+      if (!item || typeof item !== 'object') {
+        return []
+      }
+
+      const source = item as Partial<ComboLineItem>
+      if (
+        typeof source.groupId !== 'string' ||
+        typeof source.groupLabel !== 'string' ||
+        typeof source.productId !== 'string' ||
+        typeof source.productSku !== 'string' ||
+        typeof source.name !== 'string'
+      ) {
+        return []
+      }
+
+      return [{
+        groupId: source.groupId,
+        groupLabel: source.groupLabel,
+        productId: source.productId,
+        productSku: source.productSku,
+        name: source.name,
+        quantity: Math.max(1, Math.trunc(Number(source.quantity) || 1)),
+        priceDelta: Math.trunc(Number(source.priceDelta) || 0),
+      }]
+    }).slice(0, 80)
+    : []
+
+  if (comboItems.length > 0) {
+    nextLine.comboItems = comboItems
   }
 
   if (typeof entry.productId === 'string') {
@@ -2692,6 +2726,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     options: string[] = item.tags.slice(0, 1),
     unitPrice = item.price,
     itemId = item.id,
+    comboItems: ComboLineItem[] = [],
   ): CartLine => {
     const nextLine: CartLine = {
       itemId,
@@ -2703,6 +2738,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       options,
       prepStation: item.prepStation,
       printLabel: item.printLabel,
+    }
+
+    if (comboItems.length > 0) {
+      nextLine.comboItems = comboItems.map((comboItem) => ({ ...comboItem }))
     }
 
     if (item.id !== item.sku || itemId !== item.id) {
@@ -2758,7 +2797,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     setItemQuantity(item, (cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0) + 1)
   }
 
-  const addConfiguredItem = (item: MenuItem, options: string[], priceAdjustment = 0): void => {
+  const addConfiguredItem = (item: MenuItem, options: string[], priceAdjustment = 0, comboItems: ComboLineItem[] = []): void => {
     const normalizedOptions = options.filter((option) => option.trim().length > 0)
     const variantKey = [item.id, ...normalizedOptions].join('::')
     const unitPrice = Math.max(0, item.price + priceAdjustment)
@@ -2771,10 +2810,29 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey))
+    cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey, comboItems))
   }
 
-  const updateConfiguredLine = (lineItemId: string, item: MenuItem, options: string[], priceAdjustment = 0): void => {
+  const lineVariantSignature = (line: CartLine): string =>
+    [line.productId ?? line.itemId, line.productSku, ...line.options].join('::')
+
+  const mergeComboItemsIntoRemoteLines = (remoteLines: CartLine[], localLines: CartLine[]): CartLine[] => {
+    const localBySignature = new Map(localLines.map((line) => [lineVariantSignature(line), line]))
+    return remoteLines.map((line) => {
+      const localLine = localBySignature.get(lineVariantSignature(line))
+      return localLine?.comboItems && localLine.comboItems.length > 0
+        ? { ...line, comboItems: localLine.comboItems.map((item) => ({ ...item })) }
+        : line
+    })
+  }
+
+  const updateConfiguredLine = (
+    lineItemId: string,
+    item: MenuItem,
+    options: string[],
+    priceAdjustment = 0,
+    comboItems: ComboLineItem[] = [],
+  ): void => {
     const currentLine = cartLines.value.find((line) => line.itemId === lineItemId)
     if (!currentLine) {
       return
@@ -2798,7 +2856,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         return line
       }
 
-      const nextLine = createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey)
+      const nextLine = createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey, comboItems)
       if (currentLine.printPaused) {
         nextLine.printPaused = true
       }
@@ -3784,7 +3842,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       let nextOrder: PosOrder = {
         ...order,
         createdAt: persistedOrder.createdAt,
-        lines: persistedOrder.lines.length > 0 ? persistedOrder.lines : order.lines,
+        lines: persistedOrder.lines.length > 0 ? mergeComboItemsIntoRemoteLines(persistedOrder.lines, order.lines) : order.lines,
         isDraft: false,
       }
 
@@ -3799,7 +3857,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         const claimedOrder = await claimOrder(nextOrder)
         nextOrder = {
           ...claimedOrder,
-          lines: claimedOrder.lines.length > 0 ? claimedOrder.lines : nextOrder.lines,
+          lines: claimedOrder.lines.length > 0 ? mergeComboItemsIntoRemoteLines(claimedOrder.lines, nextOrder.lines) : nextOrder.lines,
           printStatus: claimedOrder.printStatus === 'skipped' ? nextOrder.printStatus : claimedOrder.printStatus,
         }
       } catch (error) {

@@ -73,6 +73,7 @@ import {
 import type {
   AdminPermission,
   CartLine,
+  ComboProductGroup,
   DiscountCampaign,
   FloorDisplayPreferences,
   FloorLevelSetting,
@@ -300,6 +301,8 @@ interface MenuOptionGroup {
   choices: MenuOptionChoice[]
 }
 
+type ComboSelectionMap = Record<string, Record<string, number>>
+
 interface SupplyNoteItem {
   id: string
   choiceId: string
@@ -330,6 +333,7 @@ interface SupplyStateSnapshot {
   availableNotes: MenuOptionChoice[]
   optionGroups: MenuOptionGroup[]
   productAssignments: Record<string, string[]>
+  comboAssignments: OnlineOrderingSettings['comboProductAssignments']
   productStatuses: Record<string, ProductSupplyStatus>
   noteStatuses: Record<string, ProductSupplyStatus>
   products: MenuItem[]
@@ -365,6 +369,7 @@ const menuCategoryStorageKey = 'script-coffee-pos-menu-categories'
 const availableNoteStorageKey = 'script-coffee-pos-available-notes'
 const optionGroupStorageKey = 'script-coffee-pos-option-groups'
 const productOptionAssignmentStorageKey = 'script-coffee-pos-product-option-assignments'
+const comboProductAssignmentStorageKey = 'script-coffee-pos-combo-product-assignments'
 const supplyNotesFilterValue = '__notes__'
 const supplyNoteGroupsFilterValue = '__note_groups__'
 const queueFilterValues: QueueFilter[] = ['active', 'ready', 'all']
@@ -1787,6 +1792,97 @@ const writeProductOptionAssignments = (assignments: Record<string, string[]>): v
   writeStorageValue(productOptionAssignmentStorageKey, assignments)
 }
 
+const comboRequirement = (required: boolean, min: number, max: number, allowRepeat: boolean): string => {
+  if (required) {
+    return min === max ? `必選 ${min} 份` : `必選 ${min}-${max} 份`
+  }
+
+  return allowRepeat ? `選填最多 ${max} 份，可重複` : `選填最多 ${max} 份`
+}
+
+const normalizeComboProductAssignments = (value: unknown): OnlineOrderingSettings['comboProductAssignments'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<OnlineOrderingSettings['comboProductAssignments']>(
+    (assignments, [productId, rawGroups]) => {
+      const normalizedProductId = normalizeSpace(productId).slice(0, 80)
+      if (!normalizedProductId || !Array.isArray(rawGroups)) {
+        return assignments
+      }
+
+      const seenGroupIds = new Set<string>()
+      const groups = rawGroups.flatMap((entry, groupIndex): ComboProductGroup[] => {
+        if (!entry || typeof entry !== 'object') {
+          return []
+        }
+
+        const source = entry as Partial<ComboProductGroup>
+        const id = typeof source.id === 'string' ? normalizeSpace(source.id).slice(0, 64) : `combo-${groupIndex + 1}`
+        const label = typeof source.label === 'string' ? normalizeSpace(source.label).slice(0, 40) : `套餐子項目 ${groupIndex + 1}`
+        if (!id || !label || seenGroupIds.has(id) || !Array.isArray(source.choices)) {
+          return []
+        }
+
+        const seenChoiceProductIds = new Set<string>()
+        const choices = source.choices.flatMap((choice): ComboProductGroup['choices'] => {
+          if (!choice || typeof choice !== 'object') {
+            return []
+          }
+
+          const choiceSource = choice as Partial<ComboProductGroup['choices'][number]>
+          const choiceProductId = typeof choiceSource.productId === 'string' ? normalizeSpace(choiceSource.productId).slice(0, 80) : ''
+          if (!choiceProductId || choiceProductId === normalizedProductId || seenChoiceProductIds.has(choiceProductId)) {
+            return []
+          }
+
+          seenChoiceProductIds.add(choiceProductId)
+          return [{
+            productId: choiceProductId,
+            priceDelta: Number.isFinite(choiceSource.priceDelta) ? Math.trunc(Number(choiceSource.priceDelta)) : 0,
+          }]
+        }).slice(0, 40)
+
+        if (choices.length === 0) {
+          return []
+        }
+
+        const max = Math.max(1, Math.min(12, Math.trunc(Number(source.max) || 1)))
+        const required = source.required !== false
+        const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(source.min) || 1))) : 0
+        const allowRepeat = source.allowRepeat === true
+        seenGroupIds.add(id)
+        const requirement = typeof source.requirement === 'string' ? normalizeSpace(source.requirement).slice(0, 40) : ''
+
+        return [{
+          id,
+          label,
+          requirement: requirement || comboRequirement(required, min, max, allowRepeat),
+          required,
+          min,
+          max,
+          allowRepeat,
+          choices,
+        }]
+      }).slice(0, 20)
+
+      if (groups.length > 0) {
+        assignments[normalizedProductId] = groups
+      }
+      return assignments
+    },
+    {},
+  )
+}
+
+const readComboProductAssignments = (): OnlineOrderingSettings['comboProductAssignments'] =>
+  normalizeComboProductAssignments(readStorageValue<unknown>(comboProductAssignmentStorageKey, {}))
+
+const writeComboProductAssignments = (assignments: OnlineOrderingSettings['comboProductAssignments']): void => {
+  writeStorageValue(comboProductAssignmentStorageKey, assignments)
+}
+
 const supplyStatusOptions: Array<{ value: ProductSupplyStatus; label: string; detail: string }> = [
   { value: 'normal', label: '正常供應', detail: '現場 POS、線上與掃碼維持可販售' },
   { value: 'online-stopped', label: '線上停售', detail: '現場 POS 仍可販售，線上入口先隱藏' },
@@ -1801,6 +1897,7 @@ const menuCategoryDefinitions = ref<MenuCategoryDefinition[]>(readMenuCategoryDe
 const optionGroupCatalog = ref<MenuOptionGroup[]>(readOptionGroups())
 const availableNoteCatalog = ref<MenuOptionChoice[]>(readAvailableNotes(optionGroupCatalog.value))
 const productOptionAssignments = ref<Record<string, string[]>>(readProductOptionAssignments())
+const comboProductAssignments = ref<OnlineOrderingSettings['comboProductAssignments']>(readComboProductAssignments())
 const newCategoryName = ref('')
 const newProductName = ref('')
 const newProductPrice = ref(0)
@@ -1837,10 +1934,29 @@ const cloneProductAssignments = (assignments: Record<string, string[]>): Record<
     return copy
   }, {})
 
+const cloneComboAssignments = (
+  assignments: OnlineOrderingSettings['comboProductAssignments'],
+): OnlineOrderingSettings['comboProductAssignments'] =>
+  Object.entries(assignments).reduce<OnlineOrderingSettings['comboProductAssignments']>((copy, [productId, groups]) => {
+    copy[productId] = groups.map((group) => ({
+      ...group,
+      choices: group.choices.map((choice) => ({ ...choice })),
+    }))
+    return copy
+  }, {})
+
 const currentSupplyProducts = (): MenuItem[] =>
   cloneProducts([
     ...new Map([...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product])).values(),
   ])
+
+const knownMenuProducts = computed<MenuItem[]>(() => [
+  ...new Map([...productStatusCatalog.value, ...menuCatalog.value].map((product) => [product.id, product])).values(),
+])
+
+const knownMenuProductById = computed(() =>
+  new Map(knownMenuProducts.value.map((product) => [product.id, product])),
+)
 
 const captureSupplySnapshot = (label: string): SupplyStateSnapshot => ({
   label,
@@ -1848,6 +1964,7 @@ const captureSupplySnapshot = (label: string): SupplyStateSnapshot => ({
   availableNotes: cloneOptionChoices(availableNoteCatalog.value),
   optionGroups: cloneOptionGroups(optionGroupCatalog.value),
   productAssignments: cloneProductAssignments(productOptionAssignments.value),
+  comboAssignments: cloneComboAssignments(comboProductAssignments.value),
   productStatuses: { ...productSupplyStatuses.value },
   noteStatuses: { ...noteSupplyStatuses.value },
   products: currentSupplyProducts(),
@@ -1868,6 +1985,7 @@ const restoreSupplySnapshot = (snapshot: SupplyStateSnapshot): void => {
   availableNoteCatalog.value = cloneOptionChoices(snapshot.availableNotes)
   optionGroupCatalog.value = cloneOptionGroups(snapshot.optionGroups)
   productOptionAssignments.value = cloneProductAssignments(snapshot.productAssignments)
+  comboProductAssignments.value = cloneComboAssignments(snapshot.comboAssignments)
   productSupplyStatuses.value = { ...snapshot.productStatuses }
   noteSupplyStatuses.value = { ...snapshot.noteStatuses }
   restoreSupplyProductSnapshot(snapshot.products)
@@ -1898,11 +2016,15 @@ const onlineMenuCategoriesForSync = (): OnlineOrderingSettings['menuCategories']
 const onlineProductAssignmentsForSync = (): OnlineOrderingSettings['productOptionAssignments'] =>
   cloneProductAssignments(productOptionAssignments.value)
 
+const onlineComboAssignmentsForSync = (): OnlineOrderingSettings['comboProductAssignments'] =>
+  cloneComboAssignments(comboProductAssignments.value)
+
 const runtimeSupplyConfigHasData = (settings: OnlineOrderingSettings): boolean =>
   settings.menuCategories.length > 0 ||
   settings.availableOptionChoices.length > 0 ||
   settings.menuOptionGroups.length > 0 ||
   Object.keys(settings.productOptionAssignments).length > 0 ||
+  Object.keys(settings.comboProductAssignments).length > 0 ||
   Object.keys(settings.noteSupplyStatuses).length > 0
 
 const applyRuntimeSupplyConfig = (settings: OnlineOrderingSettings): void => {
@@ -1915,6 +2037,7 @@ const applyRuntimeSupplyConfig = (settings: OnlineOrderingSettings): void => {
   optionGroupCatalog.value = runtimeOptionGroups
   availableNoteCatalog.value = normalizeAvailableNotes(settings.availableOptionChoices, runtimeOptionGroups)
   productOptionAssignments.value = cloneProductAssignments(settings.productOptionAssignments)
+  comboProductAssignments.value = cloneComboAssignments(settings.comboProductAssignments)
   noteSupplyStatuses.value = { ...settings.noteSupplyStatuses }
 }
 
@@ -1925,6 +2048,7 @@ const saveSupplyChanges = async (): Promise<void> => {
   writeAvailableNotes(availableNoteCatalog.value)
   writeOptionGroups(optionGroupCatalog.value)
   writeProductOptionAssignments(productOptionAssignments.value)
+  writeComboProductAssignments(comboProductAssignments.value)
 
   if (!isPosApiConfigured) {
     supplyHasUnsavedChanges.value = true
@@ -1941,6 +2065,7 @@ const saveSupplyChanges = async (): Promise<void> => {
         availableOptionChoices: onlineAvailableNotesForSync(),
         menuOptionGroups: onlineOptionGroupsForSync(),
         productOptionAssignments: onlineProductAssignmentsForSync(),
+        comboProductAssignments: onlineComboAssignmentsForSync(),
         noteSupplyStatuses: { ...noteSupplyStatuses.value },
       },
     )
@@ -1973,6 +2098,7 @@ const persistMenuCategoryOrder = async (message: string): Promise<boolean> => {
         availableOptionChoices: onlineAvailableNotesForSync(),
         menuOptionGroups: onlineOptionGroupsForSync(),
         productOptionAssignments: onlineProductAssignmentsForSync(),
+        comboProductAssignments: onlineComboAssignmentsForSync(),
         noteSupplyStatuses: { ...noteSupplyStatuses.value },
       },
     )
@@ -3995,6 +4121,7 @@ const activeCartQuickEditor = ref<CartQuickEditor>(null)
 const activeOptionItem = ref<MenuItem | null>(null)
 const activeOptionLineId = ref<string | null>(null)
 const optionSelections = ref<Record<MenuOptionGroupId, string[]>>({})
+const comboSelections = ref<ComboSelectionMap>({})
 const optionWarning = ref('')
 const queueActionMessage = ref('')
 const isToolboxOpen = ref(false)
@@ -4106,9 +4233,60 @@ const optionGroupsForProduct = (product: MenuItem): MenuOptionGroup[] => {
     }))
     .filter((group) => group.choices.length > 0)
 }
+
+const comboGroupsForProduct = (product: MenuItem): ComboProductGroup[] =>
+  (comboProductAssignments.value[product.id] ?? [])
+    .map((group) => ({
+      ...group,
+      choices: group.choices.filter((choice) => {
+        const choiceProduct = knownMenuProductById.value.get(choice.productId)
+        return Boolean(choiceProduct && productCurrentSupplyStatus(choiceProduct) !== 'stopped')
+      }),
+    }))
+    .filter((group) => group.choices.length > 0)
+
 const activeOptionGroups = computed(() => activeOptionItem.value ? optionGroupsForProduct(activeOptionItem.value) : [])
+const activeComboGroups = computed(() => activeOptionItem.value ? comboGroupsForProduct(activeOptionItem.value) : [])
 const optionChoiceLabel = (choice: MenuOptionChoice): string =>
   choice.priceDelta ? `${choice.label} +${formatCurrency(choice.priceDelta)}` : choice.label
+
+const selectedComboDetails = computed(() => {
+  const items = activeComboGroups.value.flatMap((group) => {
+    const groupSelections = comboSelections.value[group.id] ?? {}
+    return Object.entries(groupSelections).flatMap(([productId, quantity]) => {
+      const normalizedQuantity = Math.max(0, Math.trunc(Number(quantity) || 0))
+      if (normalizedQuantity <= 0) {
+        return []
+      }
+
+      const choice = group.choices.find((entry) => entry.productId === productId)
+      const product = knownMenuProductById.value.get(productId)
+      if (!choice || !product) {
+        return []
+      }
+
+      return [{
+        groupId: group.id,
+        groupLabel: group.label,
+        productId,
+        productSku: product.sku,
+        name: product.name,
+        quantity: normalizedQuantity,
+        priceDelta: choice.priceDelta,
+      }]
+    })
+  })
+
+  return {
+    items,
+    labels: items.map((item) => {
+      const quantityLabel = item.quantity > 1 ? ` x${item.quantity}` : ''
+      const priceLabel = item.priceDelta ? ` +${formatCurrency(item.priceDelta * item.quantity)}` : ''
+      return `${item.groupLabel}: ${item.name}${quantityLabel}${priceLabel}`
+    }),
+    priceDelta: items.reduce((total, item) => total + item.priceDelta * item.quantity, 0),
+  }
+})
 
 const selectedOptionDetails = computed(() => {
   const selectedChoices = activeOptionGroups.value.flatMap((group) =>
@@ -4116,8 +4294,8 @@ const selectedOptionDetails = computed(() => {
   )
 
   return {
-    labels: selectedChoices.map(optionChoiceLabel),
-    priceDelta: selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0),
+    labels: [...selectedChoices.map(optionChoiceLabel), ...selectedComboDetails.value.labels],
+    priceDelta: selectedChoices.reduce((total, choice) => total + (choice.priceDelta ?? 0), 0) + selectedComboDetails.value.priceDelta,
   }
 })
 const activeOptionLine = computed(() =>
@@ -4896,7 +5074,8 @@ const lineQuantityByItem = (itemId: string): number =>
     .filter((line) => line.itemId === itemId || line.productId === itemId)
     .reduce((total, line) => total + line.quantity, 0)
 
-const productRequiresOptions = (item: MenuItem): boolean => optionGroupsForProduct(item).length > 0
+const productRequiresOptions = (item: MenuItem): boolean =>
+  optionGroupsForProduct(item).length > 0 || comboGroupsForProduct(item).length > 0
 const productOrderingDisabled = (item: MenuItem): boolean => productCurrentSupplyStatus(item) === 'stopped'
 const productTileActionLabel = (item: MenuItem): string => {
   if (productOrderingDisabled(item)) {
@@ -5007,6 +5186,7 @@ const blurQuantityInput = (event: KeyboardEvent): void => {
 
 const resetOptionSelections = (): void => {
   optionSelections.value = {}
+  comboSelections.value = {}
   optionWarning.value = ''
 }
 
@@ -5112,11 +5292,69 @@ const toggleOptionChoice = (group: MenuOptionGroup, choice: MenuOptionChoice): v
   }
 }
 
+const comboChoiceQuantity = (group: ComboProductGroup, productId: string): number =>
+  comboSelections.value[group.id]?.[productId] ?? 0
+
+const comboGroupSelectedCount = (group: ComboProductGroup): number =>
+  Object.values(comboSelections.value[group.id] ?? {}).reduce((total, quantity) => total + Math.max(0, Math.trunc(quantity)), 0)
+
+const comboChoiceProduct = (productId: string): MenuItem | null =>
+  knownMenuProductById.value.get(productId) ?? null
+
+const setComboChoiceQuantity = (group: ComboProductGroup, productId: string, quantity: number): void => {
+  optionWarning.value = ''
+  const currentGroupSelections = comboSelections.value[group.id] ?? {}
+  const currentQuantity = currentGroupSelections[productId] ?? 0
+  const currentGroupCount = comboGroupSelectedCount(group)
+  const nextQuantity = Math.max(0, Math.min(group.allowRepeat ? group.max : 1, Math.trunc(quantity)))
+  const nextGroupCount = currentGroupCount - currentQuantity + nextQuantity
+  if (nextGroupCount > group.max) {
+    return
+  }
+
+  const nextGroupSelections = { ...currentGroupSelections }
+  if (nextQuantity > 0) {
+    nextGroupSelections[productId] = nextQuantity
+  } else {
+    delete nextGroupSelections[productId]
+  }
+
+  comboSelections.value = {
+    ...comboSelections.value,
+    [group.id]: nextGroupSelections,
+  }
+}
+
+const toggleComboChoice = (group: ComboProductGroup, productId: string): void => {
+  const currentQuantity = comboChoiceQuantity(group, productId)
+  if (group.max === 1) {
+    comboSelections.value = {
+      ...comboSelections.value,
+      [group.id]: currentQuantity > 0 ? {} : { [productId]: 1 },
+    }
+    optionWarning.value = ''
+    return
+  }
+
+  setComboChoiceQuantity(group, productId, currentQuantity > 0 ? 0 : 1)
+}
+
+const incrementComboChoice = (group: ComboProductGroup, productId: string): void => {
+  setComboChoiceQuantity(group, productId, comboChoiceQuantity(group, productId) + 1)
+}
+
+const decrementComboChoice = (group: ComboProductGroup, productId: string): void => {
+  setComboChoiceQuantity(group, productId, comboChoiceQuantity(group, productId) - 1)
+}
+
 const missingRequiredOptionGroup = (): MenuOptionGroup | null =>
   activeOptionGroups.value.find((group) => {
     const selectedCount = optionSelections.value[group.id]?.length ?? 0
     return group.required && selectedCount < group.min
   }) ?? null
+
+const missingRequiredComboGroup = (): ComboProductGroup | null =>
+  activeComboGroups.value.find((group) => group.required && comboGroupSelectedCount(group) < group.min) ?? null
 
 const confirmMenuOptions = async (): Promise<boolean> => {
   const item = activeOptionItem.value
@@ -5127,6 +5365,12 @@ const confirmMenuOptions = async (): Promise<boolean> => {
   const missingGroup = missingRequiredOptionGroup()
   if (missingGroup) {
     optionWarning.value = `「${missingGroup.label}」尚未選擇完成`
+    return false
+  }
+
+  const missingComboGroup = missingRequiredComboGroup()
+  if (missingComboGroup) {
+    optionWarning.value = `「${missingComboGroup.label}」尚未選擇完成`
     return false
   }
 
@@ -5141,9 +5385,15 @@ const confirmMenuOptions = async (): Promise<boolean> => {
   }
 
   if (activeOptionLineId.value) {
-    updateConfiguredLine(activeOptionLineId.value, item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+    updateConfiguredLine(
+      activeOptionLineId.value,
+      item,
+      selectedOptionDetails.value.labels,
+      selectedOptionDetails.value.priceDelta,
+      selectedComboDetails.value.items,
+    )
   } else {
-    addConfiguredItem(item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta)
+    addConfiguredItem(item, selectedOptionDetails.value.labels, selectedOptionDetails.value.priceDelta, selectedComboDetails.value.items)
   }
   closeOptionPanel()
   return true
@@ -7944,6 +8194,7 @@ const deleteSelectedMenuCategory = async (): Promise<void> => {
     if (deleted) {
       deletedCount += 1
       productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
+      comboProductAssignments.value = removeProductFromComboAssignments(product.id)
       productSupplyStatuses.value = withoutRecordKey(productSupplyStatuses.value, product.id)
     }
   }
@@ -8062,8 +8313,151 @@ const deleteSupplyProduct = async (product: MenuItem): Promise<void> => {
 
   commitSupplyUndoSnapshot(undoSnapshot)
   productOptionAssignments.value = withoutRecordKey(productOptionAssignments.value, product.id)
+  comboProductAssignments.value = removeProductFromComboAssignments(product.id)
   productSupplyStatuses.value = withoutRecordKey(productSupplyStatuses.value, product.id)
   supplyActionMessage.value = `${product.name} 已刪除`
+}
+
+const managedComboGroupsForProduct = (product: MenuItem): ComboProductGroup[] =>
+  comboProductAssignments.value[product.id] ?? []
+
+const comboChoiceProductsForProduct = (product: MenuItem): MenuItem[] =>
+  knownMenuProducts.value
+    .filter((entry) => entry.id !== product.id)
+    .sort((first, second) =>
+      categoryLabelFor(first.category).localeCompare(categoryLabelFor(second.category), 'zh-Hant') ||
+      first.sortOrder - second.sortOrder ||
+      first.name.localeCompare(second.name, 'zh-Hant'),
+    )
+
+const replaceComboGroupsForProduct = (productId: string, groups: ComboProductGroup[]): void => {
+  comboProductAssignments.value = groups.length > 0
+    ? { ...comboProductAssignments.value, [productId]: groups }
+    : withoutRecordKey(comboProductAssignments.value, productId)
+}
+
+const removeProductFromComboAssignments = (productId: string): OnlineOrderingSettings['comboProductAssignments'] =>
+  Object.entries(comboProductAssignments.value).reduce<OnlineOrderingSettings['comboProductAssignments']>(
+    (assignments, [comboProductId, groups]) => {
+      if (comboProductId === productId) {
+        return assignments
+      }
+
+      const nextGroups = groups
+        .map((group) => ({
+          ...group,
+          choices: group.choices.filter((choice) => choice.productId !== productId),
+        }))
+        .filter((group) => group.choices.length > 0)
+
+      if (nextGroups.length > 0) {
+        assignments[comboProductId] = nextGroups
+      }
+      return assignments
+    },
+    {},
+  )
+
+const addComboGroupToProduct = (product: MenuItem): void => {
+  const existingGroups = managedComboGroupsForProduct(product)
+  const existingIds = new Set(existingGroups.map((group) => group.id))
+  const id = uniqueId(`${product.id}-combo`, existingIds)
+  const firstChoice = comboChoiceProductsForProduct(product)[0]
+  if (!firstChoice) {
+    supplyActionMessage.value = '至少需要另一個商品才能建立套餐子項目'
+    return
+  }
+
+  pushSupplyUndo('新增套餐子項目')
+  const group: ComboProductGroup = {
+    id,
+    label: `套餐子項目 ${existingGroups.length + 1}`,
+    required: true,
+    min: 1,
+    max: 1,
+    allowRepeat: false,
+    requirement: comboRequirement(true, 1, 1, false),
+    choices: [{ productId: firstChoice.id, priceDelta: 0 }],
+  }
+  replaceComboGroupsForProduct(product.id, [...existingGroups, group])
+  supplyActionMessage.value = `${product.name} 已新增套餐子項目`
+}
+
+const deleteComboGroupFromProduct = (product: MenuItem, groupId: string): void => {
+  const group = managedComboGroupsForProduct(product).find((entry) => entry.id === groupId)
+  pushSupplyUndo('刪除套餐子項目')
+  replaceComboGroupsForProduct(product.id, managedComboGroupsForProduct(product).filter((entry) => entry.id !== groupId))
+  supplyActionMessage.value = `${group?.label ?? '套餐子項目'} 已刪除`
+}
+
+const updateComboGroup = (product: MenuItem, groupId: string, patch: Partial<ComboProductGroup>): void => {
+  const groups = managedComboGroupsForProduct(product)
+  replaceComboGroupsForProduct(product.id, groups.map((group) => {
+    if (group.id !== groupId) {
+      return group
+    }
+
+    const required = typeof patch.required === 'boolean' ? patch.required : group.required
+    const max = Math.max(1, Math.min(12, Math.trunc(Number(patch.max ?? group.max) || 1)))
+    const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(patch.min ?? group.min) || 1))) : 0
+    const allowRepeat = typeof patch.allowRepeat === 'boolean' ? patch.allowRepeat : group.allowRepeat
+    const label = typeof patch.label === 'string' && normalizeSpace(patch.label)
+      ? normalizeSpace(patch.label).slice(0, 40)
+      : group.label
+
+    return {
+      ...group,
+      ...patch,
+      label,
+      required,
+      min,
+      max,
+      allowRepeat,
+      requirement: comboRequirement(required, min, max, allowRepeat),
+    }
+  }))
+  supplyHasUnsavedChanges.value = true
+}
+
+const comboGroupHasChoice = (group: ComboProductGroup, productId: string): boolean =>
+  group.choices.some((choice) => choice.productId === productId)
+
+const toggleComboGroupChoice = (product: MenuItem, groupId: string, choiceProductId: string): void => {
+  pushSupplyUndo('調整套餐品項')
+  replaceComboGroupsForProduct(product.id, managedComboGroupsForProduct(product).map((group) => {
+    if (group.id !== groupId) {
+      return group
+    }
+
+    const exists = comboGroupHasChoice(group, choiceProductId)
+    const choices = exists
+      ? group.choices.filter((choice) => choice.productId !== choiceProductId)
+      : [...group.choices, { productId: choiceProductId, priceDelta: 0 }]
+    return choices.length > 0 ? { ...group, choices } : group
+  }))
+}
+
+const updateComboGroupChoicePrice = (
+  product: MenuItem,
+  groupId: string,
+  choiceProductId: string,
+  priceDelta: number,
+): void => {
+  replaceComboGroupsForProduct(product.id, managedComboGroupsForProduct(product).map((group) => {
+    if (group.id !== groupId) {
+      return group
+    }
+
+    return {
+      ...group,
+      choices: group.choices.map((choice) =>
+        choice.productId === choiceProductId
+          ? { ...choice, priceDelta: Math.trunc(Number(priceDelta) || 0) }
+          : choice,
+      ),
+    }
+  }))
+  supplyHasUnsavedChanges.value = true
 }
 
 const addOptionGroup = (): void => {
@@ -8496,6 +8890,10 @@ watch(optionGroupCatalog, (groups) => {
 
 watch(productOptionAssignments, (assignments) => {
   writeProductOptionAssignments(assignments)
+}, { deep: true })
+
+watch(comboProductAssignments, (assignments) => {
+  writeComboProductAssignments(assignments)
 }, { deep: true })
 
 watch(onlineOrderingSettings, (settings) => {
@@ -9230,6 +9628,35 @@ onBeforeUnmount(() => {
                             <span>{{ choice.label }}</span>
                             <small v-if="choice.priceDelta">+{{ formatCurrency(choice.priceDelta) }}</small>
                           </button>
+                        </div>
+                      </section>
+
+                      <section v-for="group in activeComboGroups" :key="group.id" class="menu-option-group menu-option-group--combo">
+                        <div class="menu-option-group-title">
+                          <h4>{{ group.label }}</h4>
+                          <span>{{ group.requirement }}</span>
+                        </div>
+                        <div class="menu-option-grid">
+                          <div
+                            v-for="choice in group.choices"
+                            :key="`${group.id}-${choice.productId}`"
+                            class="menu-option-choice menu-option-choice--combo"
+                            :class="{ 'menu-option-choice--active': comboChoiceQuantity(group, choice.productId) > 0 }"
+                          >
+                            <button class="menu-option-choice-main" type="button" @click="toggleComboChoice(group, choice.productId)">
+                              <span>{{ comboChoiceProduct(choice.productId)?.name ?? choice.productId }}</span>
+                              <small v-if="choice.priceDelta">+{{ formatCurrency(choice.priceDelta) }}</small>
+                            </button>
+                            <span v-if="group.allowRepeat || group.max > 1" class="menu-option-choice-stepper">
+                              <button type="button" title="減少套餐子項目" @click="decrementComboChoice(group, choice.productId)">
+                                <Minus :size="14" aria-hidden="true" />
+                              </button>
+                              <strong>{{ comboChoiceQuantity(group, choice.productId) }}</strong>
+                              <button type="button" title="增加套餐子項目" @click="incrementComboChoice(group, choice.productId)">
+                                <Plus :size="14" aria-hidden="true" />
+                              </button>
+                            </span>
+                          </div>
                         </div>
                       </section>
                     </div>
@@ -12098,6 +12525,80 @@ onBeforeUnmount(() => {
                         {{ group.label }}
                       </label>
                       <span v-if="optionGroupCatalog.length === 0" class="supply-row-option-empty">尚未建立註記群組</span>
+                    </div>
+                  </details>
+                  <details v-if="row.kind === 'product' && row.product" class="supply-row-options supply-row-options--combo">
+                    <summary>
+                      <span>套餐子項目</span>
+                      <small>{{ managedComboGroupsForProduct(row.product).length }} 組</small>
+                      <ChevronDown :size="16" aria-hidden="true" />
+                    </summary>
+                    <div class="supply-combo-group-list">
+                      <article v-for="group in managedComboGroupsForProduct(row.product)" :key="`${row.id}-${group.id}`" class="supply-combo-group">
+                        <div class="supply-combo-group-header">
+                          <input
+                            :value="group.label"
+                            type="text"
+                            aria-label="套餐子項目名稱"
+                            @change="updateComboGroup(row.product, group.id, { label: ($event.target as HTMLInputElement).value })"
+                          />
+                          <label class="supply-inline-check">
+                            <input
+                              type="checkbox"
+                              :checked="group.required"
+                              @change="updateComboGroup(row.product, group.id, { required: eventChecked($event) })"
+                            />
+                            必選
+                          </label>
+                          <label class="supply-inline-check">
+                            <input
+                              type="checkbox"
+                              :checked="group.allowRepeat"
+                              @change="updateComboGroup(row.product, group.id, { allowRepeat: eventChecked($event) })"
+                            />
+                            可重複
+                          </label>
+                          <input
+                            :value="group.max"
+                            type="number"
+                            inputmode="numeric"
+                            min="1"
+                            max="12"
+                            aria-label="套餐最多可選份數"
+                            @change="updateComboGroup(row.product, group.id, { max: Number(($event.target as HTMLInputElement).value) })"
+                          />
+                          <button type="button" class="ghost-danger-button" @click="deleteComboGroupFromProduct(row.product, group.id)">
+                            <Trash2 :size="15" aria-hidden="true" />
+                            刪除
+                          </button>
+                        </div>
+                        <small>{{ group.requirement }} · {{ group.choices.length }} 個可選商品</small>
+                        <div class="supply-row-option-list supply-combo-choice-list">
+                          <label v-for="choiceProduct in comboChoiceProductsForProduct(row.product)" :key="`${group.id}-${choiceProduct.id}`">
+                            <input
+                              type="checkbox"
+                              :checked="comboGroupHasChoice(group, choiceProduct.id)"
+                              @change="toggleComboGroupChoice(row.product, group.id, choiceProduct.id)"
+                            />
+                            {{ choiceProduct.name }}
+                            <input
+                              v-if="comboGroupHasChoice(group, choiceProduct.id)"
+                              class="supply-combo-price-input"
+                              type="number"
+                              inputmode="numeric"
+                              :value="group.choices.find((choice) => choice.productId === choiceProduct.id)?.priceDelta ?? 0"
+                              aria-label="套餐子項目價差"
+                              @click.stop
+                              @change="updateComboGroupChoicePrice(row.product, group.id, choiceProduct.id, Number(($event.target as HTMLInputElement).value))"
+                            />
+                          </label>
+                          <span v-if="comboChoiceProductsForProduct(row.product).length === 0" class="supply-row-option-empty">至少需要另一個商品</span>
+                        </div>
+                      </article>
+                      <button type="button" class="secondary-button supply-combo-add-button" @click="addComboGroupToProduct(row.product)">
+                        <Plus :size="16" aria-hidden="true" />
+                        新增套餐子項目
+                      </button>
                     </div>
                   </details>
                 </article>

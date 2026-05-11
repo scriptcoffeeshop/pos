@@ -96,6 +96,18 @@ rtk adb logcat -d -v time | grep -Ei 'Unable to open asset|AndroidRuntime|FATAL|
 6. 將同一訂單明細切換「暫停出單」再正式建單，確認暫停出單的品項不扣自動消耗庫存。
 7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認庫存資料與自動消耗規則仍從 Supabase 還原，且不依賴 fresh reinstall 前的本機記憶體。
 
+## 套餐商品
+
+套餐商品對照 iCHEF 商品管理的「套餐子項目與可選商品」流程。規則存在 `online_ordering.comboProductAssignments`，正式訂單的套餐子商品存在 `order_items.combo_items`，不是 APK 本機資料。
+
+1. 連點工具箱 6 下進入後台編輯模式，開啟供應狀態，選一個要當套餐主商品的商品。
+2. 在「套餐子項目」新增一組必選項，設定最少/最多選擇數量、是否允許重複選擇，加入兩個以上單點商品並設定其中一個加價。
+3. 回 POS 點該套餐主商品，確認必選子項目未選時無法加入訂單；選擇後票券會顯示子項目與加價後單價。
+4. 若子商品有可售庫存或自動耗料規則，出單或結帳後確認子商品庫存與 `inventory_records.consumption` 已更新。
+5. 到列印站設定只列印某個套餐子商品，建立含該子商品的套餐後確認 APK print job / preview 依子商品命中規則。
+6. 用另一台平板或 Web POS 展開同一張正式訂單，確認套餐子商品仍從 `order_items.combo_items` 還原。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認套餐設定與既有訂單子商品仍從 Supabase 還原，不依賴 fresh reinstall 前的本機記憶體。
+
 ## 付款拆單
 
 付款拆單對照 iCHEF「拆單各付各或均分」流程。子單資料寫入 Supabase `orders.payment_splits`，不是 APK 本機資料；fresh reinstall 後應仍從訂單欄位還原。

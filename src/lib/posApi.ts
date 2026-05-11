@@ -25,6 +25,7 @@ import type {
   PosAuditEvent,
   DailySalesReport,
   CartLine,
+  ComboLineItem,
   CustomerEngagementSettings,
   DiscountSettings,
   OnlineMenuCategory,
@@ -52,6 +53,7 @@ import type {
   CashDrawerEvent,
   CloseoutReportDelivery,
   CloseoutReportDeliveryStatus,
+  ComboProductGroup,
   ReservationStatus,
   StaffTimeClockEntry,
   StaffPermissionVerification,
@@ -97,6 +99,7 @@ interface ApiOrderItem {
   unit_price: number
   quantity: number
   options: unknown
+  combo_items?: unknown
   print_paused?: boolean | null
 }
 
@@ -817,6 +820,39 @@ const readDraftLineNumber = (line: Record<string, unknown>, camelKey: string, sn
   return Number.isFinite(value) ? Math.trunc(Number(value)) : 0
 }
 
+const normalizeComboLineItems = (items: unknown): ComboLineItem[] => {
+  if (!Array.isArray(items)) {
+    return []
+  }
+
+  return items.flatMap((entry): ComboLineItem[] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const comboItem = entry as Partial<ComboLineItem>
+    if (
+      typeof comboItem.groupId !== 'string' ||
+      typeof comboItem.groupLabel !== 'string' ||
+      typeof comboItem.productId !== 'string' ||
+      typeof comboItem.productSku !== 'string' ||
+      typeof comboItem.name !== 'string'
+    ) {
+      return []
+    }
+
+    return [{
+      groupId: comboItem.groupId,
+      groupLabel: comboItem.groupLabel,
+      productId: comboItem.productId,
+      productSku: comboItem.productSku,
+      name: comboItem.name,
+      quantity: Math.max(1, Math.trunc(Number(comboItem.quantity) || 1)),
+      priceDelta: Math.trunc(Number(comboItem.priceDelta) || 0),
+    }]
+  }).slice(0, 80)
+}
+
 const normalizeDraftLines = (lines: unknown): CartLine[] => {
   if (!Array.isArray(lines)) {
     return []
@@ -844,6 +880,10 @@ const normalizeDraftLines = (lines: unknown): CartLine[] => {
       unitPrice,
       quantity,
       options: normalizeOptions(line.options),
+    }
+    const comboItems = normalizeComboLineItems(line.comboItems ?? line.combo_items)
+    if (comboItems.length > 0) {
+      cartLine.comboItems = comboItems
     }
     if (productId) {
       cartLine.productId = productId
@@ -1322,6 +1362,7 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   availableOptionChoices: [],
   menuOptionGroups: [],
   productOptionAssignments: {},
+  comboProductAssignments: {},
   noteSupplyStatuses: {},
 })
 
@@ -1651,6 +1692,89 @@ const normalizeProductOptionAssignments = (
   )
 }
 
+const comboRequirementLabel = (required: boolean, min: number, max: number, allowRepeat: boolean): string => {
+  if (required) {
+    return min === max ? `必選 ${min} 份` : `必選 ${min}-${max} 份`
+  }
+
+  return allowRepeat ? `選填最多 ${max} 份，可重複` : `選填最多 ${max} 份`
+}
+
+const normalizeComboProductAssignments = (value: unknown): OnlineOrderingSettings['comboProductAssignments'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<OnlineOrderingSettings['comboProductAssignments']>(
+    (assignments, [productId, rawGroups]) => {
+      const normalizedProductId = sanitizeOnlineText(productId)
+      if (!normalizedProductId || !Array.isArray(rawGroups)) {
+        return assignments
+      }
+
+      const seenGroupIds = new Set<string>()
+      const groups = rawGroups.flatMap((entry, groupIndex): ComboProductGroup[] => {
+        if (!entry || typeof entry !== 'object') {
+          return []
+        }
+
+        const group = entry as Partial<ComboProductGroup>
+        const id = sanitizeOnlineText(group.id, `combo-${groupIndex + 1}`)
+        const label = sanitizeOnlineText(group.label, `套餐子項目 ${groupIndex + 1}`)
+        if (!id || !label || seenGroupIds.has(id) || !Array.isArray(group.choices)) {
+          return []
+        }
+
+        const seenChoiceIds = new Set<string>()
+        const choices = group.choices.flatMap((choiceEntry) => {
+          if (!choiceEntry || typeof choiceEntry !== 'object') {
+            return []
+          }
+
+          const choice = choiceEntry as { productId?: unknown; priceDelta?: unknown }
+          const choiceProductId = sanitizeOnlineText(choice.productId)
+          if (!choiceProductId || choiceProductId === normalizedProductId || seenChoiceIds.has(choiceProductId)) {
+            return []
+          }
+
+          seenChoiceIds.add(choiceProductId)
+          return [{
+            productId: choiceProductId,
+            priceDelta: Number.isFinite(choice.priceDelta) ? Math.trunc(Number(choice.priceDelta)) : 0,
+          }]
+        }).slice(0, 40)
+
+        if (choices.length === 0) {
+          return []
+        }
+
+        const max = Math.max(1, Math.min(12, Math.trunc(Number(group.max) || 1)))
+        const required = group.required !== false
+        const min = required ? Math.max(1, Math.min(max, Math.trunc(Number(group.min) || 1))) : 0
+        const allowRepeat = group.allowRepeat === true
+        seenGroupIds.add(id)
+
+        return [{
+          id,
+          label,
+          requirement: sanitizeOnlineText(group.requirement, comboRequirementLabel(required, min, max, allowRepeat)),
+          required,
+          min,
+          max,
+          allowRepeat,
+          choices,
+        }]
+      }).slice(0, 20)
+
+      if (groups.length > 0) {
+        assignments[normalizedProductId] = groups
+      }
+      return assignments
+    },
+    {},
+  )
+}
+
 const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings => {
   const defaults = defaultOnlineOrderingSettings()
   if (!value || typeof value !== 'object') {
@@ -1754,6 +1878,7 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     availableOptionChoices,
     menuOptionGroups,
     productOptionAssignments: normalizeProductOptionAssignments(settings.productOptionAssignments, menuOptionGroups),
+    comboProductAssignments: normalizeComboProductAssignments(settings.comboProductAssignments),
     noteSupplyStatuses:
       settings.noteSupplyStatuses && typeof settings.noteSupplyStatuses === 'object' && !Array.isArray(settings.noteSupplyStatuses)
         ? Object.entries(settings.noteSupplyStatuses).reduce<Record<string, 'normal' | 'online-stopped' | 'stopped'>>(
@@ -2250,7 +2375,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     printJobs: (order.print_jobs ?? []).map(normalizePrintJob),
     lines: orderItems.length > 0
       ? orderItems.map((line) => {
-        const cartLine = {
+        const cartLine: CartLine = {
           itemId: line.product_id ?? line.product_sku,
           productSku: line.product_sku,
           name: line.name,
@@ -2258,6 +2383,10 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
           quantity: line.quantity,
           options: normalizeOptions(line.options),
           printPaused: line.print_paused === true,
+        }
+        const comboItems = normalizeComboLineItems(line.combo_items)
+        if (comboItems.length > 0) {
+          cartLine.comboItems = comboItems
         }
 
         return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
@@ -2947,6 +3076,7 @@ const orderPayload = (order: PosOrder) => ({
     unitPrice: line.unitPrice,
     quantity: line.quantity,
     options: line.options,
+    comboItems: line.comboItems,
     printPaused: line.printPaused === true,
   })),
 })

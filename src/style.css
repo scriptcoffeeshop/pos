@@ -1706,6 +1706,42 @@ button:disabled {
   font-weight: 900;
 }
 
+.menu-option-choice--combo {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.menu-option-choice-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+}
+
+.menu-option-choice-stepper {
+  display: inline-grid;
+  grid-template-columns: 32px minmax(24px, auto) 32px;
+  align-items: center;
+  gap: 6px;
+}
+
+.menu-option-choice-stepper button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
 .menu-option-footer {
   display: flex;
   align-items: center;
@@ -8190,6 +8226,51 @@ button.cart-line-summary:focus-visible {
   accent-color: var(--primary);
 }
 
+.supply-combo-group-list,
+.supply-combo-group {
+  display: grid;
+  gap: 10px;
+}
+
+.supply-combo-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.supply-combo-group-header {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto 74px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.supply-combo-group-header > input[type='text'],
+.supply-combo-group-header > input[type='number'],
+.supply-combo-price-input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.supply-combo-choice-list label {
+  justify-content: flex-start;
+}
+
+.supply-combo-price-input {
+  width: 72px;
+  margin-left: auto;
+}
+
+.supply-combo-add-button {
+  justify-self: start;
+}
+
 .supply-empty-state {
   min-height: 220px;
 }
@@ -10100,6 +10181,42 @@ button.cart-line-summary:focus-visible {
 .consumer-option-choice--active small,
 .consumer-option-choice--active svg {
   color: var(--primary-dark);
+}
+
+.consumer-option-choice--combo {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.consumer-option-choice-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.consumer-option-stepper {
+  display: inline-grid;
+  grid-template-columns: 30px minmax(22px, auto) 30px;
+  align-items: center;
+  gap: 6px;
+}
+
+.consumer-option-stepper button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
 }
 
 .consumer-option-footer {

@@ -104,6 +104,10 @@ const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
     return true
   }
 
+  if (line.comboItems?.some((item) => ruleItemIds.includes(item.productId) || ruleItemIds.includes(item.productSku))) {
+    return true
+  }
+
   return Boolean(line.category && ruleCategories.includes(line.category))
 }
 
@@ -112,6 +116,10 @@ const lineExcludedFromRuleCount = (line: CartLine, rule: PrintRuleSetting): bool
   const excludedItemIds = rule.countExcludedItemIds ?? []
 
   if (excludedItemIds.includes(line.itemId) || (line.productId && excludedItemIds.includes(line.productId))) {
+    return true
+  }
+
+  if (line.comboItems?.some((item) => excludedItemIds.includes(item.productId) || excludedItemIds.includes(item.productSku))) {
     return true
   }
 
