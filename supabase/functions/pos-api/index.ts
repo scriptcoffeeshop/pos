@@ -832,6 +832,9 @@ interface CustomerEngagementSettings {
     defaultTakeoutPickupMinutes: number;
     takeoutLoopEnabled: boolean;
   };
+  orderPageDisplay: {
+    noteColumns: number;
+  };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
@@ -1363,6 +1366,9 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
     fulfillmentDueSoonMinutes: 15,
     defaultTakeoutPickupMinutes: 5,
     takeoutLoopEnabled: false,
+  },
+  orderPageDisplay: {
+    noteColumns: 3,
   },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
@@ -9648,6 +9654,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.workflowAlerts
     : defaultEngagementSettings.workflowAlerts;
   const workflowAlerts = rawWorkflowAlerts as Partial<CustomerEngagementSettings["workflowAlerts"]>;
+  const rawOrderPageDisplay = settings.orderPageDisplay && typeof settings.orderPageDisplay === "object"
+    ? settings.orderPageDisplay
+    : defaultEngagementSettings.orderPageDisplay;
+  const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings["orderPageDisplay"]>;
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
       if (!entry || typeof entry !== "object") {
@@ -9847,6 +9857,14 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         86400,
       ),
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
+    },
+    orderPageDisplay: {
+      noteColumns: clampIntegerRange(
+        orderPageDisplay.noteColumns,
+        defaultEngagementSettings.orderPageDisplay.noteColumns,
+        1,
+        3,
+      ),
     },
     recommendations,
     translations,

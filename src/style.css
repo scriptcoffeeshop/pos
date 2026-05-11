@@ -1674,7 +1674,7 @@ button:disabled {
 
 .menu-option-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--pos-note-columns, 3), minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1798,8 +1798,15 @@ button:disabled {
 .menu-option-combo-note-grid,
 .consumer-combo-note-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
   gap: 6px;
+}
+
+.menu-option-combo-note-grid {
+  grid-template-columns: repeat(var(--pos-note-columns, 3), minmax(88px, 1fr));
+}
+
+.consumer-combo-note-grid {
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
 }
 
 .menu-option-combo-note-choice,

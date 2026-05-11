@@ -3531,6 +3531,14 @@ const activeKnowledgeArticle = computed<PosKnowledgeArticle | null>(() =>
   filteredKnowledgeArticles.value[0] ??
   null,
 )
+const orderPageDisplayNoteColumns = computed(() => {
+  const rawColumns = Number(engagementSettings.value.orderPageDisplay.noteColumns)
+  const columns = Number.isFinite(rawColumns) ? Math.trunc(rawColumns) : 3
+  return Math.min(Math.max(columns, 1), 3)
+})
+const orderPageNoteGridStyle = computed<Record<string, string>>(() => ({
+  '--pos-note-columns': String(orderPageDisplayNoteColumns.value),
+}))
 const productTotalDisplayEnabled = computed(() => engagementSettings.value.productTotalDisplay.enabled)
 const lineCountsForProductTotalDisplay = (line: CartLine): boolean => {
   const settings = engagementSettings.value.productTotalDisplay
@@ -10201,7 +10209,7 @@ onBeforeUnmount(() => {
                           <h4>{{ group.label }}</h4>
                           <span>{{ group.requirement }}</span>
                         </div>
-                        <div class="menu-option-grid">
+                        <div class="menu-option-grid" :style="orderPageNoteGridStyle">
                           <button
                             v-for="choice in group.choices"
                             :key="choice.id"
@@ -10250,7 +10258,7 @@ onBeforeUnmount(() => {
                                   <span>{{ noteGroup.label }}</span>
                                   <small>{{ noteGroup.requirement }}</small>
                                 </div>
-                                <div class="menu-option-combo-note-grid">
+                                <div class="menu-option-combo-note-grid" :style="orderPageNoteGridStyle">
                                   <button
                                     v-for="noteChoice in noteGroup.choices"
                                     :key="noteChoice.id"
