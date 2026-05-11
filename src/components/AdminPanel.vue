@@ -11,6 +11,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  ReceiptText,
   Save,
   Search,
   ShieldCheck,
@@ -402,6 +403,7 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
   checkoutInstructions: '',
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  showDonationCodeField: false,
   paymentMethods: [
     { id: 'line-pay', label: 'LINE Pay', enabled: true, opensCashDrawer: false },
     { id: 'jkopay', label: '街口', enabled: true, opensCashDrawer: false },
@@ -622,6 +624,10 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
     loyaltyPoints: {
       ...defaults.loyaltyPoints,
       ...settings.loyaltyPoints,
+    },
+    electronicInvoice: {
+      ...defaults.electronicInvoice,
+      ...settings.electronicInvoice,
     },
     checkoutCounters: {
       ...defaults.checkoutCounters,
@@ -2557,6 +2563,7 @@ const saveOnlineOrdering = async (): Promise<void> => {
         checkoutInstructions: onlineOrdering.value.checkoutInstructions.trim().slice(0, 500),
         showTaxIdField: Boolean(onlineOrdering.value.showTaxIdField),
         showCarrierBarcodeField: Boolean(onlineOrdering.value.showCarrierBarcodeField),
+        showDonationCodeField: Boolean(onlineOrdering.value.showDonationCodeField),
         scheduledOrderIntervalMinutes: Math.min(
           Math.max(Math.trunc(Number(onlineOrdering.value.scheduledOrderIntervalMinutes) || 15), 5),
           120,
@@ -3781,6 +3788,10 @@ const saveAccessControl = async (): Promise<void> => {
               結帳顯示載具條碼
             </label>
             <label class="toggle-row">
+              <input v-model="onlineOrdering.showDonationCodeField" type="checkbox" />
+              結帳顯示捐贈碼
+            </label>
+            <label class="toggle-row">
               <input v-model="onlineOrdering.sessionQrCode.autoPrint" type="checkbox" />
               建立內用訂單後自動列印 QR
             </label>
@@ -4603,6 +4614,43 @@ const saveAccessControl = async (): Promise<void> => {
               </div>
               <p v-if="productTotalProductOptions.length === 0" class="panel-note">此分類尚無商品。</p>
             </div>
+          </section>
+
+          <section class="admin-subpanel">
+            <div class="admin-subpanel-heading">
+              <div>
+                <p class="eyebrow">E-Invoice</p>
+                <h3>電子發票帳本</h3>
+              </div>
+              <ReceiptText :size="22" aria-hidden="true" />
+            </div>
+
+            <div class="admin-online-settings-grid">
+              <label class="toggle-row">
+                <input v-model="engagementSettings.electronicInvoice.enabled" type="checkbox" />
+                啟用電子發票追蹤
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.electronicInvoice.defaultIssueOnCheckout" type="checkbox" />
+                結帳預設開立
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.electronicInvoice.allowManualIssueToggle" type="checkbox" />
+                結帳頁允許手動調整
+              </label>
+              <label class="toggle-row">
+                <input v-model="engagementSettings.electronicInvoice.defaultPrintPaper" type="checkbox" />
+                預設列印紙本發票
+              </label>
+              <label>
+                上傳期限小時
+                <input v-model.number="engagementSettings.electronicInvoice.uploadDeadlineHours" type="number" min="1" max="168" step="1" />
+              </label>
+            </div>
+
+            <p class="panel-note">
+              本專案先保存發票需求、載具/捐贈碼、狀態與 48 小時上傳期限；正式財政部加值中心串接需另接服務憑證。
+            </p>
           </section>
 
           <section class="admin-subpanel">

@@ -11,6 +11,8 @@ type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
 type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided";
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | "refunded";
+type ElectronicInvoiceStatus = "not_requested" | "queued" | "issued" | "voided" | "refunded" | "failed";
+type ElectronicInvoicePrintMode = "paper" | "carrier" | "donation" | "none";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
@@ -75,6 +77,9 @@ interface CreateOrderInput {
   requestedFulfillmentAt?: string | null;
   taxId?: string;
   invoiceCarrierBarcode?: string;
+  invoiceDonationCode?: string;
+  electronicInvoiceRequested?: boolean;
+  electronicInvoicePrintMode?: ElectronicInvoicePrintMode;
   memberId?: string | null;
   note?: string;
   qrSessionOrderId?: string | null;
@@ -577,6 +582,7 @@ interface OnlineOrderingSettings {
   checkoutInstructions: string;
   showTaxIdField: boolean;
   showCarrierBarcodeField: boolean;
+  showDonationCodeField: boolean;
   paymentMethods: OnlinePaymentMethodSetting[];
   deliveryFeeAmount: number;
   deliveryMinimumSubtotal: number;
@@ -811,6 +817,13 @@ interface CustomerEngagementSettings {
     enabled: boolean;
     defaultBookId: string;
     books: CheckoutCounterBookSetting[];
+  };
+  electronicInvoice: {
+    enabled: boolean;
+    defaultIssueOnCheckout: boolean;
+    allowManualIssueToggle: boolean;
+    defaultPrintPaper: boolean;
+    uploadDeadlineHours: number;
   };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
@@ -1161,6 +1174,7 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
   checkoutInstructions: "",
   showTaxIdField: false,
   showCarrierBarcodeField: false,
+  showDonationCodeField: false,
   paymentMethods: defaultOnlinePaymentMethods(),
   deliveryFeeAmount: 60,
   deliveryMinimumSubtotal: 0,
@@ -1328,6 +1342,13 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
         enabled: true,
       },
     ],
+  },
+  electronicInvoice: {
+    enabled: false,
+    defaultIssueOnCheckout: true,
+    allowManualIssueToggle: true,
+    defaultPrintPaper: true,
+    uploadDeadlineHours: 48,
   },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
@@ -1825,7 +1846,67 @@ const normalizePaymentBreakdown = (input: unknown): Array<Record<string, unknown
   }).slice(0, 8);
 };
 
-const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, unknown> => ({
+const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
+
+const normalizeInvoiceDonationCode = (value: unknown): string =>
+  sanitizeText(value, "").replace(/\s/g, "").slice(0, 7);
+
+const normalizeElectronicInvoicePrintMode = (
+  input: CreateOrderInput,
+  donationCode: string,
+  carrierBarcode: string,
+  settings: CustomerEngagementSettings["electronicInvoice"],
+): ElectronicInvoicePrintMode => {
+  if (donationCode) {
+    return "donation";
+  }
+
+  if (carrierBarcode) {
+    return "carrier";
+  }
+
+  if (input.electronicInvoicePrintMode === "none") {
+    return "none";
+  }
+
+  return input.electronicInvoicePrintMode === "paper" || settings.defaultPrintPaper ? "paper" : "none";
+};
+
+const buildElectronicInvoicePayload = (
+  input: CreateOrderInput,
+  settings: CustomerEngagementSettings["electronicInvoice"],
+  now = new Date(),
+): Record<string, unknown> => {
+  const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8);
+  const carrierBarcode = sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32);
+  const donationCode = normalizeInvoiceDonationCode(input.invoiceDonationCode);
+  const requestedByInput = typeof input.electronicInvoiceRequested === "boolean"
+    ? input.electronicInvoiceRequested
+    : settings.defaultIssueOnCheckout;
+  const requested = settings.enabled &&
+    (requestedByInput || Boolean(taxId || carrierBarcode || donationCode));
+  const status: ElectronicInvoiceStatus = requested && collectedPaymentStatuses.has(input.paymentStatus ?? "pending")
+    ? "queued"
+    : "not_requested";
+  const uploadDueAt = status === "queued"
+    ? new Date(now.getTime() + Math.min(Math.max(settings.uploadDeadlineHours, 1), 168) * 60 * 60_000).toISOString()
+    : null;
+
+  return {
+    invoice_donation_code: donationCode,
+    electronic_invoice_requested: requested,
+    electronic_invoice_status: status,
+    electronic_invoice_print_mode: requested
+      ? normalizeElectronicInvoicePrintMode(input, donationCode, carrierBarcode, settings)
+      : "none",
+    electronic_invoice_upload_due_at: uploadDueAt,
+  };
+};
+
+const buildOrderEnhancementPayload = (
+  input: CreateOrderInput,
+  engagementSettings = defaultEngagementSettings,
+): Record<string, unknown> => ({
   member_id: normalizeUuid(input.memberId) ?? null,
   order_labels: normalizeOrderLabels(input.orderLabels),
   service_fee_rate: Math.min(clampNonNegativeInteger(input.serviceFeeRate), 30),
@@ -1840,15 +1921,98 @@ const buildOrderEnhancementPayload = (input: CreateOrderInput): Record<string, u
   member_points_earned: clampNonNegativeInteger(input.memberPointsEarned),
   tax_id: sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8),
   invoice_carrier_barcode: sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32),
+  ...buildElectronicInvoicePayload(input, engagementSettings.electronicInvoice),
 });
 
-const applyOrderEnhancements = async (orderId: string, input: CreateOrderInput) =>
+const applyOrderEnhancements = async (
+  orderId: string,
+  input: CreateOrderInput,
+  engagementSettings = defaultEngagementSettings,
+) =>
   supabase
     .from("orders")
-    .update(buildOrderEnhancementPayload(input))
+    .update(buildOrderEnhancementPayload(input, engagementSettings))
     .eq("id", orderId)
     .select(orderSelect)
     .single();
+
+const electronicInvoiceUploadDueAt = (
+  order: Record<string, unknown>,
+  settings: CustomerEngagementSettings["electronicInvoice"],
+  now = new Date(),
+): string => {
+  const existingDueAt = typeof order.electronic_invoice_upload_due_at === "string"
+    ? new Date(order.electronic_invoice_upload_due_at).getTime()
+    : NaN;
+  if (Number.isFinite(existingDueAt)) {
+    return String(order.electronic_invoice_upload_due_at);
+  }
+
+  return new Date(
+    now.getTime() + Math.min(Math.max(settings.uploadDeadlineHours, 1), 168) * 60 * 60_000,
+  ).toISOString();
+};
+
+const syncElectronicInvoiceForPayment = async (
+  order: Record<string, unknown>,
+  paymentStatus: PaymentStatus,
+) => {
+  if (order.electronic_invoice_requested !== true) {
+    return { data: order, error: null };
+  }
+
+  const currentStatus = order.electronic_invoice_status as ElectronicInvoiceStatus | undefined;
+  if (currentStatus === "issued" || currentStatus === "voided" || currentStatus === "refunded") {
+    return { data: order, error: null };
+  }
+
+  const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  ));
+  const payload: Record<string, unknown> = collectedPaymentStatuses.has(paymentStatus)
+    ? {
+        electronic_invoice_status: "queued" as ElectronicInvoiceStatus,
+        electronic_invoice_upload_due_at: electronicInvoiceUploadDueAt(order, engagementSettings.electronicInvoice),
+      }
+    : paymentStatus === "failed" || paymentStatus === "expired"
+      ? {
+          electronic_invoice_status: "failed" as ElectronicInvoiceStatus,
+          electronic_invoice_upload_due_at: null,
+        }
+      : {};
+
+  if (Object.keys(payload).length === 0) {
+    return { data: order, error: null };
+  }
+
+  return supabase
+    .from("orders")
+    .update(payload)
+    .eq("id", String(order.id))
+    .select(orderSelect)
+    .single();
+};
+
+const markElectronicInvoiceTerminal = async (
+  order: Record<string, unknown>,
+  status: Extract<ElectronicInvoiceStatus, "voided" | "refunded">,
+) => {
+  if (order.electronic_invoice_requested !== true) {
+    return { data: order, error: null };
+  }
+
+  return supabase
+    .from("orders")
+    .update({
+      electronic_invoice_status: status,
+      electronic_invoice_voided_at: new Date().toISOString(),
+      electronic_invoice_upload_due_at: null,
+    })
+    .eq("id", String(order.id))
+    .select(orderSelect)
+    .single();
+};
 
 const expireStalePendingOnlineOrders = async (): Promise<void> => {
   const now = new Date();
@@ -4225,6 +4389,10 @@ api.post("/orders", async (c) => {
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
   const discountRuntime = await applyRuntimeDiscountsToInput(input, orderSource);
+  const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  ));
   if (orderSource === "online" || orderSource === "qr") {
     const rawOnlineOrdering = await loadSetting<OnlineOrderingSettings>(
       "online_ordering",
@@ -4234,10 +4402,6 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.enabled) {
       return c.json({ error: onlineOrdering.pauseMessage }, 409);
     }
-    const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
-      "engagement_settings",
-      defaultEngagementSettings,
-    ));
     const serviceMode = input.serviceMode ?? "takeout";
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
@@ -4337,7 +4501,7 @@ api.post("/orders", async (c) => {
     return c.json({ error: orderError.message }, status);
   }
 
-  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(orderId), input);
+  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(orderId), input, engagementSettings);
   if (savedOrderError) {
     await couponClaim?.release();
     await pointClaim?.release();
@@ -4580,6 +4744,10 @@ api.post("/orders/:id/finalize", async (c) => {
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderLines = input.lines ?? [];
   const discountRuntime = await applyRuntimeDiscountsToInput(input, "counter");
+  const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
+    "engagement_settings",
+    defaultEngagementSettings,
+  ));
   const couponClaimResult = await claimCouponForOrderInput(input, stationId);
   if (couponClaimResult.error) {
     const status = couponClaimResult.error === couponUnavailableMessage ? 409 : 500;
@@ -4623,7 +4791,7 @@ api.post("/orders/:id/finalize", async (c) => {
     return c.json({ error: finalizeError.message }, status);
   }
 
-  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(finalizedOrderId), input);
+  const { data: savedOrder, error: savedOrderError } = await applyOrderEnhancements(String(finalizedOrderId), input, engagementSettings);
   if (savedOrderError) {
     await couponClaim?.release();
     await pointClaim?.release();
@@ -4887,21 +5055,31 @@ api.patch("/orders/:id/payment", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
-  const registerAssignment = await assignOrderToCheckoutRegister(String(savedOrder.id), stationId);
+  const { data: invoiceSyncedOrder, error: invoiceSyncError } = await syncElectronicInvoiceForPayment(
+    savedOrder as Record<string, unknown>,
+    input.paymentStatus,
+  );
+  if (invoiceSyncError) {
+    return c.json({ error: invoiceSyncError.message }, 500);
+  }
+  const responseOrder = invoiceSyncedOrder as typeof savedOrder;
+
+  const registerAssignment = await assignOrderToCheckoutRegister(String(responseOrder.id), stationId);
   if (registerAssignment.error) {
     return c.json({ error: registerAssignment.error }, 500);
   }
-  (savedOrder as Record<string, unknown>).register_session_id = registerAssignment.registerSessionId;
-  (savedOrder as Record<string, unknown>).checkout_station_id = stationId;
-  (savedOrder as Record<string, unknown>).checkout_book_id = registerAssignment.bookId;
+  (responseOrder as Record<string, unknown>).register_session_id = registerAssignment.registerSessionId;
+  (responseOrder as Record<string, unknown>).checkout_station_id = stationId;
+  (responseOrder as Record<string, unknown>).checkout_book_id = registerAssignment.bookId;
 
   await writeAuditEvent({
     action: "order.payment.update",
-    orderId: savedOrder.id,
+    orderId: responseOrder.id,
     stationId,
     metadata: {
-      orderNumber: savedOrder.order_number,
+      orderNumber: responseOrder.order_number,
       paymentStatus: input.paymentStatus,
+      electronicInvoiceStatus: responseOrder.electronic_invoice_status,
       checkoutBook: {
         id: registerAssignment.bookId,
         name: registerAssignment.bookName,
@@ -4910,7 +5088,7 @@ api.patch("/orders/:id/payment", async (c) => {
     },
   });
 
-  return c.json({ order: savedOrder });
+  return c.json({ order: responseOrder });
 });
 
 api.patch("/orders/:id/floor", async (c) => {
@@ -5029,6 +5207,13 @@ api.post("/orders/:id/void", async (c) => {
     .update({
       status: "voided",
       payment_status: "failed",
+      ...(currentOrder.electronic_invoice_requested
+        ? {
+            electronic_invoice_status: "voided" as ElectronicInvoiceStatus,
+            electronic_invoice_voided_at: now.toISOString(),
+            electronic_invoice_upload_due_at: null,
+          }
+        : {}),
       note: appendVoidNote(currentOrder.note, input.note),
       claimed_by: null,
       claimed_at: null,
@@ -5072,6 +5257,7 @@ api.post("/orders/:id/void", async (c) => {
       orderNumber: savedOrder.order_number,
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
+      electronicInvoiceStatus: savedOrder.electronic_invoice_status,
       restoredCoupon: couponRestore.restored,
       restoredPointDelta: pointRestore.pointsDelta,
     },
@@ -5114,30 +5300,40 @@ api.post("/orders/:id/refund", async (c) => {
     return c.json({ error: savedOrderError.message }, 500);
   }
 
-  const couponRestore = await restoreCouponRedemptionForOrder(savedOrder as Record<string, unknown>, stationId);
+  const { data: invoiceSyncedOrder, error: invoiceSyncError } = await markElectronicInvoiceTerminal(
+    savedOrder as Record<string, unknown>,
+    "refunded",
+  );
+  if (invoiceSyncError) {
+    return c.json({ error: invoiceSyncError.message }, 500);
+  }
+  const responseOrder = invoiceSyncedOrder as typeof savedOrder;
+
+  const couponRestore = await restoreCouponRedemptionForOrder(responseOrder as Record<string, unknown>, stationId);
   if (couponRestore.error) {
     return c.json({ error: couponRestore.error }, 500);
   }
-  const pointRestore = await restoreMemberPointsForOrder(String(savedOrder.id), stationId);
+  const pointRestore = await restoreMemberPointsForOrder(String(responseOrder.id), stationId);
   if (pointRestore.error) {
     return c.json({ error: pointRestore.error }, 500);
   }
 
   await writeAuditEvent({
     action: "order.refund",
-    orderId: savedOrder.id,
+    orderId: responseOrder.id,
     stationId,
     metadata: {
-      orderNumber: savedOrder.order_number,
-      refundAmount: savedOrder.subtotal,
+      orderNumber: responseOrder.order_number,
+      refundAmount: responseOrder.subtotal,
       previousStatus: currentOrder.status,
       previousPaymentStatus: currentOrder.payment_status,
+      electronicInvoiceStatus: responseOrder.electronic_invoice_status,
       restoredCoupon: couponRestore.restored,
       restoredPointDelta: pointRestore.pointsDelta,
     },
   });
 
-  return c.json({ order: savedOrder });
+  return c.json({ order: responseOrder });
 });
 
 api.post("/print-jobs", async (c) => {
@@ -5364,8 +5560,6 @@ interface DailyReportOrderRow extends RegisterOrderSummaryRow {
   created_at: string;
   order_items?: DailyReportOrderItemRow[];
 }
-
-const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
 
 const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
   id: "main",
@@ -6249,6 +6443,22 @@ const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
   const carrierBarcode = sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "");
   if (carrierBarcode.length > 32) {
     return "invoiceCarrierBarcode must be 32 characters or fewer";
+  }
+
+  const donationCode = normalizeInvoiceDonationCode(input.invoiceDonationCode);
+  if (donationCode && !/^[0-9]{3,7}$/.test(donationCode)) {
+    return "invoiceDonationCode must be 3 to 7 digits";
+  }
+
+  if (carrierBarcode && donationCode) {
+    return "invoiceCarrierBarcode and invoiceDonationCode cannot both be set";
+  }
+
+  if (
+    input.electronicInvoicePrintMode !== undefined &&
+    !["paper", "carrier", "donation", "none"].includes(String(input.electronicInvoicePrintMode))
+  ) {
+    return "electronicInvoicePrintMode is invalid";
   }
 
   return null;
@@ -8974,6 +9184,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     ).slice(0, 500),
     showTaxIdField: settings.showTaxIdField === true,
     showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
+    showDonationCodeField: settings.showDonationCodeField === true,
     paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
     deliveryFeeAmount: clampIntegerRange(
       settings.deliveryFeeAmount,
@@ -9337,6 +9548,7 @@ const validateOnlineOrdering = (input: unknown): {
       checkoutInstructions,
       showTaxIdField: settings.showTaxIdField === true,
       showCarrierBarcodeField: settings.showCarrierBarcodeField === true,
+      showDonationCodeField: settings.showDonationCodeField === true,
       paymentMethods: normalizeOnlinePaymentMethods(settings.paymentMethods),
       deliveryFeeAmount,
       deliveryMinimumSubtotal,
@@ -9397,6 +9609,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.checkoutCounters
     : defaultEngagementSettings.checkoutCounters;
   const checkoutCounters = rawCheckoutCounters as Partial<CustomerEngagementSettings["checkoutCounters"]>;
+  const rawElectronicInvoice = settings.electronicInvoice && typeof settings.electronicInvoice === "object"
+    ? settings.electronicInvoice
+    : defaultEngagementSettings.electronicInvoice;
+  const electronicInvoice = rawElectronicInvoice as Partial<CustomerEngagementSettings["electronicInvoice"]>;
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
       if (!entry || typeof entry !== "object") {
@@ -9557,10 +9773,22 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
       books: checkoutCounterBooks.length > 0
         ? checkoutCounterBooks
         : defaultEngagementSettings.checkoutCounters.books.map((book) => ({
-          ...book,
-          stationIds: [...book.stationIds],
-          paymentDeviceIds: [...book.paymentDeviceIds],
-        })),
+            ...book,
+            stationIds: [...book.stationIds],
+            paymentDeviceIds: [...book.paymentDeviceIds],
+          })),
+    },
+    electronicInvoice: {
+      enabled: electronicInvoice.enabled === true,
+      defaultIssueOnCheckout: electronicInvoice.defaultIssueOnCheckout !== false,
+      allowManualIssueToggle: electronicInvoice.allowManualIssueToggle !== false,
+      defaultPrintPaper: electronicInvoice.defaultPrintPaper !== false,
+      uploadDeadlineHours: clampIntegerRange(
+        electronicInvoice.uploadDeadlineHours,
+        defaultEngagementSettings.electronicInvoice.uploadDeadlineHours,
+        1,
+        168,
+      ),
     },
     recommendations,
     translations,

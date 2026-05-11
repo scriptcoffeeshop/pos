@@ -87,6 +87,18 @@ const invoiceLinesForOrder = (order: PosOrder): string[] => {
     invoiceLines.push(`CARRIER ${order.invoiceCarrierBarcode}`)
   }
 
+  if (order.invoiceDonationCode) {
+    invoiceLines.push(`DONATE ${order.invoiceDonationCode}`)
+  }
+
+  if (order.electronicInvoiceRequested) {
+    invoiceLines.push(`E-INVOICE ${order.electronicInvoiceStatus.toUpperCase()}`)
+  }
+
+  if (order.electronicInvoiceNumber) {
+    invoiceLines.push(`INV NO ${order.electronicInvoiceNumber}`)
+  }
+
   return invoiceLines
 }
 

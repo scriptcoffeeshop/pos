@@ -253,6 +253,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'payment',
   },
   {
+    id: 'electronic-invoice-ledger',
+    category: 'payments',
+    title: '電子發票、載具與捐贈碼',
+    summary: '付款頁可記錄電子發票需求，交易查詢會追蹤待開立、作廢與退款狀態。',
+    steps: [
+      '後台「iCHEF 補齊」開啟電子發票追蹤，設定結帳預設開立、是否允許手動調整、紙本列印與上傳期限。',
+      '在顧客資訊填統編、載具條碼或捐贈碼；載具與捐贈碼只能擇一。',
+      '付款頁「電子發票」可切換本單是否開立，並決定紙本發票或不列印紙本。',
+      '收款完成後，POS API 會把發票狀態排入待開立並保存上傳期限；未收款作廢與已收款退款會更新發票狀態。',
+      '工具箱「交易查詢與作廢」可用發票/收據號碼、載具、捐贈碼、統編或訂單號碼查詢，並查看電子發票狀態。',
+    ],
+    keywords: ['電子發票', '統編', '載具', '捐贈碼', '作廢', '退款', '交易查詢', 'iCHEF'],
+    target: 'payment',
+  },
+  {
     id: 'fulfillment-alerts',
     category: 'orders',
     title: '任務快篩與取餐/送達時間預警',

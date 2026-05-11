@@ -1,11 +1,12 @@
 # 開發交接紀錄
 
-更新日期：2026-05-11
+更新日期：2026-05-12
 
 ## 目前狀態
 
 - 專案位置：`/Users/kimi/Library/Mobile Documents/com~apple~CloudDocs/POS`
 - 技術基底：Vue 3 + Vite + TypeScript。
+- iCHEF 電子發票帳本：2026-05-12 以 Safari / Computer Use 讀取官方「iCHEF 電子發票與交易明細」「由財政部認證的 iCHEF 電子發票服務」「使用 iCHEF 開立電子發票」，確認 iCHEF 支援紙本發票、統編、載具、捐贈碼、多元支付發票開關、開立/作廢/申報與 48 小時上傳時限。本專案新增 `20260512223000_add_order_electronic_invoice_ledger.sql`，在 `orders` 保存 `invoice_donation_code`、`electronic_invoice_requested/status/print_mode/number/random_code/issued_at/voided_at/upload_due_at`，並在 `engagement_settings.electronicInvoice` 保存啟用、結帳預設開立、手動調整、紙本列印與上傳期限。POS 付款頁新增電子發票區塊與捐贈碼欄位；線上點餐設定新增 `showDonationCodeField`；交易查詢、訂單明細、線上新單提醒與列印 payload 會顯示捐贈碼與發票狀態。`pos-api` 會在建單/finalize 保存發票需求，在收款後把發票排入 `queued` 並計算上傳期限，未收款作廢標成 `voided`，已收款退款標成 `refunded`。目前只做可追蹤帳本與現場列印資訊，尚未串接財政部加值中心憑證或正式字軌申報。
 - iCHEF 線上訂單通知：2026-05-11 以 Safari 讀取官方知識庫「線上點餐功能設定｜iCHEF POS」，確認訂單通知是每台 iPad 分開設定，且內用掃碼可指定桌位通知。`online_ordering.notificationRouting` 新增 `stations[]`，保存每台平板的通知開關、服務方式、內用桌位清單、提示聲模式與音量；POS 桌位地圖右側「線上通知設定」可直接修改目前平板設定。`usePosSession()` 前景提醒、Web 背景通知與 Android `OnlineOrderNotifier` / `OnlineOrderPollingService` 背景輪詢都會依目前 station 套用路由；舊 runtime 由 `20260512163000_add_online_notification_routing_settings.sql` 補成空 stations，未設定的平板維持接收全部新單。
 - iCHEF 多結帳口：2026-05-12 以 Safari 讀取官方知識庫「iPad 子機升級為獨立結帳櫃檯｜多結帳口」，確認子機可升級為獨立結帳口，且訂單/付款資訊會依帳本分離。`engagement_settings.checkoutCounters` 新增啟用開關、預設帳本與多個帳本設定；後台「iCHEF 補齊」可指定帳本名稱、iPad station id、出單機、錢櫃與刷卡/掃碼 device id。`20260512193000_add_multi_checkout_register_books.sql` 在 `register_sessions` 新增 `book_id/book_name/station_id`，在 `orders` 新增 `register_session_id/checkout_station_id/checkout_book_id`；`pos-api` 的 `/register/current/open/close`、現金臨時收支、錢櫃事件、建單、草稿 finalize 與收款都會依目前 station 分配帳本，關帳摘要改以 `register_session_id` 彙總，未指定的平板使用預設帳本，不用 localStorage 保存帳本狀態。
 - 消費者線上訂位：`?view=reservation` 會載入 `ConsumerReservationPage`，使用 `/settings/runtime` 的 `engagementSettings.reservationWebsite` 作為唯一設定來源。後台「iCHEF 補齊」新增「專屬訂位網站 / 規則」，可儲存開關、餐廳資訊、訂位公告、人數上下限、訂位間隔、用餐時間、提前時間、開放天數、每週開放時段與 iCHEF「特殊時間設定」對應的 `specialDates`；特殊訂位日可設定日期/日期區間整日不開放，或用自訂開放時段取代固定時段，跨夜時段也由公開 API 和消費者頁同時計算。公開 `POST /reservations` 會用同一份 runtime 規則驗證後寫入 `reservations`，並用 `reservation_blacklist_entries.normalized_phone` 阻擋黑名單手機，localStorage 不承擔訂位規則或黑名單狀態。

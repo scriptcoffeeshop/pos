@@ -3755,6 +3755,62 @@ h3 {
   font-weight: 900;
 }
 
+.electronic-invoice-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.electronic-invoice-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.electronic-invoice-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.electronic-invoice-header span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.electronic-invoice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.electronic-invoice-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.electronic-invoice-grid input,
+.electronic-invoice-grid select {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.electronic-invoice-grid input {
+  padding: 0 10px;
+}
+
 .receipt-count-stepper {
   min-width: 134px;
   border-radius: 9px;
@@ -3895,9 +3951,12 @@ h3 {
   }
 
   .mixed-payment-summary,
-  .transaction-receipt-row {
+  .transaction-receipt-row,
+  .electronic-invoice-header,
+  .electronic-invoice-grid {
     display: grid;
     justify-content: stretch;
+    grid-template-columns: 1fr;
   }
 }
 
