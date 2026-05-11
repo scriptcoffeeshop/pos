@@ -830,8 +830,10 @@ const {
   pointsRedeemed,
   effectivePointsRedeemed,
   memberPointsEarned,
+  printBillingStatement,
   printCartLinesByPrintStatus,
   printCustomerReceipt,
+  printCurrentBillingStatement,
   printTransactionDetail,
   printOrder,
   printOrderQrCode,
@@ -6593,6 +6595,15 @@ const manualPrintActionDisabled = (order: PosOrder): boolean =>
 const customerReceiptDisabled = (order: PosOrder): boolean =>
   manualPrintActionDisabled(order) || order.lines.length === 0
 
+const orderPaymentCollected = (order: PosOrder): boolean =>
+  order.paymentStatus === 'paid' || order.paymentStatus === 'authorized'
+
+const billingDetailLabel = (order: PosOrder): string =>
+  orderPaymentCollected(order) ? '交易明細' : '請款明細'
+
+const printBillingDetailAction = (order: PosOrder): Promise<void> =>
+  orderPaymentCollected(order) ? printTransactionDetail(order.id) : printBillingStatement(order.id)
+
 const fulfillmentUrgencyLabel = (order: PosOrder): string => {
   const urgency = orderFulfillmentUrgency(order)
   if (urgency === 'overdue') {
@@ -12283,6 +12294,15 @@ onBeforeUnmount(() => {
                       <strong>{{ formatCurrency(cartTotal) }}</strong>
                     </div>
                     <button
+                      class="secondary-button"
+                      type="button"
+                      :disabled="cartLines.length === 0 || Boolean(printingOrderId)"
+                      @click="printCurrentBillingStatement"
+                    >
+                      <ReceiptText :size="18" aria-hidden="true" />
+                      {{ printingOrderId ? '列印中' : '請款明細' }}
+                    </button>
+                    <button
                       class="primary-button"
                       type="button"
                       :disabled="ticketActionDisabled()"
@@ -12718,10 +12738,10 @@ onBeforeUnmount(() => {
                               class="order-action--print"
                               type="button"
                               :disabled="manualPrintActionDisabled(order)"
-                              @click="printTransactionDetail(order.id)"
+                              @click="printBillingDetailAction(order)"
                             >
                               <ReceiptText :size="16" aria-hidden="true" />
-                              交易明細
+                              {{ billingDetailLabel(order) }}
                             </button>
                             <button
                               class="order-action--claim"
@@ -13588,10 +13608,10 @@ onBeforeUnmount(() => {
                     class="active-order-print-button"
                     type="button"
                     :disabled="manualPrintActionDisabled(activeOrder)"
-                    @click="printTransactionDetail(activeOrder.id)"
+                    @click="printBillingDetailAction(activeOrder)"
                   >
                     <ReceiptText :size="16" aria-hidden="true" />
-                    交易明細
+                    {{ billingDetailLabel(activeOrder) }}
                   </button>
                 </section>
               </aside>
