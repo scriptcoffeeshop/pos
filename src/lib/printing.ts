@@ -107,6 +107,17 @@ const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
   return Boolean(line.category && ruleCategories.includes(line.category))
 }
 
+const lineExcludedFromRuleCount = (line: CartLine, rule: PrintRuleSetting): boolean => {
+  const excludedCategories = rule.countExcludedCategories ?? []
+  const excludedItemIds = rule.countExcludedItemIds ?? []
+
+  if (excludedItemIds.includes(line.itemId) || (line.productId && excludedItemIds.includes(line.productId))) {
+    return true
+  }
+
+  return Boolean(line.category && excludedCategories.includes(line.category))
+}
+
 const modesForRule = (mode: PrintLabelMode): PrintableMode[] => {
   if (mode === 'both') {
     return ['receipt', 'label']
@@ -167,19 +178,28 @@ const buildLabelPayload = (
   order: PosOrder,
   station: PrintStation,
   lines: CartLine[],
-  ruleName: string,
+  rule: PrintRuleSetting,
 ): string => {
-  const labels = lines.flatMap((line) =>
-    Array.from({ length: line.quantity }, (_, index) => ({
+  const totalCount = lines.reduce(
+    (total, line) => total + (lineExcludedFromRuleCount(line, rule) ? 0 : line.quantity),
+    0,
+  )
+  let countableSequence = 0
+  const labels = lines.flatMap((line) => {
+    const isCountExcluded = lineExcludedFromRuleCount(line, rule)
+    return Array.from({ length: line.quantity }, (_, index) => ({
       line,
       sequence: index + 1,
-    })),
-  )
+      isCountExcluded,
+      orderSequence: isCountExcluded ? null : (countableSequence += 1),
+    }))
+  })
 
   return labels
-    .map(({ line, sequence }) => {
+    .map(({ line, sequence, isCountExcluded, orderSequence }) => {
       const options = line.options.length > 0 ? line.options.join(' / ') : '-'
-      const quantityMark = line.quantity > 1 ? `${sequence}/${line.quantity}` : '1/1'
+      const totalMark = Math.max(totalCount, 0)
+      const quantityMark = isCountExcluded ? `NC/${totalMark}` : `${orderSequence ?? sequence}/${Math.max(totalMark, 1)}`
 
       return [
         '^Q70,3',
@@ -190,7 +210,7 @@ const buildLabelPayload = (
         `A20,18,0,2,1,1,N,"${escapeEzplText(order.id)}"`,
         `A20,46,0,3,1,1,N,"${escapeEzplText(line.name)}"`,
         `A20,82,0,2,1,1,N,"${escapeEzplText(options)}"`,
-        `A20,108,0,2,1,1,N,"${escapeEzplText(`${order.mode} ${ruleName}`)}"`,
+        `A20,108,0,2,1,1,N,"${escapeEzplText(`${order.mode} ${rule.name}`)}"`,
         `A420,18,0,2,1,1,N,"${escapeEzplText(quantityMark)}"`,
         `A420,82,0,2,1,1,N,"${escapeEzplText(station.name)}"`,
         'E',
@@ -204,13 +224,13 @@ const buildPayload = (
   station: PrintStation,
   lines: CartLine[],
   mode: PrintableMode,
-  ruleName: string,
+  rule: PrintRuleSetting,
 ): string => {
   if (mode === 'receipt') {
-    return buildReceiptPayload(order, station, lines, ruleName)
+    return buildReceiptPayload(order, station, lines, rule.name)
   }
 
-  return buildLabelPayload(order, station, lines, ruleName)
+  return buildLabelPayload(order, station, lines, rule)
 }
 
 const buildSkippedReason = (settings: PrinterSettings, order: PosOrder): string => {
@@ -270,7 +290,7 @@ export const buildOrderPrintPlan = (order: PosOrder, settings: PrinterSettings):
           copy,
           station,
           lines: printableLines,
-          payload: buildPayload(order, station, printableLines, mode, rule.name),
+          payload: buildPayload(order, station, printableLines, mode, rule),
         })
       }
     }

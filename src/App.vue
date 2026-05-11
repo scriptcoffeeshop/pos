@@ -2964,6 +2964,7 @@ const printRuleMenuItems = computed<MenuItem[]>(() =>
   }),
 )
 const activePrinterRuleCategoryIds = ref<Record<string, MenuCategory>>({})
+const activePrinterRuleCountCategoryIds = ref<Record<string, MenuCategory>>({})
 const printerStationName = (stationId: string): string =>
   printerStationRows.value.find((station) => station.id === stationId)?.name ?? printStation.name
 const printerConnectionLabel = (station: PrintStationSetting): string => `${station.host}:${station.port}`
@@ -2978,6 +2979,18 @@ const printerRuleItemsLabel = (rule: PrintRuleSetting): string => {
   const names = printRuleMenuItems.value.filter((item) => itemIds.has(item.id)).map((item) => item.name)
   const missingCount = itemIds.size - names.length
   return [...names.slice(0, 3), ...(missingCount > 0 ? [`另 ${missingCount} 項`] : [])].join('、')
+}
+const printerRuleCountExcludedLabel = (rule: PrintRuleSetting): string => {
+  const categories = rule.countExcludedCategories ?? []
+  const itemIds = new Set(rule.countExcludedItemIds ?? [])
+  if (categories.length === 0 && itemIds.size === 0) {
+    return '未設定不計算品項'
+  }
+
+  const categoryNames = categories.map(categoryLabelFor)
+  const itemNames = printRuleMenuItems.value.filter((item) => itemIds.has(item.id)).map((item) => item.name)
+  const missingCount = itemIds.size - itemNames.length
+  return [...categoryNames, ...itemNames.slice(0, 3), ...(missingCount > 0 ? [`另 ${missingCount} 項`] : [])].join('、')
 }
 const printerRuleScopeLabel = (rule: PrintRuleSetting): string => {
   const categoryCount = rule.categories.length
@@ -3009,8 +3022,31 @@ const selectPrinterRuleCategory = (rule: PrintRuleSetting, category: MenuCategor
     [rule.id]: category,
   }
 }
+const activePrinterRuleCountCategoryId = (rule: PrintRuleSetting): MenuCategory | '' => {
+  const activeCategory = activePrinterRuleCountCategoryIds.value[rule.id]
+  if (activeCategory && menuCategoryOptions.value.some((category) => category.id === activeCategory)) {
+    return activeCategory
+  }
+
+  const firstRuleCategory = (rule.countExcludedCategories ?? []).find((category) =>
+    menuCategoryOptions.value.some((option) => option.id === category),
+  )
+  return firstRuleCategory ?? menuCategoryOptions.value[0]?.id ?? ''
+}
+const selectPrinterRuleCountCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
+  activePrinterRuleCountCategoryIds.value = {
+    ...activePrinterRuleCountCategoryIds.value,
+    [rule.id]: category,
+  }
+}
 const printerRuleProductOptions = (rule: PrintRuleSetting): MenuItem[] => {
   const activeCategory = activePrinterRuleCategoryId(rule)
+  return activeCategory
+    ? printRuleMenuItems.value.filter((item) => item.category === activeCategory)
+    : printRuleMenuItems.value
+}
+const printerRuleCountProductOptions = (rule: PrintRuleSetting): MenuItem[] => {
+  const activeCategory = activePrinterRuleCountCategoryId(rule)
   return activeCategory
     ? printRuleMenuItems.value.filter((item) => item.category === activeCategory)
     : printRuleMenuItems.value
@@ -3026,6 +3062,18 @@ const printerRuleCategoryFullySelected = (rule: PrintRuleSetting, category: Menu
 }
 const printerRuleItemSelected = (rule: PrintRuleSetting, item: MenuItem): boolean =>
   rule.categories.includes(item.category) || (rule.itemIds ?? []).includes(item.id)
+const printerRuleCountCategoryFullySelected = (rule: PrintRuleSetting, category: MenuCategory): boolean => {
+  const categoryProductIds = printerRuleProductIdsForCategory(category)
+  const categories = rule.countExcludedCategories ?? []
+  if (categoryProductIds.length === 0) {
+    return categories.includes(category)
+  }
+
+  const selectedItemIds = new Set(rule.countExcludedItemIds ?? [])
+  return categories.includes(category) || categoryProductIds.every((itemId) => selectedItemIds.has(itemId))
+}
+const printerRuleCountItemSelected = (rule: PrintRuleSetting, item: MenuItem): boolean =>
+  (rule.countExcludedCategories ?? []).includes(item.category) || (rule.countExcludedItemIds ?? []).includes(item.id)
 const normalizePrinterRuleFullCategories = (rule: PrintRuleSetting): void => {
   const itemIds = new Set(rule.itemIds ?? [])
   const categories = new Set(rule.categories)
@@ -3043,6 +3091,24 @@ const normalizePrinterRuleFullCategories = (rule: PrintRuleSetting): void => {
 
   rule.categories = [...categories]
   rule.itemIds = [...itemIds]
+}
+const normalizePrinterRuleCountFullCategories = (rule: PrintRuleSetting): void => {
+  const itemIds = new Set(rule.countExcludedItemIds ?? [])
+  const categories = new Set(rule.countExcludedCategories ?? [])
+  for (const category of menuCategoryOptions.value.map((option) => option.id)) {
+    const categoryProductIds = printerRuleProductIdsForCategory(category)
+    if (categoryProductIds.length === 0 || !categoryProductIds.every((itemId) => itemIds.has(itemId))) {
+      continue
+    }
+
+    categories.add(category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+  }
+
+  rule.countExcludedCategories = [...categories]
+  rule.countExcludedItemIds = [...itemIds]
 }
 const togglePrinterRuleCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
   selectPrinterRuleCategory(rule, category)
@@ -3088,12 +3154,58 @@ const togglePrinterRuleItem = (rule: PrintRuleSetting, itemId: string): void => 
   rule.itemIds = [...itemIds]
   normalizePrinterRuleFullCategories(rule)
 }
+const togglePrinterRuleCountCategory = (rule: PrintRuleSetting, category: MenuCategory): void => {
+  selectPrinterRuleCountCategory(rule, category)
+  const categoryProductIds = printerRuleProductIdsForCategory(category)
+  const itemIds = new Set(rule.countExcludedItemIds ?? [])
+  if (printerRuleCountCategoryFullySelected(rule, category)) {
+    rule.countExcludedCategories = (rule.countExcludedCategories ?? []).filter((entry) => entry !== category)
+    for (const itemId of categoryProductIds) {
+      itemIds.delete(itemId)
+    }
+    rule.countExcludedItemIds = [...itemIds]
+    return
+  }
+
+  rule.countExcludedCategories = [...(rule.countExcludedCategories ?? []), category]
+  for (const itemId of categoryProductIds) {
+    itemIds.delete(itemId)
+  }
+  rule.countExcludedItemIds = [...itemIds]
+}
+const togglePrinterRuleCountItem = (rule: PrintRuleSetting, itemId: string): void => {
+  const item = printRuleMenuItems.value.find((entry) => entry.id === itemId)
+  if (!item) {
+    return
+  }
+
+  const itemIds = new Set(rule.countExcludedItemIds ?? [])
+  if (printerRuleCountItemSelected(rule, item)) {
+    if ((rule.countExcludedCategories ?? []).includes(item.category)) {
+      rule.countExcludedCategories = (rule.countExcludedCategories ?? []).filter((entry) => entry !== item.category)
+      for (const categoryItemId of printerRuleProductIdsForCategory(item.category)) {
+        if (categoryItemId !== item.id) {
+          itemIds.add(categoryItemId)
+        }
+      }
+    }
+    itemIds.delete(item.id)
+    rule.countExcludedItemIds = [...itemIds]
+    return
+  }
+
+  itemIds.add(item.id)
+  rule.countExcludedItemIds = [...itemIds]
+  normalizePrinterRuleCountFullCategories(rule)
+}
 const clonePrinterSettingsForSave = (): PrinterSettings => ({
   stations: printerSettings.value.stations.map((station) => ({ ...station })),
   rules: printerSettings.value.rules.map((rule) => ({
     ...rule,
     categories: [...new Set(rule.categories)],
     itemIds: [...new Set(rule.itemIds ?? [])],
+    countExcludedCategories: [...new Set(rule.countExcludedCategories ?? [])],
+    countExcludedItemIds: [...new Set(rule.countExcludedItemIds ?? [])],
     copies: Math.min(5, Math.max(1, Number(rule.copies) || 1)),
   })),
 })
@@ -3109,6 +3221,8 @@ const savePrinterSettingsFromWorkstation = async (): Promise<void> => {
         ...rule,
         categories: [...rule.categories],
         itemIds: [...(rule.itemIds ?? [])],
+        countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
+        countExcludedItemIds: [...(rule.countExcludedItemIds ?? [])],
       })),
     }
     printerSettingsActionMessage.value = '印單規則已儲存'
@@ -10887,6 +11001,59 @@ onBeforeUnmount(() => {
                                     type="checkbox"
                                     :checked="printerRuleItemSelected(rule, item)"
                                     @change="togglePrinterRuleItem(rule, item.id)"
+                                  />
+                                  <span>{{ item.name }}</span>
+                                  <small>{{ categoryLabelFor(item.category) }}</small>
+                                </label>
+                              </div>
+                            </div>
+                            <div class="printer-rule-picker-section">
+                              <div class="printer-rule-picker-title">
+                                <strong>不計算商品</strong>
+                                <span>{{ categoryLabelFor(activePrinterRuleCountCategoryId(rule)) }} · {{ printerRuleCountExcludedLabel(rule) }}</span>
+                              </div>
+                              <div class="printer-rule-chip-grid" aria-label="印單規則不計算分類">
+                                <div
+                                  v-for="category in menuCategoryOptions"
+                                  :key="`${rule.id}-count-${category.id}`"
+                                  class="printer-rule-chip"
+                                  :class="{
+                                    'printer-rule-chip--active': printerRuleCountCategoryFullySelected(rule, category.id),
+                                    'printer-rule-chip--focused': activePrinterRuleCountCategoryId(rule) === category.id,
+                                  }"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    :checked="printerRuleCountCategoryFullySelected(rule, category.id)"
+                                    @click.stop
+                                    @change="togglePrinterRuleCountCategory(rule, category.id)"
+                                  />
+                                  <button
+                                    class="printer-rule-chip-button"
+                                    type="button"
+                                    @click="selectPrinterRuleCountCategory(rule, category.id)"
+                                  >
+                                    {{ category.label }}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <div class="printer-rule-picker-section">
+                              <div class="printer-rule-picker-title">
+                                <strong>不計算指定品項</strong>
+                                <span>貼紙總數排除，列印範圍不受影響</span>
+                              </div>
+                              <div class="printer-rule-product-grid" aria-label="印單規則不計算指定品項">
+                                <label
+                                  v-for="item in printerRuleCountProductOptions(rule)"
+                                  :key="`${rule.id}-count-${item.id}`"
+                                  class="printer-rule-product-chip"
+                                  :class="{ 'printer-rule-chip--active': printerRuleCountItemSelected(rule, item) }"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    :checked="printerRuleCountItemSelected(rule, item)"
+                                    @change="togglePrinterRuleCountItem(rule, item.id)"
                                   />
                                   <span>{{ item.name }}</span>
                                   <small>{{ categoryLabelFor(item.category) }}</small>

@@ -381,6 +381,7 @@ rtk npm run apk:install:fresh
 - 測外帶/外送快速出店時，來源與完成時間篩選只應批次更新已付款且到點的外帶/外送單；狀態必須透過 `/orders/:id/status` 寫成 `served`，fresh reinstall 後不得回到待處理佇列。
 - 測現金臨時收支時，先進入後台編輯模式並開班，在關帳頁登記收入/支出；fresh reinstall 後本機資料會被清掉，但重新載入 `/register/current` 仍應看到 Supabase `register_cash_adjustments` 的同一批紀錄與含臨時收支的預期現金。
 - 測逐筆暫停出單時，先在購物車品項列按「暫停」，再按「出單」或「結帳」；該品項仍應留在訂單金額與結帳流程，但 EZPL preview、`print_jobs` payload 與 Android TCP payload 不應包含該明細。若先建草稿再換平板或 fresh reinstall，草稿 `draft_lines.printPaused` 也應保留暫停狀態。
+- 測已裁貼紙「不計算商品」時，先在後台或列印站把袋子/包材加進 `countExcludedItemIds` 或不計算分類；APK 出單後飲品貼紙應用排除後的總數顯示 `1/2`、`2/2`，不計算品項若仍列印則顯示 `NC/2`，fresh reinstall 後規則仍由 Supabase runtime 還原。
 - 測 iCHEF 式手動列印時，在外帶/外送訂單列或右側 Next 訂單區按「QR」與「顧客聯」；兩個按鈕都應建立 `print_jobs`、更新列印佇列並在 APK 內透過 `LanPrinter` TCP 送出。掃描 QR 後應進入 `order.scriptcoffee.com.tw` 的 QR 點餐入口，送出的訂單來源應為 `qr`。
 - APK 已包含 `LanPrinter` native plugin 與 `OnlineOrderNotifier` native plugin；瀏覽器版仍只能測 EZPL 預覽、`print_jobs` 建立與 Browser Notification fallback，實際 GODEX TCP 列印與可靠背景提醒要在 APK 內測。
 - 平板需要可連網，才能連到 Supabase。
