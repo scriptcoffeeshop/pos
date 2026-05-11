@@ -780,6 +780,14 @@ export interface ElectronicInvoiceSettings {
   uploadDeadlineHours: number
 }
 
+export interface WorkflowAlertSettings {
+  todayOrderStartTime: string
+  todayOrderEndTime: string
+  fulfillmentDueSoonMinutes: number
+  defaultTakeoutPickupMinutes: number
+  takeoutLoopEnabled: boolean
+}
+
 export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
 
 export interface ServiceChargeSettings {
@@ -802,6 +810,7 @@ export interface CustomerEngagementSettings {
   loyaltyPoints: LoyaltyPointSettings
   checkoutCounters: CheckoutCounterSettings
   electronicInvoice: ElectronicInvoiceSettings
+  workflowAlerts: WorkflowAlertSettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

@@ -1990,11 +1990,24 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     syncNextSequenceFromQueue()
   }
 
+  const defaultRequestedFulfillmentAtForMode = (mode: ServiceMode, startedAt: Date): string | null => {
+    if (mode !== 'takeout') {
+      return null
+    }
+
+    const pickupMinutes = Math.min(
+      Math.max(Math.trunc(Number(engagementSettings.value.workflowAlerts.defaultTakeoutPickupMinutes) || 0), 0),
+      86400,
+    )
+    return new Date(startedAt.getTime() + pickupMinutes * 60_000).toISOString()
+  }
+
   const startCounterDraft = async (mode: ServiceMode = 'takeout'): Promise<void> => {
     const startedAt = new Date()
     const sequence = Math.max(nextSequence.value, nextSequenceFromOrders(orderQueue.value, formatDateKey(startedAt)))
     const orderId = buildOrderId(startedAt, sequence)
     const startedAtIso = startedAt.toISOString()
+    const requestedFulfillmentAt = defaultRequestedFulfillmentAtForMode(mode, startedAt)
     const order: PosOrder = {
       id: orderId,
       source: 'counter',
@@ -2002,7 +2015,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       customerName: '現場客',
       customerPhone: '',
       deliveryAddress: '',
-      requestedFulfillmentAt: null,
+      requestedFulfillmentAt,
       taxId: '',
       invoiceCarrierBarcode: '',
       invoiceDonationCode: '',
@@ -2043,6 +2056,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     clearCart()
     resetCustomerDraft()
+    customer.requestedFulfillmentAt = toDatetimeLocalInputValue(requestedFulfillmentAt)
     resetOrderAdjustments()
     paymentMethod.value = 'cash'
     serviceMode.value = mode
