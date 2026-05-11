@@ -163,6 +163,18 @@ GitHub Pages 啟用後，可直接用公開網址在平板瀏覽器測試消費�
 6. 未滿免運但達外送最低金額時送出外送單，確認 POS 訂單明細與列印 payload 帶出設定的外送費。
 7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認外送規則仍從 Supabase runtime 還原。
 
+## 多平板優惠活動 / 折扣模組
+
+優惠活動存在 `discount_settings` runtime，對照 iCHEF 店家優惠的自動優惠、手動優惠、排序與 POS / 雲端餐廳通路。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：
+
+1. 在平板 A 連點工具箱 6 下進入後台編輯模式，到後台「優惠活動」新增自動優惠與手動優惠。
+2. 分別設定全單、分類或指定商品、折扣/折讓、最低消費、服務方式、POS/線上通路、POS 自動套用與優惠時間後儲存。
+3. 平板 B 重新整理或等待 Realtime/fallback，同一組活動應出現在付款頁；符合條件的自動優惠應立即折抵合計。
+4. 在平板 B 停用一個 POS 自動優惠或勾選一個手動優惠，若活動要求驗證，結帳前應跳 `applyManualDiscounts` 員工識別碼。
+5. 用消費者頁送外送單，確認線上啟用的自動優惠會顯示，外送最低金額與滿額免運都以扣除優惠後金額判斷。
+6. 用舊頁或測試 API 繞過前端送出同一單，`POST /orders` 仍應依 runtime 重新計算自動優惠與外送門檻。
+7. fresh reinstall APK 或清除瀏覽器資料後重新進入 POS，確認優惠活動設定、付款頁折扣與既有訂單折抵都從 Supabase runtime/API 還原。
+
 ## 多平板班別現金臨時收支
 
 現金臨時收支會寫入 Supabase `register_cash_adjustments`，不是 localStorage。測試時至少準備兩個工作站視窗或一台 APK 加一個瀏覽器：

@@ -73,6 +73,7 @@ import {
 import type {
   AdminPermission,
   CartLine,
+  DiscountCampaign,
   FloorDisplayPreferences,
   FloorLevelSetting,
   FloorPlanSettings,
@@ -749,6 +750,8 @@ const {
   activeOnlineReminderOrders,
   accessPolicy,
   backendStatus,
+  availableDiscountCampaigns,
+  automaticDiscountAmount,
   applyCustomerMember,
   cashDrawerEvents,
   cartItemSubtotal,
@@ -773,6 +776,8 @@ const {
   deleteProductForStation,
   deletePrintJobForOrder,
   discountAmount,
+  discountCampaignApplications,
+  disabledAutomaticDiscountCampaignIds,
   engagementSettings,
   extraFeeAmount,
   filteredMenu,
@@ -826,6 +831,7 @@ const {
   serviceMode,
   serviceFeeAmount,
   serviceFeeRate,
+  selectedDiscountCampaignIds,
   saveCounterOrder,
   setItemQuantity,
   setLineQuantity,
@@ -835,8 +841,10 @@ const {
   transactionReceiptCount,
   togglingProductId,
   toggleCustomerNote,
+  toggleDiscountCampaign,
   toggleLinePrintPaused,
   toggleOrderLabel,
+  totalDiscountAmount,
   updateConfiguredLine,
   openRegisterSessionForStation,
   updateOrderFloorAssignmentForStation,
@@ -860,6 +868,25 @@ const crmMessage = ref('輸入電話或姓名可查會員')
 
 const selectedOrderLabelSettings = computed(() =>
   engagementSettings.value.orderLabels.filter((label) => orderLabels.value.includes(label.id)),
+)
+const selectedDiscountCampaignIdSet = computed(() => new Set(selectedDiscountCampaignIds.value))
+const disabledAutomaticDiscountCampaignIdSet = computed(() => new Set(disabledAutomaticDiscountCampaignIds.value))
+const discountCampaignActiveOnTicket = (campaign: DiscountCampaign): boolean =>
+  campaign.kind === 'automatic' && campaign.usage.posAutoApply
+    ? !disabledAutomaticDiscountCampaignIdSet.value.has(campaign.id)
+    : selectedDiscountCampaignIdSet.value.has(campaign.id)
+const protectedDiscountCampaignAdjusted = computed(() =>
+  availableDiscountCampaigns.value.some((campaign) => {
+    if (!campaign.usage.requiresVerification) {
+      return false
+    }
+
+    if (campaign.kind === 'automatic' && campaign.usage.posAutoApply) {
+      return disabledAutomaticDiscountCampaignIdSet.value.has(campaign.id)
+    }
+
+    return selectedDiscountCampaignIdSet.value.has(campaign.id)
+  }),
 )
 const labelManagementSummary = computed(() =>
   `${engagementSettings.value.orderLabels.length} 個訂單標籤`,
@@ -5014,7 +5041,7 @@ const ticketActionPermissionSteps = (action: TicketAction): ProtectedPermissionS
   const manualPointsRedeemed = Math.max(0, Math.trunc(Number(pointsRedeemed.value) || 0))
   if (
     (action === 'checkout-print' || action === 'checkout-only') &&
-    (manualDiscountAmount > 0 || manualPointsRedeemed > 0 || Boolean(couponCode.value))
+    (manualDiscountAmount > 0 || manualPointsRedeemed > 0 || Boolean(couponCode.value) || protectedDiscountCampaignAdjusted.value)
   ) {
     steps.push({
       permission: 'applyManualDiscounts',
@@ -9971,6 +9998,40 @@ onBeforeUnmount(() => {
                     </p>
                   </section>
 
+                  <section v-if="availableDiscountCampaigns.length > 0" class="payment-discount-panel" aria-label="優惠活動">
+                    <div class="payment-discount-header">
+                      <div>
+                        <span>優惠活動</span>
+                        <strong>{{ formatCurrency(automaticDiscountAmount) }}</strong>
+                      </div>
+                      <small>{{ discountCampaignApplications.length }} 項套用</small>
+                    </div>
+                    <div class="payment-discount-campaigns">
+                      <label
+                        v-for="campaign in availableDiscountCampaigns"
+                        :key="campaign.id"
+                        class="payment-discount-campaign"
+                        :class="{ 'payment-discount-campaign--active': discountCampaignActiveOnTicket(campaign) }"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="discountCampaignActiveOnTicket(campaign)"
+                          @change="toggleDiscountCampaign(campaign.id)"
+                        />
+                        <span>{{ campaign.name }}</span>
+                        <small>
+                          {{ campaign.kind === 'automatic' && campaign.usage.posAutoApply ? '自動' : '手動' }} ·
+                          {{ campaign.valueType === 'percentage' ? `${campaign.discountValue}%` : formatCurrency(campaign.discountValue) }}
+                        </small>
+                      </label>
+                    </div>
+                    <div v-if="discountCampaignApplications.length > 0" class="payment-discount-applied">
+                      <span v-for="application in discountCampaignApplications" :key="application.campaignId">
+                        {{ application.campaignName }} -{{ formatCurrency(application.amount) }}
+                      </span>
+                    </div>
+                  </section>
+
                   <div class="payment-adjustment-grid" aria-label="費用與折抵">
                     <label>
                       服務費 %
@@ -9981,7 +10042,7 @@ onBeforeUnmount(() => {
                       <input v-model.number="extraFeeAmount" type="number" min="0" step="1" />
                     </label>
                     <label>
-                      優惠折抵
+                      手動折抵
                       <input v-model.number="discountAmount" type="number" min="0" step="1" />
                     </label>
                     <label>
@@ -10011,6 +10072,14 @@ onBeforeUnmount(() => {
                     <article>
                       <span>服務費</span>
                       <strong>{{ formatCurrency(serviceFeeAmount) }}</strong>
+                    </article>
+                    <article>
+                      <span>優惠活動</span>
+                      <strong>-{{ formatCurrency(automaticDiscountAmount) }}</strong>
+                    </article>
+                    <article>
+                      <span>總折抵</span>
+                      <strong>-{{ formatCurrency(totalDiscountAmount) }}</strong>
                     </article>
                     <article>
                       <span>顧客</span>

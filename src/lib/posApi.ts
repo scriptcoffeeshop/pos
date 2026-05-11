@@ -26,6 +26,7 @@ import type {
   DailySalesReport,
   CartLine,
   CustomerEngagementSettings,
+  DiscountSettings,
   OnlineMenuCategory,
   OnlineMenuOptionChoice,
   OnlineMenuOptionGroup,
@@ -64,6 +65,7 @@ import type {
   PrintStation,
   ServiceMode,
 } from '../types/pos'
+import { defaultDiscountSettings, normalizeDiscountSettings } from './discounts'
 
 interface ApiProduct {
   id: string
@@ -511,6 +513,7 @@ interface AdminSettingsResponse {
 interface RuntimeSettingsResponse {
   printerSettings: PrinterSettings
   onlineOrdering: OnlineOrderingSettings
+  discountSettings: DiscountSettings
   posAppearance: PosAppearanceSettings
   floorPlan: FloorPlanSettings
   engagementSettings: CustomerEngagementSettings
@@ -652,6 +655,7 @@ export type AdminSettingKey =
   | 'printer_settings'
   | 'access_control'
   | 'online_ordering'
+  | 'discount_settings'
   | 'pos_appearance'
   | 'floor_plan'
   | 'engagement_settings'
@@ -2161,6 +2165,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
   const printerSettings = rows.find((row) => row.key === 'printer_settings')?.value
   const accessControl = rows.find((row) => row.key === 'access_control')?.value
   const onlineOrdering = rows.find((row) => row.key === 'online_ordering')?.value
+  const discountSettings = rows.find((row) => row.key === 'discount_settings')?.value
   const posAppearance = rows.find((row) => row.key === 'pos_appearance')?.value
   const floorPlan = rows.find((row) => row.key === 'floor_plan')?.value
   const engagementSettings = rows.find((row) => row.key === 'engagement_settings')?.value
@@ -2169,6 +2174,7 @@ const normalizeAdminSettings = (rows: ApiSettingRow[]): PosAdminSettings => {
     printerSettings: normalizePrinterSettings(printerSettings),
     accessControl: normalizeAccessControlSettings(accessControl),
     onlineOrdering: normalizeOnlineOrderingSettings(onlineOrdering),
+    discountSettings: normalizeDiscountSettings(discountSettings),
     posAppearance: normalizePosAppearanceSettings(posAppearance),
     floorPlan: normalizeFloorPlanSettings(floorPlan),
     engagementSettings: normalizeEngagementSettings(engagementSettings),
@@ -2728,6 +2734,7 @@ export const fetchRuntimeSettings = async (): Promise<RuntimeSettingsResponse> =
   return {
     printerSettings: normalizePrinterSettings(data.printerSettings),
     onlineOrdering: normalizeOnlineOrderingSettings(data.onlineOrdering),
+    discountSettings: normalizeDiscountSettings(data.discountSettings ?? defaultDiscountSettings()),
     posAppearance: normalizePosAppearanceSettings(data.posAppearance),
     floorPlan: normalizeFloorPlanSettings(data.floorPlan),
     engagementSettings: normalizeEngagementSettings(data.engagementSettings),
@@ -2907,6 +2914,7 @@ const orderPayload = (order: PosOrder) => ({
   lines: order.lines.map((line) => ({
     productId: line.productId,
     productSku: line.productSku,
+    category: line.category,
     name: line.name,
     unitPrice: line.unitPrice,
     quantity: line.quantity,

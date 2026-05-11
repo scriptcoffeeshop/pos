@@ -155,6 +155,18 @@ POS 操作權限對照 iCHEF 後台「帳號與權限」的操作驗證開關。
 6. 關帳頁付款方式對帳應依混合支付金額分攤，不得只把整張單算到主付款方式。
 7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認同一張訂單仍顯示混合支付摘要、交易明細張數與可補印交易明細。
 
+## 優惠活動 / 折扣模組
+
+優惠活動對照 iCHEF「結帳設定 > 優惠活動」的店家優惠、自動/手動優惠、排序、POS 與雲端餐廳通路設定。規則存在 Supabase `discount_settings` runtime，APK fresh reinstall 後應重新從 `/settings/runtime` 載入，不靠本機資料。
+
+1. 連點工具箱 6 下進入後台編輯模式，到後台「優惠活動」。
+2. 新增一個自動優惠與一個手動優惠，分別設定全單、分類或指定商品、折扣/折讓、最低消費、服務方式、POS/線上通路與優惠時間。
+3. 回 POS 加入符合條件的品項，進入「付款/拆單」，確認自動優惠會出現在優惠活動區並折抵合計；手動優惠需由員工勾選後才套用。
+4. 將其中一個活動設定為「需要驗證」，再停用自動優惠或勾選手動優惠，結帳時應跳出 `applyManualDiscounts` 員工識別碼驗證。
+5. 用消費者頁送一張符合線上自動優惠的訂單，確認結帳顯示優惠活動，外送最低金額與滿額免運以扣除優惠後金額判斷。
+6. 送單後在 APK 訂單中心展開訂單，確認 `discount_amount` 與合計一致；若用舊頁或 API 繞過前端，`pos-api` 仍應依 runtime 重新計算自動優惠。
+7. 跑 `rtk npm run apk:install:fresh` 後重新開啟 APK，確認優惠活動設定、POS 付款頁可用活動與線上訂單折扣都從 Supabase runtime 還原。
+
 ## 線上/掃碼新單背景提醒
 
 APK 內含 `OnlineOrderNotifier` native plugin 與 `OnlineOrderPollingService` foreground service，會在 POS 進入背景、螢幕熄滅或 WebView 暫停時接手線上/掃碼新單提醒。前景仍由 Vue + Supabase Realtime invalidation 驅動接單浮層與提示音；背景時 native 層會啟動 `dataSync` 前景服務，依目前 `online_ordering` 設定短輪詢：
@@ -348,6 +360,7 @@ rtk npm run apk:install:fresh
 - 測工具箱裝置管理時，出單機清單應來自 `printer_settings.stations`，刷卡/掃碼/錢櫃外設應來自 `engagement_settings.hardwareDevices`，未印出單據應來自訂單 `print_jobs`；取消未印出單據後 fresh reinstall 不得再次看到已刪除的 print jobs。
 - 測工具箱顧客資訊管理時，搜尋、類型篩選、排序與新增顧客都應走 `GET/POST /admin/members`；新增後點餐頁 CRM 搜尋與後台會員錢包應看到同一位顧客，fresh reinstall 後不得靠本機快取顯示。
 - 測混合支付時，付款分配必須寫入 `orders.payment_breakdown`，交易明細張數必須寫入 `orders.transaction_receipt_count`；關帳付款方式金額要依分配後金額計算。
+- 測優惠活動時，後台規則必須寫入 `discount_settings` runtime；POS 與線上點餐需套用同一份計算器，外送門檻/免運與 `pos-api` 建單都要用折抵後金額重新驗證。
 - 測線上結帳統編/載具時，欄位顯示由 `online_ordering` runtime 決定，資料必須寫入 `orders.tax_id` 與 `orders.invoice_carrier_barcode`；fresh reinstall 後不得靠本機快取才能顯示。
 - 測線上服務方式開關時，自取、內用掃碼與外送應由 `online_ordering.serviceModeAvailability` 控制；前端停用按鈕只是 UX，`POST /orders` 仍必須拒絕 disabled service mode。
 - 測線上預約訂單時，取餐時間間隔、最長預約天數與可預約時段應由 `online_ordering` runtime 控制；`POST /orders` 仍必須拒絕不合規 `requestedFulfillmentAt`。

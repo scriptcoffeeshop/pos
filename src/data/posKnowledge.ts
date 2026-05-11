@@ -414,6 +414,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'discount-campaigns',
+    category: 'payments',
+    title: '優惠活動與自動折扣',
+    summary: '後台優惠活動會同步到 POS 付款頁與線上點餐，支援自動優惠、手動優惠、通路與時間條件。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟後台「優惠活動」。',
+      '新增自動或手動優惠，設定全單、分類或指定商品，並選擇折扣百分比或固定折讓金額。',
+      '設定最低消費、適用服務方式、POS/線上通路、POS 自動套用、優惠時間與是否需要員工識別碼驗證。',
+      'POS 付款頁會列出可用活動；自動優惠可停用，手動優惠需勾選才套用，需驗證時會走手動折扣權限。',
+      '線上點餐只套用線上啟用的自動優惠，外送門檻與免運會用扣除優惠後的金額判斷。',
+      '設定存在 `discount_settings` runtime，API 建單、草稿與 finalize 也會重新計算，不只靠本機畫面。',
+    ],
+    keywords: ['優惠活動', '折扣模組', '店家優惠', '自動優惠', '手動優惠', '折扣', '折讓', 'POS', '雲端餐廳', 'discount_settings', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'online-scheduled-order-rules',
     category: 'online',
     title: '線上預約訂單設定',

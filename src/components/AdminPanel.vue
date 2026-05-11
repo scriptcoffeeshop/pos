@@ -22,6 +22,7 @@ import {
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 import { categoryLabels } from '../data/menu'
+import { defaultDiscountSettings, normalizeDiscountSettings } from '../lib/discounts'
 import { formatCurrency } from '../lib/formatters'
 import {
   adjustMemberWallet,
@@ -59,6 +60,8 @@ import type {
   CloseoutReportDelivery,
   CustomerEngagementSettings,
   DailySalesReport,
+  DiscountCampaign,
+  DiscountSettings,
   FloorPlanSettings,
   InventoryConsumptionRule,
   InventoryItem,
@@ -141,6 +144,7 @@ interface OptionConsumptionDraft extends InventoryConsumptionDraft {
 type AdminTab =
   | 'products'
   | 'online'
+  | 'discounts'
   | 'members'
   | 'ichef'
   | 'reports'
@@ -175,6 +179,7 @@ const emit = defineEmits<{
 const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'products', label: '商品菜單' },
   { value: 'online', label: '線上點餐' },
+  { value: 'discounts', label: '優惠活動' },
   { value: 'members', label: '會員錢包' },
   { value: 'ichef', label: 'iCHEF 補齊' },
   { value: 'reports', label: '營運報表' },
@@ -442,6 +447,9 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
   noteSupplyStatuses: { ...settings.noteSupplyStatuses },
 })
 
+const cloneDiscountSettings = (settings: DiscountSettings): DiscountSettings =>
+  normalizeDiscountSettings(settings)
+
 const cloneEngagementSettings = (settings: CustomerEngagementSettings): CustomerEngagementSettings => {
   const defaults = defaultEngagementSettings()
   const reservationWebsite = settings.reservationWebsite ?? defaults.reservationWebsite
@@ -530,6 +538,7 @@ const closeoutReportDeliveries = ref<CloseoutReportDelivery[]>([])
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
 const onlineOrdering = ref<OnlineOrderingSettings>(defaultOnlineOrderingSettings())
+const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
 const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
 const floorPlan = ref<FloorPlanSettings>(defaultFloorPlanSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
@@ -576,6 +585,10 @@ const roleCount = computed(() => accessControl.value.roles.length)
 const activeStaffCount = computed(() => accessControl.value.staffAccounts.filter((staff) => staff.active).length)
 const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
 const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
+const activeDiscountCampaignCount = computed(() => discountSettings.value.campaigns.filter((campaign) => campaign.enabled).length)
+const automaticDiscountCampaignCount = computed(() =>
+  discountSettings.value.campaigns.filter((campaign) => campaign.enabled && campaign.kind === 'automatic').length,
+)
 const auditEventCount = computed(() => auditEvents.value.length)
 const paymentEventCount = computed(() => paymentEvents.value.length)
 const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
@@ -1420,6 +1433,7 @@ const loadAdminData = async (): Promise<void> => {
     printerSettings.value = clonePrinterSettings(settings.printerSettings)
     accessControl.value = cloneAccessControl(settings.accessControl)
     onlineOrdering.value = cloneOnlineOrdering(settings.onlineOrdering)
+    discountSettings.value = cloneDiscountSettings(settings.discountSettings)
     engagementSettings.value = cloneEngagementSettings(settings.engagementSettings)
     floorPlan.value = settings.floorPlan
     auditEvents.value = events
@@ -1431,7 +1445,7 @@ const loadAdminData = async (): Promise<void> => {
     timeClockEntries.value = timeClockRows
     closeoutReportDeliveries.value = closeoutDeliveries
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1938,6 +1952,150 @@ const saveOnlineOrdering = async (): Promise<void> => {
   } finally {
     savingSettingKey.value = null
   }
+}
+
+const normalizedDiscountCampaignsForSave = (): DiscountCampaign[] =>
+  discountSettings.value.campaigns.map((campaign, index) => ({
+    ...campaign,
+    id: campaign.id.trim().replace(/\s+/g, '-').slice(0, 80) || `discount-${index + 1}`,
+    name: campaign.name.trim().slice(0, 80) || `優惠活動 ${index + 1}`,
+    discountValue: campaign.valueType === 'percentage'
+      ? Math.min(Math.max(Math.trunc(Number(campaign.discountValue) || 0), 0), 100)
+      : Math.min(Math.max(Math.trunc(Number(campaign.discountValue) || 0), 0), 999_999),
+    minimumSubtotal: Math.min(Math.max(Math.trunc(Number(campaign.minimumSubtotal) || 0), 0), 999_999),
+    sortOrder: index + 1,
+    serviceModes: campaign.serviceModes.length > 0 ? campaign.serviceModes : ['dine-in', 'takeout', 'delivery'],
+    categories: [...new Set(campaign.categories.filter(Boolean))],
+    productIds: [...new Set(campaign.productIds.filter(Boolean))],
+    schedule: {
+      enabled: Boolean(campaign.schedule.enabled),
+      days: campaign.schedule.days.length > 0
+        ? [...new Set(campaign.schedule.days.filter((day) => day >= 0 && day <= 6))]
+        : [1, 2, 3, 4, 5, 6, 0],
+      start: campaign.schedule.start || '00:00',
+      end: campaign.schedule.end || '23:59',
+      allDay: Boolean(campaign.schedule.allDay),
+    },
+    usage: {
+      posEnabled: campaign.usage.posEnabled !== false,
+      posAutoApply: campaign.kind === 'automatic' && campaign.usage.posAutoApply === true,
+      onlineEnabled: campaign.kind === 'automatic' && campaign.usage.onlineEnabled === true,
+      requiresVerification: campaign.usage.requiresVerification === true,
+    },
+  }))
+
+const saveDiscountSettings = async (): Promise<void> => {
+  savingSettingKey.value = 'discount_settings'
+  adminMessage.value = '儲存優惠活動設定'
+
+  try {
+    const savedSettings = await updateAdminSetting<DiscountSettings>('discount_settings', {
+      campaigns: normalizedDiscountCampaignsForSave(),
+    })
+    discountSettings.value = cloneDiscountSettings(savedSettings)
+    adminMessage.value = '優惠活動已更新，POS 與線上訂單會依最新設定重新計算'
+    emit('refreshPos')
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '優惠活動更新失敗'
+  } finally {
+    savingSettingKey.value = null
+  }
+}
+
+const addDiscountCampaign = (kind: DiscountCampaign['kind']): void => {
+  const nextIndex = discountSettings.value.campaigns.length + 1
+  discountSettings.value.campaigns.push({
+    id: buildId(kind === 'automatic' ? 'auto-discount' : 'manual-discount'),
+    name: kind === 'automatic' ? `自動優惠 ${nextIndex}` : `手動優惠 ${nextIndex}`,
+    kind,
+    scope: 'whole-order',
+    valueType: 'amount',
+    discountValue: kind === 'automatic' ? 20 : 0,
+    minimumSubtotal: 0,
+    enabled: true,
+    sortOrder: nextIndex,
+    serviceModes: ['dine-in', 'takeout', 'delivery'],
+    categories: [],
+    productIds: [],
+    schedule: {
+      enabled: false,
+      days: [1, 2, 3, 4, 5, 6, 0],
+      start: '00:00',
+      end: '23:59',
+      allDay: true,
+    },
+    usage: {
+      posEnabled: true,
+      posAutoApply: kind === 'automatic',
+      onlineEnabled: kind === 'automatic',
+      requiresVerification: kind === 'manual',
+    },
+  })
+}
+
+const removeDiscountCampaign = (campaignId: string): void => {
+  if (discountSettings.value.campaigns.length <= 1) {
+    adminMessage.value = '至少保留 1 個優惠活動'
+    return
+  }
+
+  discountSettings.value.campaigns = discountSettings.value.campaigns.filter((campaign) => campaign.id !== campaignId)
+}
+
+const moveDiscountCampaign = (campaignId: string, direction: -1 | 1): void => {
+  const campaigns = [...discountSettings.value.campaigns]
+  const index = campaigns.findIndex((campaign) => campaign.id === campaignId)
+  const nextIndex = index + direction
+  if (index < 0 || nextIndex < 0 || nextIndex >= campaigns.length) {
+    return
+  }
+
+  const [campaign] = campaigns.splice(index, 1)
+  if (!campaign) {
+    return
+  }
+  campaigns.splice(nextIndex, 0, campaign)
+  discountSettings.value.campaigns = campaigns.map((entry, entryIndex) => ({ ...entry, sortOrder: entryIndex + 1 }))
+}
+
+const toggleDiscountCampaignServiceMode = (campaign: DiscountCampaign, mode: ServiceMode): void => {
+  const modes = new Set(campaign.serviceModes)
+  if (modes.has(mode)) {
+    modes.delete(mode)
+  } else {
+    modes.add(mode)
+  }
+  campaign.serviceModes = Array.from(modes)
+}
+
+const toggleDiscountCampaignDay = (campaign: DiscountCampaign, day: number): void => {
+  const days = new Set(campaign.schedule.days)
+  if (days.has(day)) {
+    days.delete(day)
+  } else {
+    days.add(day)
+  }
+  campaign.schedule.days = Array.from(days).sort((first, second) => first - second)
+}
+
+const toggleDiscountCampaignCategory = (campaign: DiscountCampaign, category: MenuCategory): void => {
+  const categories = new Set(campaign.categories)
+  if (categories.has(category)) {
+    categories.delete(category)
+  } else {
+    categories.add(category)
+  }
+  campaign.categories = Array.from(categories)
+}
+
+const toggleDiscountCampaignProduct = (campaign: DiscountCampaign, productId: string): void => {
+  const productIds = new Set(campaign.productIds)
+  if (productIds.has(productId)) {
+    productIds.delete(productId)
+  } else {
+    productIds.add(productId)
+  }
+  campaign.productIds = Array.from(productIds)
 }
 
 const moveOnlinePaymentMethod = (methodId: string, direction: -1 | 1): void => {
@@ -2972,6 +3130,193 @@ const saveAccessControl = async (): Promise<void> => {
             </div>
           </div>
         </section>
+      </section>
+
+      <section v-else-if="activeAdminTab === 'discounts'" class="admin-tab-panel" aria-label="優惠活動">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Promotions</p>
+            <h2>優惠活動</h2>
+            <span class="panel-note">{{ activeDiscountCampaignCount }} 個啟用 · {{ automaticDiscountCampaignCount }} 個自動優惠</span>
+          </div>
+          <div class="admin-action-row">
+            <button class="utility-button" type="button" @click="addDiscountCampaign('automatic')">
+              <Plus :size="16" aria-hidden="true" />
+              新增自動優惠
+            </button>
+            <button class="utility-button" type="button" @click="addDiscountCampaign('manual')">
+              <Plus :size="16" aria-hidden="true" />
+              新增手動優惠
+            </button>
+            <button class="primary-button" type="button" :disabled="savingSettingKey === 'discount_settings'" @click="saveDiscountSettings">
+              <Save :size="18" aria-hidden="true" />
+              {{ savingSettingKey === 'discount_settings' ? '儲存中' : '儲存優惠' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-discount-list">
+          <article v-for="(campaign, index) in discountSettings.campaigns" :key="campaign.id" class="admin-discount-row">
+            <header class="admin-row-header">
+              <div class="admin-discount-title">
+                <strong>{{ campaign.name || `優惠活動 ${index + 1}` }}</strong>
+                <span>{{ campaign.kind === 'automatic' ? '自動優惠' : '手動優惠' }} · {{ campaign.enabled ? '進行中' : '停用' }}</span>
+              </div>
+              <div class="admin-payment-method-actions" aria-label="優惠排序">
+                <button class="icon-button" type="button" title="往上" :disabled="index === 0" @click="moveDiscountCampaign(campaign.id, -1)">
+                  <ArrowUp :size="18" aria-hidden="true" />
+                </button>
+                <button class="icon-button" type="button" title="往下" :disabled="index >= discountSettings.campaigns.length - 1" @click="moveDiscountCampaign(campaign.id, 1)">
+                  <ArrowDown :size="18" aria-hidden="true" />
+                </button>
+                <button class="icon-button" type="button" title="刪除優惠" @click="removeDiscountCampaign(campaign.id)">
+                  <Trash2 :size="16" aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+
+            <div class="admin-discount-grid">
+              <label>
+                活動名稱
+                <input v-model="campaign.name" type="text" maxlength="80" />
+              </label>
+              <label>
+                類型
+                <select v-model="campaign.kind">
+                  <option value="automatic">自動優惠</option>
+                  <option value="manual">手動優惠</option>
+                </select>
+              </label>
+              <label>
+                範圍
+                <select v-model="campaign.scope">
+                  <option value="whole-order">全單</option>
+                  <option value="categories">指定分類</option>
+                  <option value="products">指定商品</option>
+                </select>
+              </label>
+              <label>
+                計算
+                <select v-model="campaign.valueType">
+                  <option value="amount">折讓金額</option>
+                  <option value="percentage">折扣比例</option>
+                </select>
+              </label>
+              <label>
+                數值
+                <input v-model.number="campaign.discountValue" type="number" min="0" :max="campaign.valueType === 'percentage' ? 100 : 999999" step="1" />
+              </label>
+              <label>
+                最低消費
+                <input v-model.number="campaign.minimumSubtotal" type="number" min="0" max="999999" step="1" />
+              </label>
+            </div>
+
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="campaign.enabled" type="checkbox" />
+                啟用
+              </label>
+              <label class="toggle-row">
+                <input v-model="campaign.usage.posEnabled" type="checkbox" />
+                iCHEF POS
+              </label>
+              <label class="toggle-row">
+                <input v-model="campaign.usage.posAutoApply" type="checkbox" :disabled="campaign.kind !== 'automatic'" />
+                POS 自動套用
+              </label>
+              <label class="toggle-row">
+                <input v-model="campaign.usage.onlineEnabled" type="checkbox" :disabled="campaign.kind !== 'automatic'" />
+                外帶外送網站
+              </label>
+              <label class="toggle-row">
+                <input v-model="campaign.usage.requiresVerification" type="checkbox" />
+                POS 調整需權限
+              </label>
+              <label class="toggle-row">
+                <input v-model="campaign.schedule.enabled" type="checkbox" />
+                限定時間
+              </label>
+            </div>
+
+            <div class="admin-discount-scope-grid">
+              <section>
+                <strong>使用訂單</strong>
+                <div class="admin-weekday-toggle">
+                  <button
+                    v-for="mode in serviceModeOptions"
+                    :key="`${campaign.id}-${mode.value}`"
+                    type="button"
+                    :class="{ 'admin-weekday-toggle--active': campaign.serviceModes.includes(mode.value) }"
+                    @click="toggleDiscountCampaignServiceMode(campaign, mode.value)"
+                  >
+                    {{ mode.label }}
+                  </button>
+                </div>
+              </section>
+              <section v-if="campaign.schedule.enabled">
+                <strong>優惠時間</strong>
+                <div class="admin-discount-time-grid">
+                  <label class="toggle-row">
+                    <input v-model="campaign.schedule.allDay" type="checkbox" />
+                    全天
+                  </label>
+                  <input v-model="campaign.schedule.start" type="time" :disabled="campaign.schedule.allDay" />
+                  <input v-model="campaign.schedule.end" type="time" :disabled="campaign.schedule.allDay" />
+                </div>
+                <div class="admin-weekday-toggle">
+                  <button
+                    v-for="day in weekdayOptions"
+                    :key="`${campaign.id}-day-${day.value}`"
+                    type="button"
+                    :class="{ 'admin-weekday-toggle--active': campaign.schedule.days.includes(day.value) }"
+                    @click="toggleDiscountCampaignDay(campaign, day.value)"
+                  >
+                    {{ day.label }}
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <div v-if="campaign.scope !== 'whole-order'" class="admin-rule-scope">
+              <div>
+                <strong>{{ campaign.scope === 'categories' ? '指定分類' : '指定商品' }}</strong>
+                <span>{{ campaign.scope === 'categories' ? `${campaign.categories.length} 個分類` : `${campaign.productIds.length} 個商品` }}</span>
+              </div>
+              <div v-if="campaign.scope === 'categories'" class="admin-toggle-grid">
+                <label
+                  v-for="category in menuCategoryOptions"
+                  :key="`${campaign.id}-${category.value}`"
+                  class="toggle-row"
+                  :class="{ 'toggle-row--active': campaign.categories.includes(category.value) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="campaign.categories.includes(category.value)"
+                    @change="toggleDiscountCampaignCategory(campaign, category.value)"
+                  />
+                  {{ category.label }}
+                </label>
+              </div>
+              <div v-else class="admin-rule-item-grid">
+                <label
+                  v-for="product in productDrafts"
+                  :key="`${campaign.id}-${product.id}`"
+                  class="toggle-row"
+                  :class="{ 'toggle-row--active': campaign.productIds.includes(product.id) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="campaign.productIds.includes(product.id)"
+                    @change="toggleDiscountCampaignProduct(campaign, product.id)"
+                  />
+                  <span>{{ product.name }}</span>
+                  <small>{{ categoryLabels[product.category] ?? product.category }}</small>
+                </label>
+              </div>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section v-else-if="activeAdminTab === 'members'" class="admin-tab-panel" aria-label="會員錢包">
