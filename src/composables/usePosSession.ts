@@ -1555,6 +1555,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
+  const lineCountsForProductTotal = (line: CartLine): boolean => {
+    const settings = engagementSettings.value.productTotalDisplay
+    if (!settings.enabled) {
+      return true
+    }
+
+    const excludedCategorySet = new Set(settings.excludedCategories)
+    const excludedItemIdSet = new Set(settings.excludedItemIds)
+    return !(
+      (line.category && excludedCategorySet.has(line.category)) ||
+      excludedItemIdSet.has(line.itemId) ||
+      (line.productId ? excludedItemIdSet.has(line.productId) : false)
+    )
+  }
+  const cartProductTotalQuantity = computed(() =>
+    cartLines.value.reduce((total, line) => total + (lineCountsForProductTotal(line) ? line.quantity : 0), 0),
+  )
   const pendingOrders = computed(() =>
     orderQueue.value.filter((order) =>
       order.status !== 'served' &&
@@ -4111,6 +4128,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     cartLines,
     cartItemSubtotal,
     cartQuantity,
+    cartProductTotalQuantity,
     cartTotal,
     availableDiscountCampaigns,
     automaticDiscountAmount,

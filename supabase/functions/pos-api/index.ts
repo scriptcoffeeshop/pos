@@ -665,6 +665,11 @@ interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[];
   customerTypes: string[];
   defaultServiceFeeRate: number;
+  productTotalDisplay: {
+    enabled: boolean;
+    excludedCategories: MenuCategory[];
+    excludedItemIds: string[];
+  };
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
@@ -1094,6 +1099,11 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
   ],
   customerTypes: ["一般顧客", "常客", "VIP", "員工"],
   defaultServiceFeeRate: 0,
+  productTotalDisplay: {
+    enabled: true,
+    excludedCategories: [],
+    excludedItemIds: [],
+  },
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
     { id: "food-pairing", trigger: "morning", title: "早餐搭配", productIds: [], enabled: true },
@@ -8150,6 +8160,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeText(type, "").slice(0, 40)).filter(Boolean))].slice(0, 16)
     : defaultEngagementSettings.customerTypes;
+  const rawProductTotalDisplay = settings.productTotalDisplay && typeof settings.productTotalDisplay === "object"
+    ? settings.productTotalDisplay
+    : defaultEngagementSettings.productTotalDisplay;
+  const productTotalDisplay = rawProductTotalDisplay as Partial<CustomerEngagementSettings["productTotalDisplay"]>;
   const recommendations = Array.isArray(settings.recommendations)
     ? settings.recommendations.flatMap((entry, index): RecommendationRule[] => {
       if (!entry || typeof entry !== "object") {
@@ -8226,6 +8240,15 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     orderLabels: orderLabels.length > 0 ? orderLabels : defaultEngagementSettings.orderLabels,
     customerTypes: customerTypes.length > 0 ? customerTypes : defaultEngagementSettings.customerTypes,
     defaultServiceFeeRate: Math.min(Math.max(Math.trunc(Number(settings.defaultServiceFeeRate) || 0), 0), 30),
+    productTotalDisplay: {
+      enabled: productTotalDisplay.enabled !== false,
+      excludedCategories: Array.isArray(productTotalDisplay.excludedCategories)
+        ? [...new Set(productTotalDisplay.excludedCategories.filter((category): category is MenuCategory => typeof category === "string"))].slice(0, 40)
+        : defaultEngagementSettings.productTotalDisplay.excludedCategories,
+      excludedItemIds: Array.isArray(productTotalDisplay.excludedItemIds)
+        ? [...new Set(productTotalDisplay.excludedItemIds.filter((itemId): itemId is string => typeof itemId === "string"))].slice(0, 200)
+        : defaultEngagementSettings.productTotalDisplay.excludedItemIds,
+    },
     recommendations,
     translations,
     hardwareDevices,

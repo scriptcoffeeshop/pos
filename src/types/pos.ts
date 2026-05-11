@@ -615,10 +615,17 @@ export interface ReservationWebsiteSettings {
   specialDates: ReservationSpecialDateRule[]
 }
 
+export interface ProductTotalDisplaySettings {
+  enabled: boolean
+  excludedCategories: MenuCategory[]
+  excludedItemIds: string[]
+}
+
 export interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[]
   customerTypes: string[]
   defaultServiceFeeRate: number
+  productTotalDisplay: ProductTotalDisplaySettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]
