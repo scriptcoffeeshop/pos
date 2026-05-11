@@ -87,6 +87,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'item-fulfillment-confirmation',
+    category: 'orders',
+    title: '出餐管理與品項完成',
+    summary: '出餐確認開啟時，可在訂單明細逐品項標記已出餐，全部完成後訂單轉為可交付。',
+    steps: [
+      '到後台「iCHEF 補齊」的店面流程設定開啟「出餐確認」。',
+      '訂單出單後，訂單中心仍保留待出餐狀態；展開「明細」可看到每個品項的待出餐按鈕。',
+      '餐點完成時，按該品項的「待出餐」切成「已出餐」，狀態會寫入 Supabase `order_items.fulfilled_at`。',
+      '所有品項都已出餐後，訂單會自動更新為「可交付」；若取消其中一項，訂單會回到製作中。',
+      '未開啟出餐確認時，首次出單仍依店面流程設定自動把訂單推到可交付。',
+    ],
+    keywords: ['出餐管理', '出餐確認', '已出餐', '待出餐', '廚房效率', '顧客聯', 'iCHEF'],
+    target: 'queue',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',

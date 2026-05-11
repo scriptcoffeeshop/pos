@@ -58,6 +58,7 @@ import {
   updateAdminSetting,
   updateCounterDraftOrder,
   updateOrderFloorAssignment as persistOrderFloorAssignment,
+  updateOrderItemFulfillment as persistOrderItemFulfillment,
   updateProduct,
   updatePrintJobStatus,
   updateOrderPaymentStatus as persistOrderPaymentStatus,
@@ -3507,6 +3508,44 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
   }
 
+  const updateOrderItemFulfillment = async (
+    orderId: string,
+    orderItemId: string,
+    fulfilled: boolean,
+  ): Promise<PosOrder | null> => {
+    const order = orderQueue.value.find((entry) => entry.id === orderId)
+    if (!order) {
+      return null
+    }
+
+    if (orderClaimedByOtherStation(order)) {
+      setBackendStatus('fallback', '訂單已鎖定', `${order.id} 目前由 ${order.claimedBy} 處理`)
+      return null
+    }
+
+    if (!isPosApiConfigured || !order.remoteId) {
+      setBackendStatus('fallback', '出餐狀態未同步', `${order.id} 尚未同步到 POS API`)
+      return null
+    }
+
+    try {
+      const updatedOrder = await persistOrderItemFulfillment(order, orderItemId, fulfilled)
+      replaceOrder(order.id, {
+        ...updatedOrder,
+        printStatus: updatedOrder.printStatus === 'skipped' ? order.printStatus : updatedOrder.printStatus,
+      })
+      setBackendStatus(
+        'connected',
+        fulfilled ? '品項已出餐' : '品項恢復待出餐',
+        `${order.id} ${fulfilled ? '已記錄單品出餐完成' : '已取消單品出餐完成'}`,
+      )
+      return updatedOrder
+    } catch (error) {
+      setBackendStatus('fallback', '出餐狀態失敗', `${order.id} 出餐狀態失敗：${getErrorMessage(error)}`)
+      return null
+    }
+  }
+
   const updatePaymentStatus = async (orderId: string, paymentStatus: PaymentStatus): Promise<void> => {
     const order = orderQueue.value.find((entry) => entry.id === orderId)
     if (!order) {
@@ -5100,6 +5139,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     sendPrinterHealthcheck,
     submitCounterOrder,
     updateOrderStatus,
+    updateOrderItemFulfillment,
     updateOrderFloorAssignmentForStation,
     updatePaymentStatus,
     updateProductAvailability,

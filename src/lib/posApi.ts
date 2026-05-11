@@ -108,6 +108,8 @@ interface ApiOrderItem {
   options: unknown
   combo_items?: unknown
   print_paused?: boolean | null
+  fulfilled_at?: string | null
+  fulfilled_by_station_id?: string | null
 }
 
 interface ApiPrintJob {
@@ -2943,19 +2945,25 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
       ? orderItems.map((line) => {
         const cartLine: CartLine = {
           itemId: line.product_id ?? line.product_sku,
+          orderItemId: line.id,
           productSku: line.product_sku,
           name: line.name,
           unitPrice: line.unit_price,
           quantity: line.quantity,
           options: normalizeOptions(line.options),
           printPaused: line.print_paused === true,
+          fulfilledAt: line.fulfilled_at ?? null,
+          fulfilledByStationId: line.fulfilled_by_station_id ?? '',
+        }
+        if (line.product_id) {
+          cartLine.productId = line.product_id
         }
         const comboItems = normalizeComboLineItems(line.combo_items)
         if (comboItems.length > 0) {
           cartLine.comboItems = comboItems
         }
 
-        return line.product_id ? { ...cartLine, productId: line.product_id } : cartLine
+        return cartLine
       })
       : draftLines,
   }
@@ -3696,6 +3704,19 @@ export const updateOrderStatus = async (order: PosOrder, status: OrderStatus): P
   const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status, stationId: currentStationId() }),
+  })
+
+  return normalizeOrder(data.order)
+}
+
+export const updateOrderItemFulfillment = async (
+  order: PosOrder,
+  orderItemId: string,
+  fulfilled: boolean,
+): Promise<PosOrder> => {
+  const data = await request<CreateOrderResponse>(`/orders/${order.remoteId ?? order.id}/items/${orderItemId}/fulfillment`, {
+    method: 'PATCH',
+    body: JSON.stringify({ fulfilled, stationId: currentStationId() }),
   })
 
   return normalizeOrder(data.order)
