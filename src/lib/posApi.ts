@@ -2487,6 +2487,9 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
     defaultTakeoutPickupMinutes: 5,
     takeoutLoopEnabled: false,
   },
+  orderPageDisplay: {
+    noteColumns: 3,
+  },
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2571,6 +2574,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.workflowAlerts
     : defaults.workflowAlerts
   const workflowAlerts = rawWorkflowAlerts as Partial<CustomerEngagementSettings['workflowAlerts']>
+  const rawOrderPageDisplay = settings.orderPageDisplay && typeof settings.orderPageDisplay === 'object'
+    ? settings.orderPageDisplay
+    : defaults.orderPageDisplay
+  const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings['orderPageDisplay']>
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
       const book = entry && typeof entry === 'object' ? entry as Partial<CustomerEngagementSettings['checkoutCounters']['books'][number]> : null
@@ -2718,6 +2725,14 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         86400,
       ),
       takeoutLoopEnabled: workflowAlerts.takeoutLoopEnabled === true,
+    },
+    orderPageDisplay: {
+      noteColumns: clampRuntimeInteger(
+        orderPageDisplay.noteColumns,
+        defaults.orderPageDisplay.noteColumns,
+        1,
+        3,
+      ),
     },
     recommendations,
     translations,

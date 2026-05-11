@@ -788,6 +788,10 @@ export interface WorkflowAlertSettings {
   takeoutLoopEnabled: boolean
 }
 
+export interface OrderPageDisplaySettings {
+  noteColumns: number
+}
+
 export type ServiceChargeDiscountBasis = 'before-discount' | 'after-discount'
 
 export interface ServiceChargeSettings {
@@ -811,6 +815,7 @@ export interface CustomerEngagementSettings {
   checkoutCounters: CheckoutCounterSettings
   electronicInvoice: ElectronicInvoiceSettings
   workflowAlerts: WorkflowAlertSettings
+  orderPageDisplay: OrderPageDisplaySettings
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

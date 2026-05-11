@@ -633,6 +633,10 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       ...defaults.workflowAlerts,
       ...settings.workflowAlerts,
     },
+    orderPageDisplay: {
+      ...defaults.orderPageDisplay,
+      ...settings.orderPageDisplay,
+    },
     checkoutCounters: {
       ...defaults.checkoutCounters,
       ...settings.checkoutCounters,
@@ -4699,10 +4703,18 @@ const saveAccessControl = async (): Promise<void> => {
                 <input v-model="engagementSettings.workflowAlerts.takeoutLoopEnabled" type="checkbox" />
                 外帶循環模式
               </label>
+              <label>
+                註記欄位數量
+                <select v-model.number="engagementSettings.orderPageDisplay.noteColumns">
+                  <option :value="1">每列 1 欄</option>
+                  <option :value="2">每列 2 欄</option>
+                  <option :value="3">每列 3 欄</option>
+                </select>
+              </label>
             </div>
 
             <p class="panel-note">
-              訂單工作區的今日/未來/過去篩選會依開始與結束時間切分；外帶草稿會預帶取餐時間，外帶循環會在送單或結帳後開下一張外帶單。
+              訂單工作區的今日/未來/過去篩選會依開始與結束時間切分；外帶草稿會預帶取餐時間，外帶循環會在送單或結帳後開下一張外帶單；註記欄位數量會套用到點餐頁商品註記選項。
             </p>
           </section>
 
