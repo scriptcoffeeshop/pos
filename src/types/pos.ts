@@ -19,6 +19,8 @@ export type OnlineDineInCheckoutMode = 'prepaid' | 'postpaid'
 export type OnlineItemCommentMode = 'hidden' | 'shown'
 export type OnlineOrderCommentMode = 'hidden' | 'optional' | 'required'
 export type OnlineTableQrTheme = 'black' | 'green' | 'orange' | 'yellow' | 'purple'
+export type OnlineWebsiteThemeColor = 'classic' | 'green' | 'orange' | 'yellow' | 'purple' | 'blue' | 'rose' | 'brown' | 'slate'
+export type OnlineMenuDisplayMode = 'list' | 'grid'
 export type InventoryRecordAction = 'purchase' | 'return' | 'consumption' | 'scrapped' | 'count'
 export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
@@ -526,6 +528,21 @@ export interface OnlineStoreProfileSettings {
   coverImageDataUrls: string[]
 }
 
+export interface OnlineWebsiteAppearanceSettings {
+  themeColor: OnlineWebsiteThemeColor
+  defaultMenuDisplay: OnlineMenuDisplayMode
+}
+
+export interface OnlineMemberPortalSettings {
+  enabled: boolean
+  requireLoginForTakeoutDelivery: boolean
+  requireLoginForDineInQr: boolean
+}
+
+export interface OnlineAiMenuTranslationSettings {
+  enabled: boolean
+}
+
 export interface OnlineNotificationStationSettings {
   stationId: string
   stationLabel: string
@@ -574,6 +591,9 @@ export interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings
   tableQrCode: OnlineTableQrCodeSettings
   storeProfile: OnlineStoreProfileSettings
+  websiteAppearance: OnlineWebsiteAppearanceSettings
+  memberPortal: OnlineMemberPortalSettings
+  aiMenuTranslation: OnlineAiMenuTranslationSettings
   notificationRouting: OnlineNotificationRoutingSettings
   pauseMessage: string
   menuCategories: OnlineMenuCategory[]

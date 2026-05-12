@@ -855,6 +855,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'online-website-member-settings',
+    category: 'online',
+    title: '網站與會員設定',
+    summary: '後台線上點餐可對照 iCHEF 雲端餐廳，設定網站外觀、會員專區與 AI 菜單翻譯。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「網站與會員設定」選擇主題色與預設菜單樣式；消費者頁會套用主題色，菜單預設列表或格狀。',
+      '開啟會員專區後，消費者頁可用電話登入既有會員；訂單會保存 `memberId`，點數與會員類型會一起帶入。',
+      '若勾選外帶/外送或內用掃碼強制登入，前端送單與 `pos-api` 都會拒絕未綁會員的線上或掃碼訂單。',
+      'AI 菜單翻譯開關會顯示消費者網站翻譯入口，POS 與收據仍使用原始菜單文字。',
+    ],
+    keywords: ['網站與會員設定', '會員專區', '強制登入', '主題色', '預設菜單樣式', 'AI 菜單翻譯', '雲端餐廳', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'online-menu-browse-mode',
     category: 'online',
     title: '僅菜單瀏覽模式',
