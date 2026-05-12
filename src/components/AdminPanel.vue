@@ -260,6 +260,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'manageOnlineAvailability', label: '線上營業狀態' },
   { value: 'manageReservations', label: '訂位' },
   { value: 'manageCashDrawer', label: '錢櫃' },
+  { value: 'viewCurrentSales', label: '目前營業概況' },
   { value: 'voidOrders', label: '作廢' },
   { value: 'refundOrders', label: '退款' },
   { value: 'closeRegister', label: '關帳' },
@@ -469,8 +470,16 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
   })),
 })
 
+const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
+  const normalized = new Set(permissions)
+  if (normalized.has('manageReports') || normalized.has('closeRegister')) {
+    normalized.add('viewCurrentSales')
+  }
+  return [...normalized]
+}
+
 const cloneAccessControl = (settings: AccessControlSettings): AccessControlSettings => ({
-  roles: settings.roles.map((role) => ({ ...role, permissions: [...role.permissions] })),
+  roles: settings.roles.map((role) => ({ ...role, permissions: normalizeRolePermissions(role.permissions) })),
   staffAccounts: (settings.staffAccounts ?? []).map((staff) => ({
     ...staff,
     reportEmail: staff.reportEmail ?? '',

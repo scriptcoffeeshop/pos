@@ -363,6 +363,7 @@ export type AdminPermission =
   | 'manageOnlineAvailability'
   | 'manageReservations'
   | 'manageCashDrawer'
+  | 'viewCurrentSales'
   | 'voidOrders'
   | 'refundOrders'
   | 'closeRegister'

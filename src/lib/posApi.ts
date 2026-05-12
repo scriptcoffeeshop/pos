@@ -1313,12 +1313,20 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
   return Array.isArray(settings.roles)
 }
 
+const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
+  const normalized = new Set(permissions)
+  if (normalized.has('manageReports') || normalized.has('closeRegister')) {
+    normalized.add('viewCurrentSales')
+  }
+  return [...normalized]
+}
+
 const normalizeAccessControlSettings = (value: unknown): AccessControlSettings => {
   if (!isAccessControlSettings(value)) {
     return { roles: [], staffAccounts: [], protectedPermissions: [] }
   }
 
-  const roles = value.roles.map((role) => ({ ...role, permissions: [...role.permissions] }))
+  const roles = value.roles.map((role) => ({ ...role, permissions: normalizeRolePermissions([...role.permissions]) }))
   const fallbackRole = roles[0]
   const protectedPermissions = Array.isArray(value.protectedPermissions)
     ? [...new Set(value.protectedPermissions.filter((permission): permission is AdminPermission => typeof permission === 'string'))]
