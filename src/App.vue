@@ -135,7 +135,7 @@ type FulfillmentUrgency = 'none' | 'scheduled' | 'soon' | 'overdue'
 type QueueTaskActionId = 'fulfillment-alerts' | 'workflow-warnings' | 'pending-payments' | 'ready-orders' | 'online-unconfirmed' | 'print-issues'
 type QueueTaskTone = 'primary' | 'success' | 'warning' | 'danger'
 type ToolboxAction = 'floor' | 'order' | 'queue' | 'reservations' | 'supply' | 'printing' | 'closeout' | 'admin' | 'online' | 'sync' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
-type ToolboxPanel = 'home' | 'appearance' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
+type ToolboxPanel = 'home' | 'appearance' | 'online-settings' | 'time-clock' | 'current-sales' | 'system-info' | 'transactions' | 'cash-drawer' | 'label-management' | 'device-management' | 'customer-management' | 'inventory-management'
 type KnowledgeCategoryFilter = 'all' | PosKnowledgeCategory
 type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
@@ -4076,6 +4076,8 @@ const waitlineDraft = ref({
 const activeFloorServiceView = ref<FloorServiceView>('dine-in')
 const selectedFloorTableId = ref<string | null>(null)
 const activeToolboxPanel = ref<ToolboxPanel>('home')
+const onlineToolboxMessage = ref('線上點餐狀態會同步到後台與每台平板')
+const isOnlineToolboxSaving = ref(false)
 const onlineTimeLimitToggleMessage = ref('用餐與點餐限時會同步後台設定')
 const isOnlineTimeLimitToggling = ref(false)
 const timeClockStaffCode = ref('')
@@ -4173,6 +4175,10 @@ const toolboxPanelTitle = computed(() => {
     return '外觀設定'
   }
 
+  if (activeToolboxPanel.value === 'online-settings') {
+    return '線上點餐功能設定'
+  }
+
   if (activeToolboxPanel.value === 'time-clock') {
     return '員工打卡'
   }
@@ -4214,6 +4220,10 @@ const toolboxPanelTitle = computed(() => {
 const toolboxPanelEyebrow = computed(() => {
   if (activeToolboxPanel.value === 'appearance') {
     return 'Display'
+  }
+
+  if (activeToolboxPanel.value === 'online-settings') {
+    return 'Online Ordering'
   }
 
   if (activeToolboxPanel.value === 'time-clock') {
@@ -5193,6 +5203,18 @@ const toolboxHomeStatusMessage = computed(() =>
   stationOperationMode.value === 'child'
     ? childToolboxRestrictionMessage
     : onlineTimeLimitToggleMessage.value,
+)
+const onlineToolboxServiceSummary = computed(() => {
+  const enabledModes = serviceModeValues
+    .filter((mode) => onlineOrderingSettings.value.serviceModeAvailability[mode] !== false)
+    .map((mode) => serviceModeLabels[mode])
+  return enabledModes.length > 0 ? enabledModes.join('、') : '全部暫停'
+})
+const onlineToolboxSummary = computed(() =>
+  `${onlineOrderingSettings.value.enabled ? '接單開啟' : '僅菜單瀏覽'} · ${onlineToolboxServiceSummary.value}`,
+)
+const onlineToolboxNotificationSummary = computed(() =>
+  `${currentOnlineNotificationSettings.value.enabled ? '接收通知' : '暫停通知'} · ${currentOnlineNotificationTableSummary.value}`,
 )
 const systemInfoItems = computed<SystemInfoItem[]>(() => [
   {
@@ -8326,6 +8348,84 @@ const requireBackendEditMode = (actionLabel = '後台編輯'): boolean => {
   return false
 }
 
+const saveOnlineToolboxSettingsPatch = async (
+  patch: Partial<Pick<OnlineOrderingSettings, 'enabled' | 'serviceModeAvailability' | 'acceptanceRequired'>>,
+  successMessage: string,
+  permissionDetail: string,
+): Promise<void> => {
+  if (isOnlineToolboxSaving.value) {
+    return
+  }
+
+  if (!isPosApiConfigured) {
+    onlineToolboxMessage.value = '本機模式無法同步線上點餐狀態'
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageOnlineAvailability',
+      title: accessPermissionLabels.manageOnlineAvailability,
+      detail: permissionDetail,
+    },
+  ]))) {
+    return
+  }
+
+  isOnlineToolboxSaving.value = true
+  onlineToolboxMessage.value = '正在同步線上點餐功能設定'
+
+  try {
+    const savedSettings = await updateAdminSetting<OnlineOrderingSettings>('online_ordering', {
+      ...onlineOrderingSettings.value,
+      ...patch,
+      serviceModeAvailability: {
+        ...onlineOrderingSettings.value.serviceModeAvailability,
+        ...(patch.serviceModeAvailability ?? {}),
+      },
+      acceptanceRequired: patch.acceptanceRequired ?? onlineOrderingSettings.value.acceptanceRequired,
+    })
+    onlineOrderingSettings.value = savedSettings
+    onlineToolboxMessage.value = successMessage
+  } catch (error) {
+    onlineToolboxMessage.value = `線上點餐設定同步失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isOnlineToolboxSaving.value = false
+  }
+}
+
+const toggleOnlineToolboxEnabled = (): void => {
+  const nextEnabled = !onlineOrderingSettings.value.enabled
+  void saveOnlineToolboxSettingsPatch(
+    { enabled: nextEnabled },
+    nextEnabled ? '線上點餐已開放送單' : '線上點餐已切為僅菜單瀏覽',
+    '切換線上點餐總開關會立即影響線上與掃碼顧客是否可送出訂單。',
+  )
+}
+
+const toggleOnlineToolboxServiceMode = (mode: ServiceMode): void => {
+  const nextEnabled = onlineOrderingSettings.value.serviceModeAvailability[mode] === false
+  void saveOnlineToolboxSettingsPatch(
+    {
+      serviceModeAvailability: {
+        ...onlineOrderingSettings.value.serviceModeAvailability,
+        [mode]: nextEnabled,
+      },
+    },
+    `${serviceModeLabels[mode]}送單已${nextEnabled ? '開放' : '暫停'}`,
+    `切換${serviceModeLabels[mode]}會立即影響顧客是否可用此服務方式送單。`,
+  )
+}
+
+const toggleOnlineToolboxAcceptanceRequired = (): void => {
+  const nextRequired = !onlineOrderingSettings.value.acceptanceRequired
+  void saveOnlineToolboxSettingsPatch(
+    { acceptanceRequired: nextRequired },
+    nextRequired ? '線上與掃碼新單改為需平板接單' : '線上與掃碼新單改為自動入列',
+    '切換接單流程會立即影響新進線上與掃碼訂單是否需要店員確認。',
+  )
+}
+
 const toggleDineInTimeLimitFromToolbox = async (): Promise<void> => {
   if (isOnlineTimeLimitToggling.value) {
     return
@@ -8369,6 +8469,16 @@ const toggleDineInTimeLimitFromToolbox = async (): Promise<void> => {
 
 const showToolboxHome = (): void => {
   activeToolboxPanel.value = 'home'
+}
+
+const previewOnlineOrderingFromToolbox = (): void => {
+  setActiveView('online')
+  closeToolbox()
+}
+
+const openAdminFromToolbox = (): void => {
+  setActiveView('admin')
+  closeToolbox()
 }
 
 const closeKnowledge = (): void => {
@@ -9063,7 +9173,8 @@ const runToolboxAction = (action: ToolboxAction): void => {
   }
 
   if (action === 'online') {
-    setActiveView('online')
+    activeToolboxPanel.value = 'online-settings'
+    return
   }
 
   if (action === 'appearance') {
@@ -14719,10 +14830,16 @@ onBeforeUnmount(() => {
             <strong>後台</strong>
             <span>商品 · 報表 · 權限</span>
           </button>
-          <button v-if="canSwitchWorkspace" type="button" class="toolbox-card" :disabled="toolboxActionDisabled('online')" @click="runToolboxAction('online')">
+          <button
+            type="button"
+            class="toolbox-card"
+            :class="{ 'toolbox-card--status': onlineOrderingSettings.enabled }"
+            :disabled="toolboxActionDisabled('online')"
+            @click="runToolboxAction('online')"
+          >
             <ShoppingBag :size="24" aria-hidden="true" />
             <strong>線上點餐</strong>
-            <span>顧客入口預覽</span>
+            <span>{{ onlineToolboxSummary }}</span>
           </button>
           <button
             type="button"
@@ -14744,6 +14861,171 @@ onBeforeUnmount(() => {
         <p v-if="activeToolboxPanel === 'home'" class="toolbox-status-message">
           {{ toolboxHomeStatusMessage }}
         </p>
+
+        <section v-else-if="activeToolboxPanel === 'online-settings'" class="toolbox-detail-panel online-toolbox-panel" aria-labelledby="toolbox-title">
+          <div class="online-toolbox-status-grid">
+            <article>
+              <span>功能狀態</span>
+              <strong>{{ onlineOrderingSettings.enabled ? '可送出訂單' : '僅菜單瀏覽' }}</strong>
+              <small>{{ onlineToolboxServiceSummary }}</small>
+            </article>
+            <article>
+              <span>訂單通知</span>
+              <strong>{{ onlineToolboxNotificationSummary }}</strong>
+              <small>{{ currentOnlineNotificationSettings.notificationRepeatMode === 'once' ? '只播放一次' : '連續提醒' }} · {{ currentOnlineNotificationSettings.notificationVolume }}%</small>
+            </article>
+          </div>
+
+          <section class="online-toolbox-section" aria-label="營運方式與流程">
+            <div class="online-toolbox-section-heading">
+              <div>
+                <strong>營運方式與流程</strong>
+                <span>全店同步設定</span>
+              </div>
+              <span>{{ isOnlineToolboxSaving ? '同步中' : onlineToolboxSummary }}</span>
+            </div>
+            <div class="online-toolbox-toggle-grid">
+              <button
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': onlineOrderingSettings.enabled }"
+                :aria-pressed="onlineOrderingSettings.enabled"
+                :disabled="isOnlineToolboxSaving"
+                @click="toggleOnlineToolboxEnabled"
+              >
+                <strong>{{ onlineOrderingSettings.enabled ? '接單開啟' : '僅菜單瀏覽' }}</strong>
+                <span>線上與掃碼送單</span>
+              </button>
+              <button
+                v-for="mode in serviceModeValues"
+                :key="`online-service-${mode}`"
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': onlineOrderingSettings.serviceModeAvailability[mode] !== false }"
+                :aria-pressed="onlineOrderingSettings.serviceModeAvailability[mode] !== false"
+                :disabled="isOnlineToolboxSaving"
+                @click="toggleOnlineToolboxServiceMode(mode)"
+              >
+                <strong>{{ onlineOrderingSettings.serviceModeAvailability[mode] !== false ? '開放' : '暫停' }}</strong>
+                <span>{{ serviceModeLabels[mode] }}</span>
+              </button>
+              <button
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': onlineOrderingSettings.acceptanceRequired }"
+                :aria-pressed="onlineOrderingSettings.acceptanceRequired"
+                :disabled="isOnlineToolboxSaving"
+                @click="toggleOnlineToolboxAcceptanceRequired"
+              >
+                <strong>{{ onlineOrderingSettings.acceptanceRequired ? '需接單' : '自動入列' }}</strong>
+                <span>新單流程</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="online-toolbox-section" aria-label="訂單通知">
+            <div class="online-toolbox-section-heading">
+              <div>
+                <strong>訂單通知</strong>
+                <span>{{ currentOnlineNotificationSettings.stationLabel }}</span>
+              </div>
+              <span>{{ onlineNotificationRoutingSaving ? '儲存中' : currentOnlineNotificationTableSummary }}</span>
+            </div>
+            <div class="online-toolbox-toggle-grid">
+              <button
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': currentOnlineNotificationSettings.enabled }"
+                :aria-pressed="currentOnlineNotificationSettings.enabled"
+                :disabled="onlineNotificationRoutingSaving"
+                @click="toggleOnlineNotificationEnabled"
+              >
+                <strong>{{ currentOnlineNotificationSettings.enabled ? '接收' : '暫停' }}</strong>
+                <span>此平板通知</span>
+              </button>
+              <button
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': currentOnlineNotificationSettings.soundEnabled }"
+                :aria-pressed="currentOnlineNotificationSettings.soundEnabled"
+                :disabled="onlineNotificationRoutingSaving"
+                @click="toggleOnlineNotificationSound"
+              >
+                <strong>{{ currentOnlineNotificationSettings.soundEnabled ? '提示音' : '靜音' }}</strong>
+                <span>聲音提醒</span>
+              </button>
+              <button
+                v-for="mode in serviceModeValues"
+                :key="`online-notification-service-${mode}`"
+                type="button"
+                :class="{ 'online-toolbox-toggle--active': currentOnlineNotificationSettings.serviceModes[mode] !== false }"
+                :aria-pressed="currentOnlineNotificationSettings.serviceModes[mode] !== false"
+                :disabled="onlineNotificationRoutingSaving"
+                @click="toggleOnlineNotificationServiceMode(mode)"
+              >
+                <strong>{{ currentOnlineNotificationSettings.serviceModes[mode] !== false ? '提醒' : '不提醒' }}</strong>
+                <span>{{ serviceModeLabels[mode] }}</span>
+              </button>
+            </div>
+            <div class="online-toolbox-settings-grid">
+              <label>
+                提示聲
+                <select
+                  :value="currentOnlineNotificationSettings.notificationRepeatMode"
+                  :disabled="onlineNotificationRoutingSaving"
+                  @change="updateOnlineNotificationRepeatMode(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="continuous">連續提醒</option>
+                  <option value="once">只播放一次</option>
+                </select>
+              </label>
+              <label>
+                音量 {{ currentOnlineNotificationSettings.notificationVolume }}%
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  :value="currentOnlineNotificationSettings.notificationVolume"
+                  :disabled="onlineNotificationRoutingSaving"
+                  @change="updateOnlineNotificationVolume(($event.target as HTMLInputElement).value)"
+                />
+              </label>
+            </div>
+            <div class="online-toolbox-table-heading">
+              <span>內用桌位通知</span>
+              <strong>{{ currentOnlineNotificationTableSummary }}</strong>
+              <button
+                type="button"
+                :disabled="onlineNotificationRoutingSaving || currentOnlineNotificationSettings.tableIds.length === 0"
+                @click="clearOnlineNotificationTables"
+              >
+                全部
+              </button>
+            </div>
+            <div class="online-toolbox-table-list" aria-label="指定內用桌位通知">
+              <button
+                v-for="table in activeFloorTables"
+                :key="`online-notification-table-${table.id}`"
+                type="button"
+                :class="{ 'online-toolbox-table--active': currentOnlineNotificationTableIdSet.has(table.id.toUpperCase()) }"
+                :disabled="onlineNotificationRoutingSaving"
+                @click="toggleOnlineNotificationTable(table.id)"
+              >
+                {{ table.label }}
+              </button>
+            </div>
+          </section>
+
+          <div class="online-toolbox-actions">
+            <button v-if="canSwitchWorkspace" class="secondary-button" type="button" @click="previewOnlineOrderingFromToolbox">
+              <ShoppingBag :size="18" aria-hidden="true" />
+              顧客入口預覽
+            </button>
+            <button v-if="canSwitchWorkspace" class="secondary-button" type="button" @click="openAdminFromToolbox">
+              <Settings2 :size="18" aria-hidden="true" />
+              後台線上設定
+            </button>
+          </div>
+          <p class="online-toolbox-message" aria-live="polite">
+            {{ onlineNotificationRoutingMessage || onlineToolboxMessage }}
+          </p>
+        </section>
 
         <section v-else-if="activeToolboxPanel === 'appearance'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <div class="preference-slider-list">
