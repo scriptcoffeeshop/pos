@@ -3372,9 +3372,55 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     return Math.min(maxCartLineQuantity, Math.max(0, Math.trunc(quantity)))
   }
 
+  const inventoryLimitForProduct = (product: MenuItem): number => {
+    if (product.inventoryCount === null || !Number.isFinite(product.inventoryCount)) {
+      return maxCartLineQuantity
+    }
+
+    return Math.min(maxCartLineQuantity, Math.max(0, Math.trunc(product.inventoryCount)))
+  }
+
+  const cartLineProductId = (line: CartLine): string => line.productId ?? line.itemId.split('::')[0] ?? line.itemId
+
+  const cartLineMatchesProduct = (line: CartLine, product: MenuItem): boolean =>
+    cartLineProductId(line) === product.id || line.productSku === product.sku
+
+  const cartQuantityForProduct = (product: MenuItem, excludedLineItemIds: string[] = []): number => {
+    const excludedIds = new Set(excludedLineItemIds)
+    return cartLines.value.reduce((total, line) => {
+      if (excludedIds.has(line.itemId) || !cartLineMatchesProduct(line, product)) {
+        return total
+      }
+
+      return total + normalizeCartQuantity(line.quantity)
+    }, 0)
+  }
+
+  const normalizeCartQuantityForProduct = (
+    product: MenuItem,
+    quantity: number,
+    excludedLineItemIds: string[] = [],
+  ): number => {
+    const normalizedQuantity = normalizeCartQuantity(quantity)
+    const inventoryLimit = inventoryLimitForProduct(product)
+    if (inventoryLimit >= maxCartLineQuantity) {
+      return normalizedQuantity
+    }
+
+    const availableForLine = Math.max(0, inventoryLimit - cartQuantityForProduct(product, excludedLineItemIds))
+    return Math.min(normalizedQuantity, availableForLine)
+  }
+
+  const productForCartLine = (line: CartLine): MenuItem | null => {
+    const productId = cartLineProductId(line)
+    return productStatusCatalog.value.find((product) => product.id === productId || product.sku === line.productSku)
+      ?? menuCatalog.value.find((product) => product.id === productId || product.sku === line.productSku)
+      ?? null
+  }
+
   const setItemQuantity = (item: MenuItem, quantity: number): void => {
-    const nextQuantity = normalizeCartQuantity(quantity)
     const existing = cartLines.value.find((line) => line.itemId === item.id)
+    const nextQuantity = normalizeCartQuantityForProduct(item, quantity, existing ? [existing.itemId] : [])
 
     if (nextQuantity === 0) {
       cartLines.value = cartLines.value.filter((line) => line.itemId !== item.id)
@@ -3392,11 +3438,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   }
 
   const setLineQuantity = (itemId: string, quantity: number): void => {
-    const nextQuantity = normalizeCartQuantity(quantity)
     const line = cartLines.value.find((entry) => entry.itemId === itemId)
     if (!line) {
       return
     }
+    const product = productForCartLine(line)
+    const nextQuantity = product
+      ? normalizeCartQuantityForProduct(product, quantity, [line.itemId])
+      : normalizeCartQuantity(quantity)
 
     if (nextQuantity === 0) {
       cartLines.value = cartLines.value.filter((entry) => entry.itemId !== itemId)
@@ -3419,11 +3468,22 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     rememberRecentItem(item.id)
 
     if (existing) {
-      existing.quantity = normalizeCartQuantity(existing.quantity + 1)
+      const nextQuantity = normalizeCartQuantityForProduct(item, existing.quantity + 1, [existing.itemId])
+      if (nextQuantity === 0) {
+        cartLines.value = cartLines.value.filter((line) => line.itemId !== existing.itemId)
+        return
+      }
+
+      existing.quantity = nextQuantity
       return
     }
 
-    cartLines.value.push(createCartLine(item, 1, normalizedOptions, unitPrice, variantKey, comboItems))
+    const nextQuantity = normalizeCartQuantityForProduct(item, 1, [variantKey])
+    if (nextQuantity === 0) {
+      return
+    }
+
+    cartLines.value.push(createCartLine(item, nextQuantity, normalizedOptions, unitPrice, variantKey, comboItems))
   }
 
   const lineVariantSignature = (line: CartLine): string =>
@@ -3465,7 +3525,23 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     rememberRecentItem(item.id)
 
     if (existing) {
-      existing.quantity = normalizeCartQuantity(existing.quantity + currentLine.quantity)
+      const nextQuantity = normalizeCartQuantityForProduct(
+        item,
+        existing.quantity + currentLine.quantity,
+        [existing.itemId, lineItemId],
+      )
+      if (nextQuantity === 0) {
+        cartLines.value = cartLines.value.filter((line) => line.itemId !== existing.itemId && line.itemId !== lineItemId)
+        return
+      }
+
+      existing.quantity = nextQuantity
+      cartLines.value = cartLines.value.filter((line) => line.itemId !== lineItemId)
+      return
+    }
+
+    const nextQuantity = normalizeCartQuantityForProduct(item, currentLine.quantity, [lineItemId])
+    if (nextQuantity === 0) {
       cartLines.value = cartLines.value.filter((line) => line.itemId !== lineItemId)
       return
     }
@@ -3475,7 +3551,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         return line
       }
 
-      const nextLine = createCartLine(item, currentLine.quantity, normalizedOptions, unitPrice, variantKey, comboItems)
+      const nextLine = createCartLine(item, nextQuantity, normalizedOptions, unitPrice, variantKey, comboItems)
       if (currentLine.printPaused) {
         nextLine.printPaused = true
       }

@@ -57,6 +57,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'large-quantity-ordering',
+    category: 'orders',
+    title: '商品大數量銷售的調整方式',
+    summary: '可直接用鍵盤輸入商品數量；系統會彙總同商品變體並限制在可售庫存內。',
+    steps: [
+      '在點餐頁點商品加入票券；每點一次會增加 1 件。',
+      '單品可直接在商品方塊或左側票券的數量欄輸入數字，也可用加減號調整。',
+      '套餐商品需先完成套餐子項目與註記，再在票券品項數量欄輸入要銷售的份數。',
+      '同一商品若有不同註記或套餐變體，庫存上限會合併計算，不能超過後台商品庫存。',
+      '庫存為 0、停售或暫停供應時，商品會保留在菜單中但不可加入訂單。',
+    ],
+    keywords: ['大數量', '直接輸入數量', '鍵盤', '套餐數量', '庫存上限', '商品數量', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'product-barcode-ordering',
     category: 'orders',
     title: '商品條碼點餐',
