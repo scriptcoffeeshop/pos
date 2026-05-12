@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 
 type MenuCategory = string;
 type PaymentAllocationStatus = "open" | "paid";
-type PaymentMethod = "cash" | "card" | "app91-card" | "line-pay" | "jkopay" | "transfer";
+type PaymentMethod = "cash" | "card" | "custom" | "app91-card" | "line-pay" | "jkopay" | "transfer";
 type PaymentSplitStatus = "open" | "paid";
 type ServiceMode = "dine-in" | "takeout" | "delivery";
 type OrderSource = "counter" | "qr" | "online";
@@ -2066,7 +2066,7 @@ const normalizePaymentSplits = (input: unknown): Array<Record<string, unknown>> 
 
     const split = entry as PaymentSplitInput;
     const amount = clampNonNegativeInteger(split.amount);
-    const paymentMethod: PaymentMethod = ["cash", "card", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(split.paymentMethod))
+    const paymentMethod: PaymentMethod = ["cash", "card", "custom", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(split.paymentMethod))
       ? split.paymentMethod as PaymentMethod
       : "cash";
     const paidAt = sanitizeText(split.paidAt, "");
@@ -2097,7 +2097,7 @@ const normalizePaymentBreakdown = (input: unknown): Array<Record<string, unknown
     }
 
     const payment = entry as PaymentAllocationInput;
-    const paymentMethod: PaymentMethod = ["cash", "card", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(payment.paymentMethod))
+    const paymentMethod: PaymentMethod = ["cash", "card", "custom", "app91-card", "line-pay", "jkopay", "transfer"].includes(String(payment.paymentMethod))
       ? payment.paymentMethod as PaymentMethod
       : "cash";
     const paidAt = sanitizeText(payment.paidAt, "");
