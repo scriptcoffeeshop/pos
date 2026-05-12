@@ -7612,7 +7612,7 @@ button.cart-line-summary:focus-visible {
 
 .register-session-panel {
   display: grid;
-  grid-template-rows: auto auto auto auto auto;
+  grid-template-rows: auto auto auto auto auto auto;
   gap: 10px;
   min-height: 0;
   padding: 10px;
@@ -7853,6 +7853,133 @@ button.cart-line-summary:focus-visible {
 }
 
 .cash-adjustment-empty {
+  margin: 0;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+.register-history-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.register-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.register-history-heading div {
+  display: grid;
+  gap: 2px;
+}
+
+.register-history-heading span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.register-history-heading strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.register-history-list {
+  display: grid;
+  gap: 7px;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.register-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.register-history-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.register-history-status {
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.register-history-status--open {
+  border-color: #a9d4ba;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.register-history-status--closed {
+  border-color: #c8d0d6;
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.register-history-main strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.register-history-main small,
+.register-history-stats span {
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 850;
+}
+
+.register-history-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.register-history-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.register-history-actions button {
+  min-height: 34px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 950;
+}
+
+.register-history-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.register-history-empty {
   margin: 0;
   padding: 8px;
   color: var(--muted);

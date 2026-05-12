@@ -7,6 +7,7 @@ import type {
   PrintRuleTiming,
   PrintStation,
   PrintStationSetting,
+  RegisterSession,
 } from '../types/pos'
 import { formatCurrency, formatOrderTime } from './formatters'
 
@@ -127,6 +128,14 @@ const paymentMethodLabels: Record<PosOrder['paymentMethod'], string> = {
   'line-pay': 'LINE PAY',
   jkopay: 'JKOPAY',
   transfer: 'TRANSFER',
+}
+
+export type RegisterReportKind = 'subtotal' | 'closeout' | 'sales-record'
+
+const registerReportTitles: Record<RegisterReportKind, string> = {
+  subtotal: '小結',
+  closeout: '關帳',
+  'sales-record': '銷售紀錄',
 }
 
 const paymentLinesForOrder = (order: PosOrder): string[] => {
@@ -535,6 +544,58 @@ export const buildTransactionDetailPayload = (order: PosOrder, station: PrintSta
     'Script Coffee 交易明細',
     billingStatementFooterLines(order, order.lines),
   )
+
+export const buildRegisterSessionReportPayload = (
+  session: RegisterSession,
+  station: PrintStation,
+  kind: RegisterReportKind,
+): string => {
+  const title = registerReportTitles[kind]
+  const countedCash = session.closingCash ?? session.expectedCash
+  const variance = countedCash - session.expectedCash
+  const rows: Array<[string, string]> = [
+    ['帳本', session.bookName || session.bookId || '主帳本'],
+    ['站台', session.stationId || '-'],
+    ['開班', formatOrderTime(session.openedAt)],
+    ['關班', session.closedAt ? formatOrderTime(session.closedAt) : '營業中'],
+    ['開班金', formatCurrency(session.openingCash)],
+    ['現金銷售', formatCurrency(session.cashSales)],
+    ['非現金', formatCurrency(session.nonCashSales)],
+    ['臨時收入', formatCurrency(session.cashAdjustmentIncome)],
+    ['臨時支出', formatCurrency(session.cashAdjustmentExpense)],
+    ['預期現金', formatCurrency(session.expectedCash)],
+    ['實點現金', session.closingCash === null ? '-' : formatCurrency(session.closingCash)],
+    ['現金差額', formatCurrency(variance)],
+    ['待收款', formatCurrency(session.pendingTotal)],
+    ['訂單數', `${session.orderCount}`],
+    ['未交付', `${session.openOrderCount}`],
+    ['付款異常', `${session.failedPaymentCount}`],
+    ['列印異常', `${session.failedPrintCount}`],
+    ['作廢單', `${session.voidedOrderCount}`],
+    ['備註', session.note || '-'],
+  ]
+
+  const commands = rows.flatMap(([label, value], index) => {
+    const y = 112 + index * 28
+    return [
+      `A20,${y},0,2,1,1,N,"${escapeEzplText(label)}"`,
+      `A170,${y},0,2,1,1,N,"${escapeEzplText(value)}"`,
+    ]
+  })
+
+  return [
+    `^Q${Math.max(150, 96 + rows.length * 10)},3`,
+    '^W80',
+    '^H10',
+    '^P1',
+    '^S2',
+    `A20,20,0,3,1,1,N,"${escapeEzplText(`Script Coffee ${title}`)}"`,
+    `A20,58,0,2,1,1,N,"${escapeEzplText(session.id)}"`,
+    `A20,84,0,2,1,1,N,"${escapeEzplText(`${session.status === 'open' ? 'OPEN' : 'CLOSED'} ${station.name}`)}"`,
+    ...commands,
+    'E',
+  ].join('\n')
+}
 
 export const buildCashDrawerPulsePayload = (): string => '\x1bp\x00\x19\xfa'
 

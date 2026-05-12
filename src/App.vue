@@ -55,6 +55,7 @@ import {
 } from './data/posKnowledge'
 import { activeDineInTimeLimitRule, calculateDineInTimeLimitWindow } from './lib/dineInTimeLimit'
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
+import type { RegisterReportKind } from './lib/printing'
 import { serviceChargeRateForMode } from './lib/serviceCharge'
 import {
   createAdminReservation,
@@ -113,6 +114,7 @@ import type {
   PrintRuleTiming,
   PrintStationSetting,
   RegisterCashAdjustmentKind,
+  RegisterSession,
   ReservationStatus,
   ServiceMode,
   StaffTimeClockEntry,
@@ -821,6 +823,7 @@ const {
   loadCashDrawerEvents,
   loadCounterOrderForEditing,
   loadRegisterSession,
+  loadRegisterSessions,
   markOnlineOrderRemindersSeen,
   orderClaimExpired,
   orderClaimedByCurrentStation,
@@ -848,6 +851,7 @@ const {
   printTransactionDetail,
   printOrder,
   printOrderQrCode,
+  printRegisterSessionReport,
   printingOrderId,
   printStation,
   printerSettings,
@@ -857,6 +861,7 @@ const {
   refreshBackendData,
   registerMessage,
   registerSession,
+  registerSessions,
   rejectOnlineOrderForStation,
   refundingOrderId,
   refundOrderForStation,
@@ -4852,6 +4857,18 @@ const registerCashAdjustmentNet = computed(() =>
   (registerSession.value?.cashAdjustmentIncome ?? 0) - (registerSession.value?.cashAdjustmentExpense ?? 0),
 )
 const registerCashAdjustments = computed(() => registerSession.value?.cashAdjustments ?? [])
+const registerSessionHistoryRows = computed(() => registerSessions.value)
+const registerSessionStatusLabel = (session: RegisterSession): string =>
+  session.status === 'open' ? '營業中' : '已關班'
+const registerSessionStatusClass = (session: RegisterSession): string =>
+  session.status === 'open' ? 'register-history-status--open' : 'register-history-status--closed'
+const registerSessionPrimaryLabel = (session: RegisterSession): string => {
+  const openedLabel = formatOrderTime(session.openedAt)
+  const closedLabel = session.closedAt ? formatOrderTime(session.closedAt) : '尚未關班'
+  return `${openedLabel} - ${closedLabel}`
+}
+const registerSessionSecondaryLabel = (session: RegisterSession): string =>
+  `${session.bookName || '主帳本'} · ${session.stationId || 'POS'} · 預期現金 ${formatCurrency(session.expectedCash)}`
 const cashDrawerDevices = computed(() =>
   engagementSettings.value.hardwareDevices.filter((device) => device.kind === 'cash-drawer'),
 )
@@ -10228,6 +10245,34 @@ const createRegisterCashAdjustmentAction = async (): Promise<void> => {
   }
 }
 
+const registerReportPrintDisabled = (session: RegisterSession, kind: RegisterReportKind): boolean =>
+  isRegisterBusy.value || (kind === 'closeout' && session.status !== 'closed')
+
+const printRegisterReportAction = async (
+  session: RegisterSession,
+  kind: RegisterReportKind,
+): Promise<void> => {
+  if (registerReportPrintDisabled(session, kind)) {
+    return
+  }
+
+  if (!requireBackendEditMode('補印帳務紀錄')) {
+    return
+  }
+
+  if (!(await verifyProtectedPermissions([
+    {
+      permission: 'manageCashDrawer',
+      title: accessPermissionLabels.manageCashDrawer,
+      detail: '補印小結、關帳或銷售紀錄前需驗證員工識別碼。',
+    },
+  ]))) {
+    return
+  }
+
+  await printRegisterSessionReport(session.id, kind)
+}
+
 const openCashDrawerAction = async (): Promise<void> => {
   if (!requireBackendEditMode('開啟錢櫃')) {
     cashDrawerActionMessage.value = '開啟錢櫃需先進入後台編輯模式'
@@ -13825,6 +13870,70 @@ onBeforeUnmount(() => {
                               本班尚無現金臨時收支
                             </p>
                           </div>
+                        </div>
+
+                        <div class="register-history-panel" aria-label="班別紀錄與補印">
+                          <div class="register-history-heading">
+                            <div>
+                              <span>瀏覽紀錄 / 補印</span>
+                              <strong>小結、關帳、銷售紀錄</strong>
+                            </div>
+                            <button
+                              class="icon-button"
+                              type="button"
+                              title="重新載入班別紀錄"
+                              :disabled="isRegisterBusy"
+                              @click="loadRegisterSessions"
+                            >
+                              <RefreshCw :size="18" aria-hidden="true" />
+                            </button>
+                          </div>
+
+                          <div v-if="registerSessionHistoryRows.length" class="register-history-list">
+                            <article
+                              v-for="session in registerSessionHistoryRows"
+                              :key="session.id"
+                              class="register-history-row"
+                            >
+                              <div class="register-history-main">
+                                <span class="register-history-status" :class="registerSessionStatusClass(session)">
+                                  {{ registerSessionStatusLabel(session) }}
+                                </span>
+                                <strong>{{ registerSessionPrimaryLabel(session) }}</strong>
+                                <small>{{ registerSessionSecondaryLabel(session) }}</small>
+                              </div>
+                              <div class="register-history-stats">
+                                <span>{{ session.orderCount }} 單</span>
+                                <span>待收 {{ formatCurrency(session.pendingTotal) }}</span>
+                                <span>差額 {{ formatCurrency((session.closingCash ?? session.expectedCash) - session.expectedCash) }}</span>
+                              </div>
+                              <div class="register-history-actions" aria-label="補印帳務紀錄">
+                                <button
+                                  type="button"
+                                  :disabled="registerReportPrintDisabled(session, 'subtotal')"
+                                  @click="printRegisterReportAction(session, 'subtotal')"
+                                >
+                                  小結
+                                </button>
+                                <button
+                                  type="button"
+                                  :disabled="registerReportPrintDisabled(session, 'closeout')"
+                                  @click="printRegisterReportAction(session, 'closeout')"
+                                >
+                                  關帳
+                                </button>
+                                <button
+                                  type="button"
+                                  :disabled="registerReportPrintDisabled(session, 'sales-record')"
+                                  @click="printRegisterReportAction(session, 'sales-record')"
+                                >
+                                  銷售紀錄
+                                </button>
+                              </div>
+                            </article>
+                          </div>
+
+                          <p v-else class="register-history-empty">尚無班別紀錄</p>
                         </div>
 
                         <div class="register-form-grid">

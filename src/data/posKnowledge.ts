@@ -558,6 +558,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'register-report-reprint',
+    category: 'register',
+    title: '重印小結、關帳與銷售紀錄',
+    summary: '關帳頁可瀏覽同帳本最近班別，並補印紙本小結、關帳與銷售紀錄。',
+    steps: [
+      '進入「關帳」工作區，在班別面板找到「瀏覽紀錄 / 補印」。',
+      '按重新整理會讀取目前平板所屬帳本的最近班別；多結帳口平板只會看到自己的帳本紀錄。',
+      '營業中的班別可補印「小結」與「銷售紀錄」；已關班紀錄也可補印「關帳」。',
+      '補印前需進入後台編輯模式，若錢櫃管理操作有啟用驗證，需輸入具備權限的員工識別碼。',
+      '瀏覽器工作站會更新列印預覽，Android APK 會透過既有 GODEX LAN printer 流程送出 EZPL。',
+    ],
+    keywords: ['重印小結', '重印關帳', '銷售紀錄', '瀏覽紀錄', '補印', '班別紀錄', '小結', '關帳', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'pos-access-verification',
     category: 'register',
     title: 'POS 操作權限驗證',
