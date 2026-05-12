@@ -250,6 +250,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
   { value: 'applyManualDiscounts', label: '手動折扣' },
   { value: 'sendDailyReports', label: '日結報表寄送' },
   { value: 'manageProducts', label: '商品' },
+  { value: 'manageSupplyQuantityStatus', label: '供應數量/狀態' },
   { value: 'managePrinting', label: '出單' },
   { value: 'managePayments', label: '支付' },
   { value: 'manageReports', label: '報表' },
@@ -473,6 +474,9 @@ const clonePrinterSettings = (settings: PrinterSettings): PrinterSettings => ({
 
 const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
   const normalized = new Set(permissions)
+  if (normalized.has('manageProducts')) {
+    normalized.add('manageSupplyQuantityStatus')
+  }
   if (normalized.has('manageReports') || normalized.has('closeRegister')) {
     normalized.add('viewCurrentSales')
   }

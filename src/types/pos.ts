@@ -353,6 +353,7 @@ export type AdminPermission =
   | 'applyManualDiscounts'
   | 'sendDailyReports'
   | 'manageProducts'
+  | 'manageSupplyQuantityStatus'
   | 'managePrinting'
   | 'managePayments'
   | 'manageReports'

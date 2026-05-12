@@ -1319,6 +1319,9 @@ const isAccessControlSettings = (value: unknown): value is AccessControlSettings
 
 const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
   const normalized = new Set(permissions)
+  if (normalized.has('manageProducts')) {
+    normalized.add('manageSupplyQuantityStatus')
+  }
   if (normalized.has('manageReports') || normalized.has('closeRegister')) {
     normalized.add('viewCurrentSales')
   }
