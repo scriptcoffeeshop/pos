@@ -5904,6 +5904,55 @@ const lineQuantityByItem = (itemId: string): number =>
     .filter((line) => line.itemId === itemId || line.productId === itemId)
     .reduce((total, line) => total + line.quantity, 0)
 
+const maxCartQuantityInput = 999
+
+const inventoryLimitForProduct = (product: MenuItem): number => {
+  if (product.inventoryCount === null || !Number.isFinite(product.inventoryCount)) {
+    return maxCartQuantityInput
+  }
+
+  return Math.min(maxCartQuantityInput, Math.max(0, Math.trunc(product.inventoryCount)))
+}
+
+const cartLineProductId = (line: CartLine): string => line.productId ?? line.itemId.split('::')[0] ?? line.itemId
+
+const cartLineMatchesProduct = (line: CartLine, product: MenuItem): boolean =>
+  cartLineProductId(line) === product.id || line.productSku === product.sku
+
+const cartQuantityForProduct = (product: MenuItem, excludedLineItemIds: string[] = []): number => {
+  const excludedIds = new Set(excludedLineItemIds)
+  return cartLines.value.reduce((total, line) => {
+    if (excludedIds.has(line.itemId) || !cartLineMatchesProduct(line, product)) {
+      return total
+    }
+
+    return total + Math.min(maxCartQuantityInput, Math.max(0, Math.trunc(line.quantity)))
+  }, 0)
+}
+
+const availableQuantityForProduct = (product: MenuItem, excludedLineItemIds: string[] = []): number => {
+  const inventoryLimit = inventoryLimitForProduct(product)
+  if (inventoryLimit >= maxCartQuantityInput) {
+    return maxCartQuantityInput
+  }
+
+  return Math.max(0, inventoryLimit - cartQuantityForProduct(product, excludedLineItemIds))
+}
+
+const productQuantityMax = (item: MenuItem): number => availableQuantityForProduct(item, [item.id])
+
+const productForCartLineQuantity = (line: CartLine): MenuItem | null => {
+  const productId = cartLineProductId(line)
+  return knownMenuProductById.value.get(productId)
+    ?? knownMenuProducts.value.find((product) => product.sku === line.productSku)
+    ?? null
+}
+
+const cartLineQuantityMax = (line: CartLine): number => {
+  const product = productForCartLineQuantity(line)
+  return product ? availableQuantityForProduct(product, [line.itemId]) : maxCartQuantityInput
+}
+
 const productRequiresOptions = (item: MenuItem): boolean =>
   optionGroupsForProduct(item).length > 0 || comboGroupsForProduct(item).length > 0
 const productOrderingDisabled = (item: MenuItem): boolean => productCurrentSupplyStatus(item) === 'stopped'
@@ -11034,7 +11083,7 @@ onBeforeUnmount(() => {
                           class="quantity-input"
                           type="number"
                           min="0"
-                          max="999"
+                          :max="cartLineQuantityMax(line)"
                           inputmode="numeric"
                           :aria-label="`${line.name} 數量`"
                           :value="line.quantity"
@@ -11044,7 +11093,12 @@ onBeforeUnmount(() => {
                           @keydown.enter.stop="blurQuantityInput"
                           @keydown.escape.stop="blurQuantityInput"
                         />
-                        <button type="button" title="增加" @click.stop="increaseLine(line.itemId)">
+                        <button
+                          type="button"
+                          title="增加"
+                          :disabled="line.quantity >= cartLineQuantityMax(line)"
+                          @click.stop="increaseLine(line.itemId)"
+                        >
                           <Plus :size="16" aria-hidden="true" />
                         </button>
                       </div>
@@ -11325,7 +11379,7 @@ onBeforeUnmount(() => {
                             <input
                               type="number"
                               min="0"
-                              max="999"
+                              :max="productQuantityMax(item)"
                               inputmode="numeric"
                               :aria-label="`${item.name} 數量`"
                               :value="lineQuantityByItem(item.id) || ''"
@@ -11335,7 +11389,12 @@ onBeforeUnmount(() => {
                               @keydown.enter.stop="blurQuantityInput"
                               @keydown.escape.stop="blurQuantityInput"
                             />
-                            <button type="button" title="增加數量" @click="addItem(item)">
+                            <button
+                              type="button"
+                              title="增加數量"
+                              :disabled="lineQuantityByItem(item.id) >= productQuantityMax(item)"
+                              @click="addItem(item)"
+                            >
                               <Plus :size="15" aria-hidden="true" />
                             </button>
                           </div>
