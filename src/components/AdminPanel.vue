@@ -35,6 +35,7 @@ import {
   tableQrThemeOptions,
   type TableQrCardSource,
 } from '../lib/tableQrCards'
+import { productTaxCategoryLabels } from '../lib/taxCategory'
 import {
   adjustMemberWallet,
   createAdminMember,
@@ -91,6 +92,7 @@ import type {
   PosMember,
   PosPaymentEvent,
   PosReservation,
+  ProductTaxCategory,
   ReservationBlacklistEntry,
   ReservationSpecialDateRule,
   PosStationHeartbeat,
@@ -214,6 +216,11 @@ const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'tea', label: categoryLabels.tea ?? '茶飲' },
   { value: 'food', label: categoryLabels.food ?? '輕食' },
   { value: 'retail', label: categoryLabels.retail ?? '零售' },
+]
+const productTaxCategoryOptions: Array<{ value: ProductTaxCategory; label: string }> = [
+  { value: 'taxable', label: productTaxCategoryLabels.taxable },
+  { value: 'zero', label: productTaxCategoryLabels.zero },
+  { value: 'exempt', label: productTaxCategoryLabels.exempt },
 ]
 const reservationWeekdayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
 
@@ -2364,6 +2371,7 @@ const saveProduct = async (product: ProductDraft): Promise<void> => {
     name: product.name,
     category: product.category,
     price: Number(product.price),
+    taxCategory: product.taxCategory,
     tags: tagsFromText(product.tagsText),
     accent: product.accent,
     isAvailable: product.available,
@@ -3886,7 +3894,7 @@ const saveAccessControl = async (): Promise<void> => {
                 <span class="product-swatch" :style="{ backgroundColor: product.accent }" aria-hidden="true"></span>
                 <div>
                   <strong>{{ product.name || '未命名商品' }}</strong>
-                  <span>{{ product.sku }}<template v-if="product.barcode"> · 條碼 {{ product.barcode }}</template></span>
+                  <span>{{ product.sku }}<template v-if="product.barcode"> · 條碼 {{ product.barcode }}</template> · {{ productTaxCategoryLabels[product.taxCategory] }}</span>
                 </div>
               </div>
 
@@ -3920,6 +3928,15 @@ const saveAccessControl = async (): Promise<void> => {
               <label>
                 價格
                 <input v-model.number="product.price" type="number" min="0" step="1" />
+              </label>
+
+              <label>
+                稅別
+                <select v-model="product.taxCategory">
+                  <option v-for="option in productTaxCategoryOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
               </label>
 
               <label>
@@ -6155,6 +6172,8 @@ const saveAccessControl = async (): Promise<void> => {
                 </span>
                 <span>銷售 {{ formatCurrency(row.salesAmount) }}</span>
                 <span>營業稅 {{ formatCurrency(row.taxAmount) }}</span>
+                <span v-if="row.zeroTaxSalesAmount">零稅 {{ formatCurrency(row.zeroTaxSalesAmount) }}</span>
+                <span v-if="row.taxExemptSalesAmount">免稅 {{ formatCurrency(row.taxExemptSalesAmount) }}</span>
                 <span v-if="row.taxId">統編 {{ row.taxId }}</span>
                 <span v-if="row.invoiceNumber">發票 {{ row.invoiceNumber }}</span>
                 <span v-if="row.uploadDueAt">上傳期限 {{ formatAuditTime(row.uploadDueAt) }}</span>

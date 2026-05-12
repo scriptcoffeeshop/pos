@@ -10103,6 +10103,7 @@ const addProductToSupplyCategory = async (): Promise<void> => {
     name,
     category: categoryId,
     price,
+    taxCategory: 'taxable',
     tags: [],
     accent: '#0b6b63',
     isAvailable: true,
