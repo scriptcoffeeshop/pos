@@ -28,6 +28,8 @@ import type {
   PosAdminSettings,
   PosAuditEvent,
   DailySalesReport,
+  DiscountAnalysisReport,
+  DiscountAnalysisReportTimeUnit,
   ElectronicInvoiceReport,
   ElectronicInvoiceStatus,
   NoteAnalysisReport,
@@ -609,6 +611,10 @@ interface ProductSalesReportResponse {
 
 interface NoteAnalysisReportResponse {
   report: NoteAnalysisReport
+}
+
+interface DiscountAnalysisReportResponse {
+  report: DiscountAnalysisReport
 }
 
 interface ElectronicInvoiceReportResponse {
@@ -3971,6 +3977,37 @@ export const fetchAdminNoteAnalysisReport = async (options: {
   }
 
   const data = await request<NoteAnalysisReportResponse>(`/admin/reports/note-analysis?${params.toString()}`)
+
+  return data.report
+}
+
+export const fetchAdminDiscountAnalysisReport = async (options: {
+  startDate: string
+  endDate: string
+  timeUnit: DiscountAnalysisReportTimeUnit
+  serviceMode?: ServiceMode | 'all'
+  source?: OrderSource | 'all'
+  minPartySize?: number | null
+  maxPartySize?: number | null
+}): Promise<DiscountAnalysisReport> => {
+  const params = new URLSearchParams()
+  params.set('startDate', options.startDate.trim())
+  params.set('endDate', options.endDate.trim())
+  params.set('timeUnit', options.timeUnit)
+  if (options.serviceMode && options.serviceMode !== 'all') {
+    params.set('serviceMode', options.serviceMode)
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source)
+  }
+  if (options.minPartySize !== null && options.minPartySize !== undefined) {
+    params.set('minPartySize', String(options.minPartySize))
+  }
+  if (options.maxPartySize !== null && options.maxPartySize !== undefined) {
+    params.set('maxPartySize', String(options.maxPartySize))
+  }
+
+  const data = await request<DiscountAnalysisReportResponse>(`/admin/reports/discount-analysis?${params.toString()}`)
 
   return data.report
 }

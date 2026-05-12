@@ -1092,6 +1092,10 @@ export type ProductSalesReportTimeUnit = 'day' | 'week' | 'month'
 
 export type NoteAnalysisReportTimeUnit = 'day' | 'week' | 'month'
 
+export type DiscountAnalysisReportTimeUnit = 'day' | 'week' | 'month'
+
+export type DiscountAnalysisActivityType = 'merchant-discount' | 'coupon'
+
 export interface ProductSalesCategoryReportRow {
   category: string
   orderCount: number
@@ -1203,6 +1207,48 @@ export interface NoteAnalysisReport {
   notes: NoteAnalysisReportRow[]
   products: NoteAnalysisProductReportRow[]
   trend: NoteAnalysisTrendReportRow[]
+}
+
+export interface DiscountAnalysisActivityReportRow {
+  key: string
+  activityName: string
+  activityType: DiscountAnalysisActivityType
+  orderCount: number
+  discountedSales: number
+  salesShare: number
+  discountAmount: number
+  posSales: number
+  onlineSales: number
+  qrSales: number
+}
+
+export interface DiscountAnalysisTrendReportRow {
+  key: string
+  label: string
+  orderCount: number
+  discountedSales: number
+  discountAmount: number
+}
+
+export interface DiscountAnalysisReportSummary {
+  totalOrders: number
+  totalNetSales: number
+  discountOrderCount: number
+  discountOrderSales: number
+  discountSalesShare: number
+  totalDiscountAmount: number
+  averageDiscountPerOrder: number
+}
+
+export interface DiscountAnalysisReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  timeUnit: DiscountAnalysisReportTimeUnit
+  summary: DiscountAnalysisReportSummary
+  activities: DiscountAnalysisActivityReportRow[]
+  trend: DiscountAnalysisTrendReportRow[]
 }
 
 export interface ElectronicInvoiceReportRow {
