@@ -156,6 +156,11 @@ type MenuCategoryOptionValue = 'all' | MenuCategory
 type ReservationViewMode = 'day' | 'week' | 'month'
 type ReservationStatusFilter = 'all' | ReservationStatus
 
+const orderLabelNameMaxLength = 15
+const orderLabelCatalogMaxCount = 30
+const normalizeOrderLabelName = (value: string): string =>
+  Array.from(value.trim()).slice(0, orderLabelNameMaxLength).join('')
+
 interface SavedQueueView {
   filter: QueueFilter
   paymentFilter: QueuePaymentFilter
@@ -945,11 +950,30 @@ const protectedDiscountCampaignAdjusted = computed(() =>
   }),
 )
 const labelManagementSummary = computed(() =>
-  `${engagementSettings.value.orderLabels.length} 個訂單標籤`,
+  `${engagementSettings.value.orderLabels.length}/${orderLabelCatalogMaxCount} 個訂單標籤`,
 )
 const labelManagementHasChanges = computed(() =>
   JSON.stringify(labelManagementDrafts.value) !== JSON.stringify(engagementSettings.value.orderLabels),
 )
+const labelManagementValidationMessage = computed(() => {
+  if (labelManagementDrafts.value.length > orderLabelCatalogMaxCount) {
+    return `訂單標籤最多 ${orderLabelCatalogMaxCount} 個`
+  }
+
+  const seenLabels = new Set<string>()
+  for (const label of labelManagementDrafts.value) {
+    const labelText = normalizeOrderLabelName(label.label)
+    if (!labelText) {
+      return '標籤名稱不可空白'
+    }
+    if (seenLabels.has(labelText)) {
+      return `標籤名稱不可重複：${labelText}`
+    }
+    seenLabels.add(labelText)
+  }
+
+  return ''
+})
 const customerManagementTypes = computed(() => {
   const configuredTypes = engagementSettings.value.customerTypes.length > 0
     ? engagementSettings.value.customerTypes
@@ -4098,7 +4122,7 @@ const timeClockEntries = ref<StaffTimeClockEntry[]>([])
 const timeClockStaffFilter = ref('all')
 const timeClockStaffOptions = ref<TimeClockStaffOption[]>([])
 const labelManagementDrafts = ref<OrderLabelSetting[]>([])
-const labelManagementMessage = ref('訂單標籤會同步到點餐頁與後台紀錄')
+const labelManagementMessage = ref(`訂單標籤會同步到點餐頁與後台紀錄，最多 ${orderLabelCatalogMaxCount} 個`)
 const isLabelManagementSaving = ref(false)
 const deviceManagementMessage = ref('裝置狀態會由列印站、外設與 print jobs 重建')
 const isDeviceManagementRefreshing = ref(false)
@@ -8650,7 +8674,7 @@ const cloneOrderLabelSettings = (labels: OrderLabelSetting[]): OrderLabelSetting
 
 const syncLabelManagementDrafts = (): void => {
   labelManagementDrafts.value = cloneOrderLabelSettings(engagementSettings.value.orderLabels)
-  labelManagementMessage.value = '訂單標籤會同步到點餐頁與後台紀錄'
+  labelManagementMessage.value = `訂單標籤會同步到點餐頁與後台紀錄，最多 ${orderLabelCatalogMaxCount} 個`
 }
 
 const createLabelManagementId = (label: string): string => {
@@ -8668,6 +8692,11 @@ const createLabelManagementId = (label: string): string => {
 }
 
 const addLabelManagementDraft = (): void => {
+  if (labelManagementDrafts.value.length >= orderLabelCatalogMaxCount) {
+    labelManagementMessage.value = `訂單標籤最多 ${orderLabelCatalogMaxCount} 個`
+    return
+  }
+
   const nextIndex = labelManagementDrafts.value.length
   labelManagementDrafts.value = [
     ...labelManagementDrafts.value,
@@ -8683,8 +8712,12 @@ const updateLabelManagementDraft = (
   labelId: string,
   patch: Partial<Pick<OrderLabelSetting, 'label' | 'color'>>,
 ): void => {
+  const nextPatch: Partial<Pick<OrderLabelSetting, 'label' | 'color'>> = {
+    ...patch,
+    ...(patch.label !== undefined ? { label: normalizeOrderLabelName(patch.label) } : {}),
+  }
   labelManagementDrafts.value = labelManagementDrafts.value.map((label) =>
-    label.id === labelId ? { ...label, ...patch } : label,
+    label.id === labelId ? { ...label, ...nextPatch } : label,
   )
 }
 
@@ -8692,13 +8725,31 @@ const deleteLabelManagementDraft = (labelId: string): void => {
   labelManagementDrafts.value = labelManagementDrafts.value.filter((label) => label.id !== labelId)
 }
 
+const moveLabelManagementDraft = (labelId: string, direction: CategoryMoveDirection): void => {
+  const currentIndex = labelManagementDrafts.value.findIndex((label) => label.id === labelId)
+  const targetIndex = currentIndex + direction
+  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= labelManagementDrafts.value.length) {
+    return
+  }
+
+  const nextDrafts = [...labelManagementDrafts.value]
+  const [label] = nextDrafts.splice(currentIndex, 1)
+  if (!label) {
+    return
+  }
+  nextDrafts.splice(targetIndex, 0, label)
+  labelManagementDrafts.value = nextDrafts
+}
+
 const normalizeLabelManagementDrafts = (): OrderLabelSetting[] => {
   const seenIds = new Set<string>()
+  const seenLabels = new Set<string>()
   return labelManagementDrafts.value.flatMap((label, index) => {
-    const text = label.label.trim().slice(0, 24)
-    if (!text) {
+    const text = normalizeOrderLabelName(label.label)
+    if (!text || seenLabels.has(text)) {
       return []
     }
+    seenLabels.add(text)
 
     let id = label.id.trim() || createLabelManagementId(text)
     while (seenIds.has(id)) {
@@ -8711,11 +8762,17 @@ const normalizeLabelManagementDrafts = (): OrderLabelSetting[] => {
       label: text,
       color: /^#[0-9a-fA-F]{6}$/.test(label.color) ? label.color : '#0f766e',
     }]
-  }).slice(0, 24)
+  }).slice(0, orderLabelCatalogMaxCount)
 }
 
 const saveLabelManagementDrafts = async (): Promise<void> => {
   if (!requireBackendEditMode('儲存標籤管理')) {
+    return
+  }
+
+  const validationMessage = labelManagementValidationMessage.value
+  if (validationMessage) {
+    labelManagementMessage.value = validationMessage
     return
   }
 
@@ -15995,18 +16052,18 @@ onBeforeUnmount(() => {
         </section>
         <section v-else-if="activeToolboxPanel === 'label-management'" class="toolbox-detail-panel label-management-panel" aria-labelledby="toolbox-title">
           <div class="label-management-intro">
-            <p>將店內常用服務新增為標籤，點餐時可快速標示。訂單標籤僅顯示於 POS 與後台紀錄。</p>
-            <button class="secondary-button" type="button" @click="addLabelManagementDraft">
+            <p>將店內常用服務新增為標籤，點餐時可快速標示。名稱 15 字內、最多 30 個，排序會同步到點餐頁。</p>
+            <button class="secondary-button" type="button" :disabled="labelManagementDrafts.length >= orderLabelCatalogMaxCount" @click="addLabelManagementDraft">
               <Plus :size="18" aria-hidden="true" />
               新增
             </button>
           </div>
           <div class="label-management-list">
-            <article v-for="label in labelManagementDrafts" :key="label.id" class="label-management-row">
+            <article v-for="(label, labelIndex) in labelManagementDrafts" :key="label.id" class="label-management-row">
               <input
                 :value="label.label"
                 type="text"
-                maxlength="24"
+                :maxlength="orderLabelNameMaxLength"
                 placeholder="訂單標籤"
                 @input="updateLabelManagementDraft(label.id, { label: ($event.target as HTMLInputElement).value })"
               />
@@ -16016,14 +16073,22 @@ onBeforeUnmount(() => {
                 aria-label="標籤顏色"
                 @input="updateLabelManagementDraft(label.id, { color: ($event.target as HTMLInputElement).value })"
               />
-              <button class="icon-button" type="button" aria-label="刪除標籤" @click="deleteLabelManagementDraft(label.id)">
+              <div class="label-management-order-actions" aria-label="標籤排序">
+                <button class="icon-button" type="button" title="上移標籤" :disabled="labelIndex === 0" @click="moveLabelManagementDraft(label.id, -1)">
+                  <ArrowUp :size="18" aria-hidden="true" />
+                </button>
+                <button class="icon-button" type="button" title="下移標籤" :disabled="labelIndex === labelManagementDrafts.length - 1" @click="moveLabelManagementDraft(label.id, 1)">
+                  <ArrowDown :size="18" aria-hidden="true" />
+                </button>
+              </div>
+              <button class="icon-button" type="button" title="刪除標籤" aria-label="刪除標籤" @click="deleteLabelManagementDraft(label.id)">
                 <Trash2 :size="18" aria-hidden="true" />
               </button>
             </article>
             <p v-if="labelManagementDrafts.length === 0" class="label-management-empty">尚未設定訂單標籤</p>
           </div>
           <div class="label-management-actions">
-            <button class="primary-button" type="button" :disabled="isLabelManagementSaving || !labelManagementHasChanges" @click="saveLabelManagementDrafts">
+            <button class="primary-button" type="button" :disabled="isLabelManagementSaving || !labelManagementHasChanges || Boolean(labelManagementValidationMessage)" @click="saveLabelManagementDrafts">
               <Check :size="18" aria-hidden="true" />
               {{ isLabelManagementSaving ? '儲存中' : '儲存' }}
             </button>
@@ -16032,7 +16097,9 @@ onBeforeUnmount(() => {
               還原
             </button>
           </div>
-          <p class="label-management-message" aria-live="polite">{{ labelManagementMessage }}</p>
+          <p class="label-management-message" :class="{ 'label-management-message--error': labelManagementValidationMessage }" aria-live="polite">
+            {{ labelManagementValidationMessage || labelManagementMessage }}
+          </p>
         </section>
         <section v-else-if="activeToolboxPanel === 'time-clock'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
           <form class="time-clock-form" @submit.prevent="submitTimeClockAction('clock-in')">

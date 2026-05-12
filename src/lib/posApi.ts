@@ -1465,12 +1465,17 @@ const reservationTimePattern = /^\d{2}:\d{2}$/
 const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const paymentMethodIds: PaymentMethod[] = ['line-pay', 'jkopay', 'cash', 'card', 'app91-card', 'transfer']
+const orderLabelNameMaxLength = 15
+const orderLabelCatalogMaxCount = 30
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
 
 const sanitizeColor = (value: unknown, fallback = '#0f766e'): string =>
   typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
+
+const normalizeOrderLabelName = (value: unknown): string =>
+  typeof value === 'string' ? Array.from(value.trim()).slice(0, orderLabelNameMaxLength).join('') : ''
 
 const runtimeTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/
 
@@ -2580,12 +2585,30 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
 
   const settings = value as Partial<CustomerEngagementSettings>
   const orderLabels = Array.isArray(settings.orderLabels)
-    ? settings.orderLabels.flatMap((entry, index) => {
-      const label = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['orderLabels'][number] : null
-      const id = sanitizeOnlineText(label?.id, `label-${index + 1}`)
-      const text = sanitizeOnlineText(label?.label, '')
-      return id && text ? [{ id, label: text, color: sanitizeColor(label?.color) }] : []
-    }).slice(0, 16)
+    ? (() => {
+      const seenIds = new Set<string>()
+      const seenLabels = new Set<string>()
+      return settings.orderLabels.flatMap((entry, index) => {
+        const label = entry && typeof entry === 'object' ? entry as CustomerEngagementSettings['orderLabels'][number] : null
+        const baseId = sanitizeOnlineText(label?.id, `label-${index + 1}`)
+        const text = normalizeOrderLabelName(label?.label)
+        if (!baseId || !text || seenLabels.has(text)) {
+          return []
+        }
+
+        let id = baseId
+        let duplicateIndex = 1
+        while (seenIds.has(id)) {
+          const suffix = `-${index + 1}-${duplicateIndex}`
+          id = `${baseId.slice(0, Math.max(1, 80 - suffix.length))}${suffix}`
+          duplicateIndex += 1
+        }
+        seenIds.add(id)
+        seenLabels.add(text)
+
+        return [{ id, label: text, color: sanitizeColor(label?.color) }]
+      }).slice(0, orderLabelCatalogMaxCount)
+    })()
     : defaults.orderLabels
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeOnlineText(type)).filter(Boolean))].slice(0, 16)

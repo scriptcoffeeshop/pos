@@ -10212,7 +10212,7 @@ button.cart-line-summary:focus-visible {
 
 .label-management-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 48px 44px;
+  grid-template-columns: minmax(0, 1fr) 48px auto 44px;
   align-items: center;
   gap: 10px;
   padding: 10px;
@@ -10242,9 +10242,19 @@ button.cart-line-summary:focus-visible {
   background: var(--surface);
 }
 
+.label-management-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .label-management-row .icon-button {
   width: 44px;
   height: 44px;
+}
+
+.label-management-message--error {
+  color: var(--danger);
 }
 
 .online-toolbox-panel {

@@ -149,6 +149,7 @@ const realtimeBusyRetryMs = 1_200
 const realtimeReconnectBaseDelayMs = 2_000
 const realtimeReconnectMaxDelayMs = 30_000
 const maxCartLineQuantity = 999
+const orderLabelSelectionMaxCount = 30
 const counterDraftStorageKey = 'script-coffee-pos-counter-draft'
 const recentItemsStorageKey = 'script-coffee-pos-recent-items'
 const pendingLocalOrdersStorageKey = 'script-coffee-pos-pending-orders'
@@ -436,7 +437,7 @@ const readCounterDraft = (): CounterDraftState | null => {
       paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
       serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
       orderLabels: Array.isArray(parsed.orderLabels)
-        ? parsed.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, 12)
+        ? parsed.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, orderLabelSelectionMaxCount)
         : [],
       serviceFeeRate: Number.isFinite(parsed.serviceFeeRate)
         ? Math.min(Math.max(Math.trunc(Number(parsed.serviceFeeRate)), 0), 30)
@@ -586,7 +587,7 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     lines,
     subtotal: Math.max(0, Math.trunc(order.subtotal)),
     orderLabels: Array.isArray(order.orderLabels)
-      ? order.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, 12)
+      ? order.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, orderLabelSelectionMaxCount)
       : [],
     serviceFeeRate: Math.min(Math.max(Math.trunc(Number(order.serviceFeeRate) || 0), 0), 30),
     serviceFeeAmount: Math.max(0, Math.trunc(Number(order.serviceFeeAmount) || 0)),
@@ -2182,7 +2183,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       return
     }
 
-    orderLabels.value = [...orderLabels.value, labelId].slice(0, 12)
+    orderLabels.value = [...orderLabels.value, labelId].slice(0, orderLabelSelectionMaxCount)
   }
 
   const toggleDiscountCampaign = (campaignId: string): void => {

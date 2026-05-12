@@ -1535,12 +1535,19 @@ const loadMemberWithLedger = async (memberId: string) => {
   return { data: { ...member, ledger: ledger ?? [], coupons: coupons ?? [] }, error: null };
 };
 
+const orderLabelNameMaxLength = 15;
+const orderLabelCatalogMaxCount = 30;
+
+const normalizeOrderLabelName = (value: unknown): string =>
+  typeof value === "string" ? Array.from(value.trim()).slice(0, orderLabelNameMaxLength).join("") : "";
+
 const normalizeOrderLabels = (labels: unknown): string[] => {
   if (!Array.isArray(labels)) {
     return [];
   }
 
-  return [...new Set(labels.map((label) => sanitizeText(label, "").slice(0, 40)).filter(Boolean))].slice(0, 12);
+  return [...new Set(labels.map((label) => sanitizeText(label, "").slice(0, 80)).filter(Boolean))]
+    .slice(0, orderLabelCatalogMaxCount);
 };
 
 const orderAmount = (value: unknown): number => {
@@ -10201,15 +10208,33 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
 
   const settings = input as Partial<CustomerEngagementSettings>;
   const orderLabels = Array.isArray(settings.orderLabels)
-    ? settings.orderLabels.flatMap((entry, index): OrderLabelSetting[] => {
-      if (!entry || typeof entry !== "object") {
-        return [];
-      }
-      const label = entry as Partial<OrderLabelSetting>;
-      const id = sanitizeText(label.id, `label-${index + 1}`).slice(0, 80);
-      const labelText = sanitizeText(label.label, "").slice(0, 80);
-      return id && labelText ? [{ id, label: labelText, color: sanitizeColor(label.color) }] : [];
-    }).slice(0, 16)
+    ? (() => {
+      const seenIds = new Set<string>();
+      const seenLabels = new Set<string>();
+      return settings.orderLabels.flatMap((entry, index): OrderLabelSetting[] => {
+        if (!entry || typeof entry !== "object") {
+          return [];
+        }
+        const label = entry as Partial<OrderLabelSetting>;
+        const baseId = sanitizeText(label.id, `label-${index + 1}`).slice(0, 80);
+        const labelText = normalizeOrderLabelName(label.label);
+        if (!baseId || !labelText || seenLabels.has(labelText)) {
+          return [];
+        }
+
+        let id = baseId;
+        let duplicateIndex = 1;
+        while (seenIds.has(id)) {
+          const suffix = `-${index + 1}-${duplicateIndex}`;
+          id = `${baseId.slice(0, Math.max(1, 80 - suffix.length))}${suffix}`;
+          duplicateIndex += 1;
+        }
+        seenIds.add(id);
+        seenLabels.add(labelText);
+
+        return [{ id, label: labelText, color: sanitizeColor(label.color) }];
+      }).slice(0, orderLabelCatalogMaxCount);
+    })()
     : defaultEngagementSettings.orderLabels;
   const customerTypes = Array.isArray(settings.customerTypes)
     ? [...new Set(settings.customerTypes.map((type) => sanitizeText(type, "").slice(0, 40)).filter(Boolean))].slice(0, 16)
