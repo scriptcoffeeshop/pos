@@ -498,6 +498,19 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     noticeExpanded: false,
     coverImageDataUrls: [],
   },
+  googleBusinessProfile: {
+    connected: false,
+    businessName: 'Script Coffee',
+    category: '',
+    phone: '',
+    address: '',
+    profileUrl: '',
+    placeId: '',
+    menuUrl: '',
+    orderUrl: '',
+    businessHoursNote: '',
+    menuPhotoDataUrls: [],
+  },
   notificationRouting: {
     stations: [],
   },
@@ -550,6 +563,45 @@ const cloneAccessControl = (settings: AccessControlSettings): AccessControlSetti
   })),
   protectedPermissions: [...(settings.protectedPermissions ?? [])],
 })
+
+const sanitizeAdminText = (value: unknown, maxLength: number, fallback = ''): string =>
+  typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+
+const sanitizeAdminUrl = (value: unknown, maxLength = 240): string => {
+  const url = sanitizeAdminText(value, maxLength)
+  return /^https?:\/\//i.test(url) ? url : ''
+}
+
+const sanitizeAdminImageDataUrls = (value: unknown, limit: number): string[] =>
+  Array.isArray(value)
+    ? value
+      .filter((imageUrl): imageUrl is string => typeof imageUrl === 'string' && imageUrl.startsWith('data:image/'))
+      .map((imageUrl) => imageUrl.slice(0, 600_000))
+      .slice(0, limit)
+    : []
+
+const cloneGoogleBusinessProfile = (
+  settings?: Partial<OnlineOrderingSettings['googleBusinessProfile']>,
+): OnlineOrderingSettings['googleBusinessProfile'] => {
+  const defaults = defaultOnlineOrderingSettings().googleBusinessProfile
+  const businessName = sanitizeAdminText(settings?.businessName, 80)
+
+  return {
+    ...defaults,
+    ...(settings ?? {}),
+    connected: settings?.connected === true,
+    businessName: businessName || defaults.businessName,
+    category: sanitizeAdminText(settings?.category, 80, defaults.category),
+    phone: sanitizeAdminText(settings?.phone, 32, defaults.phone),
+    address: sanitizeAdminText(settings?.address, 160, defaults.address),
+    profileUrl: sanitizeAdminUrl(settings?.profileUrl),
+    placeId: sanitizeAdminText(settings?.placeId, 120, defaults.placeId),
+    menuUrl: sanitizeAdminUrl(settings?.menuUrl),
+    orderUrl: sanitizeAdminUrl(settings?.orderUrl),
+    businessHoursNote: sanitizeAdminText(settings?.businessHoursNote, 500, defaults.businessHoursNote),
+    menuPhotoDataUrls: sanitizeAdminImageDataUrls(settings?.menuPhotoDataUrls, 8),
+  }
+}
 
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
   ...defaultOnlineOrderingSettings(),
@@ -617,6 +669,7 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
         .slice(0, 4)
       : [],
   },
+  googleBusinessProfile: cloneGoogleBusinessProfile(settings.googleBusinessProfile),
   notificationRouting: {
     stations: (settings.notificationRouting?.stations ?? [])
       .filter((station) => station.stationId)
@@ -885,6 +938,7 @@ const savingSettingKey = ref<string | null>(null)
 const adminMessage = ref('尚未載入後台資料')
 const tableQrDownloadMessage = ref('')
 const onlineStoreProfileMessage = ref('')
+const googleBusinessProfileMessage = ref('')
 
 const visibleProducts = computed(() => productDrafts.value.filter((product) => product.available && product.posVisible).length)
 const onlineProducts = computed(() => productDrafts.value.filter((product) => product.onlineVisible || product.qrVisible).length)
@@ -901,6 +955,7 @@ const roleCount = computed(() => accessControl.value.roles.length)
 const activeStaffCount = computed(() => accessControl.value.staffAccounts.filter((staff) => staff.active).length)
 const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
 const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
+const googleBusinessStatusLabel = computed(() => (onlineOrdering.value.googleBusinessProfile.connected ? '已綁定' : '未綁定'))
 const onlineNotificationRoutedStationCount = computed(() =>
   onlineOrdering.value.notificationRouting.stations.filter((station) => station.enabled).length,
 )
@@ -3209,6 +3264,69 @@ const handleStoreCoverImageUpload = (event: Event): void => {
     })
 }
 
+const removeGoogleBusinessMenuPhoto = (imageIndex: number): void => {
+  onlineOrdering.value.googleBusinessProfile.menuPhotoDataUrls =
+    onlineOrdering.value.googleBusinessProfile.menuPhotoDataUrls.filter((_imageUrl, index) => index !== imageIndex)
+  googleBusinessProfileMessage.value = '菜單照片已移除，儲存線上設定後會同步。'
+}
+
+const handleGoogleBusinessMenuPhotoUpload = (event: Event): void => {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  if (files.length === 0) {
+    return
+  }
+
+  const existingImages = onlineOrdering.value.googleBusinessProfile.menuPhotoDataUrls
+  const availableSlots = Math.max(0, 8 - existingImages.length)
+  if (availableSlots === 0) {
+    googleBusinessProfileMessage.value = '最多可上傳 8 張菜單照片。'
+    input.value = ''
+    return
+  }
+
+  const selectedFiles = files.slice(0, availableSlots)
+  if (selectedFiles.some((file) => !['image/jpeg', 'image/png'].includes(file.type))) {
+    googleBusinessProfileMessage.value = '菜單照片請使用 JPG 或 PNG。'
+    input.value = ''
+    return
+  }
+
+  Promise.all(
+    selectedFiles.map((file) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = typeof reader.result === 'string' ? reader.result : ''
+          if (!result.startsWith('data:image/')) {
+            reject(new Error('菜單照片讀取失敗，請重新選擇 JPG 或 PNG。'))
+            return
+          }
+
+          if (result.length > 600_000) {
+            reject(new Error('單張菜單照片過大，請壓縮後再上傳。'))
+            return
+          }
+
+          resolve(result)
+        }
+        reader.onerror = () => reject(new Error('菜單照片讀取失敗，請重新選擇 JPG 或 PNG。'))
+        reader.readAsDataURL(file)
+      }),
+    ),
+  )
+    .then((imageUrls) => {
+      onlineOrdering.value.googleBusinessProfile.menuPhotoDataUrls = [...imageUrls, ...existingImages].slice(0, 8)
+      googleBusinessProfileMessage.value = `已載入 ${imageUrls.length} 張菜單照片，儲存線上設定後會同步。`
+    })
+    .catch((error) => {
+      googleBusinessProfileMessage.value = error instanceof Error ? error.message : '菜單照片讀取失敗'
+    })
+    .finally(() => {
+      input.value = ''
+    })
+}
+
 const saveOnlineOrdering = async (): Promise<void> => {
   savingSettingKey.value = 'online_ordering'
   adminMessage.value = '儲存線上點餐設定'
@@ -3305,6 +3423,25 @@ const saveOnlineOrdering = async (): Promise<void> => {
             .filter((imageUrl) => imageUrl.startsWith('data:image/'))
             .map((imageUrl) => imageUrl.slice(0, 600_000))
             .slice(0, 4),
+        },
+        googleBusinessProfile: {
+          connected: Boolean(onlineOrdering.value.googleBusinessProfile.connected),
+          businessName:
+            sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.businessName, 80) ||
+            onlineOrdering.value.storeProfile.name.trim().slice(0, 60) ||
+            defaultOnlineOrderingSettings().googleBusinessProfile.businessName,
+          category: sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.category, 80),
+          phone: sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.phone, 32),
+          address: sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.address, 160),
+          profileUrl: sanitizeAdminUrl(onlineOrdering.value.googleBusinessProfile.profileUrl),
+          placeId: sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.placeId, 120),
+          menuUrl: sanitizeAdminUrl(onlineOrdering.value.googleBusinessProfile.menuUrl),
+          orderUrl: sanitizeAdminUrl(onlineOrdering.value.googleBusinessProfile.orderUrl),
+          businessHoursNote: sanitizeAdminText(onlineOrdering.value.googleBusinessProfile.businessHoursNote, 500),
+          menuPhotoDataUrls: sanitizeAdminImageDataUrls(
+            onlineOrdering.value.googleBusinessProfile.menuPhotoDataUrls,
+            8,
+          ),
         },
         notificationRouting: {
           stations: onlineOrdering.value.notificationRouting.stations
@@ -4416,6 +4553,11 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ onlineOrdering.storeProfile.coverImageDataUrls.length }} 張封面圖</small>
           </article>
           <article>
+            <span>Google 商家檔案</span>
+            <strong>{{ googleBusinessStatusLabel }}</strong>
+            <small>{{ onlineOrdering.googleBusinessProfile.menuPhotoDataUrls.length }} 張菜單照片</small>
+          </article>
+          <article>
             <span>網站外觀</span>
             <strong>{{ websiteThemeColorLabel }}</strong>
             <small>預設菜單 {{ onlineMenuDisplayLabel }}</small>
@@ -4810,6 +4952,88 @@ const saveAccessControl = async (): Promise<void> => {
                 <img :src="imageUrl" alt="" />
                 <span>封面 {{ index + 1 }}</span>
                 <button class="utility-button" type="button" @click="removeStoreCoverImage(index)">移除</button>
+              </article>
+            </div>
+          </div>
+
+          <div class="admin-online-store-profile" aria-label="Google 商家檔案">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Google Business Profile</p>
+                <h3>Google 商家檔案</h3>
+                <span class="panel-note">保存與 iCHEF Google 商家檔案對應的商家資訊、菜單照片與商家連結。</span>
+              </div>
+            </div>
+            <div class="admin-online-toggle-grid">
+              <label class="toggle-row">
+                <input v-model="onlineOrdering.googleBusinessProfile.connected" type="checkbox" />
+                已完成 Google 商家檔案綁定
+              </label>
+            </div>
+            <div class="admin-online-settings-grid">
+              <label>
+                商家名稱
+                <input v-model="onlineOrdering.googleBusinessProfile.businessName" type="text" maxlength="80" />
+              </label>
+              <label>
+                主要類別
+                <input v-model="onlineOrdering.googleBusinessProfile.category" type="text" maxlength="80" />
+              </label>
+              <label>
+                商家電話
+                <input v-model="onlineOrdering.googleBusinessProfile.phone" type="tel" maxlength="32" />
+              </label>
+              <label class="wide-field">
+                商家地址
+                <input v-model="onlineOrdering.googleBusinessProfile.address" type="text" maxlength="160" />
+              </label>
+              <label>
+                商家檔案網址
+                <input v-model="onlineOrdering.googleBusinessProfile.profileUrl" type="url" maxlength="240" />
+              </label>
+              <label>
+                Google Place ID
+                <input v-model="onlineOrdering.googleBusinessProfile.placeId" type="text" maxlength="120" />
+              </label>
+              <label>
+                菜單網址
+                <input v-model="onlineOrdering.googleBusinessProfile.menuUrl" type="url" maxlength="240" />
+              </label>
+              <label>
+                雲端餐廳連結
+                <input v-model="onlineOrdering.googleBusinessProfile.orderUrl" type="url" maxlength="240" />
+              </label>
+              <label class="wide-field">
+                營業時間備註
+                <textarea
+                  v-model="onlineOrdering.googleBusinessProfile.businessHoursNote"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="例如：週一至週五 08:00-18:00；國定假日另行公告。"
+                />
+              </label>
+              <label class="wide-field">
+                Google 菜單照片
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  multiple
+                  :disabled="onlineOrdering.googleBusinessProfile.menuPhotoDataUrls.length >= 8"
+                  @change="handleGoogleBusinessMenuPhotoUpload"
+                />
+                <small>最多 8 張 JPG/PNG，最新上傳在前。</small>
+              </label>
+            </div>
+            <p v-if="googleBusinessProfileMessage" class="admin-inline-note">{{ googleBusinessProfileMessage }}</p>
+            <div v-if="onlineOrdering.googleBusinessProfile.menuPhotoDataUrls.length" class="admin-store-cover-list">
+              <article
+                v-for="(imageUrl, index) in onlineOrdering.googleBusinessProfile.menuPhotoDataUrls"
+                :key="`${imageUrl.slice(0, 36)}-${index}`"
+                class="admin-store-cover-row"
+              >
+                <img :src="imageUrl" alt="" />
+                <span>菜單照片 {{ index + 1 }}</span>
+                <button class="utility-button" type="button" @click="removeGoogleBusinessMenuPhoto(index)">移除</button>
               </article>
             </div>
           </div>

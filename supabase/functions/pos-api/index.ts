@@ -675,6 +675,20 @@ interface OnlineStoreProfileSettings {
   coverImageDataUrls: string[];
 }
 
+interface OnlineGoogleBusinessProfileSettings {
+  connected: boolean;
+  businessName: string;
+  category: string;
+  phone: string;
+  address: string;
+  profileUrl: string;
+  placeId: string;
+  menuUrl: string;
+  orderUrl: string;
+  businessHoursNote: string;
+  menuPhotoDataUrls: string[];
+}
+
 interface OnlineWebsiteAppearanceSettings {
   themeColor: OnlineWebsiteThemeColor;
   defaultMenuDisplay: OnlineMenuDisplayMode;
@@ -742,6 +756,7 @@ interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings;
   tableQrCode: OnlineTableQrCodeSettings;
   storeProfile: OnlineStoreProfileSettings;
+  googleBusinessProfile: OnlineGoogleBusinessProfileSettings;
   websiteAppearance: OnlineWebsiteAppearanceSettings;
   memberPortal: OnlineMemberPortalSettings;
   aiMenuTranslation: OnlineAiMenuTranslationSettings;
@@ -1569,6 +1584,19 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     notice: "",
     noticeExpanded: false,
     coverImageDataUrls: [],
+  },
+  googleBusinessProfile: {
+    connected: false,
+    businessName: "Script Coffee",
+    category: "",
+    phone: "",
+    address: "",
+    profileUrl: "",
+    placeId: "",
+    menuUrl: "",
+    orderUrl: "",
+    businessHoursNote: "",
+    menuPhotoDataUrls: [],
   },
   notificationRouting: {
     stations: [],
@@ -8771,6 +8799,38 @@ const normalizeOnlineStoreProfileSettings = (input: unknown): OnlineStoreProfile
   };
 };
 
+const sanitizeOnlineUrl = (input: unknown, maxLength = 240): string => {
+  const value = sanitizeText(input, "").slice(0, maxLength);
+  return /^https?:\/\//i.test(value) ? value : "";
+};
+
+const normalizeGoogleBusinessProfileSettings = (input: unknown): OnlineGoogleBusinessProfileSettings => {
+  const defaults = defaultOnlineOrdering.googleBusinessProfile;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {
+      ...defaults,
+      menuPhotoDataUrls: [...defaults.menuPhotoDataUrls],
+    };
+  }
+
+  const settings = input as Partial<OnlineGoogleBusinessProfileSettings>;
+  const businessName = sanitizeText(settings.businessName, "").slice(0, 80);
+
+  return {
+    connected: settings.connected === true,
+    businessName: businessName || defaults.businessName,
+    category: sanitizeText(settings.category, defaults.category).slice(0, 80),
+    phone: sanitizeText(settings.phone, defaults.phone).slice(0, 32),
+    address: sanitizeText(settings.address, defaults.address).slice(0, 160),
+    profileUrl: sanitizeOnlineUrl(settings.profileUrl),
+    placeId: sanitizeText(settings.placeId, defaults.placeId).slice(0, 120),
+    menuUrl: sanitizeOnlineUrl(settings.menuUrl),
+    orderUrl: sanitizeOnlineUrl(settings.orderUrl),
+    businessHoursNote: sanitizeText(settings.businessHoursNote, defaults.businessHoursNote).slice(0, 500),
+    menuPhotoDataUrls: normalizeImageDataUrls(settings.menuPhotoDataUrls, 8),
+  };
+};
+
 const normalizeOnlineNotificationServiceModes = (input: unknown): OnlineServiceModeAvailability => {
   const settings = input && typeof input === "object" && !Array.isArray(input)
     ? input as Partial<OnlineServiceModeAvailability>
@@ -10949,6 +11009,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     commentFields: normalizeCommentFieldSettings(settings.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+    googleBusinessProfile: normalizeGoogleBusinessProfileSettings(settings.googleBusinessProfile),
     websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
     memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
     aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),
@@ -11340,6 +11401,7 @@ const validateOnlineOrdering = (input: unknown): {
       commentFields: normalizeCommentFieldSettings(settings.commentFields),
       tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
       storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+      googleBusinessProfile: normalizeGoogleBusinessProfileSettings(settings.googleBusinessProfile),
       websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
       memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
       aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),

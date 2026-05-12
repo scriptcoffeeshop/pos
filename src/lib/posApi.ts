@@ -1572,6 +1572,19 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     noticeExpanded: false,
     coverImageDataUrls: [],
   },
+  googleBusinessProfile: {
+    connected: false,
+    businessName: 'Script Coffee',
+    category: '',
+    phone: '',
+    address: '',
+    profileUrl: '',
+    placeId: '',
+    menuUrl: '',
+    orderUrl: '',
+    businessHoursNote: '',
+    menuPhotoDataUrls: [],
+  },
   notificationRouting: {
     stations: [],
   },
@@ -1607,6 +1620,18 @@ const orderLabelCatalogMaxCount = 30
 
 const sanitizeOnlineText = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim().slice(0, 80) : fallback
+
+const sanitizeOnlineLongText = (value: unknown, maxLength: number, fallback = ''): string =>
+  typeof value === 'string' ? value.trim().slice(0, maxLength) : fallback
+
+const sanitizeOnlineUrl = (value: unknown, maxLength = 240): string => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  const url = value.trim().slice(0, maxLength)
+  return /^https?:\/\//i.test(url) ? url : ''
+}
 
 const sanitizeColor = (value: unknown, fallback = '#0f766e'): string =>
   typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback
@@ -1825,6 +1850,32 @@ const normalizeOnlineStoreProfileSettings = (
     notice: typeof settings.notice === 'string' ? settings.notice.trim().slice(0, 3000) : defaults.notice,
     noticeExpanded: settings.noticeExpanded === true,
     coverImageDataUrls: normalizeImageDataUrls(settings.coverImageDataUrls),
+  }
+}
+
+const normalizeGoogleBusinessProfileSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().googleBusinessProfile,
+): OnlineOrderingSettings['googleBusinessProfile'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults, menuPhotoDataUrls: [...defaults.menuPhotoDataUrls] }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['googleBusinessProfile']>
+  return {
+    connected: settings.connected === true,
+    businessName:
+      sanitizeOnlineLongText(settings.businessName, 80) ||
+      defaults.businessName,
+    category: sanitizeOnlineLongText(settings.category, 80, defaults.category),
+    phone: sanitizeOnlineLongText(settings.phone, 32, defaults.phone),
+    address: sanitizeOnlineLongText(settings.address, 160, defaults.address),
+    profileUrl: sanitizeOnlineUrl(settings.profileUrl),
+    placeId: sanitizeOnlineLongText(settings.placeId, 120, defaults.placeId),
+    menuUrl: sanitizeOnlineUrl(settings.menuUrl),
+    orderUrl: sanitizeOnlineUrl(settings.orderUrl),
+    businessHoursNote: sanitizeOnlineLongText(settings.businessHoursNote, 500, defaults.businessHoursNote),
+    menuPhotoDataUrls: normalizeImageDataUrls(settings.menuPhotoDataUrls, 8),
   }
 }
 
@@ -2417,6 +2468,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode, defaults.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile, defaults.storeProfile),
+    googleBusinessProfile: normalizeGoogleBusinessProfileSettings(
+      settings.googleBusinessProfile,
+      defaults.googleBusinessProfile,
+    ),
     websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(
       settings.websiteAppearance,
       defaults.websiteAppearance,

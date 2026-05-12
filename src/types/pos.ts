@@ -530,6 +530,20 @@ export interface OnlineStoreProfileSettings {
   coverImageDataUrls: string[]
 }
 
+export interface OnlineGoogleBusinessProfileSettings {
+  connected: boolean
+  businessName: string
+  category: string
+  phone: string
+  address: string
+  profileUrl: string
+  placeId: string
+  menuUrl: string
+  orderUrl: string
+  businessHoursNote: string
+  menuPhotoDataUrls: string[]
+}
+
 export interface OnlineWebsiteAppearanceSettings {
   themeColor: OnlineWebsiteThemeColor
   defaultMenuDisplay: OnlineMenuDisplayMode
@@ -593,6 +607,7 @@ export interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings
   tableQrCode: OnlineTableQrCodeSettings
   storeProfile: OnlineStoreProfileSettings
+  googleBusinessProfile: OnlineGoogleBusinessProfileSettings
   websiteAppearance: OnlineWebsiteAppearanceSettings
   memberPortal: OnlineMemberPortalSettings
   aiMenuTranslation: OnlineAiMenuTranslationSettings

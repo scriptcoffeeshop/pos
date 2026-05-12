@@ -1,6 +1,6 @@
 # 開發交接紀錄
 
-更新日期：2026-05-12
+更新日期：2026-05-13
 
 ## 目前狀態
 
@@ -21,6 +21,7 @@
 - iCHEF 線上訂單通知：2026-05-11 以 Safari 讀取官方知識庫「線上點餐功能設定｜iCHEF POS」，確認訂單通知是每台 iPad 分開設定，且內用掃碼可指定桌位通知。`online_ordering.notificationRouting` 新增 `stations[]`，保存每台平板的通知開關、服務方式、內用桌位清單、提示聲模式與音量；POS 桌位地圖右側「線上通知設定」可直接修改目前平板設定。`usePosSession()` 前景提醒、Web 背景通知與 Android `OnlineOrderNotifier` / `OnlineOrderPollingService` 背景輪詢都會依目前 station 套用路由；舊 runtime 由 `20260512163000_add_online_notification_routing_settings.sql` 補成空 stations，未設定的平板維持接收全部新單。
 - iCHEF 接單選項：2026-05-12 以 Safari / Computer Use 進入 iCHEF 網頁版後台「雲端餐廳 > 內用掃碼點餐」，確認接單選項支援接單畫面選擇「接受但不出單」。Script Coffee POS 沿用既有 `online_ordering.acceptWithoutPrinting`，後台線上點餐設定改為「接單時可接受但不出單」；待接單清單、訂單內容彈窗與浮動提醒在啟用後會同時提供「接單並出單」與「接受不出單」。`acceptOnlineOrderForStation(orderId, { printAfterAccept })` 會共用 claim 與 shared reminder state，只有 `printAfterAccept=true` 才執行 `printOrder(order.id, 'order')`，因此 fresh reinstall 後仍以 Supabase 訂單狀態與 shared reminder state 還原，不新增 migration。
 - iCHEF 網站與會員設定：2026-05-12 以 Safari / Computer Use 讀取官方「網站與會員設定｜雲端餐廳」並檢查 scriptcoffeeshop 後台，確認同一頁管理主題色、預設菜單樣式、會員專區、外帶/外送強制登入、內用掃碼強制登入與 AI 菜單翻譯。Script Coffee POS 在既有 `online_ordering` runtime 加入 `websiteAppearance`、`memberPortal` 與 `aiMenuTranslation`，不新增 migration。後台「線上點餐」可維護這些設定；消費者線上/QR 頁會套用主題色與預設列表/格狀，會員專區會用 `/members/search` 依電話比對會員並把 `memberId` 帶進 `POST /orders`，強制登入時前端與 `pos-api` 都會拒絕未綁會員的 online/qr 建單。AI 翻譯開關只顯示消費者網站翻譯入口，POS 與收據仍使用原始菜單文字。
+- iCHEF Google 商家檔案：2026-05-13 以 Safari / Computer Use 讀取官方「Google 商家檔案」系列知識庫，確認 iCHEF 後台可綁定 Google 商家檔案，並維護商家資訊、菜單照片與雲端餐廳連結；解除綁定後 Google 端保留最後同步資料。本專案在既有 `online_ordering` runtime 加入 `googleBusinessProfile`，不新增 migration。後台「線上點餐」可保存綁定狀態、商家名稱、主要類別、電話、地址、商家檔案網址、Place ID、菜單網址、雲端餐廳連結、營業時間備註與最多 8 張菜單照片；新照片會排在前面，換平板、重開 App 或 fresh reinstall 後由 `/settings/runtime` 還原。這個欄位目前是 Script Coffee POS 的營運對照資料，不執行 Google OAuth/API 發布。
 - iCHEF 標籤與備註可見性：2026-05-12 以 Safari / Computer Use 讀取官方「標籤與備註｜iCHEF POS」，確認 POS 店員備註與訂單標籤僅供店家查看，消費者線上下單備註才會出現在雲端餐廳與單據上，訂位也區分客人備註與店內備註。新增 `orders.customer_note` / `orders.staff_note`、`reservations.customer_note` / `reservations.staff_note`；線上/QR 訂單與公開線上訂位寫 customer note，POS 櫃台訂單與門市訂位寫 staff note。`src/lib/printing.ts` 的顧客聯、請款明細與交易明細只使用 customer note，避免店內服務記錄外流。
 - iCHEF 線上付款拒絕退款：2026-05-12 以 Safari / Computer Use 檢查 iCHEF 後台「內用掃碼點餐 > 支付模組設定」，確認線上付款被拒絕或取消時會自動退款。`rejectOnlineOrderForStation()` 現在會依付款狀態分流：待收款訂單維持 `voidOrder(..., '拒絕接單')`；已授權或已付款訂單改呼叫 `refundOrder(..., '拒絕接單')`，由 `/orders/:id/refund` 與 `refund_pos_order()` 把狀態改為 `voided/refunded`、建立退款流水，並觸發既有會員券、點數與電子發票終態同步。拒絕後仍會寫入 `online_order_reminder_states`，避免其他平板或 fresh reinstall 後重複提醒。
 - iCHEF 優惠/點數現場付款：同一個 iCHEF 後台「支付模組設定」也提示優惠活動與點數活動須選擇現場付款，於 iCHEF POS 結帳時操作。`ConsumerOrderPage` 現在會在 `onlineDiscountAmount > 0` 時把可選付款方式限制為 `cash`；若目前是外送或 QR 先結這類必須線上付款的服務方式，會顯示阻擋訊息而不送單。`pos-api` 新增 `onlineBenefitsRequireOnsitePayment()`，會用重新計算後的自動優惠、`pointsRedeemed` 與 `couponCode` 再驗證一次，非 `cash` 送單回 409，因此舊頁或 API 不能用線上付款繞過優惠/點數現場結帳規則。
