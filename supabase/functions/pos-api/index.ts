@@ -205,6 +205,49 @@ interface TopProductReportRow {
   total: number;
 }
 
+interface ElectronicInvoiceReportRow {
+  orderId: string;
+  orderNumber: string;
+  checkoutAt: string;
+  source: OrderSource;
+  serviceMode: ServiceMode;
+  partySize: number;
+  carrierOrDonationCode: string;
+  taxId: string;
+  salesAmount: number;
+  taxAmount: number;
+  zeroTaxSalesAmount: number;
+  taxExemptSalesAmount: number;
+  totalAmount: number;
+  status: ElectronicInvoiceStatus;
+  printMode: ElectronicInvoicePrintMode;
+  invoiceNumber: string;
+  randomCode: string;
+  uploadDueAt: string | null;
+}
+
+interface ElectronicInvoiceReportOrderRow {
+  id: string;
+  order_number: string;
+  source: OrderSource;
+  service_mode: ServiceMode;
+  note: string | null;
+  subtotal: number;
+  status: OrderStatus;
+  payment_status: PaymentStatus;
+  tax_id: string | null;
+  invoice_carrier_barcode: string | null;
+  invoice_donation_code: string | null;
+  electronic_invoice_status: ElectronicInvoiceStatus;
+  electronic_invoice_print_mode: ElectronicInvoicePrintMode;
+  electronic_invoice_number: string | null;
+  electronic_invoice_random_code: string | null;
+  electronic_invoice_issued_at: string | null;
+  electronic_invoice_upload_due_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface StationHeartbeatInput {
   stationId?: string;
   stationLabel?: string;
@@ -4373,6 +4416,71 @@ api.get("/admin/reports/daily", async (c) => {
   return c.json({ report: buildDailyReport(range, (data ?? []) as DailyReportOrderRow[]) });
 });
 
+api.get("/admin/reports/electronic-invoices", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "electronic invoice report can query the latest 2 years only" }, 400);
+  }
+
+  const status = validElectronicInvoiceStatus(c.req.query("status"));
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  const rangeStart = range.start.toISOString();
+  const rangeEnd = range.end.toISOString();
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, status, payment_status, tax_id, invoice_carrier_barcode, invoice_donation_code, electronic_invoice_status, electronic_invoice_print_mode, electronic_invoice_number, electronic_invoice_random_code, electronic_invoice_issued_at, electronic_invoice_upload_due_at, created_at, updated_at",
+    )
+    .eq("electronic_invoice_requested", true)
+    .or(
+      `and(electronic_invoice_issued_at.gte.${rangeStart},electronic_invoice_issued_at.lt.${rangeEnd}),and(electronic_invoice_issued_at.is.null,updated_at.gte.${rangeStart},updated_at.lt.${rangeEnd})`,
+    )
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  if (status) {
+    query = query.eq("electronic_invoice_status", status);
+  }
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const rows = ((data ?? []) as ElectronicInvoiceReportOrderRow[]).filter((order) => {
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+
+  return c.json({ report: buildElectronicInvoiceReport(range, rows) });
+});
+
 api.post("/admin/members", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -6648,7 +6756,7 @@ const parseReportDateRange = (
   }
 
   if (!startDateInput || !endDateInput) {
-    return { range: null, error: "startDate and endDate are both required when filtering time clock entries" };
+    return { range: null, error: "startDate and endDate are both required" };
   }
 
   const startRange = parseReportDate(startDateInput);
@@ -6663,7 +6771,7 @@ const parseReportDateRange = (
 
   const rangeDays = Math.ceil((endRange.end.getTime() - startRange.start.getTime()) / (24 * 60 * 60_000));
   if (rangeDays > 93) {
-    return { range: null, error: "time clock date range must not exceed 93 days" };
+    return { range: null, error: "date range must not exceed 93 days" };
   }
 
   return {
@@ -6674,6 +6782,115 @@ const parseReportDateRange = (
       end: endRange.end,
     },
     error: null,
+  };
+};
+
+const normalizeReportIntegerFilter = (
+  value: string | undefined,
+  fallback: number,
+): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? Math.trunc(numericValue) : fallback;
+};
+
+const validElectronicInvoiceStatus = (value: string | undefined): ElectronicInvoiceStatus | null => {
+  if (!value) {
+    return null;
+  }
+
+  return ["queued", "issued", "voided", "refunded", "failed", "not_requested"].includes(value)
+    ? value as ElectronicInvoiceStatus
+    : null;
+};
+
+const validServiceModeFilter = (value: string | undefined): ServiceMode | null =>
+  value === "dine-in" || value === "takeout" || value === "delivery" ? value : null;
+
+const validOrderSourceFilter = (value: string | undefined): OrderSource | null =>
+  value === "counter" || value === "qr" || value === "online" ? value : null;
+
+const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
+  order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
+
+const electronicInvoiceTaxAmounts = (
+  totalAmount: number,
+  taxId: string,
+): { salesAmount: number; taxAmount: number } => {
+  const taxAmount = Math.round(totalAmount * 5 / 105);
+  if (taxId) {
+    return {
+      salesAmount: Math.max(0, totalAmount - taxAmount),
+      taxAmount,
+    };
+  }
+
+  return {
+    salesAmount: totalAmount,
+    taxAmount,
+  };
+};
+
+const buildElectronicInvoiceReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  rows: ElectronicInvoiceReportOrderRow[],
+) => {
+  const reportRows: ElectronicInvoiceReportRow[] = rows.map((order) => {
+    const totalAmount = Math.max(Number(order.subtotal) || 0, 0);
+    const taxId = sanitizeText(order.tax_id, "");
+    const { salesAmount, taxAmount } = electronicInvoiceTaxAmounts(totalAmount, taxId);
+    const carrier = sanitizeText(order.invoice_carrier_barcode, "");
+    const donation = sanitizeText(order.invoice_donation_code, "");
+
+    return {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      checkoutAt: electronicInvoiceCheckoutAt(order),
+      source: order.source,
+      serviceMode: order.service_mode,
+      partySize: partySizeFromOrderNote(order.note),
+      carrierOrDonationCode: carrier || donation,
+      taxId,
+      salesAmount,
+      taxAmount,
+      zeroTaxSalesAmount: 0,
+      taxExemptSalesAmount: 0,
+      totalAmount,
+      status: order.electronic_invoice_status,
+      printMode: order.electronic_invoice_print_mode,
+      invoiceNumber: sanitizeText(order.electronic_invoice_number, ""),
+      randomCode: sanitizeText(order.electronic_invoice_random_code, ""),
+      uploadDueAt: order.electronic_invoice_upload_due_at,
+    };
+  });
+
+  const rangeStart = range.start.toISOString();
+  const rangeEnd = range.end.toISOString();
+  const filteredRows = reportRows.filter((row) => row.checkoutAt >= rangeStart && row.checkoutAt < rangeEnd);
+  const activeRows = filteredRows.filter((row) =>
+    row.status !== "voided" && row.status !== "refunded" && row.status !== "failed"
+  );
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart,
+    rangeEnd,
+    summary: {
+      totalRecords: filteredRows.length,
+      issuedRecords: filteredRows.filter((row) => row.status === "issued").length,
+      voidedRecords: filteredRows.filter((row) => row.status === "voided").length,
+      refundedRecords: filteredRows.filter((row) => row.status === "refunded").length,
+      queuedRecords: filteredRows.filter((row) => row.status === "queued").length,
+      failedRecords: filteredRows.filter((row) => row.status === "failed").length,
+      totalSalesAmount: activeRows.reduce((total, row) => total + row.salesAmount, 0),
+      totalTaxAmount: activeRows.reduce((total, row) => total + row.taxAmount, 0),
+      totalAmount: activeRows.reduce((total, row) => total + row.totalAmount, 0),
+    },
+    rows: filteredRows,
   };
 };
 
