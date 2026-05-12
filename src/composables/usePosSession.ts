@@ -35,6 +35,7 @@ import {
   deletePrintJob,
   fetchAdminProducts,
   fetchCurrentRegisterSession,
+  fetchRegisterSessions,
   fetchOnlineOrderReminderStates,
   fetchOrders,
   fetchProducts,
@@ -81,8 +82,10 @@ import {
   buildOrderPrintPlan,
   buildPrinterHealthcheckPayload,
   buildPrinterHealthcheckPreview,
+  buildRegisterSessionReportPayload,
   buildTransactionDetailPayload,
 } from '../lib/printing'
+import type { RegisterReportKind } from '../lib/printing'
 import type {
   CartLine,
   AccessControlPolicy,
@@ -1268,6 +1271,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const togglingProductId = ref<string | null>(null)
   const productStatusMessage = ref('後台編輯模式可載入完整商品清單，並在平板上暫停或恢復供應')
   const registerSession = ref<RegisterSession | null>(null)
+  const registerSessions = ref<RegisterSession[]>([])
   const registerMessage = ref('尚未載入開班資料')
   const cashDrawerEvents = ref<CashDrawerEvent[]>([])
   const stationHeartbeatMessage = ref('尚未回報平板在線狀態')
@@ -2115,8 +2119,36 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     Boolean(voidingOrderId.value) ||
     Boolean(refundingOrderId.value)
 
+  const registerSessionOpenedTime = (session: RegisterSession): number => {
+    const timestamp = Date.parse(session.openedAt)
+    return Number.isFinite(timestamp) ? timestamp : 0
+  }
+
+  const rememberRegisterSession = (session: RegisterSession): void => {
+    registerSessions.value = [session, ...registerSessions.value.filter((entry) => entry.id !== session.id)]
+      .sort((a, b) => registerSessionOpenedTime(b) - registerSessionOpenedTime(a))
+      .slice(0, 60)
+  }
+
+  const applyRegisterSessions = (sessions: RegisterSession[]): void => {
+    const merged = new Map<string, RegisterSession>()
+    for (const session of sessions) {
+      merged.set(session.id, session)
+    }
+    if (registerSession.value) {
+      merged.set(registerSession.value.id, registerSession.value)
+    }
+
+    registerSessions.value = [...merged.values()]
+      .sort((a, b) => registerSessionOpenedTime(b) - registerSessionOpenedTime(a))
+      .slice(0, 60)
+  }
+
   const applyRegisterSession = (session: RegisterSession | null): void => {
     registerSession.value = session
+    if (session) {
+      rememberRegisterSession(session)
+    }
     registerMessage.value = session
       ? `目前班別：${session.status === 'open' ? '營業中' : '已關班'}`
       : '尚未開班'
@@ -2948,10 +2980,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
 
     try {
       const syncedLocalCount = await syncPendingLocalOrders()
-      const [remoteProducts, remoteOrders, currentRegisterSession, runtimeSettings] = await Promise.all([
+      const [remoteProducts, remoteOrders, currentRegisterSession, recentRegisterSessions, runtimeSettings] = await Promise.all([
         fetchProducts(),
         fetchOrders(),
         fetchCurrentRegisterSession(),
+        fetchRegisterSessions(),
         fetchRuntimeSettings(),
       ])
       applyRuntimeSettingsWithProfile(runtimeSettings)
@@ -2961,6 +2994,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       productStatusCatalog.value = sortProducts(remoteProducts)
       applyRemoteOrders(remoteOrders)
       applyRegisterSession(currentRegisterSession)
+      applyRegisterSessions(recentRegisterSessions)
       syncNextSequenceFromQueue()
       setBackendStatus(
         'connected',
@@ -4150,6 +4184,59 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const printTransactionDetail = (orderId: string): Promise<void> =>
     printManualOrderPayload(orderId, buildTransactionDetailPayload, '交易明細')
 
+  const registerReportLabels: Record<RegisterReportKind, string> = {
+    subtotal: '小結',
+    closeout: '關帳',
+    'sales-record': '銷售紀錄',
+  }
+
+  const printRegisterSessionReport = async (
+    sessionId: string,
+    kind: RegisterReportKind,
+  ): Promise<void> => {
+    if (isRegisterBusy.value) {
+      return
+    }
+
+    const session = registerSessions.value.find((entry) => entry.id === sessionId)
+      ?? (registerSession.value?.id === sessionId ? registerSession.value : null)
+    const label = registerReportLabels[kind]
+
+    if (!session) {
+      registerMessage.value = '找不到要補印的班別紀錄'
+      return
+    }
+
+    isRegisterBusy.value = true
+    registerMessage.value = `${label}補印中`
+
+    const station = manualPrintStationFor()
+    const payload = buildRegisterSessionReportPayload(session, station, kind)
+    lastPrintPreview.value = [`JOB ${label}`, `REGISTER ${session.id}`, `PRINTER ${station.name}`, payload].join('\n')
+    if (!station.id || station.id === printStation.id) {
+      printStation.lastPrintAt = new Date().toISOString()
+    }
+
+    try {
+      const printResult = await tryNativeLanPrint(payload, station)
+      if (printResult.ok) {
+        registerMessage.value = `${label}已補印`
+        setBackendStatus('connected', `${label}已補印`, `${session.id} 已送出${label}`)
+      } else if (isNativeLanPrinterAvailable()) {
+        registerMessage.value = `${label}補印失敗：${printResult.error}`
+        setBackendStatus('fallback', `${label}補印失敗`, registerMessage.value)
+      } else {
+        registerMessage.value = `${label}已準備：${lanPrinterModeLabel()}`
+        setBackendStatus('connected', `${label}已準備`, `${session.id} 已產生${label}列印資料`)
+      }
+    } catch (error) {
+      registerMessage.value = `${label}補印失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', `${label}補印失敗`, registerMessage.value)
+    } finally {
+      isRegisterBusy.value = false
+    }
+  }
+
   const deletePrintJobForOrder = async (orderId: string, printJobId: string): Promise<void> => {
     if (deletingPrintJobId.value) {
       return
@@ -4421,6 +4508,21 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         : '尚未開班'
     } catch (error) {
       registerMessage.value = `開班資料載入失敗：${getErrorMessage(error)}`
+    }
+  }
+
+  const loadRegisterSessions = async (): Promise<void> => {
+    if (!isPosApiConfigured) {
+      registerMessage.value = '本機模式未啟用雲端班別紀錄'
+      return
+    }
+
+    try {
+      const sessions = await fetchRegisterSessions()
+      applyRegisterSessions(sessions)
+      registerMessage.value = `已載入 ${sessions.length} 筆班別紀錄`
+    } catch (error) {
+      registerMessage.value = `班別紀錄載入失敗：${getErrorMessage(error)}`
     }
   }
 
@@ -5076,6 +5178,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     loadCounterOrderForEditing,
     loadCashDrawerEvents,
     loadRegisterSession,
+    loadRegisterSessions,
     mergeOrderIntoOrderForStation,
     markOnlineOrderRemindersSeen,
     orderQueue,
@@ -5101,6 +5204,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     printCustomerReceipt,
     printCurrentBillingStatement,
     printTransactionDetail,
+    printRegisterSessionReport,
     printOrder,
     printOrderQrCode,
     printingOrderId,
@@ -5111,6 +5215,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     quickAddItems,
     registerMessage,
     registerSession,
+    registerSessions,
     rejectOnlineOrderForStation,
     refundingOrderId,
     refundOrderForStation,

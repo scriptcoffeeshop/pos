@@ -2830,6 +2830,31 @@ api.post("/time-clock", async (c) => {
   return c.json({ entry: data }, 201);
 });
 
+api.get("/register/sessions", async (c) => {
+  const stationId = sanitizeStationId(c.req.header("x-pos-station-id"));
+  const book = await resolveCheckoutRegisterBook(stationId);
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20) || 20, 1), 60);
+  const { data, error } = await supabase
+    .from("register_sessions")
+    .select(registerSessionSelect)
+    .eq("book_id", book.id)
+    .order("opened_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  try {
+    const sessions = await Promise.all(
+      ((data ?? []) as RegisterSessionRow[]).map((session) => withCurrentRegisterSummary(session)),
+    );
+    return c.json({ sessions });
+  } catch (error) {
+    return c.json({ error: toPosApiError(error).message }, 500);
+  }
+});
+
 api.get("/register/current", async (c) => {
   const stationId = sanitizeStationId(c.req.header("x-pos-station-id"));
   const book = await resolveCheckoutRegisterBook(stationId);

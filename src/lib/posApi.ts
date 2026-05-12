@@ -249,6 +249,10 @@ interface RegisterSessionResponse {
   adjustment?: ApiRegisterCashAdjustment
 }
 
+interface RegisterSessionsResponse {
+  sessions: ApiRegisterSession[]
+}
+
 interface ApiCashDrawerEvent {
   id: string
   station_id: string | null
@@ -3581,6 +3585,16 @@ export const fetchCurrentRegisterSession = async (): Promise<RegisterSession | n
     },
   })
   return data.session ? normalizeRegisterSession(data.session) : null
+}
+
+export const fetchRegisterSessions = async (limit = 20): Promise<RegisterSession[]> => {
+  const cappedLimit = Math.min(Math.max(Math.trunc(limit), 1), 60)
+  const data = await request<RegisterSessionsResponse>(`/register/sessions?limit=${cappedLimit}`, {
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+  })
+  return (data.sessions ?? []).map(normalizeRegisterSession)
 }
 
 export const openRegisterSession = async (
