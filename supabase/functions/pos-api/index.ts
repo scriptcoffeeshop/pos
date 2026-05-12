@@ -439,6 +439,7 @@ type AdminPermission =
   | "manageOnlineAvailability"
   | "manageReservations"
   | "manageCashDrawer"
+  | "viewCurrentSales"
   | "voidOrders"
   | "refundOrders"
   | "closeRegister";
@@ -1161,6 +1162,7 @@ const defaultAccessControl: AccessControlSettings = {
         "manageOnlineAvailability",
         "manageReservations",
         "manageCashDrawer",
+        "viewCurrentSales",
         "voidOrders",
         "refundOrders",
         "closeRegister",
@@ -8008,6 +8010,7 @@ const knownPermissions: AdminPermission[] = [
   "manageOnlineAvailability",
   "manageReservations",
   "manageCashDrawer",
+  "viewCurrentSales",
   "voidOrders",
   "refundOrders",
   "closeRegister",
@@ -8015,6 +8018,14 @@ const knownPermissions: AdminPermission[] = [
 
 const isKnownPermission = (permission: unknown): permission is AdminPermission =>
   typeof permission === "string" && knownPermissions.includes(permission as AdminPermission);
+
+const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
+  const normalized = new Set<AdminPermission>(permissions);
+  if (normalized.has("manageReports") || normalized.has("closeRegister")) {
+    normalized.add("viewCurrentSales");
+  }
+  return [...normalized];
+};
 
 const loadSetting = async <SettingValue>(
   key: AdminSettingKey,
@@ -9392,9 +9403,11 @@ const validateAccessControl = (input: unknown): {
 
   const roles: RoleSetting[] = settings.roles.map((role, index) => {
     const entry = role as Partial<RoleSetting>;
-    const permissions = Array.isArray(entry.permissions)
-      ? entry.permissions.filter(isKnownPermission)
-      : [];
+    const permissions = normalizeRolePermissions(
+      Array.isArray(entry.permissions)
+        ? entry.permissions.filter(isKnownPermission)
+        : [],
+    );
 
     return {
       id: sanitizeIdentifier(entry.id, `role-${index + 1}`),

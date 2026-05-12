@@ -1011,6 +1011,7 @@ const accessPermissionLabels: Record<AdminPermission, string> = {
   manageOnlineAvailability: '線上點餐營業狀態',
   manageReservations: '訂位管理',
   manageCashDrawer: '錢櫃管理',
+  viewCurrentSales: '查看目前營業概況',
   voidOrders: '作廢訂單',
   refundOrders: '退款',
   closeRegister: '關帳',
@@ -5132,7 +5133,7 @@ const currentSalesModeRows = computed(() =>
   })
 )
 const currentSalesSummary = computed(() =>
-  `餐期 ${currentSalesPeriodLabel.value} · 已結 ${formatCurrency(currentSalesPaidTotal.value)} · 未結 ${formatCurrency(currentSalesPendingTotal.value)}`,
+  `需權限驗證 · 餐期 ${currentSalesPeriodLabel.value}`,
 )
 const todayDineInTimeLimitRule = computed(() =>
   activeDineInTimeLimitRule(onlineOrderingSettings.value.dineInTimeLimit, new Date(currentTime.value)),
@@ -9134,7 +9135,7 @@ const submitTimeClockAction = async (eventType: TimeClockEventType): Promise<voi
   }
 }
 
-const runToolboxAction = (action: ToolboxAction): void => {
+const runToolboxAction = async (action: ToolboxAction): Promise<void> => {
   if (!toolboxActionAllowed(action)) {
     return
   }
@@ -9189,6 +9190,20 @@ const runToolboxAction = (action: ToolboxAction): void => {
   }
 
   if (action === 'current-sales') {
+    if (!isPosApiConfigured) {
+      backendEditMessage.value = '目前營業概況需要連線 POS API 進行權限驗證'
+      return
+    }
+
+    const verified = await requestAccessVerification({
+      permission: 'viewCurrentSales',
+      title: accessPermissionLabels.viewCurrentSales,
+      detail: '查看目前營業概況前需驗證員工識別碼。',
+    })
+    if (!verified) {
+      return
+    }
+
     activeToolboxPanel.value = 'current-sales'
     return
   }
