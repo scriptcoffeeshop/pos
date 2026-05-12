@@ -689,6 +689,19 @@ interface OnlineGoogleBusinessProfileSettings {
   menuPhotoDataUrls: string[];
 }
 
+interface OnlineLineOfficialAccountSettings {
+  connected: boolean;
+  officialAccountId: string;
+  displayName: string;
+  profileUrl: string;
+  orderEntryUrl: string;
+  liffId: string;
+  channelId: string;
+  orderStatusNotifications: boolean;
+  marketingAudienceEnabled: boolean;
+  messageQuotaNote: string;
+}
+
 interface OnlineWebsiteAppearanceSettings {
   themeColor: OnlineWebsiteThemeColor;
   defaultMenuDisplay: OnlineMenuDisplayMode;
@@ -757,6 +770,7 @@ interface OnlineOrderingSettings {
   tableQrCode: OnlineTableQrCodeSettings;
   storeProfile: OnlineStoreProfileSettings;
   googleBusinessProfile: OnlineGoogleBusinessProfileSettings;
+  lineOfficialAccount: OnlineLineOfficialAccountSettings;
   websiteAppearance: OnlineWebsiteAppearanceSettings;
   memberPortal: OnlineMemberPortalSettings;
   aiMenuTranslation: OnlineAiMenuTranslationSettings;
@@ -1597,6 +1611,18 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     orderUrl: "",
     businessHoursNote: "",
     menuPhotoDataUrls: [],
+  },
+  lineOfficialAccount: {
+    connected: false,
+    officialAccountId: "",
+    displayName: "Script Coffee",
+    profileUrl: "",
+    orderEntryUrl: "",
+    liffId: "",
+    channelId: "",
+    orderStatusNotifications: true,
+    marketingAudienceEnabled: true,
+    messageQuotaNote: "",
   },
   notificationRouting: {
     stations: [],
@@ -9206,6 +9232,29 @@ const normalizeGoogleBusinessProfileSettings = (input: unknown): OnlineGoogleBus
   };
 };
 
+const normalizeLineOfficialAccountSettings = (input: unknown): OnlineLineOfficialAccountSettings => {
+  const defaults = defaultOnlineOrdering.lineOfficialAccount;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaults };
+  }
+
+  const settings = input as Partial<OnlineLineOfficialAccountSettings>;
+  const displayName = sanitizeText(settings.displayName, "").slice(0, 80);
+
+  return {
+    connected: settings.connected === true,
+    officialAccountId: sanitizeText(settings.officialAccountId, defaults.officialAccountId).slice(0, 80),
+    displayName: displayName || defaults.displayName,
+    profileUrl: sanitizeOnlineUrl(settings.profileUrl),
+    orderEntryUrl: sanitizeOnlineUrl(settings.orderEntryUrl),
+    liffId: sanitizeText(settings.liffId, defaults.liffId).slice(0, 80),
+    channelId: sanitizeText(settings.channelId, defaults.channelId).slice(0, 80),
+    orderStatusNotifications: settings.orderStatusNotifications !== false,
+    marketingAudienceEnabled: settings.marketingAudienceEnabled !== false,
+    messageQuotaNote: sanitizeText(settings.messageQuotaNote, defaults.messageQuotaNote).slice(0, 240),
+  };
+};
+
 const normalizeOnlineNotificationServiceModes = (input: unknown): OnlineServiceModeAvailability => {
   const settings = input && typeof input === "object" && !Array.isArray(input)
     ? input as Partial<OnlineServiceModeAvailability>
@@ -11385,6 +11434,7 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
     googleBusinessProfile: normalizeGoogleBusinessProfileSettings(settings.googleBusinessProfile),
+    lineOfficialAccount: normalizeLineOfficialAccountSettings(settings.lineOfficialAccount),
     websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
     memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
     aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),
@@ -11777,6 +11827,7 @@ const validateOnlineOrdering = (input: unknown): {
       tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
       storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
       googleBusinessProfile: normalizeGoogleBusinessProfileSettings(settings.googleBusinessProfile),
+      lineOfficialAccount: normalizeLineOfficialAccountSettings(settings.lineOfficialAccount),
       websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
       memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
       aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),

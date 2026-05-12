@@ -917,6 +917,23 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'line-official-account',
+    category: 'online',
+    title: 'LINE 官方帳號整合',
+    summary: '後台可保存 LINE OA 綁定狀態、點餐入口、訂單狀態通知與會員分眾前置檢查。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「LINE 官方帳號」記錄是否已完成綁定、官方帳號 ID、LINE OA 連結、點餐入口網址、LIFF ID 與 Channel ID。',
+      '前置檢查會提示外帶/外送訂餐入口、會員專區、外帶/外送強制登入與 LINE OA 綁定資料是否齊全。',
+      '開啟「訂單狀態 LINE 通知」只保存門市設定與狀態，不會直接代替 LINE Messaging API 發送訊息。',
+      '會員分眾可用 LINE 名單會和會員廣告分眾的 LINE 可觸及數對齊；LINE 推播仍需注意官方帳號訊息用量。',
+      '若設定點餐入口或 LINE OA 連結，消費者線上點餐頁會顯示 LINE 官方帳號入口，方便客人回到門市 LINE。',
+      '設定存在 `online_ordering.lineOfficialAccount`，換平板、重開 App 或 fresh reinstall 後仍從 runtime 還原。',
+    ],
+    keywords: ['LINE OA', 'LINE 官方帳號', 'LIFF', 'Channel ID', '訂單狀態通知', '會員分眾', '強制登入', '訊息用量', 'iCHEF'],
+    target: 'online',
+  },
+  {
     id: 'google-business-profile',
     category: 'online',
     title: 'Google 商家檔案整合',

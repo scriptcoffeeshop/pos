@@ -11080,6 +11080,16 @@ button.cart-line-summary:focus-visible {
   color: var(--primary-dark);
 }
 
+.consumer-status-line a {
+  color: inherit;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.consumer-status-line a:hover {
+  text-decoration: underline;
+}
+
 .consumer-store-notice {
   display: grid;
   gap: 5px;

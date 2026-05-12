@@ -1591,6 +1591,18 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     businessHoursNote: '',
     menuPhotoDataUrls: [],
   },
+  lineOfficialAccount: {
+    connected: false,
+    officialAccountId: '',
+    displayName: 'Script Coffee',
+    profileUrl: '',
+    orderEntryUrl: '',
+    liffId: '',
+    channelId: '',
+    orderStatusNotifications: true,
+    marketingAudienceEnabled: true,
+    messageQuotaNote: '',
+  },
   notificationRouting: {
     stations: [],
   },
@@ -1882,6 +1894,31 @@ const normalizeGoogleBusinessProfileSettings = (
     orderUrl: sanitizeOnlineUrl(settings.orderUrl),
     businessHoursNote: sanitizeOnlineLongText(settings.businessHoursNote, 500, defaults.businessHoursNote),
     menuPhotoDataUrls: normalizeImageDataUrls(settings.menuPhotoDataUrls, 8),
+  }
+}
+
+const normalizeLineOfficialAccountSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().lineOfficialAccount,
+): OnlineOrderingSettings['lineOfficialAccount'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['lineOfficialAccount']>
+  return {
+    connected: settings.connected === true,
+    officialAccountId: sanitizeOnlineLongText(settings.officialAccountId, 80, defaults.officialAccountId),
+    displayName:
+      sanitizeOnlineLongText(settings.displayName, 80) ||
+      defaults.displayName,
+    profileUrl: sanitizeOnlineUrl(settings.profileUrl),
+    orderEntryUrl: sanitizeOnlineUrl(settings.orderEntryUrl),
+    liffId: sanitizeOnlineLongText(settings.liffId, 80, defaults.liffId),
+    channelId: sanitizeOnlineLongText(settings.channelId, 80, defaults.channelId),
+    orderStatusNotifications: settings.orderStatusNotifications !== false,
+    marketingAudienceEnabled: settings.marketingAudienceEnabled !== false,
+    messageQuotaNote: sanitizeOnlineLongText(settings.messageQuotaNote, 240, defaults.messageQuotaNote),
   }
 }
 
@@ -2477,6 +2514,10 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     googleBusinessProfile: normalizeGoogleBusinessProfileSettings(
       settings.googleBusinessProfile,
       defaults.googleBusinessProfile,
+    ),
+    lineOfficialAccount: normalizeLineOfficialAccountSettings(
+      settings.lineOfficialAccount,
+      defaults.lineOfficialAccount,
     ),
     websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(
       settings.websiteAppearance,
