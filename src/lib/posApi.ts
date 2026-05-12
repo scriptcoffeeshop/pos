@@ -1535,6 +1535,18 @@ export const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
     logoDataUrl: '',
   },
+  websiteAppearance: {
+    themeColor: 'green',
+    defaultMenuDisplay: 'list',
+  },
+  memberPortal: {
+    enabled: true,
+    requireLoginForTakeoutDelivery: false,
+    requireLoginForDineInQr: false,
+  },
+  aiMenuTranslation: {
+    enabled: false,
+  },
   storeProfile: {
     name: 'Script Coffee',
     phone: '',
@@ -1561,6 +1573,18 @@ const reservationTimePattern = /^\d{2}:\d{2}$/
 const reservationDatePattern = /^\d{4}-\d{2}-\d{2}$/
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
 const paymentMethodIds: PaymentMethod[] = ['line-pay', 'jkopay', 'cash', 'card', 'app91-card', 'transfer']
+const onlineWebsiteThemeColors: Array<OnlineOrderingSettings['websiteAppearance']['themeColor']> = [
+  'classic',
+  'green',
+  'orange',
+  'yellow',
+  'purple',
+  'blue',
+  'rose',
+  'brown',
+  'slate',
+]
+const onlineMenuDisplayModes: Array<OnlineOrderingSettings['websiteAppearance']['defaultMenuDisplay']> = ['list', 'grid']
 const orderLabelNameMaxLength = 15
 const orderLabelCatalogMaxCount = 30
 
@@ -1702,6 +1726,55 @@ const normalizeTableQrCodeSettings = (
       typeof settings.logoDataUrl === 'string' && settings.logoDataUrl.startsWith('data:image/')
         ? settings.logoDataUrl.slice(0, 120_000)
         : '',
+  }
+}
+
+const normalizeOnlineWebsiteAppearanceSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().websiteAppearance,
+): OnlineOrderingSettings['websiteAppearance'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['websiteAppearance']>
+  return {
+    themeColor: onlineWebsiteThemeColors.includes(settings.themeColor ?? defaults.themeColor)
+      ? (settings.themeColor ?? defaults.themeColor)
+      : defaults.themeColor,
+    defaultMenuDisplay: onlineMenuDisplayModes.includes(settings.defaultMenuDisplay ?? defaults.defaultMenuDisplay)
+      ? (settings.defaultMenuDisplay ?? defaults.defaultMenuDisplay)
+      : defaults.defaultMenuDisplay,
+  }
+}
+
+const normalizeOnlineMemberPortalSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().memberPortal,
+): OnlineOrderingSettings['memberPortal'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['memberPortal']>
+  return {
+    enabled: settings.enabled !== false,
+    requireLoginForTakeoutDelivery: settings.requireLoginForTakeoutDelivery === true,
+    requireLoginForDineInQr: settings.requireLoginForDineInQr === true,
+  }
+}
+
+const normalizeOnlineAiMenuTranslationSettings = (
+  value: unknown,
+  defaults = defaultOnlineOrderingSettings().aiMenuTranslation,
+): OnlineOrderingSettings['aiMenuTranslation'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...defaults }
+  }
+
+  const settings = value as Partial<OnlineOrderingSettings['aiMenuTranslation']>
+  return {
+    enabled: settings.enabled === true,
   }
 }
 
@@ -2327,6 +2400,15 @@ const normalizeOnlineOrderingSettings = (value: unknown): OnlineOrderingSettings
     commentFields: normalizeCommentFieldSettings(settings.commentFields, defaults.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode, defaults.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile, defaults.storeProfile),
+    websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(
+      settings.websiteAppearance,
+      defaults.websiteAppearance,
+    ),
+    memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal, defaults.memberPortal),
+    aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(
+      settings.aiMenuTranslation,
+      defaults.aiMenuTranslation,
+    ),
     notificationRouting: normalizeOnlineNotificationRoutingSettings(
       settings.notificationRouting,
       defaults.notificationRouting,

@@ -5,8 +5,11 @@ import {
   Clock3,
   CreditCard,
   Info,
+  Languages,
   LayoutGrid,
   List,
+  LogIn,
+  LogOut,
   Minus,
   Plus,
   Search,
@@ -33,6 +36,7 @@ import {
   fetchRuntimeSettings,
   isPosApiConfigured,
   normalizeEngagementSettings,
+  searchPosMembers,
 } from '../lib/posApi'
 import { subscribeToPosRealtimeEvents } from '../lib/posRealtime'
 import type {
@@ -49,12 +53,14 @@ import type {
   OnlineMenuOptionGroup,
   OnlineOrderingSettings,
   PaymentMethod,
+  PosMember,
   PosOrder,
   ServiceMode,
 } from '../types/pos'
 
 type CategoryFilter = 'all' | MenuCategory
 type DisplayMode = 'list' | 'grid'
+type TranslationLocale = 'en' | 'ja' | 'ko' | 'vi' | 'th' | 'id' | 'ms' | 'fil'
 type OptionSelectionMap = Record<string, string[]>
 type ComboSelectionMap = Record<string, Record<string, number>>
 type ComboOptionSelectionMap = Record<string, Record<string, OptionSelectionMap>>
@@ -95,6 +101,32 @@ const fallbackPaymentOptions: Array<{ value: PaymentMethod; label: string }> = [
 const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(['line-pay', 'jkopay', 'card', 'app91-card'])
 const paymentAllowedForServiceMode = (method: PaymentMethod, mode: ServiceMode): boolean =>
   mode !== 'delivery' || deliveryOnlinePaymentMethods.has(method)
+const websiteThemeTokens: Record<OnlineOrderingSettings['websiteAppearance']['themeColor'], {
+  primary: string
+  primaryDark: string
+  primarySoft: string
+  accent: string
+}> = {
+  green: { primary: '#0f766e', primaryDark: '#115e59', primarySoft: '#ccfbf1', accent: '#14b8a6' },
+  classic: { primary: '#202124', primaryDark: '#111827', primarySoft: '#e5e7eb', accent: '#4b5563' },
+  orange: { primary: '#c2410c', primaryDark: '#9a3412', primarySoft: '#ffedd5', accent: '#f97316' },
+  yellow: { primary: '#a16207', primaryDark: '#854d0e', primarySoft: '#fef3c7', accent: '#eab308' },
+  purple: { primary: '#7c3aed', primaryDark: '#5b21b6', primarySoft: '#ede9fe', accent: '#8b5cf6' },
+  blue: { primary: '#2563eb', primaryDark: '#1d4ed8', primarySoft: '#dbeafe', accent: '#60a5fa' },
+  rose: { primary: '#be123c', primaryDark: '#9f1239', primarySoft: '#ffe4e6', accent: '#fb7185' },
+  brown: { primary: '#7c2d12', primaryDark: '#431407', primarySoft: '#ffedd5', accent: '#a16207' },
+  slate: { primary: '#475569', primaryDark: '#334155', primarySoft: '#e2e8f0', accent: '#64748b' },
+}
+const translationLanguageOptions: Array<{ value: TranslationLocale; label: string }> = [
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+  { value: 'ko', label: '한국어' },
+  { value: 'vi', label: 'Tiếng Việt' },
+  { value: 'th', label: 'ไทย' },
+  { value: 'id', label: 'Bahasa Indonesia' },
+  { value: 'ms', label: 'Bahasa Melayu' },
+  { value: 'fil', label: 'Filipino' },
+]
 const urlParams = new URLSearchParams(globalThis.location?.search ?? '')
 const consumerOrderSource = urlParams.get('source') === 'qr' ? 'qr' : 'online'
 const qrSessionOrderId = urlParams.get('order')?.trim() ?? ''
@@ -106,6 +138,7 @@ const qrTableDisplayLabel = [qrFloorLabel, qrTableLabel].filter(Boolean).join(' 
 const selectedCategory = ref<CategoryFilter>('all')
 const searchTerm = ref('')
 const displayMode = ref<DisplayMode>('list')
+const displayModeTouched = ref(false)
 const serviceMode = ref<ServiceMode>(urlParams.get('mode') === 'dine-in' || qrTableLabel ? 'dine-in' : 'takeout')
 const paymentMethod = ref<PaymentMethod>('line-pay')
 const brandLogoSrc = `${import.meta.env.BASE_URL}assets/script-coffee-logo.png`
@@ -122,6 +155,11 @@ const storeNoticeExpanded = ref(false)
 const orderMessage = ref('讀取線上菜單中')
 const formError = ref('')
 const lastOrder = ref<PosOrder | null>(null)
+const linkedMember = ref<PosMember | null>(null)
+const memberPortalMessage = ref('')
+const isMemberLookupLoading = ref(false)
+const translationLanguage = ref<TranslationLocale>('en')
+const aiTranslationRequested = ref(false)
 const optionPanelItem = ref<MenuItem | null>(null)
 const optionSelections = ref<OptionSelectionMap>({})
 const comboSelections = ref<ComboSelectionMap>({})
@@ -280,6 +318,20 @@ const activeStoreCoverImage = computed(() => {
   return images[storeCoverIndex.value % images.length] ?? images[0] ?? ''
 })
 const storeNoticeOpen = computed(() => onlineStoreProfile.value.noticeExpanded || storeNoticeExpanded.value)
+const consumerThemeStyle = computed<Record<string, string>>(() => {
+  const tokens = websiteThemeTokens[onlineOrdering.value.websiteAppearance.themeColor] ?? websiteThemeTokens.green
+  return {
+    '--primary': tokens.primary,
+    '--primary-dark': tokens.primaryDark,
+    '--primary-soft': tokens.primarySoft,
+    '--consumer-theme-accent': tokens.accent,
+    '--consumer-theme-soft': tokens.primarySoft,
+  }
+})
+const selectedTranslationLanguage = computed(() =>
+  translationLanguageOptions.find((option) => option.value === translationLanguage.value) ??
+  { value: 'en', label: 'English' },
+)
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
@@ -356,6 +408,32 @@ const dineInCheckoutPrepaid = computed(() =>
   isQrDineInOrder.value && onlineOrdering.value.dineInCheckout.mode === 'prepaid',
 )
 const requiresPaymentSelection = computed(() => !dineInCheckoutPostpaid.value)
+const memberPortalRequired = computed(() => {
+  const memberPortal = onlineOrdering.value.memberPortal
+  if (!memberPortal.enabled) {
+    return false
+  }
+
+  if (consumerOrderSource === 'qr' && serviceMode.value === 'dine-in') {
+    return memberPortal.requireLoginForDineInQr
+  }
+
+  return serviceMode.value === 'takeout' || serviceMode.value === 'delivery'
+    ? memberPortal.requireLoginForTakeoutDelivery
+    : false
+})
+const memberPortalSatisfied = computed(() => !memberPortalRequired.value || customer.memberId !== null)
+const memberPortalRequirementMessage = computed(() =>
+  serviceMode.value === 'dine-in'
+    ? '內用掃碼點餐需先登入會員'
+    : '外帶/外送訂餐需先登入會員',
+)
+const memberPortalStatusLabel = computed(() => {
+  if (customer.memberId) {
+    return `${customer.customerType || '會員'} · ${customer.pointsBalance} 點`
+  }
+  return memberPortalRequired.value ? '需登入會員' : '可登入會員'
+})
 const qrDineInTimeLimit = computed(() =>
   isQrDineInOrder.value
     ? calculateDineInTimeLimitWindow(
@@ -534,11 +612,73 @@ const requestedFulfillmentError = (): string | null => {
 
   return null
 }
+const normalizeMemberPhoneKey = (value: string): string => value.replace(/[\s\-().]/g, '').trim()
+const applyMemberPortalLogin = (member: PosMember): void => {
+  linkedMember.value = member
+  customer.memberId = member.id
+  customer.customerType = member.customerType
+  customer.pointsBalance = member.pointsBalance
+  customer.availableCoupons = member.coupons.filter((coupon) => coupon.status === 'active')
+  customer.phone = member.phone || customer.phone
+  if (!customer.name.trim()) {
+    customer.name = member.displayName || customer.name
+  }
+  memberPortalMessage.value = `${member.displayName || member.phone || '會員'} · ${member.pointsBalance} 點`
+}
+const linkMemberPortal = async (): Promise<void> => {
+  const keyword = customer.phone.trim()
+  if (!keyword) {
+    memberPortalMessage.value = '請先輸入電話'
+    return
+  }
+
+  isMemberLookupLoading.value = true
+  memberPortalMessage.value = ''
+
+  try {
+    const members = await searchPosMembers(keyword, 8)
+    const phoneKey = normalizeMemberPhoneKey(keyword)
+    const member = members.find((entry) => normalizeMemberPhoneKey(entry.phone) === phoneKey) ?? null
+    if (!member) {
+      customer.memberId = null
+      linkedMember.value = null
+      memberPortalMessage.value = '查無相同電話會員'
+      return
+    }
+
+    applyMemberPortalLogin(member)
+  } catch (error) {
+    memberPortalMessage.value = error instanceof Error ? error.message : '會員查詢失敗'
+  } finally {
+    isMemberLookupLoading.value = false
+  }
+}
+const clearMemberPortal = (): void => {
+  linkedMember.value = null
+  customer.memberId = null
+  customer.customerType = '一般顧客'
+  customer.pointsBalance = 0
+  customer.availableCoupons = []
+  memberPortalMessage.value = ''
+}
+const applyDefaultDisplayMode = (): void => {
+  if (!displayModeTouched.value) {
+    displayMode.value = onlineOrdering.value.websiteAppearance.defaultMenuDisplay
+  }
+}
+const setDisplayMode = (mode: DisplayMode): void => {
+  displayMode.value = mode
+  displayModeTouched.value = true
+}
+const activateAiTranslation = (): void => {
+  aiTranslationRequested.value = true
+}
 const canSubmit = computed(() =>
   canOrderOnline.value &&
   cartLines.value.length > 0 &&
   customer.name.trim().length > 0 &&
   customer.phone.trim().length > 0 &&
+  memberPortalSatisfied.value &&
   (!orderNoteRequired.value || customer.note.trim().length > 0) &&
   (!requiresPaymentSelection.value || paymentOptions.value.some((option) => option.value === paymentMethod.value)) &&
   onlineBenefitPaymentError.value === null &&
@@ -1080,6 +1220,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
   try {
     if (!isPosApiConfigured) {
       onlineOrdering.value = defaultOnlineOrderingSettings()
+      applyDefaultDisplayMode()
       engagementSettings.value = defaultEngagementSettings()
       discountSettings.value = defaultDiscountSettings()
       menuCatalog.value = onlineFallbackMenu()
@@ -1092,6 +1233,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
       fetchProducts(consumerOrderSource === 'qr' ? 'qr' : 'online'),
     ])
     onlineOrdering.value = runtimeSettings.onlineOrdering
+    applyDefaultDisplayMode()
     engagementSettings.value = normalizeEngagementSettings(runtimeSettings.engagementSettings)
     discountSettings.value = normalizeDiscountSettings(runtimeSettings.discountSettings)
     menuCatalog.value = products
@@ -1100,6 +1242,7 @@ const loadOnlineMenu = async (quiet = false): Promise<void> => {
       : `僅菜單瀏覽 · ${onlineOrdering.value.pauseMessage}`
   } catch (error) {
     onlineOrdering.value = defaultOnlineOrderingSettings()
+    applyDefaultDisplayMode()
     engagementSettings.value = defaultEngagementSettings()
     discountSettings.value = defaultDiscountSettings()
     menuCatalog.value = onlineFallbackMenu()
@@ -1136,6 +1279,11 @@ const submitOnlineOrder = async (): Promise<void> => {
 
   if (!deliveryMinimumMet.value) {
     formError.value = `外送最低金額為 ${formatCurrency(deliveryMinimumSubtotal.value)}`
+    return
+  }
+
+  if (!memberPortalSatisfied.value) {
+    formError.value = memberPortalRequirementMessage.value
     return
   }
 
@@ -1194,7 +1342,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     electronicInvoiceIssuedAt: null,
     electronicInvoiceVoidedAt: null,
     electronicInvoiceUploadDueAt: null,
-    memberId: null,
+    memberId: customer.memberId,
     note: [
       qrFloorLabel ? `樓層 ${qrFloorLabel}` : '',
       qrTableLabel ? `桌位 ${qrTableLabel}` : '',
@@ -1338,6 +1486,33 @@ watch(
 )
 
 watch(
+  () => customer.phone,
+  (phone) => {
+    if (linkedMember.value && normalizeMemberPhoneKey(linkedMember.value.phone) !== normalizeMemberPhoneKey(phone)) {
+      clearMemberPortal()
+    }
+  },
+)
+
+watch(
+  () => onlineOrdering.value.memberPortal.enabled,
+  (enabled) => {
+    if (!enabled) {
+      clearMemberPortal()
+    }
+  },
+)
+
+watch(
+  () => onlineOrdering.value.aiMenuTranslation.enabled,
+  (enabled) => {
+    if (!enabled) {
+      aiTranslationRequested.value = false
+    }
+  },
+)
+
+watch(
   () => onlineStoreProfile.value.notice,
   () => {
     storeNoticeExpanded.value = false
@@ -1358,7 +1533,7 @@ watch(
 </script>
 
 <template>
-  <section class="consumer-shell" aria-label="線上點餐">
+  <section class="consumer-shell" :style="consumerThemeStyle" aria-label="線上點餐">
     <section class="consumer-storefront">
       <div class="consumer-cover" :class="{ 'consumer-cover--photo': activeStoreCoverImage }" aria-hidden="true">
         <img :src="activeStoreCoverImage || brandLogoSrc" alt="" />
@@ -1424,7 +1599,7 @@ watch(
             type="button"
             title="格狀"
             :class="{ 'consumer-layout-button--active': displayMode === 'grid' }"
-            @click="displayMode = 'grid'"
+            @click="setDisplayMode('grid')"
           >
             <LayoutGrid :size="18" aria-hidden="true" />
           </button>
@@ -1432,7 +1607,7 @@ watch(
             type="button"
             title="列表"
             :class="{ 'consumer-layout-button--active': displayMode === 'list' }"
-            @click="displayMode = 'list'"
+            @click="setDisplayMode('list')"
           >
             <List :size="18" aria-hidden="true" />
           </button>
@@ -1443,6 +1618,19 @@ watch(
         <Search :size="18" aria-hidden="true" />
         <input v-model="searchTerm" type="search" placeholder="搜尋咖啡、茶飲或輕食" />
       </label>
+
+      <div v-if="onlineOrdering.aiMenuTranslation.enabled" class="consumer-translation-bar">
+        <Languages :size="18" aria-hidden="true" />
+        <select v-model="translationLanguage" @change="aiTranslationRequested = false">
+          <option v-for="language in translationLanguageOptions" :key="language.value" :value="language.value">
+            {{ language.label }}
+          </option>
+        </select>
+        <button type="button" @click="activateAiTranslation">
+          翻譯
+        </button>
+        <span v-if="aiTranslationRequested">{{ selectedTranslationLanguage.label }}</span>
+      </div>
 
       <div class="consumer-category-rail" aria-label="線上菜單分類">
         <button
@@ -1594,6 +1782,31 @@ watch(
       <p v-if="dineInCheckoutDetail" class="consumer-checkout-instructions">
         {{ dineInCheckoutDetail }}
       </p>
+
+      <div
+        v-if="onlineOrdering.memberPortal.enabled"
+        class="consumer-member-portal"
+        :class="{ 'consumer-member-portal--required': memberPortalRequired && !customer.memberId }"
+      >
+        <div>
+          <span>會員專區</span>
+          <strong>{{ memberPortalStatusLabel }}</strong>
+          <small v-if="memberPortalRequired && !customer.memberId">{{ memberPortalRequirementMessage }}</small>
+          <small v-else-if="linkedMember">{{ linkedMember.displayName || linkedMember.phone }}</small>
+        </div>
+        <div class="consumer-member-actions">
+          <button class="secondary-button" type="button" :disabled="isMemberLookupLoading" @click="linkMemberPortal">
+            <LogIn v-if="!isMemberLookupLoading" :size="16" aria-hidden="true" />
+            <Clock3 v-else :size="16" aria-hidden="true" />
+            {{ isMemberLookupLoading ? '查詢中' : '登入' }}
+          </button>
+          <button v-if="customer.memberId" class="secondary-button" type="button" @click="clearMemberPortal">
+            <LogOut :size="16" aria-hidden="true" />
+            登出
+          </button>
+        </div>
+        <p v-if="memberPortalMessage">{{ memberPortalMessage }}</p>
+      </div>
 
       <div class="customer-grid consumer-customer-grid">
         <label>

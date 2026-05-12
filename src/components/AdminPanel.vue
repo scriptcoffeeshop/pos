@@ -87,9 +87,11 @@ import type {
   MemberAudienceRuleSetting,
   MenuCategory,
   MenuItem,
+  OnlineMenuDisplayMode,
   OnlineOrderingSettings,
   OnlineDineInTimeLimitRule,
   OnlineScheduledOrderTimeWindow,
+  OnlineWebsiteThemeColor,
   OrderSource,
   PrinterSettings,
   PosAuditEvent,
@@ -474,6 +476,18 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     logoText: 'Script Coffee',
     logoDataUrl: '',
   },
+  websiteAppearance: {
+    themeColor: 'green',
+    defaultMenuDisplay: 'list',
+  },
+  memberPortal: {
+    enabled: true,
+    requireLoginForTakeoutDelivery: false,
+    requireLoginForDineInQr: false,
+  },
+  aiMenuTranslation: {
+    enabled: false,
+  },
   storeProfile: {
     name: 'Script Coffee',
     phone: '',
@@ -561,6 +575,26 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
       typeof settings.tableQrCode?.logoDataUrl === 'string' && settings.tableQrCode.logoDataUrl.startsWith('data:image/')
         ? settings.tableQrCode.logoDataUrl.slice(0, 120_000)
         : '',
+  },
+  websiteAppearance: {
+    ...defaultOnlineOrderingSettings().websiteAppearance,
+    ...(settings.websiteAppearance ?? {}),
+    themeColor: websiteThemeColorOptions.some((option) => option.value === settings.websiteAppearance?.themeColor)
+      ? settings.websiteAppearance.themeColor
+      : defaultOnlineOrderingSettings().websiteAppearance.themeColor,
+    defaultMenuDisplay: settings.websiteAppearance?.defaultMenuDisplay === 'grid' ? 'grid' : 'list',
+  },
+  memberPortal: {
+    ...defaultOnlineOrderingSettings().memberPortal,
+    ...(settings.memberPortal ?? {}),
+    enabled: settings.memberPortal?.enabled !== false,
+    requireLoginForTakeoutDelivery: settings.memberPortal?.requireLoginForTakeoutDelivery === true,
+    requireLoginForDineInQr: settings.memberPortal?.requireLoginForDineInQr === true,
+  },
+  aiMenuTranslation: {
+    ...defaultOnlineOrderingSettings().aiMenuTranslation,
+    ...(settings.aiMenuTranslation ?? {}),
+    enabled: settings.aiMenuTranslation?.enabled === true,
   },
   storeProfile: {
     ...defaultOnlineOrderingSettings().storeProfile,
@@ -1046,6 +1080,22 @@ const stationOptions = computed(() => {
 const stationNameForId = (stationId: string): string =>
   stationOptions.value.find((station) => station.id === stationId)?.name ?? '目前出單機'
 
+const websiteThemeColorOptions: Array<{ value: OnlineWebsiteThemeColor; label: string; swatch: string }> = [
+  { value: 'green', label: '共容綠', swatch: '#0f766e' },
+  { value: 'classic', label: '經典黑', swatch: '#202124' },
+  { value: 'orange', label: '暖橘', swatch: '#c2410c' },
+  { value: 'yellow', label: '亮黃', swatch: '#a16207' },
+  { value: 'purple', label: '紫韻', swatch: '#7c3aed' },
+  { value: 'blue', label: '海藍', swatch: '#2563eb' },
+  { value: 'rose', label: '玫瑰', swatch: '#be123c' },
+  { value: 'brown', label: '咖啡', swatch: '#7c2d12' },
+  { value: 'slate', label: '石板灰', swatch: '#475569' },
+]
+const onlineMenuDisplayOptions: Array<{ value: OnlineMenuDisplayMode; label: string }> = [
+  { value: 'list', label: '列表' },
+  { value: 'grid', label: '格狀' },
+]
+
 const printerRulesInPrintOrder = (settings: PrinterSettings): PrintRuleSetting[] => {
   if (settings.stations.length === 0) {
     return settings.rules
@@ -1061,6 +1111,12 @@ const printerRuleRows = computed<PrintRuleSetting[]>(() => printerRulesInPrintOr
 
 const tableQrThemeLabel = computed(() =>
   tableQrThemeOptions.find((option) => option.value === onlineOrdering.value.tableQrCode.theme)?.label ?? '經典黑色',
+)
+const websiteThemeColorLabel = computed(() =>
+  websiteThemeColorOptions.find((option) => option.value === onlineOrdering.value.websiteAppearance.themeColor)?.label ?? '共容綠',
+)
+const onlineMenuDisplayLabel = computed(() =>
+  onlineMenuDisplayOptions.find((option) => option.value === onlineOrdering.value.websiteAppearance.defaultMenuDisplay)?.label ?? '列表',
 )
 const tableQrFloorIndex = computed(() =>
   new Map(floorPlan.value.floors.map((floor, index) => [floor.id, index])),
@@ -3219,6 +3275,20 @@ const saveOnlineOrdering = async (): Promise<void> => {
             ? onlineOrdering.value.tableQrCode.logoDataUrl.slice(0, 120_000)
             : '',
         },
+        websiteAppearance: {
+          themeColor: websiteThemeColorOptions.some((option) => option.value === onlineOrdering.value.websiteAppearance.themeColor)
+            ? onlineOrdering.value.websiteAppearance.themeColor
+            : defaultOnlineOrderingSettings().websiteAppearance.themeColor,
+          defaultMenuDisplay: onlineOrdering.value.websiteAppearance.defaultMenuDisplay === 'grid' ? 'grid' : 'list',
+        },
+        memberPortal: {
+          enabled: Boolean(onlineOrdering.value.memberPortal.enabled),
+          requireLoginForTakeoutDelivery: Boolean(onlineOrdering.value.memberPortal.requireLoginForTakeoutDelivery),
+          requireLoginForDineInQr: Boolean(onlineOrdering.value.memberPortal.requireLoginForDineInQr),
+        },
+        aiMenuTranslation: {
+          enabled: Boolean(onlineOrdering.value.aiMenuTranslation.enabled),
+        },
         storeProfile: {
           name:
             onlineOrdering.value.storeProfile.name.trim().slice(0, 60) ||
@@ -4338,6 +4408,21 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ onlineOrdering.storeProfile.coverImageDataUrls.length }} 張封面圖</small>
           </article>
           <article>
+            <span>網站外觀</span>
+            <strong>{{ websiteThemeColorLabel }}</strong>
+            <small>預設菜單 {{ onlineMenuDisplayLabel }}</small>
+          </article>
+          <article>
+            <span>會員專區</span>
+            <strong>{{ onlineOrdering.memberPortal.enabled ? '已開啟' : '已關閉' }}</strong>
+            <small>{{ onlineOrdering.memberPortal.requireLoginForTakeoutDelivery || onlineOrdering.memberPortal.requireLoginForDineInQr ? '有通路需登入' : '未強制登入' }}</small>
+          </article>
+          <article>
+            <span>AI 菜單翻譯</span>
+            <strong>{{ onlineOrdering.aiMenuTranslation.enabled ? '已開啟' : '已關閉' }}</strong>
+            <small>只套用雲端餐廳網站</small>
+          </article>
+          <article>
             <span>平均備餐</span>
             <strong>{{ onlineOrdering.averagePrepMinutes }} 分</strong>
             <small>顯示於消費者頁並作為預約最早時間參考</small>
@@ -4383,6 +4468,63 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ onlineOrdering.commentFields.itemNotes === 'hidden' ? '隱藏餐點備註' : '顯示餐點備註' }}</small>
           </article>
         </div>
+
+        <section class="admin-subpanel">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Online Store</p>
+              <h3>網站與會員設定</h3>
+            </div>
+          </div>
+
+          <div class="admin-online-settings-grid">
+            <label>
+              主題色
+              <select v-model="onlineOrdering.websiteAppearance.themeColor">
+                <option v-for="theme in websiteThemeColorOptions" :key="theme.value" :value="theme.value">
+                  {{ theme.label }}
+                </option>
+              </select>
+              <small>對齊 iCHEF 雲端餐廳網站的主題色，儲存後消費者頁即時套用。</small>
+            </label>
+            <label>
+              預設菜單樣式
+              <select v-model="onlineOrdering.websiteAppearance.defaultMenuDisplay">
+                <option v-for="display in onlineMenuDisplayOptions" :key="display.value" :value="display.value">
+                  {{ display.label }}
+                </option>
+              </select>
+              <small>消費者仍可在菜單頁自行切換列表或格狀。</small>
+            </label>
+          </div>
+
+          <div class="admin-online-toggle-grid">
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.memberPortal.enabled" type="checkbox" />
+              會員專區
+            </label>
+            <label class="toggle-row">
+              <input
+                v-model="onlineOrdering.memberPortal.requireLoginForTakeoutDelivery"
+                type="checkbox"
+                :disabled="!onlineOrdering.memberPortal.enabled"
+              />
+              外帶/外送訂餐強制登入
+            </label>
+            <label class="toggle-row">
+              <input
+                v-model="onlineOrdering.memberPortal.requireLoginForDineInQr"
+                type="checkbox"
+                :disabled="!onlineOrdering.memberPortal.enabled"
+              />
+              內用掃碼點餐強制登入
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.aiMenuTranslation.enabled" type="checkbox" />
+              AI 菜單翻譯
+            </label>
+          </div>
+        </section>
 
         <section class="admin-subpanel">
           <div class="admin-subpanel-heading">

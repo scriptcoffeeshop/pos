@@ -31,6 +31,8 @@ type OnlineDineInCheckoutMode = "prepaid" | "postpaid";
 type OnlineItemCommentMode = "hidden" | "shown";
 type OnlineOrderCommentMode = "hidden" | "optional" | "required";
 type OnlineTableQrTheme = "black" | "green" | "orange" | "yellow" | "purple";
+type OnlineWebsiteThemeColor = "classic" | "green" | "orange" | "yellow" | "purple" | "blue" | "rose" | "brown" | "slate";
+type OnlineMenuDisplayMode = "list" | "grid";
 type InventoryRecordAction = "purchase" | "return" | "consumption" | "scrapped" | "count";
 type InventoryConsumptionSubject = "product" | "option";
 
@@ -671,6 +673,21 @@ interface OnlineStoreProfileSettings {
   coverImageDataUrls: string[];
 }
 
+interface OnlineWebsiteAppearanceSettings {
+  themeColor: OnlineWebsiteThemeColor;
+  defaultMenuDisplay: OnlineMenuDisplayMode;
+}
+
+interface OnlineMemberPortalSettings {
+  enabled: boolean;
+  requireLoginForTakeoutDelivery: boolean;
+  requireLoginForDineInQr: boolean;
+}
+
+interface OnlineAiMenuTranslationSettings {
+  enabled: boolean;
+}
+
 type OnlineNotificationRepeatMode = "once" | "continuous";
 type ProductSupplyStatus = "normal" | "online-stopped" | "stopped";
 type OnlineServiceModeAvailability = Record<ServiceMode, boolean>;
@@ -723,6 +740,9 @@ interface OnlineOrderingSettings {
   commentFields: OnlineCommentFieldSettings;
   tableQrCode: OnlineTableQrCodeSettings;
   storeProfile: OnlineStoreProfileSettings;
+  websiteAppearance: OnlineWebsiteAppearanceSettings;
+  memberPortal: OnlineMemberPortalSettings;
+  aiMenuTranslation: OnlineAiMenuTranslationSettings;
   notificationRouting: OnlineNotificationRoutingSettings;
   pauseMessage: string;
   menuCategories: OnlineMenuCategory[];
@@ -1525,6 +1545,18 @@ const defaultOnlineOrdering: OnlineOrderingSettings = {
     theme: "black",
     logoText: "Script Coffee",
     logoDataUrl: "",
+  },
+  websiteAppearance: {
+    themeColor: "green",
+    defaultMenuDisplay: "list",
+  },
+  memberPortal: {
+    enabled: true,
+    requireLoginForTakeoutDelivery: false,
+    requireLoginForDineInQr: false,
+  },
+  aiMenuTranslation: {
+    enabled: false,
   },
   storeProfile: {
     name: "Script Coffee",
@@ -5321,6 +5353,12 @@ api.post("/orders", async (c) => {
     if (!onlineOrdering.serviceModeAvailability[serviceMode]) {
       return c.json({ error: "Selected service mode is disabled" }, 409);
     }
+    if (onlineMemberPortalRequiresLogin(onlineOrdering, orderSource, serviceMode)) {
+      const memberLoginError = await validateOnlineMemberLogin(normalizeUuid(input.memberId));
+      if (memberLoginError) {
+        return c.json({ error: memberLoginError }, 409);
+      }
+    }
     const commentFieldError = applyOnlineCommentFieldRules(input, onlineOrdering.commentFields);
     if (commentFieldError) {
       return c.json({ error: commentFieldError }, 409);
@@ -8012,6 +8050,18 @@ const normalizeRequestedFulfillmentAt = (value: unknown): string | null => {
 const serviceModes: ServiceMode[] = ["dine-in", "takeout", "delivery"];
 const paymentMethodIds: PaymentMethod[] = ["line-pay", "jkopay", "cash", "card", "app91-card", "transfer"];
 const deliveryOnlinePaymentMethods = new Set<PaymentMethod>(["line-pay", "jkopay", "card", "app91-card"]);
+const onlineWebsiteThemeColors: OnlineWebsiteThemeColor[] = [
+  "classic",
+  "green",
+  "orange",
+  "yellow",
+  "purple",
+  "blue",
+  "rose",
+  "brown",
+  "slate",
+];
+const onlineMenuDisplayModes: OnlineMenuDisplayMode[] = ["list", "grid"];
 const labelModes: PrintLabelMode[] = ["receipt", "label", "both"];
 const defaultPrintRuleTimings: PrintRuleTiming[] = ["order", "reprint"];
 const printRuleTimings: PrintRuleTiming[] = ["order", "reprint", "move", "merge"];
@@ -8032,6 +8082,40 @@ const calculateOnlineDeliveryFee = (subtotal: number, settings: OnlineOrderingSe
     return 0;
   }
   return settings.deliveryFeeAmount;
+};
+const onlineMemberPortalRequiresLogin = (
+  settings: OnlineOrderingSettings,
+  source: OrderSource,
+  serviceMode: ServiceMode,
+): boolean => {
+  if (!settings.memberPortal.enabled) {
+    return false;
+  }
+
+  if (source === "qr" && serviceMode === "dine-in") {
+    return settings.memberPortal.requireLoginForDineInQr;
+  }
+
+  return serviceMode === "takeout" || serviceMode === "delivery"
+    ? settings.memberPortal.requireLoginForTakeoutDelivery
+    : false;
+};
+const validateOnlineMemberLogin = async (memberId: string | null): Promise<string | null> => {
+  if (!memberId) {
+    return "Member login is required for this online ordering channel";
+  }
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("id")
+    .eq("id", memberId)
+    .maybeSingle();
+
+  if (error) {
+    return error.message;
+  }
+
+  return data ? null : "Member login is required for this online ordering channel";
 };
 const serviceChargeRateForMode = (settings: ServiceChargeSettings, serviceMode: ServiceMode): number => {
   if (!settings.enabled) {
@@ -8559,6 +8643,48 @@ const normalizeTableQrCodeSettings = (input: unknown): OnlineTableQrCodeSettings
     logoText: sanitizeText(settings.logoText, defaultOnlineOrdering.tableQrCode.logoText).slice(0, 40) ||
       defaultOnlineOrdering.tableQrCode.logoText,
     logoDataUrl: logoDataUrl.startsWith("data:image/") ? logoDataUrl.slice(0, 120_000) : "",
+  };
+};
+
+const normalizeOnlineWebsiteAppearanceSettings = (input: unknown): OnlineWebsiteAppearanceSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.websiteAppearance };
+  }
+
+  const settings = input as Partial<OnlineWebsiteAppearanceSettings>;
+  return {
+    themeColor: onlineWebsiteThemeColors.includes(settings.themeColor ?? defaultOnlineOrdering.websiteAppearance.themeColor)
+      ? settings.themeColor ?? defaultOnlineOrdering.websiteAppearance.themeColor
+      : defaultOnlineOrdering.websiteAppearance.themeColor,
+    defaultMenuDisplay: onlineMenuDisplayModes.includes(
+        settings.defaultMenuDisplay ?? defaultOnlineOrdering.websiteAppearance.defaultMenuDisplay,
+      )
+      ? settings.defaultMenuDisplay ?? defaultOnlineOrdering.websiteAppearance.defaultMenuDisplay
+      : defaultOnlineOrdering.websiteAppearance.defaultMenuDisplay,
+  };
+};
+
+const normalizeOnlineMemberPortalSettings = (input: unknown): OnlineMemberPortalSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.memberPortal };
+  }
+
+  const settings = input as Partial<OnlineMemberPortalSettings>;
+  return {
+    enabled: settings.enabled !== false,
+    requireLoginForTakeoutDelivery: settings.requireLoginForTakeoutDelivery === true,
+    requireLoginForDineInQr: settings.requireLoginForDineInQr === true,
+  };
+};
+
+const normalizeOnlineAiMenuTranslationSettings = (input: unknown): OnlineAiMenuTranslationSettings => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ...defaultOnlineOrdering.aiMenuTranslation };
+  }
+
+  const settings = input as Partial<OnlineAiMenuTranslationSettings>;
+  return {
+    enabled: settings.enabled === true,
   };
 };
 
@@ -10755,6 +10881,9 @@ const normalizeOnlineOrderingForRuntime = (input: unknown): OnlineOrderingSettin
     commentFields: normalizeCommentFieldSettings(settings.commentFields),
     tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
     storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+    websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
+    memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
+    aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),
     notificationRouting: normalizeOnlineNotificationRoutingSettings(settings.notificationRouting),
     pauseMessage: sanitizeText(settings.pauseMessage, defaultOnlineOrdering.pauseMessage).slice(0, 120),
     menuCategories: normalizeOnlineMenuCategories(settings.menuCategories),
@@ -11143,6 +11272,9 @@ const validateOnlineOrdering = (input: unknown): {
       commentFields: normalizeCommentFieldSettings(settings.commentFields),
       tableQrCode: normalizeTableQrCodeSettings(settings.tableQrCode),
       storeProfile: normalizeOnlineStoreProfileSettings(settings.storeProfile),
+      websiteAppearance: normalizeOnlineWebsiteAppearanceSettings(settings.websiteAppearance),
+      memberPortal: normalizeOnlineMemberPortalSettings(settings.memberPortal),
+      aiMenuTranslation: normalizeOnlineAiMenuTranslationSettings(settings.aiMenuTranslation),
       notificationRouting: normalizeOnlineNotificationRoutingSettings(settings.notificationRouting),
       pauseMessage,
       menuCategories,
