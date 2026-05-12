@@ -432,6 +432,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'payment',
   },
   {
+    id: 'electronic-invoice-report',
+    category: 'payments',
+    title: '電子發票開立紀錄',
+    summary: '後台營運報表可依 iCHEF 電子發票開立紀錄查詢結帳時間、載具/捐贈碼、銷售額、營業稅與目前概況。',
+    steps: [
+      '連點工具箱 6 下進入後台，再到「營運報表」。',
+      '在「電子發票開立紀錄」選擇開始/結束日期；單次查詢不可超過 93 天，資料窗口限近 2 年。',
+      '可依發票狀態、服務方式、訂單來源與人數範圍篩選，對照 iCHEF 的時間、訂單類型與人數篩選。',
+      '紀錄會顯示結帳時間、載具/捐贈碼或統編、銷售額、營業稅、總額、發票號碼、上傳期限與開立/作廢狀態。',
+      '按「匯出發票 CSV」可下載目前篩選結果；目前仍是本系統電子發票帳本，尚未串接財政部正式上傳。',
+    ],
+    keywords: ['電子發票開立紀錄', '營業稅', '銷售額', '統編', '載具', '捐贈碼', 'CSV', '報表分析', 'iCHEF'],
+    target: 'payment',
+  },
+  {
     id: 'fulfillment-alerts',
     category: 'orders',
     title: '任務快篩與取餐/送達時間預警',

@@ -962,6 +962,48 @@ export interface HourlyReportRow {
   total: number
 }
 
+export interface ElectronicInvoiceReportRow {
+  orderId: string
+  orderNumber: string
+  checkoutAt: string
+  source: OrderSource
+  serviceMode: ServiceMode
+  partySize: number
+  carrierOrDonationCode: string
+  taxId: string
+  salesAmount: number
+  taxAmount: number
+  zeroTaxSalesAmount: number
+  taxExemptSalesAmount: number
+  totalAmount: number
+  status: ElectronicInvoiceStatus
+  printMode: ElectronicInvoicePrintMode
+  invoiceNumber: string
+  randomCode: string
+  uploadDueAt: string | null
+}
+
+export interface ElectronicInvoiceReportSummary {
+  totalRecords: number
+  issuedRecords: number
+  voidedRecords: number
+  refundedRecords: number
+  queuedRecords: number
+  failedRecords: number
+  totalSalesAmount: number
+  totalTaxAmount: number
+  totalAmount: number
+}
+
+export interface ElectronicInvoiceReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  summary: ElectronicInvoiceReportSummary
+  rows: ElectronicInvoiceReportRow[]
+}
+
 export interface DailySalesReport {
   date: string
   rangeStart: string

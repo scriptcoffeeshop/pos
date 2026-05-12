@@ -48,6 +48,7 @@ import {
   fetchAdminCloseoutReportDeliveries,
   fetchAdminCoupons,
   fetchAdminDailyReport,
+  fetchAdminElectronicInvoiceReport,
   fetchAdminInventory,
   fetchAdminMembers,
   fetchAdminPaymentEvents,
@@ -73,6 +74,8 @@ import type {
   DailySalesReport,
   DiscountCampaign,
   DiscountSettings,
+  ElectronicInvoiceReport,
+  ElectronicInvoiceStatus,
   FloorPlanSettings,
   InventoryConsumptionRule,
   InventoryItem,
@@ -82,6 +85,7 @@ import type {
   OnlineOrderingSettings,
   OnlineDineInTimeLimitRule,
   OnlineScheduledOrderTimeWindow,
+  OrderSource,
   PrinterSettings,
   PosAuditEvent,
   PosMember,
@@ -746,6 +750,14 @@ const pendingBlacklistedReservationPhone = ref('')
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
 const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
+const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
+const electronicInvoiceReportEndDate = ref(toDateInput())
+const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
+const electronicInvoiceReportServiceMode = ref<ServiceMode | 'all'>('all')
+const electronicInvoiceReportSource = ref<OrderSource | 'all'>('all')
+const electronicInvoiceReportMinPeople = ref<number | null>(null)
+const electronicInvoiceReportMaxPeople = ref<number | null>(null)
+const electronicInvoiceReport = ref<ElectronicInvoiceReport | null>(null)
 const closeoutReportDeliveries = ref<CloseoutReportDelivery[]>([])
 const printerSettings = ref<PrinterSettings>(emptyPrinterSettings())
 const accessControl = ref<AccessControlSettings>(emptyAccessControl())
@@ -778,6 +790,7 @@ const isPermissionAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
+const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
 const isIchefLoading = ref(false)
@@ -900,6 +913,22 @@ const reportPeakHour = computed(() => {
 
   return [...report.hourly].sort((a, b) => b.total - a.total || b.count - a.count)[0] ?? null
 })
+const electronicInvoiceReportRangeDays = computed(() => {
+  if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${electronicInvoiceReportStartDate.value}T00:00:00`)
+  const end = new Date(`${electronicInvoiceReportEndDate.value}T00:00:00`)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start.getTime() > end.getTime()) {
+    return null
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+})
+const electronicInvoiceReportRangeValid = computed(() =>
+  electronicInvoiceReportRangeDays.value !== null && electronicInvoiceReportRangeDays.value <= 93,
+)
 const closeoutReportDeliverySummary = computed(() => ({
   sent: closeoutReportDeliveries.value.filter((delivery) => delivery.status === 'sent').length,
   queued: closeoutReportDeliveries.value.filter((delivery) => delivery.status === 'queued').length,
@@ -1496,9 +1525,31 @@ const reportBreakdownLabel = (key: string): string => {
     served: '已交付',
     failed: '異常',
     voided: '已作廢',
+    queued: '待開立',
+    issued: '已開立',
+    refunded: '已退款',
+    not_requested: '未開立',
   }
 
   return labels[key] ?? key
+}
+
+const electronicInvoiceStatusLabel = (status: ElectronicInvoiceStatus): string => reportBreakdownLabel(status)
+
+const electronicInvoiceStatusClass = (status: ElectronicInvoiceStatus): string => {
+  if (status === 'issued' || status === 'queued') {
+    return 'status-pill--success'
+  }
+
+  if (status === 'voided' || status === 'refunded') {
+    return 'status-pill--neutral'
+  }
+
+  if (status === 'failed') {
+    return 'status-pill--danger'
+  }
+
+  return 'status-pill--neutral'
 }
 
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
@@ -1577,6 +1628,40 @@ const exportDailyReportCsv = (): void => {
 
   downloadCsv(`script-coffee-daily-report-${report.date}.csv`, rows)
   adminMessage.value = `${report.date} 日報 CSV 已匯出`
+}
+
+const exportElectronicInvoiceReportCsv = (): void => {
+  const report = electronicInvoiceReport.value
+  if (!report) {
+    adminMessage.value = '請先載入電子發票開立紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['checkout_at', 'order_number', 'source', 'service_mode', 'people', 'carrier_or_donation', 'tax_id', 'sales_amount', 'tax_amount', 'zero_tax_sales_amount', 'tax_exempt_sales_amount', 'total_amount', 'status', 'print_mode', 'invoice_number', 'random_code', 'upload_due_at'],
+    ...report.rows.map((row) => [
+      row.checkoutAt,
+      row.orderNumber,
+      reportBreakdownLabel(row.source),
+      reportBreakdownLabel(row.serviceMode),
+      row.partySize,
+      row.carrierOrDonationCode,
+      row.taxId,
+      row.salesAmount,
+      row.taxAmount,
+      row.zeroTaxSalesAmount,
+      row.taxExemptSalesAmount,
+      row.totalAmount,
+      electronicInvoiceStatusLabel(row.status),
+      row.printMode,
+      row.invoiceNumber,
+      row.randomCode,
+      row.uploadDueAt ?? '',
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-electronic-invoices-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 電子發票紀錄 CSV 已匯出`
 }
 
 const paymentEventStatusClass = (event: PosPaymentEvent): string => {
@@ -1938,15 +2023,63 @@ const timeClockQueryOptions = (): {
   }
 }
 
+type ElectronicInvoiceReportQuery = {
+  startDate: string
+  endDate: string
+  status: ElectronicInvoiceStatus | 'all'
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
+const emptyElectronicInvoiceReport = (query: ElectronicInvoiceReportQuery): ElectronicInvoiceReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  summary: {
+    totalRecords: 0,
+    issuedRecords: 0,
+    voidedRecords: 0,
+    refundedRecords: 0,
+    queuedRecords: 0,
+    failedRecords: 0,
+    totalSalesAmount: 0,
+    totalTaxAmount: 0,
+    totalAmount: 0,
+  },
+  rows: [],
+})
+
+const electronicInvoiceReportQueryOptions = (): ElectronicInvoiceReportQuery | null => {
+  if (!electronicInvoiceReportRangeValid.value) {
+    adminMessage.value = '電子發票紀錄日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: electronicInvoiceReportStartDate.value,
+    endDate: electronicInvoiceReportEndDate.value,
+    status: electronicInvoiceReportStatus.value,
+    serviceMode: electronicInvoiceReportServiceMode.value,
+    source: electronicInvoiceReportSource.value,
+    minPartySize: electronicInvoiceReportMinPeople.value ? Math.max(1, Math.trunc(electronicInvoiceReportMinPeople.value)) : null,
+    maxPartySize: electronicInvoiceReportMaxPeople.value ? Math.max(1, Math.trunc(electronicInvoiceReportMaxPeople.value)) : null,
+  }
+}
+
 const loadAdminData = async (): Promise<void> => {
   isLoading.value = true
   adminMessage.value = '讀取後台資料中'
 
   try {
     const timeClockQuery = timeClockQueryOptions()
-    if (!timeClockQuery) {
+    const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
+    if (!timeClockQuery || !electronicInvoiceReportQuery) {
       return
     }
+    let electronicInvoiceReportWarning = ''
 
     const [
       products,
@@ -1963,6 +2096,7 @@ const loadAdminData = async (): Promise<void> => {
       timeClockRows,
       inventory,
       closeoutDeliveries,
+      invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
       fetchAdminMembers(50, memberSearchTerm.value),
@@ -1978,6 +2112,10 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminTimeClockEntries(timeClockQuery),
       fetchAdminInventory(120),
       fetchAdminCloseoutReportDeliveries(closeoutReportDeliveryLimit.value),
+      fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
+        electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
+        return emptyElectronicInvoiceReport(electronicInvoiceReportQuery)
+      }),
     ])
     productDrafts.value = products.map(toDraft)
     inventoryItems.value = inventory.items
@@ -1999,8 +2137,9 @@ const loadAdminData = async (): Promise<void> => {
     reservationBlacklist.value = blacklistRows
     timeClockEntries.value = timeClockRows
     closeoutReportDeliveries.value = closeoutDeliveries
+    electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -2127,6 +2266,25 @@ const loadDailyReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
   } finally {
     isReportLoading.value = false
+  }
+}
+
+const loadElectronicInvoiceReport = async (): Promise<void> => {
+  const query = electronicInvoiceReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isElectronicInvoiceReportLoading.value = true
+  adminMessage.value = '讀取電子發票開立紀錄中'
+
+  try {
+    electronicInvoiceReport.value = await fetchAdminElectronicInvoiceReport(query)
+    adminMessage.value = `已載入 ${electronicInvoiceReport.value.summary.totalRecords} 筆電子發票開立紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '電子發票開立紀錄讀取失敗'
+  } finally {
+    isElectronicInvoiceReportLoading.value = false
   }
 }
 
@@ -5893,6 +6051,119 @@ const saveAccessControl = async (): Promise<void> => {
             <div v-if="closeoutReportDeliveries.length === 0" class="empty-state">
               <Search :size="24" aria-hidden="true" />
               <span>尚無關帳信紀錄</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="電子發票開立紀錄">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">E-Invoice</p>
+              <h3>電子發票開立紀錄</h3>
+            </div>
+            <span class="panel-note">
+              {{ electronicInvoiceReport ? `${electronicInvoiceReport.startDate} - ${electronicInvoiceReport.endDate} · ${electronicInvoiceReport.summary.totalRecords} 筆` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="electronicInvoiceReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="electronicInvoiceReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              狀態
+              <select v-model="electronicInvoiceReportStatus">
+                <option value="all">全部</option>
+                <option value="queued">待開立</option>
+                <option value="issued">已開立</option>
+                <option value="voided">已作廢</option>
+                <option value="refunded">已退款</option>
+                <option value="failed">失敗</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="electronicInvoiceReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="electronicInvoiceReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="electronicInvoiceReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="electronicInvoiceReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isElectronicInvoiceReportLoading" @click="loadElectronicInvoiceReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isElectronicInvoiceReportLoading ? '讀取中' : '刷新發票' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!electronicInvoiceReport" @click="exportElectronicInvoiceReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出發票 CSV
+            </button>
+          </div>
+
+          <div v-if="electronicInvoiceReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>發票結帳金額</span>
+              <strong>{{ formatCurrency(electronicInvoiceReport.summary.totalAmount) }}</strong>
+              <small>{{ electronicInvoiceReport.summary.totalRecords }} 筆 · 稅額 {{ formatCurrency(electronicInvoiceReport.summary.totalTaxAmount) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>已開立</span>
+              <strong>{{ electronicInvoiceReport.summary.issuedRecords }}</strong>
+              <small>待開立 {{ electronicInvoiceReport.summary.queuedRecords }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>作廢/退款</span>
+              <strong>{{ electronicInvoiceReport.summary.voidedRecords + electronicInvoiceReport.summary.refundedRecords }}</strong>
+              <small>失敗 {{ electronicInvoiceReport.summary.failedRecords }}</small>
+            </article>
+          </div>
+
+          <div v-if="electronicInvoiceReport" class="admin-audit-list admin-report-delivery-list">
+            <article v-for="row in electronicInvoiceReport.rows" :key="row.orderId" class="admin-audit-row">
+              <header class="admin-row-header">
+                <div class="admin-audit-primary">
+                  <strong>No. {{ row.orderNumber }} · {{ formatCurrency(row.totalAmount) }}</strong>
+                  <span>{{ reportBreakdownLabel(row.source) }} / {{ reportBreakdownLabel(row.serviceMode) }} · {{ row.partySize }} 人 · {{ row.carrierOrDonationCode || row.taxId || '無載具/統編' }}</span>
+                </div>
+                <time :datetime="row.checkoutAt">{{ formatAuditTime(row.checkoutAt) }}</time>
+              </header>
+              <div class="admin-audit-meta">
+                <span class="status-pill" :class="electronicInvoiceStatusClass(row.status)">
+                  {{ electronicInvoiceStatusLabel(row.status) }}
+                </span>
+                <span>銷售 {{ formatCurrency(row.salesAmount) }}</span>
+                <span>營業稅 {{ formatCurrency(row.taxAmount) }}</span>
+                <span v-if="row.taxId">統編 {{ row.taxId }}</span>
+                <span v-if="row.invoiceNumber">發票 {{ row.invoiceNumber }}</span>
+                <span v-if="row.uploadDueAt">上傳期限 {{ formatAuditTime(row.uploadDueAt) }}</span>
+              </div>
+            </article>
+
+            <div v-if="electronicInvoiceReport.rows.length === 0" class="empty-state">
+              <Search :size="24" aria-hidden="true" />
+              <span>此區間沒有電子發票開立紀錄</span>
             </div>
           </div>
         </section>
