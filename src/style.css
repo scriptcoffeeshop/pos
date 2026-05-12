@@ -9760,6 +9760,15 @@ button.cart-line-summary:focus-visible {
   background: var(--surface-raised);
 }
 
+.device-printer-pairing {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
 .device-management-card header {
   display: flex;
   align-items: center;
@@ -9767,7 +9776,15 @@ button.cart-line-summary:focus-visible {
   min-width: 0;
 }
 
+.device-printer-pairing header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .device-management-card header div,
+.device-printer-pairing header div,
 .device-management-row div {
   display: grid;
   min-width: 0;
@@ -9775,12 +9792,14 @@ button.cart-line-summary:focus-visible {
 }
 
 .device-management-card strong,
+.device-printer-pairing strong,
 .device-management-row strong {
   color: var(--ink);
   font-weight: 950;
 }
 
 .device-management-card span,
+.device-printer-pairing span,
 .device-management-row span,
 .device-management-message,
 .device-management-empty,
@@ -9789,6 +9808,36 @@ button.cart-line-summary:focus-visible {
   font-size: 0.82rem;
   font-weight: 850;
   line-height: 1.35;
+}
+
+.device-printer-pairing-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(100px, 0.6fr) minmax(150px, 0.8fr) repeat(2, auto);
+  gap: 10px;
+  align-items: end;
+}
+
+.device-printer-pairing-grid label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.device-printer-pairing-grid input,
+.device-printer-pairing-grid select {
+  width: 100%;
+}
+
+.device-printer-pairing-grid .toggle-row {
+  align-self: stretch;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
 }
 
 .device-management-list {
@@ -13253,6 +13302,7 @@ button.cart-line-summary:focus-visible {
   .current-sales-grid,
   .current-sales-mode-list article,
   .device-management-grid,
+  .device-printer-pairing-grid,
   .device-management-row,
   .customer-management-sort,
   .customer-management-row,

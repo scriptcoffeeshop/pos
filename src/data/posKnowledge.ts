@@ -594,15 +594,16 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     id: 'device-management',
     category: 'printing',
     title: '裝置管理',
-    summary: '工具箱「裝置管理」可快速查看出單機、刷卡/掃碼外設、未印出單據與主機 App ID。',
+    summary: '工具箱「裝置管理」可快速查看與配對出單機，並檢視刷卡/掃碼外設、未印出單據與主機 App ID。',
     steps: [
       '開啟工具箱「裝置管理」，先看出單機清單、IP、通訊協定與啟用狀態。',
+      '在「配對出單機」選擇後台出單機，填入實體設備 IP、Port、協定、啟用與自動列印狀態後儲存。',
       '刷卡機、掃碼裝置、錢櫃與指定 iPad 列印 QR code 會讀 `engagement_settings.hardwareDevices`。',
       '按「重新整理連線狀態」會重新載入 runtime、訂單、班別與工作站狀態。',
       '若列印佇列卡住，進入後台編輯模式後可按「取消所有未印出的單據」，系統會逐筆刪除尚未列印成功的 print jobs。',
       '主機 App ID 顯示目前工作站識別，方便對照後台平板在線與鎖單紀錄。',
     ],
-    keywords: ['裝置管理', '出單機', '刷卡機', '掃碼裝置', '未印出', '主機 App ID', 'print jobs'],
+    keywords: ['裝置管理', '出單機', '出單機配對', 'IP', '刷卡機', '掃碼裝置', '未印出', '主機 App ID', 'print jobs'],
     target: 'printing',
   },
   {
