@@ -674,6 +674,12 @@ const toDateInput = (date = new Date()): string => {
   return new Date(date.getTime() - timezoneOffsetMs).toISOString().slice(0, 10)
 }
 
+const dateInputDaysAgo = (days: number): string => {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return toDateInput(date)
+}
+
 const activeAdminTab = ref<AdminTab>('products')
 const searchTerm = ref('')
 const selectedCategory = ref<'all' | MenuCategory>('all')
@@ -740,7 +746,10 @@ const timeClockEntries = ref<StaffTimeClockEntry[]>([])
 const auditLimit = ref(50)
 const closeoutReportDeliveryLimit = ref(60)
 const paymentEventLimit = ref(50)
-const timeClockLimit = ref(80)
+const timeClockLimit = ref(300)
+const timeClockStartDate = ref(dateInputDaysAgo(6))
+const timeClockEndDate = ref(toDateInput())
+const timeClockStaffFilter = ref('all')
 const paymentProviderFilter = ref('all')
 const paymentEventStatusFilter = ref<PaymentEventStatusFilter>('all')
 const auditActionFilter = ref('all')
@@ -1402,6 +1411,46 @@ const timeClockEventLabel = (entry: StaffTimeClockEntry): string =>
 const timeClockEventClass = (entry: StaffTimeClockEntry): string =>
   entry.eventType === 'clock-in' ? 'status-pill--success' : 'status-pill--neutral'
 
+const dateInputTime = (value: string): number => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return Number.NaN
+  }
+
+  return new Date(`${value}T00:00:00`).getTime()
+}
+
+const timeClockRangeDays = computed(() => {
+  const start = dateInputTime(timeClockStartDate.value)
+  const end = dateInputTime(timeClockEndDate.value)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+    return null
+  }
+
+  return Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1
+})
+
+const timeClockDateRangeValid = computed(() =>
+  Boolean(timeClockStartDate.value) &&
+  Boolean(timeClockEndDate.value) &&
+  timeClockRangeDays.value !== null &&
+  timeClockRangeDays.value <= 93,
+)
+
+const timeClockStaffFilterLabel = computed(() => {
+  if (timeClockStaffFilter.value === 'all') {
+    return '全體員工'
+  }
+
+  return accessControl.value.staffAccounts.find((staff) => staff.id === timeClockStaffFilter.value)?.name ?? '指定員工'
+})
+
+const timeClockReportSummary = computed(() => {
+  const rangeText = timeClockRangeDays.value === null
+    ? '日期區間無效'
+    : `${timeClockStartDate.value} - ${timeClockEndDate.value} · ${timeClockRangeDays.value} 天`
+  return `${rangeText} · ${timeClockStaffFilterLabel.value} · ${timeClockEntries.value.length} 筆`
+})
+
 const reportBreakdownLabel = (key: string): string => {
   const labels: Record<string, string> = {
     cash: '現金',
@@ -1633,6 +1682,30 @@ const exportOperationTimelineCsv = (): void => {
   adminMessage.value = `已匯出 ${filteredOperationTimelineEntries.value.length} 筆營運紀錄`
 }
 
+const exportTimeClockCsv = (): void => {
+  if (timeClockEntries.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的打卡紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['created_at', 'staff_name', 'staff_code', 'role_name', 'event_type', 'station_id', 'note'],
+    ...timeClockEntries.value.map((entry) => [
+      entry.createdAt,
+      entry.staffName,
+      entry.staffCode,
+      entry.roleName || entry.roleId,
+      timeClockEventLabel(entry),
+      entry.stationId,
+      entry.note,
+    ]),
+  ]
+
+  const staff = timeClockStaffFilter.value === 'all' ? 'all' : timeClockStaffFilterLabel.value.replace(/\s+/g, '-')
+  downloadCsv(`script-coffee-time-clock-${timeClockStartDate.value}-${timeClockEndDate.value}-${staff}.csv`, rows)
+  adminMessage.value = `已匯出 ${timeClockEntries.value.length} 筆打卡紀錄`
+}
+
 const auditMetadataLabel = (event: PosAuditEvent, key: string): string | null => {
   const value = event.metadata[key]
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -1787,11 +1860,35 @@ const auditMetadataSummary = (event: PosAuditEvent): string => {
   return parts.length > 0 ? parts.join('、') : '無附加資料'
 }
 
+const timeClockQueryOptions = (): {
+  limit: number
+  startDate: string
+  endDate: string
+  staffAccountId: string
+} | null => {
+  if (!timeClockDateRangeValid.value) {
+    adminMessage.value = '打卡紀錄日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    limit: Math.min(Math.max(Math.trunc(timeClockLimit.value || 300), 1), 2000),
+    startDate: timeClockStartDate.value,
+    endDate: timeClockEndDate.value,
+    staffAccountId: timeClockStaffFilter.value,
+  }
+}
+
 const loadAdminData = async (): Promise<void> => {
   isLoading.value = true
   adminMessage.value = '讀取後台資料中'
 
   try {
+    const timeClockQuery = timeClockQueryOptions()
+    if (!timeClockQuery) {
+      return
+    }
+
     const [
       products,
       memberRows,
@@ -1817,7 +1914,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminCoupons(),
       fetchAdminReservations(),
       fetchAdminReservationBlacklist(),
-      fetchAdminTimeClockEntries(timeClockLimit.value),
+      fetchAdminTimeClockEntries(timeClockQuery),
       fetchAdminInventory(120),
       fetchAdminCloseoutReportDeliveries(closeoutReportDeliveryLimit.value),
     ])
@@ -1896,8 +1993,13 @@ const loadTimeClockEntries = async (): Promise<void> => {
   adminMessage.value = '讀取員工打卡紀錄中'
 
   try {
-    timeClockEntries.value = await fetchAdminTimeClockEntries(timeClockLimit.value)
-    adminMessage.value = `已載入 ${timeClockEntries.value.length} 筆員工打卡紀錄`
+    const timeClockQuery = timeClockQueryOptions()
+    if (!timeClockQuery) {
+      return
+    }
+
+    timeClockEntries.value = await fetchAdminTimeClockEntries(timeClockQuery)
+    adminMessage.value = `已載入 ${timeClockEntries.value.length} 筆員工打卡紀錄（${timeClockReportSummary.value}）`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '員工打卡紀錄讀取失敗'
   } finally {
@@ -6489,19 +6591,41 @@ const saveAccessControl = async (): Promise<void> => {
           <div>
             <p class="eyebrow">Time Clock</p>
             <h3>打卡紀錄</h3>
-            <span class="panel-note">最近 {{ timeClockEntries.length }} 筆上下班紀錄</span>
+            <span class="panel-note">{{ timeClockReportSummary }} · 建議查詢區間不超過 93 天</span>
           </div>
-          <div class="admin-action-row">
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-inline-field">
+              起日
+              <input v-model="timeClockStartDate" type="date" :max="timeClockEndDate" />
+            </label>
+            <label class="admin-inline-field">
+              迄日
+              <input v-model="timeClockEndDate" type="date" :min="timeClockStartDate" />
+            </label>
+            <label class="admin-inline-field">
+              員工
+              <select v-model="timeClockStaffFilter">
+                <option value="all">全體員工</option>
+                <option v-for="staff in accessControl.staffAccounts" :key="staff.id" :value="staff.id">
+                  {{ staff.name }} · {{ staff.staffCode }}
+                </option>
+              </select>
+            </label>
             <label class="admin-inline-field">
               筆數
-              <input v-model.number="timeClockLimit" type="number" min="1" max="300" step="1" />
+              <input v-model.number="timeClockLimit" type="number" min="1" max="2000" step="1" />
             </label>
-            <button class="primary-button" type="button" :disabled="isTimeClockLoading" @click="loadTimeClockEntries">
+            <button class="primary-button" type="button" :disabled="isTimeClockLoading || !timeClockDateRangeValid" @click="loadTimeClockEntries">
               <RefreshCw :size="16" aria-hidden="true" />
               {{ isTimeClockLoading ? '讀取中' : '刷新打卡' }}
             </button>
+            <button class="secondary-button" type="button" :disabled="timeClockEntries.length === 0" @click="exportTimeClockCsv">
+              <Download :size="16" aria-hidden="true" />
+              下載打卡紀錄
+            </button>
           </div>
         </div>
+        <p v-if="!timeClockDateRangeValid" class="admin-inline-warning">請選擇有效日期區間，且最多 93 天。</p>
 
         <div class="admin-audit-list">
           <article v-for="entry in timeClockEntries" :key="entry.id" class="admin-audit-row">

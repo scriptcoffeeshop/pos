@@ -573,6 +573,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'closeout',
   },
   {
+    id: 'staff-time-clock-report',
+    category: 'register',
+    title: '員工打卡紀錄報表',
+    summary: '後台可依 iCHEF 打卡紀錄報表，用日期區間與員工篩選上下班紀錄並下載 CSV。',
+    steps: [
+      '先在後台「權限」替員工建立啟用帳號與員工識別碼，平板工具箱「員工打卡」會寫入 staff_time_clock_entries。',
+      '連點工具箱 6 下進入後台編輯模式，再到「權限」頁的「打卡紀錄」。',
+      '選擇起日、迄日與全體或指定員工；為維持報表效率，單次查詢區間最多 93 天。',
+      '按「刷新打卡」會從 POS API 依條件讀取雲端資料，換平板或 fresh reinstall 後仍可還原。',
+      '按「下載打卡紀錄」會匯出目前篩選結果 CSV，包含時間、員工、識別碼、角色、上下班、站台與備註。',
+    ],
+    keywords: ['員工打卡', '打卡紀錄', '工時', '日期區間', '員工篩選', 'CSV', 'staff_time_clock_entries', 'iCHEF'],
+    target: 'closeout',
+  },
+  {
     id: 'closeout-report-delivery',
     category: 'register',
     title: '關帳信 / 日結報表寄送',
