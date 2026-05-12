@@ -3184,10 +3184,32 @@ export const fetchAdminCloseoutReportDeliveries = async (limit = 60): Promise<Cl
   return data.deliveries.map(normalizeCloseoutReportDelivery)
 }
 
-export const fetchAdminTimeClockEntries = async (limit = 80): Promise<StaffTimeClockEntry[]> => {
-  const rawLimit = Number.isFinite(limit) ? limit : 80
-  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 300)
-  const data = await request<StaffTimeClockEntriesResponse>(`/admin/time-clock?limit=${cappedLimit}`)
+interface AdminTimeClockEntryQuery {
+  limit?: number
+  startDate?: string
+  endDate?: string
+  staffAccountId?: string
+}
+
+export const fetchAdminTimeClockEntries = async (
+  query: number | AdminTimeClockEntryQuery = 80,
+): Promise<StaffTimeClockEntry[]> => {
+  const options = typeof query === 'number' ? { limit: query } : query
+  const rawLimit = Number.isFinite(options.limit ?? 80) ? options.limit ?? 80 : 80
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 2000)
+  const params = new URLSearchParams({ limit: String(cappedLimit) })
+  const startDate = options.startDate?.trim()
+  const endDate = options.endDate?.trim()
+  const staffAccountId = options.staffAccountId?.trim()
+  if (startDate && endDate) {
+    params.set('startDate', startDate)
+    params.set('endDate', endDate)
+  }
+  if (staffAccountId && staffAccountId !== 'all') {
+    params.set('staffAccountId', staffAccountId)
+  }
+
+  const data = await request<StaffTimeClockEntriesResponse>(`/admin/time-clock?${params.toString()}`)
 
   return data.entries.map(normalizeStaffTimeClockEntry)
 }

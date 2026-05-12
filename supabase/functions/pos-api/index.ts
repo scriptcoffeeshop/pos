@@ -2659,12 +2659,31 @@ api.get("/admin/time-clock", async (c) => {
     return authError;
   }
 
-  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 80, 1), 300);
-  const { data, error } = await supabase
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 80, 1), 2000);
+  const startDate = c.req.query("startDate")?.trim();
+  const endDate = c.req.query("endDate")?.trim();
+  const staffAccountId = c.req.query("staffAccountId")?.trim();
+  const dateRange = parseReportDateRange(startDate, endDate);
+  if (dateRange.error) {
+    return c.json({ error: dateRange.error }, 400);
+  }
+
+  let query = supabase
     .from("staff_time_clock_entries")
     .select(staffTimeClockEntrySelect)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
+
+  if (dateRange.range) {
+    query = query
+      .gte("created_at", dateRange.range.start.toISOString())
+      .lt("created_at", dateRange.range.end.toISOString());
+  }
+
+  if (staffAccountId && staffAccountId !== "all") {
+    query = query.eq("staff_account_id", staffAccountId);
+  }
+
+  const { data, error } = await query.limit(limit);
 
   if (error) {
     return c.json({ error: error.message }, 500);
@@ -6535,6 +6554,44 @@ const parseReportDate = (dateInput: string | undefined): {
   }
 
   return { date, start, end };
+};
+
+const parseReportDateRange = (
+  startDateInput: string | undefined,
+  endDateInput: string | undefined,
+): { range: { startDate: string; endDate: string; start: Date; end: Date } | null; error: string | null } => {
+  if (!startDateInput && !endDateInput) {
+    return { range: null, error: null };
+  }
+
+  if (!startDateInput || !endDateInput) {
+    return { range: null, error: "startDate and endDate are both required when filtering time clock entries" };
+  }
+
+  const startRange = parseReportDate(startDateInput);
+  const endRange = parseReportDate(endDateInput);
+  if (!startRange || !endRange) {
+    return { range: null, error: "startDate and endDate must use YYYY-MM-DD" };
+  }
+
+  if (startRange.start.getTime() > endRange.start.getTime()) {
+    return { range: null, error: "startDate must be before or equal to endDate" };
+  }
+
+  const rangeDays = Math.ceil((endRange.end.getTime() - startRange.start.getTime()) / (24 * 60 * 60_000));
+  if (rangeDays > 93) {
+    return { range: null, error: "time clock date range must not exceed 93 days" };
+  }
+
+  return {
+    range: {
+      startDate: startRange.date,
+      endDate: endRange.date,
+      start: startRange.start,
+      end: endRange.end,
+    },
+    error: null,
+  };
 };
 
 const emptyBreakdown = (key: string): ReportBreakdownRow => ({

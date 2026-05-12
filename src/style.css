@@ -11065,7 +11065,8 @@ button.cart-line-summary:focus-visible {
 .admin-rule-row select,
 .admin-role-row input,
 .admin-role-row select,
-.admin-inline-field input {
+.admin-inline-field input,
+.admin-inline-field select {
   min-height: 38px;
   min-width: 0;
   padding: 8px 10px;
