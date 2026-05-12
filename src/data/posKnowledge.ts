@@ -102,6 +102,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'floor',
   },
   {
+    id: 'dine-in-table-hold',
+    category: 'orders',
+    title: '內用保留桌位',
+    summary: '空桌可保留 60-240 分鐘或永久保留，桌況頁以紅色倒數並可手動取消。',
+    steps: [
+      '在桌位地圖點選空桌，右側「保留桌位」可選 60、120、180、240 分鐘或永久。',
+      '保留桌位會變成紅色桌卡；有時間的保留會顯示剩餘分鐘，永久保留只顯示保留狀態。',
+      '時間截止後前台會自動釋出並同步 `floor_plan.tableHolds`；也可在右側按「取消保留」立即釋出。',
+      '保留中的桌位不會出現在移桌或候位入座的空桌清單，也不能直接開桌點餐。',
+      '保留狀態寫入 Supabase runtime，換平板、重開 App 或 fresh reinstall 後仍會同步。',
+    ],
+    keywords: ['保留桌位', '內用', '桌況', '倒數', '永久保留', '空桌', 'iCHEF'],
+    target: 'floor',
+  },
+  {
     id: 'cart-batch-item-actions',
     category: 'orders',
     title: '批次點餐清單操作',

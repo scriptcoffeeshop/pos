@@ -2275,6 +2275,7 @@ export const defaultFloorPlanSettings = (): FloorPlanSettings => ({
   },
   partySizes: {},
   waitline: [],
+  tableHolds: [],
 })
 
 const normalizeFloorLevelId = (value: unknown, fallback = '1F'): string => {
@@ -2433,6 +2434,49 @@ const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
   }).slice(0, 60)
 }
 
+const normalizeFloorTableHolds = (
+  value: unknown,
+  tables: FloorTableSetting[],
+): FloorPlanSettings['tableHolds'] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const tableIds = new Set(tables.map((table) => table.id))
+  const now = Date.now()
+  const seenTableIds = new Set<string>()
+  return value.flatMap((entry): FloorPlanSettings['tableHolds'] => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const hold = entry as Partial<FloorPlanSettings['tableHolds'][number]>
+    const tableId = typeof hold.tableId === 'string' ? hold.tableId.trim().toUpperCase().slice(0, 12) : ''
+    const startedAt = typeof hold.startedAt === 'string' ? hold.startedAt : ''
+    const startedTime = new Date(startedAt).getTime()
+    const rawExpiresAt = typeof hold.expiresAt === 'string' && hold.expiresAt.trim() ? hold.expiresAt : null
+    const expiresAt = rawExpiresAt && Number.isFinite(new Date(rawExpiresAt).getTime()) ? rawExpiresAt : null
+    const expiresTime = expiresAt ? new Date(expiresAt).getTime() : null
+    if (!tableIds.has(tableId) || seenTableIds.has(tableId) || !Number.isFinite(startedTime) || (expiresTime !== null && expiresTime <= now)) {
+      return []
+    }
+
+    seenTableIds.add(tableId)
+    const duration = Number(hold.durationMinutes)
+    const durationMinutes = Number.isFinite(duration)
+      ? Math.min(240, Math.max(1, Math.trunc(duration)))
+      : null
+
+    return [{
+      id: typeof hold.id === 'string' && hold.id.trim() ? hold.id.trim().slice(0, 80) : `hold-${tableId}-${startedTime}`,
+      tableId,
+      startedAt,
+      expiresAt,
+      durationMinutes: expiresAt ? durationMinutes : null,
+    }]
+  }).slice(0, 40)
+}
+
 export const normalizeFloorPlanSettings = (value: unknown): FloorPlanSettings => {
   const defaults = defaultFloorPlanSettings()
   if (!value || typeof value !== 'object') {
@@ -2450,6 +2494,7 @@ export const normalizeFloorPlanSettings = (value: unknown): FloorPlanSettings =>
     display: normalizeFloorDisplayPreferences(settings.display),
     partySizes: normalizeFloorPartySizes(settings.partySizes, tables),
     waitline: normalizeWaitlineEntries(settings.waitline),
+    tableHolds: normalizeFloorTableHolds(settings.tableHolds, tables),
   }
 }
 

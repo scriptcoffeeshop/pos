@@ -645,6 +645,14 @@ export interface FloorTableSetting {
   width: number
 }
 
+export interface FloorTableHoldSetting {
+  id: string
+  tableId: string
+  startedAt: string
+  expiresAt: string | null
+  durationMinutes: number | null
+}
+
 export interface FloorDisplayPreferences {
   showPeople: boolean
   showUnsubmittedWait: boolean
@@ -672,6 +680,7 @@ export interface FloorPlanSettings {
   display: FloorDisplayPreferences
   partySizes: Record<string, number>
   waitline: WaitlineEntry[]
+  tableHolds: FloorTableHoldSetting[]
 }
 
 export interface OrderLabelSetting {
