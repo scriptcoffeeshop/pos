@@ -67,6 +67,7 @@ import {
   fetchAdminInventory,
   fetchAdminMembers,
   fetchAdminReservations,
+  fetchStaffTimeClockEntries,
   isPosApiConfigured,
   normalizeFloorPlanSettings,
   searchPosMembers,
@@ -266,6 +267,13 @@ interface ToolboxDragState {
   startY: number
   startPosition: ToolboxPosition
   moved: boolean
+}
+
+interface TimeClockStaffOption {
+  id: string
+  name: string
+  staffCode: string
+  label: string
 }
 
 interface FloorTableDragState {
@@ -4073,7 +4081,11 @@ const timeClockStaffCode = ref('')
 const timeClockNote = ref('')
 const timeClockMessage = ref('輸入員工識別碼打卡')
 const isTimeClockSubmitting = ref(false)
+const isTimeClockEntriesLoading = ref(false)
 const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
+const timeClockEntries = ref<StaffTimeClockEntry[]>([])
+const timeClockStaffFilter = ref('all')
+const timeClockStaffOptions = ref<TimeClockStaffOption[]>([])
 const labelManagementDrafts = ref<OrderLabelSetting[]>([])
 const labelManagementMessage = ref('訂單標籤會同步到點餐頁與後台紀錄')
 const isLabelManagementSaving = ref(false)
@@ -4240,6 +4252,20 @@ const toolboxPanelEyebrow = computed(() => {
 
   return 'Toolbox'
 })
+const timeClockStaffFilterOptions = computed(() => [
+  { id: 'all', name: '所有員工', staffCode: '', label: '所有員工' },
+  ...timeClockStaffOptions.value,
+])
+const activeTimeClockStaffLabel = computed(() => {
+  if (timeClockStaffFilter.value === 'all') {
+    return '全體員工'
+  }
+
+  return timeClockStaffFilterOptions.value.find((option) => option.id === timeClockStaffFilter.value)?.name ?? '指定員工'
+})
+const timeClockEntriesSummary = computed(() =>
+  `最近 7 天 · ${activeTimeClockStaffLabel.value} · ${timeClockEntries.value.length} 筆`,
+)
 const readLayoutViewportHeight = (): number => {
   const documentHeight = document.documentElement?.clientHeight ?? 0
   const visualHeight = globalThis.visualViewport?.height ?? 0
@@ -8896,6 +8922,72 @@ const deactivateInventoryItemAction = async (item: InventoryItem): Promise<void>
   }
 }
 
+const timeClockEventLabel = (entry: StaffTimeClockEntry): string =>
+  entry.eventType === 'clock-in' ? '上班' : '下班'
+
+const timeClockEventClass = (entry: StaffTimeClockEntry): string =>
+  entry.eventType === 'clock-in' ? 'time-clock-event-pill--in' : 'time-clock-event-pill--out'
+
+const syncTimeClockStaffOptions = (entries: StaffTimeClockEntry[]): void => {
+  const options = new Map(timeClockStaffOptions.value.map((option) => [option.id, option]))
+
+  entries.forEach((entry) => {
+    if (!entry.staffAccountId) {
+      return
+    }
+
+    options.set(entry.staffAccountId, {
+      id: entry.staffAccountId,
+      name: entry.staffName,
+      staffCode: entry.staffCode,
+      label: entry.staffName,
+    })
+  })
+
+  timeClockStaffOptions.value = Array.from(options.values()).sort((left, right) =>
+    left.label.localeCompare(right.label, 'zh-Hant'),
+  )
+}
+
+const loadTimeClockEntries = async (options: { preserveMessage?: boolean } = {}): Promise<void> => {
+  if (!isPosApiConfigured) {
+    timeClockEntries.value = []
+    if (!options.preserveMessage) {
+      timeClockMessage.value = '本機模式無法讀取打卡紀錄'
+    }
+    return
+  }
+
+  isTimeClockEntriesLoading.value = true
+  if (!options.preserveMessage) {
+    timeClockMessage.value = '讀取最近 7 天打卡紀錄中'
+  }
+
+  try {
+    const entries = await fetchStaffTimeClockEntries({
+      staffAccountId: timeClockStaffFilter.value,
+      limit: 120,
+    })
+    timeClockEntries.value = entries
+    syncTimeClockStaffOptions(entries)
+    if (!options.preserveMessage) {
+      timeClockMessage.value = entries.length > 0
+        ? `已載入${activeTimeClockStaffLabel.value}最近 7 天打卡紀錄`
+        : `${activeTimeClockStaffLabel.value}最近 7 天沒有打卡紀錄`
+    }
+  } catch (error) {
+    if (!options.preserveMessage) {
+      timeClockMessage.value = `讀取打卡紀錄失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+    }
+  } finally {
+    isTimeClockEntriesLoading.value = false
+  }
+}
+
+const handleTimeClockStaffFilterChange = (): void => {
+  void loadTimeClockEntries()
+}
+
 const submitTimeClockAction = async (): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
@@ -8915,9 +9007,12 @@ const submitTimeClockAction = async (): Promise<void> => {
   try {
     const entry = await createStaffTimeClockEntry(staffCode, timeClockNote.value.trim())
     latestTimeClockEntry.value = entry
+    syncTimeClockStaffOptions([entry])
+    timeClockStaffFilter.value = entry.staffAccountId || 'all'
+    await loadTimeClockEntries({ preserveMessage: true })
     timeClockStaffCode.value = ''
     timeClockNote.value = ''
-    timeClockMessage.value = `${entry.staffName} 已${entry.eventType === 'clock-in' ? '上班' : '下班'}打卡 · ${formatOrderTime(entry.createdAt)}`
+    timeClockMessage.value = `${entry.staffName} 已${timeClockEventLabel(entry)}打卡 · ${formatOrderTime(entry.createdAt)}`
   } catch (error) {
     timeClockMessage.value = `打卡失敗：${error instanceof Error ? error.message : '未知錯誤'}`
   } finally {
@@ -8974,6 +9069,7 @@ const runToolboxAction = (action: ToolboxAction): void => {
 
   if (action === 'time-clock') {
     activeToolboxPanel.value = 'time-clock'
+    void loadTimeClockEntries()
     return
   }
 
@@ -15401,8 +15497,42 @@ onBeforeUnmount(() => {
           <article v-if="latestTimeClockEntry" class="time-clock-result">
             <strong>{{ latestTimeClockEntry.staffName }}</strong>
             <span>{{ latestTimeClockEntry.roleName || latestTimeClockEntry.roleId || '未指定角色' }}</span>
-            <span>{{ latestTimeClockEntry.eventType === 'clock-in' ? '上班' : '下班' }} · {{ formatOrderTime(latestTimeClockEntry.createdAt) }}</span>
+            <span>{{ timeClockEventLabel(latestTimeClockEntry) }} · {{ formatOrderTime(latestTimeClockEntry.createdAt) }}</span>
           </article>
+          <section class="time-clock-records" aria-label="最近 7 天打卡紀錄">
+            <div class="time-clock-records-header">
+              <div>
+                <strong>瀏覽記錄</strong>
+                <span>{{ timeClockEntriesSummary }}</span>
+              </div>
+              <button class="secondary-button" type="button" :disabled="isTimeClockEntriesLoading" @click="loadTimeClockEntries()">
+                <RefreshCw :size="17" aria-hidden="true" />
+                {{ isTimeClockEntriesLoading ? '讀取中' : '刷新' }}
+              </button>
+            </div>
+            <label class="time-clock-filter">
+              所有員工
+              <select v-model="timeClockStaffFilter" :disabled="isTimeClockEntriesLoading" @change="handleTimeClockStaffFilterChange">
+                <option v-for="option in timeClockStaffFilterOptions" :key="option.id" :value="option.id">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <div v-if="timeClockEntries.length > 0" class="time-clock-record-list">
+              <article v-for="entry in timeClockEntries" :key="entry.id" class="time-clock-record">
+                <span class="time-clock-record-time">{{ formatOrderTime(entry.createdAt) }}</span>
+                <div class="time-clock-record-main">
+                  <strong>{{ entry.staffName }}</strong>
+                  <span>{{ entry.roleName || entry.roleId || '未指定角色' }}{{ entry.stationId ? ` · ${entry.stationId}` : '' }}</span>
+                  <span v-if="entry.note">{{ entry.note }}</span>
+                </div>
+                <span class="time-clock-event-pill" :class="timeClockEventClass(entry)">
+                  {{ timeClockEventLabel(entry) }}
+                </span>
+              </article>
+            </div>
+            <p v-else class="time-clock-empty">最近 7 天尚無符合條件的打卡紀錄</p>
+          </section>
         </section>
       </section>
     </div>

@@ -3191,6 +3191,11 @@ interface AdminTimeClockEntryQuery {
   staffAccountId?: string
 }
 
+interface StaffTimeClockEntryQuery {
+  limit?: number
+  staffAccountId?: string
+}
+
 export const fetchAdminTimeClockEntries = async (
   query: number | AdminTimeClockEntryQuery = 80,
 ): Promise<StaffTimeClockEntry[]> => {
@@ -3210,6 +3215,23 @@ export const fetchAdminTimeClockEntries = async (
   }
 
   const data = await request<StaffTimeClockEntriesResponse>(`/admin/time-clock?${params.toString()}`)
+
+  return data.entries.map(normalizeStaffTimeClockEntry)
+}
+
+export const fetchStaffTimeClockEntries = async (
+  query: number | StaffTimeClockEntryQuery = 80,
+): Promise<StaffTimeClockEntry[]> => {
+  const options = typeof query === 'number' ? { limit: query } : query
+  const rawLimit = Number.isFinite(options.limit ?? 80) ? options.limit ?? 80 : 80
+  const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 300)
+  const params = new URLSearchParams({ limit: String(cappedLimit) })
+  const staffAccountId = options.staffAccountId?.trim()
+  if (staffAccountId && staffAccountId !== 'all') {
+    params.set('staffAccountId', staffAccountId)
+  }
+
+  const data = await request<StaffTimeClockEntriesResponse>(`/time-clock?${params.toString()}`)
 
   return data.entries.map(normalizeStaffTimeClockEntry)
 }

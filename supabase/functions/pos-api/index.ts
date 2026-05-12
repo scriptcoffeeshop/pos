@@ -979,6 +979,8 @@ const staffTimeClockEntrySelect =
   "id, staff_account_id, staff_code, staff_name, role_id, role_name, event_type, station_id, note, created_at";
 const defaultOrderLeaseSeconds = 180;
 const maxOrderLeaseSeconds = 900;
+const recentTimeClockWindowDays = 7;
+const recentTimeClockWindowMs = recentTimeClockWindowDays * 24 * 60 * 60_000;
 
 interface CashDrawerAuditRow {
   id: string;
@@ -2690,6 +2692,35 @@ api.get("/admin/time-clock", async (c) => {
   }
 
   return c.json({ entries: data ?? [] });
+});
+
+api.get("/time-clock", async (c) => {
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 80, 1), 300);
+  const staffAccountId = c.req.query("staffAccountId")?.trim();
+  const since = new Date(Date.now() - recentTimeClockWindowMs).toISOString();
+
+  let query = supabase
+    .from("staff_time_clock_entries")
+    .select(staffTimeClockEntrySelect)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false });
+
+  if (staffAccountId && staffAccountId !== "all") {
+    query = query.eq("staff_account_id", staffAccountId);
+  }
+
+  const { data, error } = await query.limit(limit);
+
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const entries = (data ?? []).map((entry) => ({
+    ...entry,
+    staff_code: "",
+  }));
+
+  return c.json({ entries, windowDays: recentTimeClockWindowDays });
 });
 
 api.post("/access/verify", async (c) => {
