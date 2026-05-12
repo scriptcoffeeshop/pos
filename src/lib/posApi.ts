@@ -3177,10 +3177,14 @@ export const fetchAdminSettings = async (): Promise<PosAdminSettings> => {
   return normalizeAdminSettings(data.settings)
 }
 
-export const fetchAdminAuditEvents = async (limit = 50): Promise<PosAuditEvent[]> => {
+export const fetchAdminAuditEvents = async (limit = 50, action = ''): Promise<PosAuditEvent[]> => {
   const rawLimit = Number.isFinite(limit) ? limit : 50
   const cappedLimit = Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
-  const data = await request<AuditEventsResponse>(`/admin/audit-events?limit=${cappedLimit}`)
+  const params = new URLSearchParams({ limit: String(cappedLimit) })
+  if (action.trim().length > 0) {
+    params.set('action', action.trim())
+  }
+  const data = await request<AuditEventsResponse>(`/admin/audit-events?${params.toString()}`)
 
   return data.events.map(normalizeAuditEvent)
 }

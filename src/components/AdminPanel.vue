@@ -267,6 +267,7 @@ const permissionOptions: Array<{ value: AdminPermission; label: string }> = [
 ]
 
 const auditActionLabels: Record<string, string> = {
+  'access.verify': '權限驗證',
   'register.open': '開班',
   'register.close': '關班',
   'register.close_report.delivery': '關帳信寄送',
@@ -749,10 +750,12 @@ const discountSettings = ref<DiscountSettings>(defaultDiscountSettings())
 const engagementSettings = ref<CustomerEngagementSettings>(defaultEngagementSettings())
 const floorPlan = ref<FloorPlanSettings>(defaultFloorPlanSettings())
 const auditEvents = ref<PosAuditEvent[]>([])
+const permissionAuditEvents = ref<PosAuditEvent[]>([])
 const paymentEvents = ref<PosPaymentEvent[]>([])
 const stationHeartbeats = ref<PosStationHeartbeat[]>([])
 const timeClockEntries = ref<StaffTimeClockEntry[]>([])
 const auditLimit = ref(50)
+const permissionAuditLimit = ref(100)
 const closeoutReportDeliveryLimit = ref(60)
 const paymentEventLimit = ref(50)
 const timeClockLimit = ref(300)
@@ -767,6 +770,7 @@ const operationKindFilter = ref<OperationTimelineFilter>('all')
 const operationStationFilter = ref('all')
 const isLoading = ref(false)
 const isAuditLoading = ref(false)
+const isPermissionAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
@@ -906,6 +910,14 @@ const auditActionOptions = computed(() =>
     label: auditActionLabel(action),
   })),
 )
+const permissionAuditSummary = computed(() => {
+  if (permissionAuditEvents.value.length === 0) {
+    return '尚無權限驗證紀錄'
+  }
+
+  const latest = permissionAuditEvents.value[0]!
+  return `${permissionAuditEvents.value.length} 筆 · 最近 ${formatAuditTime(latest.createdAt)}`
+})
 const filteredAuditEvents = computed(() =>
   auditActionFilter.value === 'all'
     ? auditEvents.value
@@ -1666,6 +1678,40 @@ const exportAuditEventsCsv = (): void => {
   adminMessage.value = `已匯出 ${filteredAuditEvents.value.length} 筆稽核紀錄`
 }
 
+const permissionLabel = (permission: unknown): string =>
+  typeof permission === 'string' && permission.trim().length > 0
+    ? permissionOptions.find((option) => option.value === permission)?.label ?? permission
+    : '未標記權限'
+
+const permissionAuditOperator = (event: PosAuditEvent): string =>
+  auditMetadataLabel(event, 'operatorStaffName') ?? '未知員工'
+
+const permissionAuditRole = (event: PosAuditEvent): string =>
+  auditMetadataLabel(event, 'operatorRoleName') ?? auditMetadataLabel(event, 'operatorRoleId') ?? '未知角色'
+
+const exportPermissionAuditCsv = (): void => {
+  if (permissionAuditEvents.value.length === 0) {
+    adminMessage.value = '目前沒有可匯出的權限紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['created_at', 'permission', 'permission_label', 'operator_staff_name', 'operator_role_name', 'station_id', 'actor'],
+    ...permissionAuditEvents.value.map((event) => [
+      event.createdAt,
+      auditMetadataLabel(event, 'permission') ?? '',
+      permissionLabel(event.metadata.permission),
+      permissionAuditOperator(event),
+      permissionAuditRole(event),
+      event.stationId ?? '',
+      event.actor ?? 'pos-api',
+    ]),
+  ]
+
+  downloadCsv('script-coffee-permission-log.csv', rows)
+  adminMessage.value = `已匯出 ${permissionAuditEvents.value.length} 筆權限紀錄`
+}
+
 const exportOperationTimelineCsv = (): void => {
   if (filteredOperationTimelineEntries.value.length === 0) {
     adminMessage.value = '目前沒有可匯出的營運紀錄'
@@ -1904,6 +1950,7 @@ const loadAdminData = async (): Promise<void> => {
       report,
       settings,
       events,
+      permissionEvents,
       paymentRows,
       stations,
       couponRows,
@@ -1918,6 +1965,7 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminDailyReport(reportDate.value),
       fetchAdminSettings(),
       fetchAdminAuditEvents(auditLimit.value),
+      fetchAdminAuditEvents(permissionAuditLimit.value, 'access.verify'),
       fetchAdminPaymentEvents(paymentEventLimit.value, paymentProviderFilter.value),
       fetchAdminStations(),
       fetchAdminCoupons(),
@@ -1939,6 +1987,7 @@ const loadAdminData = async (): Promise<void> => {
     engagementSettings.value = cloneEngagementSettings(settings.engagementSettings)
     floorPlan.value = settings.floorPlan
     auditEvents.value = events
+    permissionAuditEvents.value = permissionEvents
     paymentEvents.value = paymentRows
     stationHeartbeats.value = stations
     coupons.value = couponRows
@@ -1947,7 +1996,7 @@ const loadAdminData = async (): Promise<void> => {
     timeClockEntries.value = timeClockRows
     closeoutReportDeliveries.value = closeoutDeliveries
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -1980,6 +2029,20 @@ const loadAuditEvents = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '稽核紀錄讀取失敗'
   } finally {
     isAuditLoading.value = false
+  }
+}
+
+const loadPermissionAuditEvents = async (): Promise<void> => {
+  isPermissionAuditLoading.value = true
+  adminMessage.value = '讀取權限紀錄中'
+
+  try {
+    permissionAuditEvents.value = await fetchAdminAuditEvents(permissionAuditLimit.value, 'access.verify')
+    adminMessage.value = `已載入 ${permissionAuditEvents.value.length} 筆權限紀錄`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '權限紀錄讀取失敗'
+  } finally {
+    isPermissionAuditLoading.value = false
   }
 }
 
@@ -6593,6 +6656,49 @@ const saveAccessControl = async (): Promise<void> => {
           <div v-if="accessControl.staffAccounts.length === 0" class="empty-state">
             <UserPlus :size="24" aria-hidden="true" />
             <span>尚未建立員工識別碼</span>
+          </div>
+        </div>
+
+        <div class="panel-heading admin-subheading">
+          <div>
+            <p class="eyebrow">Permission Log</p>
+            <h3>權限紀錄</h3>
+            <span class="panel-note">{{ permissionAuditSummary }} · 只列出員工識別碼驗證成功紀錄</span>
+          </div>
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-inline-field">
+              筆數
+              <input v-model.number="permissionAuditLimit" type="number" min="1" max="100" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isPermissionAuditLoading" @click="loadPermissionAuditEvents">
+              <RefreshCw :size="16" aria-hidden="true" />
+              {{ isPermissionAuditLoading ? '讀取中' : '刷新權限紀錄' }}
+            </button>
+            <button class="secondary-button" type="button" :disabled="permissionAuditEvents.length === 0" @click="exportPermissionAuditCsv">
+              <Download :size="16" aria-hidden="true" />
+              下載權限紀錄
+            </button>
+          </div>
+        </div>
+
+        <div class="admin-audit-list">
+          <article v-for="event in permissionAuditEvents" :key="event.id" class="admin-audit-row">
+            <div class="admin-row-header">
+              <div class="admin-audit-primary">
+                <strong>{{ permissionAuditOperator(event) }}</strong>
+                <span>{{ permissionLabel(event.metadata.permission) }}</span>
+              </div>
+              <time :datetime="event.createdAt">{{ formatAuditTime(event.createdAt) }}</time>
+            </div>
+            <div class="admin-audit-meta">
+              <span>{{ permissionAuditRole(event) }}</span>
+              <span>{{ event.stationId || '未標記平板' }}</span>
+              <span>{{ event.actor || 'pos-api' }}</span>
+            </div>
+          </article>
+          <div v-if="permissionAuditEvents.length === 0" class="empty-state">
+            <Search :size="24" aria-hidden="true" />
+            <span>尚無權限驗證紀錄</span>
           </div>
         </div>
 
