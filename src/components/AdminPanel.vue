@@ -53,6 +53,7 @@ import {
   fetchAdminInventory,
   fetchAdminMembers,
   fetchAdminPaymentEvents,
+  fetchAdminProductSalesReport,
   fetchAdminReservationBlacklist,
   fetchAdminProducts,
   fetchAdminReservations,
@@ -98,6 +99,8 @@ import type {
   PosMember,
   PosPaymentEvent,
   PosReservation,
+  ProductSalesReport,
+  ProductSalesReportTimeUnit,
   ProductTaxCategory,
   ReservationBlacklistEntry,
   ReservationSpecialDateRule,
@@ -885,6 +888,14 @@ const pendingBlacklistedReservationPhone = ref('')
 const walletAdjustmentDrafts = ref<Record<string, WalletAdjustmentDraft>>({})
 const reportDate = ref(toDateInput())
 const dailyReport = ref<DailySalesReport | null>(null)
+const productSalesReportStartDate = ref(dateInputDaysAgo(6))
+const productSalesReportEndDate = ref(toDateInput())
+const productSalesReportTimeUnit = ref<ProductSalesReportTimeUnit>('day')
+const productSalesReportServiceMode = ref<ServiceMode | 'all'>('all')
+const productSalesReportSource = ref<OrderSource | 'all'>('all')
+const productSalesReportMinPeople = ref<number | null>(null)
+const productSalesReportMaxPeople = ref<number | null>(null)
+const productSalesReport = ref<ProductSalesReport | null>(null)
 const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
 const electronicInvoiceReportEndDate = ref(toDateInput())
 const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
@@ -925,6 +936,7 @@ const isPermissionAuditLoading = ref(false)
 const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
+const isProductSalesReportLoading = ref(false)
 const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
@@ -1052,6 +1064,24 @@ const reportPeakHour = computed(() => {
 
   return [...report.hourly].sort((a, b) => b.total - a.total || b.count - a.count)[0] ?? null
 })
+const productSalesReportRangeDays = computed(() => {
+  if (!productSalesReportStartDate.value || !productSalesReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${productSalesReportStartDate.value}T00:00:00`)
+  const end = new Date(`${productSalesReportEndDate.value}T00:00:00`)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start.getTime() > end.getTime()) {
+    return null
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+})
+const productSalesReportRangeValid = computed(() =>
+  productSalesReportRangeDays.value !== null && productSalesReportRangeDays.value <= 93,
+)
+const productSalesTopCategory = computed(() => productSalesReport.value?.categories[0] ?? null)
+const productSalesTopProduct = computed(() => productSalesReport.value?.products[0] ?? null)
 const electronicInvoiceReportRangeDays = computed(() => {
   if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
     return null
@@ -1852,6 +1882,12 @@ const electronicInvoiceStatusClass = (status: ElectronicInvoiceStatus): string =
 
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
 
+const formatReportPercent = (value: number): string =>
+  `${Number.isInteger(value) ? value : value.toFixed(1)}%`
+
+const productSalesCategoryLabel = (category: string): string =>
+  categoryLabels[category as MenuCategory] ?? category
+
 const closeoutReportDeliveryStatusLabel = (delivery: CloseoutReportDelivery): string => {
   const labels: Record<CloseoutReportDelivery['status'], string> = {
     queued: '待寄送',
@@ -1926,6 +1962,71 @@ const exportDailyReportCsv = (): void => {
 
   downloadCsv(`script-coffee-daily-report-${report.date}.csv`, rows)
   adminMessage.value = `${report.date} 日報 CSV 已匯出`
+}
+
+const exportProductSalesReportCsv = (): void => {
+  const report = productSalesReport.value
+  if (!report) {
+    adminMessage.value = '請先載入商品銷售報表'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['section', 'category', 'sku', 'name', 'orders', 'quantity', 'net_sales', 'average_price', 'selection_rate', 'sales_share'],
+    ['summary', '', '', 'total_orders', report.summary.totalOrders, report.summary.totalQuantity, report.summary.totalSales, report.summary.averageItemPrice, '', ''],
+    ['summary', '', '', 'total_party_size', report.summary.totalPartySize, '', '', report.summary.averageTicket, '', ''],
+    ...report.categories.map((row) => [
+      'category',
+      productSalesCategoryLabel(row.category),
+      '',
+      productSalesCategoryLabel(row.category),
+      row.orderCount,
+      row.quantity,
+      row.total,
+      row.averagePrice,
+      row.selectionRate,
+      row.salesShare,
+    ]),
+    ...report.products.map((row) => [
+      'product',
+      productSalesCategoryLabel(row.category),
+      row.sku,
+      row.name,
+      row.orderCount,
+      row.quantity,
+      row.total,
+      row.averagePrice,
+      row.selectionRate,
+      row.salesShare,
+    ]),
+    ...report.comboSelections.map((row) => [
+      'combo_selection',
+      row.groupLabel,
+      row.sku,
+      `${row.parentName} > ${row.name}`,
+      '',
+      row.quantity,
+      row.priceDeltaTotal,
+      '',
+      '',
+      '',
+    ]),
+    ...report.trend.map((row) => [
+      'trend',
+      row.label,
+      '',
+      row.key,
+      row.orderCount,
+      row.quantity,
+      row.total,
+      '',
+      '',
+      '',
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-product-sales-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 商品銷售 CSV 已匯出`
 }
 
 const exportElectronicInvoiceReportCsv = (): void => {
@@ -2332,6 +2433,53 @@ type ElectronicInvoiceReportQuery = {
   maxPartySize: number | null
 }
 
+type ProductSalesReportQuery = {
+  startDate: string
+  endDate: string
+  timeUnit: ProductSalesReportTimeUnit
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
+const emptyProductSalesReport = (query: ProductSalesReportQuery): ProductSalesReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  timeUnit: query.timeUnit,
+  summary: {
+    totalOrders: 0,
+    totalPartySize: 0,
+    totalQuantity: 0,
+    totalSales: 0,
+    averageTicket: 0,
+    averageItemPrice: 0,
+  },
+  categories: [],
+  products: [],
+  comboSelections: [],
+  trend: [],
+})
+
+const productSalesReportQueryOptions = (): ProductSalesReportQuery | null => {
+  if (!productSalesReportRangeValid.value) {
+    adminMessage.value = '商品銷售報表日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: productSalesReportStartDate.value,
+    endDate: productSalesReportEndDate.value,
+    timeUnit: productSalesReportTimeUnit.value,
+    serviceMode: productSalesReportServiceMode.value,
+    source: productSalesReportSource.value,
+    minPartySize: productSalesReportMinPeople.value ? Math.max(1, Math.trunc(productSalesReportMinPeople.value)) : null,
+    maxPartySize: productSalesReportMaxPeople.value ? Math.max(1, Math.trunc(productSalesReportMaxPeople.value)) : null,
+  }
+}
+
 const emptyElectronicInvoiceReport = (query: ElectronicInvoiceReportQuery): ElectronicInvoiceReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2374,10 +2522,12 @@ const loadAdminData = async (): Promise<void> => {
 
   try {
     const timeClockQuery = timeClockQueryOptions()
+    const productSalesReportQuery = productSalesReportQueryOptions()
     const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
-    if (!timeClockQuery || !electronicInvoiceReportQuery) {
+    if (!timeClockQuery || !productSalesReportQuery || !electronicInvoiceReportQuery) {
       return
     }
+    let productSalesReportWarning = ''
     let electronicInvoiceReportWarning = ''
 
     const [
@@ -2395,6 +2545,7 @@ const loadAdminData = async (): Promise<void> => {
       timeClockRows,
       inventory,
       closeoutDeliveries,
+      productReport,
       invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
@@ -2411,6 +2562,10 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminTimeClockEntries(timeClockQuery),
       fetchAdminInventory(120),
       fetchAdminCloseoutReportDeliveries(closeoutReportDeliveryLimit.value),
+      fetchAdminProductSalesReport(productSalesReportQuery).catch((error) => {
+        productSalesReportWarning = error instanceof Error ? error.message : '商品銷售報表暫時無法載入'
+        return emptyProductSalesReport(productSalesReportQuery)
+      }),
       fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
         electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
         return emptyElectronicInvoiceReport(electronicInvoiceReportQuery)
@@ -2436,9 +2591,10 @@ const loadAdminData = async (): Promise<void> => {
     reservationBlacklist.value = blacklistRows
     timeClockEntries.value = timeClockRows
     closeoutReportDeliveries.value = closeoutDeliveries
+    productSalesReport.value = productReport
     electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -2565,6 +2721,25 @@ const loadDailyReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '營運日報讀取失敗'
   } finally {
     isReportLoading.value = false
+  }
+}
+
+const loadProductSalesReport = async (): Promise<void> => {
+  const query = productSalesReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isProductSalesReportLoading.value = true
+  adminMessage.value = '讀取商品銷售報表中'
+
+  try {
+    productSalesReport.value = await fetchAdminProductSalesReport(query)
+    adminMessage.value = `已載入 ${productSalesReport.value.summary.totalQuantity} 件商品銷售，營業淨額 ${formatCurrency(productSalesReport.value.summary.totalSales)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '商品銷售報表讀取失敗'
+  } finally {
+    isProductSalesReportLoading.value = false
   }
 }
 
@@ -6723,6 +6898,177 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ reportPeakHour ? `${reportPeakHour.count} 張 · ${formatCurrency(reportPeakHour.total)}` : '尚無資料' }}</small>
           </article>
         </div>
+
+        <section class="admin-subpanel" aria-label="商品銷售報表">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Product Sales</p>
+              <h3>商品銷售報表</h3>
+            </div>
+            <span class="panel-note">
+              {{ productSalesReport ? `${productSalesReport.startDate} - ${productSalesReport.endDate} · ${productSalesReport.summary.totalQuantity} 件` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="productSalesReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="productSalesReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              單位
+              <select v-model="productSalesReportTimeUnit">
+                <option value="day">日</option>
+                <option value="week">週</option>
+                <option value="month">月</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="productSalesReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="productSalesReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="productSalesReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="productSalesReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isProductSalesReportLoading" @click="loadProductSalesReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isProductSalesReportLoading ? '讀取中' : '刷新商品' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!productSalesReport" @click="exportProductSalesReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出商品 CSV
+            </button>
+          </div>
+
+          <div v-if="productSalesReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>營業淨額</span>
+              <strong>{{ formatCurrency(productSalesReport.summary.totalSales) }}</strong>
+              <small>{{ productSalesReport.summary.totalOrders }} 張 · 平均客單 {{ formatCurrency(productSalesReport.summary.averageTicket) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>銷售量</span>
+              <strong>{{ productSalesReport.summary.totalQuantity }}</strong>
+              <small>平均售價 {{ formatCurrency(productSalesReport.summary.averageItemPrice) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>來客數</span>
+              <strong>{{ productSalesReport.summary.totalPartySize }}</strong>
+              <small>點選率以銷售量 / 來客數計算</small>
+            </article>
+            <article class="admin-report-card">
+              <span>熱門商品</span>
+              <strong>{{ productSalesTopProduct?.name ?? '尚無' }}</strong>
+              <small>{{ productSalesTopProduct ? `${productSalesTopProduct.quantity} 件 · ${formatReportPercent(productSalesTopProduct.salesShare)}` : '尚無資料' }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>熱門類別</span>
+              <strong>{{ productSalesTopCategory ? productSalesCategoryLabel(productSalesTopCategory.category) : '尚無' }}</strong>
+              <small>{{ productSalesTopCategory ? `${productSalesTopCategory.quantity} 件 · ${formatReportPercent(productSalesTopCategory.salesShare)}` : '尚無資料' }}</small>
+            </article>
+          </div>
+
+          <div v-if="productSalesReport" class="admin-section-grid admin-report-sections">
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Category</p>
+                  <h3>類別概況</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in productSalesReport.categories.slice(0, 10)" :key="row.category" class="admin-report-row">
+                <span>{{ productSalesCategoryLabel(row.category) }}</span>
+                <strong>{{ formatCurrency(row.total) }}</strong>
+                <small>{{ row.quantity }} 件 · 點選率 {{ formatReportPercent(row.selectionRate) }}</small>
+              </article>
+              <div v-if="productSalesReport.categories.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間沒有已收款商品</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Items</p>
+                  <h3>品項概況</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in productSalesReport.products.slice(0, 12)" :key="row.key" class="admin-report-row">
+                <span>{{ row.name }}</span>
+                <strong>{{ formatCurrency(row.total) }}</strong>
+                <small>{{ row.quantity }} 件 · 均價 {{ formatCurrency(row.averagePrice) }} · 占比 {{ formatReportPercent(row.salesShare) }}</small>
+              </article>
+              <div v-if="productSalesReport.products.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>尚無商品銷售</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Trend</p>
+                  <h3>銷售走勢</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in productSalesReport.trend" :key="row.key" class="admin-report-row">
+                <span>{{ row.label }}</span>
+                <strong>{{ formatCurrency(row.total) }}</strong>
+                <small>{{ row.quantity }} 件 · {{ row.orderCount }} 張 · {{ row.partySize }} 人</small>
+              </article>
+              <div v-if="productSalesReport.trend.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間尚無走勢資料</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Combo</p>
+                  <h3>套餐搭配</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in productSalesReport.comboSelections.slice(0, 12)" :key="row.key" class="admin-report-row">
+                <span>{{ row.parentName }} / {{ row.groupLabel }} / {{ row.name }}</span>
+                <strong>{{ row.quantity }} 件</strong>
+                <small>{{ row.priceDeltaTotal ? `加價 ${formatCurrency(row.priceDeltaTotal)}` : '無加價' }}</small>
+              </article>
+              <div v-if="productSalesReport.comboSelections.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間沒有套餐搭配資料</span>
+              </div>
+            </section>
+          </div>
+        </section>
 
         <section class="admin-subpanel admin-report-delivery-panel" aria-label="關帳信紀錄">
           <div class="admin-subpanel-heading">

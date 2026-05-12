@@ -464,6 +464,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'payment',
   },
   {
+    id: 'product-sales-report',
+    category: 'register',
+    title: '商品銷售報表',
+    summary: '後台營運報表可依 iCHEF 商品銷售報表查詢類別、品項、銷售走勢與套餐搭配。',
+    steps: [
+      '連點工具箱 6 下進入後台，再到「營運報表」。',
+      '在「商品銷售報表」選擇開始/結束日期；單次查詢不可超過 93 天，資料窗口限近 2 年。',
+      '可用日、週、月切換走勢單位，也可依服務方式、訂單來源與人數範圍篩選。',
+      '類別概況與品項概況會顯示銷售量、營業淨額、平均售價、點選率與占比。',
+      '若訂單含套餐子項目，套餐搭配會列出套餐、子項目、群組與加價合計。',
+      '按「匯出商品 CSV」可下載目前篩選結果，供後續商品調整或備貨判斷。',
+    ],
+    keywords: ['商品銷售報表', '商品報表', '類別概況', '品項概況', '點選率', '平均售價', '套餐搭配', 'CSV', '報表分析', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'fulfillment-alerts',
     category: 'orders',
     title: '任務快篩與取餐/送達時間預警',

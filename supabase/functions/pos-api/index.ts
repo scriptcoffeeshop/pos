@@ -5034,6 +5034,80 @@ api.get("/admin/reports/daily", async (c) => {
   return c.json({ report: buildDailyReport(range, (data ?? []) as DailyReportOrderRow[]) });
 });
 
+api.get("/admin/reports/product-sales", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "product sales report can query the latest 2 years only" }, 400);
+  }
+
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, payment_method, payment_status, status, created_at, order_items(product_id, product_sku, name, quantity, line_total, combo_items)",
+    )
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString())
+    .in("payment_status", Array.from(collectedPaymentStatuses))
+    .neq("status", "voided")
+    .neq("status", "failed")
+    .order("created_at", { ascending: true })
+    .limit(5000);
+
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const [{ data: orderData, error: orderError }, { data: productData, error: productError }] = await Promise.all([
+    query,
+    supabase.from("products").select("id, sku, name, category"),
+  ]);
+
+  if (orderError) {
+    return c.json({ error: orderError.message }, 500);
+  }
+  if (productError) {
+    return c.json({ error: productError.message }, 500);
+  }
+
+  const rows = ((orderData ?? []) as DailyReportOrderRow[]).filter((order) => {
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+
+  return c.json({
+    report: buildProductSalesReport(
+      range,
+      validProductSalesTimeUnit(c.req.query("timeUnit")),
+      rows,
+      (productData ?? []) as ProductCatalogReportRow[],
+    ),
+  });
+});
+
 api.get("/admin/reports/electronic-invoices", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -6840,19 +6914,64 @@ interface RegisterOrderSummaryRow {
 }
 
 interface DailyReportOrderItemRow {
+  product_id?: string | null;
   product_sku: string;
   name: string;
   quantity: number;
   line_total: number;
+  combo_items?: unknown;
 }
 
 interface DailyReportOrderRow extends RegisterOrderSummaryRow {
   id: string;
   order_number: string;
+  note?: string | null;
   source: OrderSource;
   service_mode: ServiceMode;
   created_at: string;
   order_items?: DailyReportOrderItemRow[];
+}
+
+type ProductSalesReportTimeUnit = "day" | "week" | "month";
+
+interface ProductCatalogReportRow {
+  id: string;
+  sku: string;
+  name: string;
+  category: string;
+}
+
+interface ProductSalesReportAccumulator {
+  orderIds: Set<string>;
+  quantity: number;
+  total: number;
+}
+
+interface ProductSalesProductAccumulator extends ProductSalesReportAccumulator {
+  key: string;
+  sku: string;
+  name: string;
+  category: string;
+}
+
+interface ProductSalesComboAccumulator {
+  key: string;
+  parentSku: string;
+  parentName: string;
+  groupLabel: string;
+  sku: string;
+  name: string;
+  quantity: number;
+  priceDeltaTotal: number;
+}
+
+interface ProductSalesTrendAccumulator {
+  key: string;
+  label: string;
+  orderIds: Set<string>;
+  partySize: number;
+  quantity: number;
+  total: number;
 }
 
 const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
@@ -7456,6 +7575,9 @@ const validServiceModeFilter = (value: string | undefined): ServiceMode | null =
 const validOrderSourceFilter = (value: string | undefined): OrderSource | null =>
   value === "counter" || value === "qr" || value === "online" ? value : null;
 
+const validProductSalesTimeUnit = (value: string | undefined): ProductSalesReportTimeUnit =>
+  value === "week" || value === "month" ? value : "day";
+
 const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
   order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
 
@@ -7586,6 +7708,259 @@ const addBreakdown = (
   row.count += 1;
   row.total += amount;
   map.set(key, row);
+};
+
+const reportLocalDate = (value: string | Date): Date => {
+  const date = value instanceof Date ? value : new Date(value);
+  return new Date(date.getTime() + reportTimezoneOffsetMinutes * 60_000);
+};
+
+const reportDateKey = (date: Date): string =>
+  [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+
+const reportMonthKey = (date: Date): string =>
+  [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+  ].join("-");
+
+const productSalesTrendBucket = (
+  createdAt: string,
+  timeUnit: ProductSalesReportTimeUnit,
+  singleDay: boolean,
+): { key: string; label: string } => {
+  const local = reportLocalDate(createdAt);
+  if (timeUnit === "month") {
+    const key = reportMonthKey(local);
+    return { key, label: key };
+  }
+
+  if (timeUnit === "week") {
+    const weekday = local.getUTCDay() === 0 ? 7 : local.getUTCDay();
+    const weekStart = new Date(local);
+    weekStart.setUTCHours(0, 0, 0, 0);
+    weekStart.setUTCDate(local.getUTCDate() - weekday + 1);
+    const key = reportDateKey(weekStart);
+    return { key, label: `${key} 週` };
+  }
+
+  if (singleDay) {
+    const hour = String(local.getUTCHours()).padStart(2, "0");
+    return { key: `${reportDateKey(local)}T${hour}`, label: `${hour}:00` };
+  }
+
+  const key = reportDateKey(local);
+  return { key, label: key };
+};
+
+const roundedPercent = (value: number, total: number): number =>
+  total > 0 ? Math.round((value / total) * 1000) / 10 : 0;
+
+const readProductSalesComboItems = (items: unknown): ComboLineItemInput[] => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const item = entry as Record<string, unknown>;
+    const productSku = sanitizeText(item.productSku ?? item.product_sku, "").slice(0, 80);
+    const name = sanitizeText(item.name, "").slice(0, 120);
+    const quantity = Number(item.quantity);
+    if (!productSku || !name || !Number.isFinite(quantity) || quantity <= 0) {
+      return [];
+    }
+
+    return [{
+      groupId: sanitizeText(item.groupId ?? item.group_id, "").slice(0, 80) || "combo",
+      groupLabel: sanitizeText(item.groupLabel ?? item.group_label, "").slice(0, 80) || "套餐",
+      productId: sanitizeText(item.productId ?? item.product_id, "").slice(0, 80),
+      productSku,
+      name,
+      quantity: Math.min(Math.max(Math.trunc(quantity), 1), 99),
+      priceDelta: Math.trunc(Number(item.priceDelta ?? item.price_delta) || 0),
+      options: Array.isArray(item.options)
+        ? item.options.flatMap((option) => {
+          const label = sanitizeText(option, "").slice(0, 120);
+          return label ? [label] : [];
+        }).slice(0, 12)
+        : [],
+    }];
+  }).slice(0, 80);
+};
+
+const buildProductSalesReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  timeUnit: ProductSalesReportTimeUnit,
+  rows: DailyReportOrderRow[],
+  products: ProductCatalogReportRow[],
+) => {
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const productBySku = new Map(products.map((product) => [product.sku, product]));
+  const categoryMap = new Map<string, ProductSalesReportAccumulator>();
+  const productMap = new Map<string, ProductSalesProductAccumulator>();
+  const comboMap = new Map<string, ProductSalesComboAccumulator>();
+  const trendMap = new Map<string, ProductSalesTrendAccumulator>();
+  const rangeDays = Math.ceil((range.end.getTime() - range.start.getTime()) / (24 * 60 * 60_000));
+  const singleDay = rangeDays <= 1;
+
+  let totalPartySize = 0;
+  let totalQuantity = 0;
+  let totalSales = 0;
+
+  for (const order of rows) {
+    const orderSubtotal = Math.max(Number(order.subtotal) || 0, 0);
+    const orderItems = order.order_items ?? [];
+    const partySize = partySizeFromOrderNote(order.note);
+    const orderGrossItemTotal = orderItems.reduce(
+      (total, item) => total + Math.max(Number(item.line_total) || 0, 0),
+      0,
+    );
+    const orderQuantity = orderItems.reduce(
+      (total, item) => total + Math.max(Number(item.quantity) || 0, 0),
+      0,
+    );
+    const bucket = productSalesTrendBucket(order.created_at, timeUnit, singleDay);
+    const trend = trendMap.get(bucket.key) ?? {
+      ...bucket,
+      orderIds: new Set<string>(),
+      partySize: 0,
+      quantity: 0,
+      total: 0,
+    };
+
+    trend.orderIds.add(order.id);
+    trend.partySize += partySize;
+    trend.quantity += orderQuantity;
+    trend.total += orderSubtotal;
+    trendMap.set(bucket.key, trend);
+
+    totalPartySize += partySize;
+    totalQuantity += orderQuantity;
+    totalSales += orderSubtotal;
+
+    for (const item of orderItems) {
+      const quantity = Math.max(Number(item.quantity) || 0, 0);
+      if (quantity <= 0) {
+        continue;
+      }
+
+      const grossLineTotal = Math.max(Number(item.line_total) || 0, 0);
+      const lineTotal = orderGrossItemTotal > 0
+        ? Math.round((grossLineTotal / orderGrossItemTotal) * orderSubtotal)
+        : grossLineTotal;
+      const catalogProduct = item.product_id
+        ? productById.get(item.product_id) ?? productBySku.get(item.product_sku)
+        : productBySku.get(item.product_sku);
+      const productKey = catalogProduct?.id ?? item.product_id ?? item.product_sku ?? item.name;
+      const sku = catalogProduct?.sku ?? item.product_sku;
+      const name = catalogProduct?.name ?? item.name;
+      const category = catalogProduct?.category ?? "未分類";
+
+      const categoryRow = categoryMap.get(category) ?? {
+        orderIds: new Set<string>(),
+        quantity: 0,
+        total: 0,
+      };
+      categoryRow.orderIds.add(order.id);
+      categoryRow.quantity += quantity;
+      categoryRow.total += lineTotal;
+      categoryMap.set(category, categoryRow);
+
+      const productRow = productMap.get(productKey) ?? {
+        key: productKey,
+        sku,
+        name,
+        category,
+        orderIds: new Set<string>(),
+        quantity: 0,
+        total: 0,
+      };
+      productRow.orderIds.add(order.id);
+      productRow.quantity += quantity;
+      productRow.total += lineTotal;
+      productMap.set(productKey, productRow);
+
+      for (const comboItem of readProductSalesComboItems(item.combo_items)) {
+        const comboQuantity = quantity * comboItem.quantity;
+        const comboKey = `${sku}:${comboItem.groupLabel}:${comboItem.productSku}:${comboItem.name}`;
+        const comboRow = comboMap.get(comboKey) ?? {
+          key: comboKey,
+          parentSku: sku,
+          parentName: name,
+          groupLabel: comboItem.groupLabel,
+          sku: comboItem.productSku,
+          name: comboItem.name,
+          quantity: 0,
+          priceDeltaTotal: 0,
+        };
+        comboRow.quantity += comboQuantity;
+        comboRow.priceDeltaTotal += comboItem.priceDelta * comboQuantity;
+        comboMap.set(comboKey, comboRow);
+      }
+    }
+  }
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart: range.start.toISOString(),
+    rangeEnd: range.end.toISOString(),
+    timeUnit,
+    summary: {
+      totalOrders: rows.length,
+      totalPartySize,
+      totalQuantity,
+      totalSales,
+      averageTicket: rows.length > 0 ? Math.round(totalSales / rows.length) : 0,
+      averageItemPrice: totalQuantity > 0 ? Math.round(totalSales / totalQuantity) : 0,
+    },
+    categories: Array.from(categoryMap.entries())
+      .map(([category, row]) => ({
+        category,
+        orderCount: row.orderIds.size,
+        quantity: row.quantity,
+        total: row.total,
+        averagePrice: row.quantity > 0 ? Math.round(row.total / row.quantity) : 0,
+        selectionRate: roundedPercent(row.quantity, totalPartySize),
+        salesShare: roundedPercent(row.total, totalSales),
+      }))
+      .sort((a, b) => b.total - a.total || b.quantity - a.quantity),
+    products: Array.from(productMap.values())
+      .map((row) => ({
+        key: row.key,
+        sku: row.sku,
+        name: row.name,
+        category: row.category,
+        orderCount: row.orderIds.size,
+        quantity: row.quantity,
+        total: row.total,
+        averagePrice: row.quantity > 0 ? Math.round(row.total / row.quantity) : 0,
+        selectionRate: roundedPercent(row.quantity, totalPartySize),
+        salesShare: roundedPercent(row.total, totalSales),
+      }))
+      .sort((a, b) => b.total - a.total || b.quantity - a.quantity),
+    comboSelections: Array.from(comboMap.values())
+      .sort((a, b) => b.quantity - a.quantity || b.priceDeltaTotal - a.priceDeltaTotal)
+      .slice(0, 24),
+    trend: Array.from(trendMap.values())
+      .map((row) => ({
+        key: row.key,
+        label: row.label,
+        orderCount: row.orderIds.size,
+        partySize: row.partySize,
+        quantity: row.quantity,
+        total: row.total,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
 };
 
 const buildDailyReport = (

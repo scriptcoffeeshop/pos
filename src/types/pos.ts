@@ -1064,6 +1064,73 @@ export interface HourlyReportRow {
   total: number
 }
 
+export type ProductSalesReportTimeUnit = 'day' | 'week' | 'month'
+
+export interface ProductSalesCategoryReportRow {
+  category: string
+  orderCount: number
+  quantity: number
+  total: number
+  averagePrice: number
+  selectionRate: number
+  salesShare: number
+}
+
+export interface ProductSalesProductReportRow {
+  key: string
+  sku: string
+  name: string
+  category: string
+  orderCount: number
+  quantity: number
+  total: number
+  averagePrice: number
+  selectionRate: number
+  salesShare: number
+}
+
+export interface ProductSalesComboReportRow {
+  key: string
+  parentSku: string
+  parentName: string
+  groupLabel: string
+  sku: string
+  name: string
+  quantity: number
+  priceDeltaTotal: number
+}
+
+export interface ProductSalesTrendReportRow {
+  key: string
+  label: string
+  orderCount: number
+  partySize: number
+  quantity: number
+  total: number
+}
+
+export interface ProductSalesReportSummary {
+  totalOrders: number
+  totalPartySize: number
+  totalQuantity: number
+  totalSales: number
+  averageTicket: number
+  averageItemPrice: number
+}
+
+export interface ProductSalesReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  timeUnit: ProductSalesReportTimeUnit
+  summary: ProductSalesReportSummary
+  categories: ProductSalesCategoryReportRow[]
+  products: ProductSalesProductReportRow[]
+  comboSelections: ProductSalesComboReportRow[]
+  trend: ProductSalesTrendReportRow[]
+}
+
 export interface ElectronicInvoiceReportRow {
   orderId: string
   orderNumber: string

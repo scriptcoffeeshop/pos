@@ -48,6 +48,8 @@ import type {
   PosOrder,
   PosPaymentEvent,
   PosReservation,
+  ProductSalesReport,
+  ProductSalesReportTimeUnit,
   ReservationBusinessHour,
   ReservationBlacklistEntry,
   ReservationSpecialDateMode,
@@ -597,6 +599,10 @@ interface RuntimeSettingsResponse {
 
 interface DailyReportResponse {
   report: DailySalesReport
+}
+
+interface ProductSalesReportResponse {
+  report: ProductSalesReport
 }
 
 interface ElectronicInvoiceReportResponse {
@@ -3832,6 +3838,37 @@ export const fetchAdminDailyReport = async (date: string): Promise<DailySalesRep
   }
 
   const data = await request<DailyReportResponse>(`/admin/reports/daily?${params.toString()}`)
+
+  return data.report
+}
+
+export const fetchAdminProductSalesReport = async (options: {
+  startDate: string
+  endDate: string
+  timeUnit: ProductSalesReportTimeUnit
+  serviceMode?: ServiceMode | 'all'
+  source?: OrderSource | 'all'
+  minPartySize?: number | null
+  maxPartySize?: number | null
+}): Promise<ProductSalesReport> => {
+  const params = new URLSearchParams()
+  params.set('startDate', options.startDate.trim())
+  params.set('endDate', options.endDate.trim())
+  params.set('timeUnit', options.timeUnit)
+  if (options.serviceMode && options.serviceMode !== 'all') {
+    params.set('serviceMode', options.serviceMode)
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source)
+  }
+  if (options.minPartySize !== null && options.minPartySize !== undefined) {
+    params.set('minPartySize', String(options.minPartySize))
+  }
+  if (options.maxPartySize !== null && options.maxPartySize !== undefined) {
+    params.set('maxPartySize', String(options.maxPartySize))
+  }
+
+  const data = await request<ProductSalesReportResponse>(`/admin/reports/product-sales?${params.toString()}`)
 
   return data.report
 }
