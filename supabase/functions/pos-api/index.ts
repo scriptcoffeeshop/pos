@@ -693,6 +693,14 @@ interface FloorTableSetting {
   width: number;
 }
 
+interface FloorTableHoldSetting {
+  id: string;
+  tableId: string;
+  startedAt: string;
+  expiresAt: string | null;
+  durationMinutes: number | null;
+}
+
 interface FloorDisplayPreferences {
   showPeople: boolean;
   showUnsubmittedWait: boolean;
@@ -720,6 +728,7 @@ interface FloorPlanSettings {
   display: FloorDisplayPreferences;
   partySizes: Record<string, number>;
   waitline: WaitlineEntry[];
+  tableHolds: FloorTableHoldSetting[];
 }
 
 interface OrderLabelSetting {
@@ -1337,6 +1346,7 @@ const defaultFloorPlan: FloorPlanSettings = {
   },
   partySizes: {},
   waitline: [],
+  tableHolds: [],
 };
 
 const defaultReservationBusinessHours = (): ReservationBusinessHour[] =>
@@ -10048,6 +10058,49 @@ const normalizeWaitlineEntries = (input: unknown): WaitlineEntry[] => {
   }).slice(0, 60);
 };
 
+const normalizeFloorTableHolds = (
+  input: unknown,
+  tables: FloorTableSetting[],
+): FloorTableHoldSetting[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const tableIds = new Set(tables.map((table) => table.id));
+  const now = Date.now();
+  const seenTableIds = new Set<string>();
+  return input.flatMap((entry): FloorTableHoldSetting[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const hold = entry as Partial<FloorTableHoldSetting>;
+    const tableId = sanitizeText(hold.tableId, "").toUpperCase().slice(0, 12);
+    const startedAt = sanitizeText(hold.startedAt, "");
+    const startedTime = new Date(startedAt).getTime();
+    const rawExpiresAt = sanitizeText(hold.expiresAt, "");
+    const expiresAt = rawExpiresAt && Number.isFinite(new Date(rawExpiresAt).getTime()) ? rawExpiresAt : null;
+    const expiresTime = expiresAt ? new Date(expiresAt).getTime() : null;
+    if (!tableIds.has(tableId) || seenTableIds.has(tableId) || !Number.isFinite(startedTime) || (expiresTime !== null && expiresTime <= now)) {
+      return [];
+    }
+
+    seenTableIds.add(tableId);
+    const duration = Number(hold.durationMinutes);
+    const durationMinutes = Number.isFinite(duration)
+      ? Math.min(Math.max(Math.trunc(duration), 1), 240)
+      : null;
+
+    return [{
+      id: sanitizeText(hold.id, `hold-${tableId}-${startedTime}`).slice(0, 80),
+      tableId,
+      startedAt,
+      expiresAt,
+      durationMinutes: expiresAt ? durationMinutes : null,
+    }];
+  }).slice(0, 40);
+};
+
 const normalizeFloorPlanForRuntime = (input: unknown): FloorPlanSettings => {
   if (!input || typeof input !== "object") {
     return defaultFloorPlan;
@@ -10064,6 +10117,7 @@ const normalizeFloorPlanForRuntime = (input: unknown): FloorPlanSettings => {
     display: normalizeFloorDisplay(settings.display),
     partySizes: normalizeFloorPartySizes(settings.partySizes, tables),
     waitline: normalizeWaitlineEntries(settings.waitline),
+    tableHolds: normalizeFloorTableHolds(settings.tableHolds, tables),
   };
 };
 

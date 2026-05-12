@@ -86,6 +86,7 @@ import type {
   FloorDisplayPreferences,
   FloorLevelSetting,
   FloorPlanSettings,
+  FloorTableHoldSetting,
   FloorTableSetting,
   InventoryCategory,
   InventoryItem,
@@ -200,11 +201,13 @@ type DiningTableDefinition = FloorTableSetting
 interface FloorTableState {
   table: DiningTableDefinition
   order: PosOrder | null
+  hold: FloorTableHoldSetting | null
   partySize: number
-  status: 'empty' | 'active' | 'ready' | 'locked'
+  status: 'empty' | 'reserved' | 'active' | 'ready' | 'locked'
   amountLabel: string
   orderLabel: string
   peopleLabel: string
+  holdLabel: string
   waitLabel: string
   stayLabel: string
   timeLimitLabel: string
@@ -392,6 +395,7 @@ const activeFloorStorageKey = 'script-coffee-pos-active-floor'
 const floorDisplayStorageKey = 'script-coffee-pos-floor-display'
 const floorPartyStorageKey = 'script-coffee-pos-floor-parties'
 const waitlineStorageKey = 'script-coffee-pos-waitline'
+const floorTableHoldsStorageKey = 'script-coffee-pos-floor-table-holds'
 const backendEditModeStorageKey = 'script-coffee-pos-backend-edit-mode'
 const toolboxPositionStorageKey = 'script-coffee-pos-toolbox-position'
 const supplyProductStatusStorageKey = 'script-coffee-pos-supply-product-statuses'
@@ -607,6 +611,12 @@ const normalizeWaitlineEntries = (value: unknown): WaitlineEntry[] => {
 
 const readWaitlineEntries = (): WaitlineEntry[] =>
   normalizeWaitlineEntries(readStorageValue<unknown>(waitlineStorageKey, []))
+
+const normalizeFloorTableHolds = (
+  value: unknown,
+  tables: DiningTableDefinition[] = defaultDiningTables,
+): FloorTableHoldSetting[] =>
+  normalizeFloorPlanSettings({ ...defaultFloorPlanSettingsValue, tables, tableHolds: value }).tableHolds
 
 const clampPercent = (value: unknown, fallback: number, min = 4, max = 96): number => {
   const numericValue = Number(value)
@@ -4099,6 +4109,10 @@ const floorTables = ref<DiningTableDefinition[]>(readFloorTables())
 const floorDisplayPreferences = ref<FloorDisplayPreferences>(readFloorDisplayPreferences())
 const floorPartySizes = ref<Record<string, number>>(normalizeFloorPartySizes(readStorageValue<unknown>(floorPartyStorageKey, {}), floorTables.value))
 const waitlineEntries = ref<WaitlineEntry[]>(readWaitlineEntries())
+const floorTableHolds = ref<FloorTableHoldSetting[]>(normalizeFloorTableHolds(
+  readStorageValue<unknown>(floorTableHoldsStorageKey, []),
+  floorTables.value,
+))
 const waitlineDraft = ref({
   name: '',
   phone: '',
@@ -4437,6 +4451,7 @@ const floorPlanPayload = (): FloorPlanSettings =>
     display: floorDisplayPreferences.value,
     partySizes: floorPartySizes.value,
     waitline: waitlineEntries.value,
+    tableHolds: floorTableHolds.value,
   })
 
 const writeFloorPlanCache = (settings: FloorPlanSettings): void => {
@@ -4446,6 +4461,7 @@ const writeFloorPlanCache = (settings: FloorPlanSettings): void => {
   writeStorageValue(floorDisplayStorageKey, settings.display)
   writeStorageValue(floorPartyStorageKey, settings.partySizes)
   writeStorageValue(waitlineStorageKey, settings.waitline)
+  writeStorageValue(floorTableHoldsStorageKey, settings.tableHolds)
 }
 
 const clearFloorPlanPersistTimer = (): void => {
@@ -4464,6 +4480,7 @@ const applyFloorPlanSettings = (settings: FloorPlanSettings): void => {
   floorDisplayPreferences.value = normalizedSettings.display
   floorPartySizes.value = normalizedSettings.partySizes
   waitlineEntries.value = normalizedSettings.waitline
+  floorTableHolds.value = normalizedSettings.tableHolds
   writeFloorPlanCache(normalizedSettings)
   const activeFloorTableIds = new Set(
     normalizedSettings.tables
@@ -5463,6 +5480,43 @@ const activeDineInOrders = computed(() =>
 )
 const dineInOrderForTable = (tableId: string): PosOrder | null =>
   activeDineInOrders.value.find((order) => tableIdFromOrder(order) === tableId) ?? null
+const tableHoldDurations = [60, 120, 180, 240]
+const floorTableHoldIsActive = (hold: FloorTableHoldSetting): boolean => {
+  if (!hold.expiresAt) {
+    return true
+  }
+
+  const expiresAt = new Date(hold.expiresAt).getTime()
+  return Number.isFinite(expiresAt) && expiresAt > currentTime.value
+}
+const activeFloorTableHolds = computed(() => floorTableHolds.value.filter(floorTableHoldIsActive))
+const floorTableHoldForTable = (tableId: string): FloorTableHoldSetting | null =>
+  activeFloorTableHolds.value.find((hold) => hold.tableId === tableId) ?? null
+const floorTableHoldLabel = (hold: FloorTableHoldSetting | null): string => {
+  if (!hold) {
+    return ''
+  }
+
+  if (!hold.expiresAt) {
+    return '保留桌位'
+  }
+
+  const remaining = remainingMinutesUntil(hold.expiresAt)
+  if (remaining === null) {
+    return '保留桌位'
+  }
+
+  return remaining > 0 ? `保留 ${remaining} min` : '保留到時'
+}
+const pruneExpiredFloorTableHolds = (): void => {
+  const activeHolds = floorTableHolds.value.filter(floorTableHoldIsActive)
+  if (activeHolds.length === floorTableHolds.value.length) {
+    return
+  }
+
+  floorTableHolds.value = activeHolds
+  floorPlanSyncMessage.value = '保留桌位時間已到，自動釋出空桌'
+}
 const elapsedMinutesSince = (timestamp: string | null): number => {
   if (!timestamp) {
     return 0
@@ -5532,10 +5586,13 @@ const partySizeForTable = (table: DiningTableDefinition, order: PosOrder | null)
 }
 const floorTableStateForTable = (table: DiningTableDefinition): FloorTableState => {
   const order = dineInOrderForTable(table.id)
+  const hold = order ? null : floorTableHoldForTable(table.id)
   const timeLimit = dineInTimeLimitState(order)
   const isLocked = Boolean(order && orderClaimedByOtherStation(order))
   const status: FloorTableState['status'] = !order
-    ? 'empty'
+    ? hold
+      ? 'reserved'
+      : 'empty'
     : isLocked
       ? 'locked'
       : order.status === 'ready'
@@ -5546,11 +5603,13 @@ const floorTableStateForTable = (table: DiningTableDefinition): FloorTableState 
   return {
     table,
     order,
+    hold,
     partySize,
     status,
     amountLabel: order ? formatCurrency(order.subtotal) : formatCurrency(0),
     orderLabel: order ? orderSequenceLabel(order.id) : '',
     peopleLabel: `${partySize}/${table.capacity}`,
+    holdLabel: floorTableHoldLabel(hold),
     waitLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
     stayLabel: order ? elapsedMinuteLabel(order.createdAt) : '0 min',
     timeLimitLabel: dineInTimeLimitLabel(order),
@@ -5564,6 +5623,17 @@ const floorTableStates = computed<FloorTableState[]>(() => activeFloorTables.val
 const selectedFloorTable = computed(() =>
   floorTableStates.value.find((state) => state.table.id === selectedFloorTableId.value) ?? floorTableStates.value[0] ?? null,
 )
+const floorTableStatusLabel = (state: FloorTableState): string => {
+  if (state.status === 'empty') {
+    return '空桌'
+  }
+
+  if (state.status === 'reserved') {
+    return state.holdLabel
+  }
+
+  return statusLabels[state.order?.status ?? 'new']
+}
 const emptyFloorTableStates = computed(() =>
   floorTableStates.value.filter((state) => state.status === 'empty'),
 )
@@ -7596,6 +7666,7 @@ const removeFloorLevel = (floor: FloorLevelSetting): void => {
   const removedTableIds = new Set(floorTables.value.filter((table) => table.floorId === floor.id).map((table) => table.id))
   floorLevels.value = floorLevels.value.filter((currentFloor) => currentFloor.id !== floor.id)
   floorTables.value = floorTables.value.filter((table) => table.floorId !== floor.id)
+  floorTableHolds.value = floorTableHolds.value.filter((hold) => !removedTableIds.has(hold.tableId))
   floorPartySizes.value = Object.entries(floorPartySizes.value).reduce<Record<string, number>>((sizes, [tableId, size]) => {
     if (!removedTableIds.has(tableId)) {
       sizes[tableId] = size
@@ -7654,6 +7725,7 @@ const removeFloorTable = (table: DiningTableDefinition): void => {
   }
 
   floorTables.value = floorTables.value.filter((currentTable) => currentTable.id !== table.id)
+  floorTableHolds.value = floorTableHolds.value.filter((hold) => hold.tableId !== table.id)
   floorPartySizes.value = Object.entries(floorPartySizes.value).reduce<Record<string, number>>((sizes, [tableId, size]) => {
     if (tableId !== table.id) {
       sizes[tableId] = size
@@ -7669,6 +7741,7 @@ const resetFloorTablesToDefault = (): void => {
   floorLevels.value = defaultFloorPlanSettingsValue.floors.map((floor) => ({ ...floor }))
   activeFloorId.value = defaultFloorPlanSettingsValue.activeFloorId
   floorTables.value = defaultDiningTables.map((table) => ({ ...table }))
+  floorTableHolds.value = []
   floorPartySizes.value = normalizeFloorPartySizes(floorPartySizes.value, floorTables.value)
   selectedFloorTableId.value = floorTables.value.find((table) => table.floorId === activeFloorId.value)?.id ?? null
 }
@@ -7740,10 +7813,51 @@ const handleFloorTablePointerUp = (event: PointerEvent): void => {
   }
 }
 
+const reserveFloorTable = (table: DiningTableDefinition, durationMinutes: number | null): void => {
+  if (dineInOrderForTable(table.id)) {
+    floorPlanSyncMessage.value = `${table.label} 已有進行中訂單，不能保留`
+    return
+  }
+
+  const startedAt = new Date(currentTime.value).toISOString()
+  const expiresAt = durationMinutes
+    ? new Date(currentTime.value + durationMinutes * 60_000).toISOString()
+    : null
+  floorTableHolds.value = [
+    {
+      id: `hold-${table.id}-${currentTime.value}`,
+      tableId: table.id,
+      startedAt,
+      expiresAt,
+      durationMinutes,
+    },
+    ...floorTableHolds.value.filter((hold) => hold.tableId !== table.id),
+  ]
+  selectedFloorTableId.value = table.id
+  floorPlanSyncMessage.value = durationMinutes
+    ? `${table.label} 已保留 ${durationMinutes} 分鐘`
+    : `${table.label} 已永久保留，需手動取消`
+}
+
+const releaseFloorTableHold = (table: DiningTableDefinition): void => {
+  const nextHolds = floorTableHolds.value.filter((hold) => hold.tableId !== table.id)
+  if (nextHolds.length === floorTableHolds.value.length) {
+    return
+  }
+
+  floorTableHolds.value = nextHolds
+  floorPlanSyncMessage.value = `${table.label} 已取消保留`
+}
+
 const startDineInTableOrder = async (
   table: DiningTableDefinition,
   options: { partySize?: number; waitlineEntry?: WaitlineEntry } = {},
 ): Promise<void> => {
+  if (floorTableHoldForTable(table.id)) {
+    floorPlanSyncMessage.value = `${table.label} 仍在保留中，請先取消保留`
+    return
+  }
+
   if (!(await verifyProtectedPermissions([
     openOrderPermissionStep(`為 ${floorLabelForTable(table)} ${table.label} 建立內用訂單前需驗證員工識別碼。`),
   ]))) {
@@ -10647,7 +10761,11 @@ watch(activeFloorId, (floorId) => {
   }
 })
 
-watch([floorLevels, activeFloorId, floorTables, floorDisplayPreferences, floorPartySizes, waitlineEntries], () => {
+watch(currentTime, () => {
+  pruneExpiredFloorTableHolds()
+})
+
+watch([floorLevels, activeFloorId, floorTables, floorDisplayPreferences, floorPartySizes, waitlineEntries, floorTableHolds], () => {
   persistFloorPlanSettings()
 }, { deep: true })
 
@@ -11766,7 +11884,11 @@ onBeforeUnmount(() => {
                           <span v-if="nextReservationForTable(state.table.id)" class="floor-table-reservation">
                             {{ formatOrderTime(nextReservationForTable(state.table.id)?.reservedAt ?? '') }} 訂位
                           </span>
-                          <span v-if="state.order" class="floor-table-order">
+                          <span v-if="state.hold" class="floor-table-hold">
+                            <Clock3 :size="14" aria-hidden="true" />
+                            {{ state.holdLabel }}
+                          </span>
+                          <span v-else-if="state.order" class="floor-table-order">
                             <strong>{{ state.amountLabel }}</strong>
                             <small v-if="floorDisplayPreferences.showOrderLabels">No. {{ state.orderLabel }}</small>
                           </span>
@@ -11802,7 +11924,7 @@ onBeforeUnmount(() => {
                             <span>目前桌位</span>
                             <strong>{{ selectedFloorTable.table.label }}</strong>
                           </div>
-                          <small>{{ selectedFloorTable.status === 'empty' ? '空桌' : statusLabels[selectedFloorTable.order?.status ?? 'new'] }}</small>
+                          <small>{{ floorTableStatusLabel(selectedFloorTable) }}</small>
                         </div>
                         <div class="floor-party-stepper" aria-label="桌位人數">
                           <button type="button" @click.stop="updateFloorPartySize(selectedFloorTable.table, -1)">
@@ -11820,6 +11942,10 @@ onBeforeUnmount(() => {
                         <p v-if="selectedFloorTable.warningLabels.length > 0" class="floor-workflow-warning-note">
                           <CircleAlert :size="16" aria-hidden="true" />
                           {{ selectedFloorTable.warningLabels.join('、') }}
+                        </p>
+                        <p v-if="selectedFloorTable.hold" class="floor-table-hold-note">
+                          <Clock3 :size="16" aria-hidden="true" />
+                          {{ selectedFloorTable.holdLabel }}
                         </p>
                         <div class="floor-control-actions">
                           <button
@@ -11845,10 +11971,38 @@ onBeforeUnmount(() => {
                             v-else
                             type="button"
                             class="primary-button"
+                            :disabled="Boolean(selectedFloorTable.hold)"
                             @click="startDineInTableOrder(selectedFloorTable.table)"
                           >
                             <ShoppingCart :size="18" aria-hidden="true" />
                             開桌點餐
+                          </button>
+                        </div>
+                        <div
+                          v-if="!selectedFloorTable.order"
+                          class="floor-table-hold-actions"
+                          aria-label="保留桌位"
+                        >
+                          <span>保留桌位</span>
+                          <button
+                            v-for="minutes in tableHoldDurations"
+                            :key="`hold-${selectedFloorTable.table.id}-${minutes}`"
+                            type="button"
+                            class="secondary-button"
+                            @click="reserveFloorTable(selectedFloorTable.table, minutes)"
+                          >
+                            {{ minutes }} 分
+                          </button>
+                          <button type="button" class="secondary-button" @click="reserveFloorTable(selectedFloorTable.table, null)">
+                            永久
+                          </button>
+                          <button
+                            v-if="selectedFloorTable.hold"
+                            type="button"
+                            class="text-button"
+                            @click="releaseFloorTableHold(selectedFloorTable.table)"
+                          >
+                            取消保留
                           </button>
                         </div>
                         <div
