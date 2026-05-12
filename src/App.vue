@@ -250,6 +250,15 @@ interface QueueTaskAction {
   tone: QueueTaskTone
 }
 
+interface DevicePrinterPairingDraft {
+  stationId: string
+  host: string
+  port: number
+  protocol: string
+  enabled: boolean
+  autoPrint: boolean
+}
+
 interface SwipeState {
   key: string
   pointerId: number
@@ -3716,23 +3725,42 @@ const clonePrinterSettingsForSave = (): PrinterSettings => ({
     copies: Math.min(5, Math.max(1, Number(rule.copies) || 1)),
   })),
 })
+const syncCurrentPrintStationFromSettings = (settings: PrinterSettings): void => {
+  const activeSetting = settings.stations.find((station) => station.id === printStation.id)
+    ?? settings.stations.find((station) => station.enabled)
+  if (!activeSetting) {
+    return
+  }
+
+  printStation.id = activeSetting.id
+  printStation.name = activeSetting.name
+  printStation.host = activeSetting.host
+  printStation.port = activeSetting.port
+  printStation.protocol = activeSetting.protocol
+  printStation.online = activeSetting.enabled
+  printStation.autoPrint = activeSetting.autoPrint
+}
+const applySavedPrinterSettings = (savedSettings: PrinterSettings): void => {
+  printerSettings.value = {
+    stations: savedSettings.stations.map((station) => ({ ...station })),
+    rules: savedSettings.rules.map((rule) => ({
+      ...rule,
+      timings: [...(rule.timings ?? defaultPrintRuleTimings)],
+      categories: [...rule.categories],
+      itemIds: [...(rule.itemIds ?? [])],
+      countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
+      countExcludedItemIds: [...(rule.countExcludedItemIds ?? [])],
+    })),
+  }
+  syncCurrentPrintStationFromSettings(printerSettings.value)
+}
 const savePrinterSettingsFromWorkstation = async (): Promise<void> => {
   printerSettingsSaving.value = true
   printerSettingsActionMessage.value = '正在儲存印單規則'
 
   try {
     const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', clonePrinterSettingsForSave())
-    printerSettings.value = {
-      stations: savedSettings.stations.map((station) => ({ ...station })),
-      rules: savedSettings.rules.map((rule) => ({
-        ...rule,
-        timings: [...(rule.timings ?? defaultPrintRuleTimings)],
-        categories: [...rule.categories],
-        itemIds: [...(rule.itemIds ?? [])],
-        countExcludedCategories: [...(rule.countExcludedCategories ?? [])],
-        countExcludedItemIds: [...(rule.countExcludedItemIds ?? [])],
-      })),
-    }
+    applySavedPrinterSettings(savedSettings)
     printerSettingsActionMessage.value = '印單規則已儲存'
   } catch (error) {
     printerSettingsActionMessage.value = `印單規則儲存失敗：${error instanceof Error ? error.message : '未知錯誤'}`
@@ -4149,6 +4177,15 @@ const isLabelManagementSaving = ref(false)
 const deviceManagementMessage = ref('裝置狀態會由列印站、外設與 print jobs 重建')
 const isDeviceManagementRefreshing = ref(false)
 const isDeviceManagementCancelling = ref(false)
+const isDevicePrinterPairingSaving = ref(false)
+const devicePrinterPairingDraft = ref<DevicePrinterPairingDraft>({
+  stationId: '',
+  host: '',
+  port: 9100,
+  protocol: 'EZPL over TCP',
+  enabled: true,
+  autoPrint: true,
+})
 const customerManagementMembers = ref<PosMember[]>([])
 const customerManagementSearchTerm = ref('')
 const customerManagementTypeFilter = ref('all')
@@ -4995,6 +5032,47 @@ const deviceKindLabel = (kind: string): string => {
 
   return kind
 }
+const emptyDevicePrinterPairingDraft = (): DevicePrinterPairingDraft => ({
+  stationId: '',
+  host: '',
+  port: 9100,
+  protocol: 'EZPL over TCP',
+  enabled: true,
+  autoPrint: true,
+})
+const devicePrinterPairingStation = computed<PrintStationSetting | null>(() =>
+  printerSettings.value.stations.find((station) => station.id === devicePrinterPairingDraft.value.stationId)
+    ?? printerSettings.value.stations[0]
+    ?? null,
+)
+const fillDevicePrinterPairingDraft = (station: PrintStationSetting | null = devicePrinterPairingStation.value): void => {
+  devicePrinterPairingDraft.value = station
+    ? {
+      stationId: station.id,
+      host: station.host,
+      port: station.port,
+      protocol: station.protocol,
+      enabled: station.enabled,
+      autoPrint: station.autoPrint,
+    }
+    : emptyDevicePrinterPairingDraft()
+}
+const selectDevicePrinterPairingStation = (): void => {
+  const station = printerSettings.value.stations.find((entry) => entry.id === devicePrinterPairingDraft.value.stationId) ?? null
+  fillDevicePrinterPairingDraft(station)
+}
+const normalizeDevicePrinterPairingPort = (port: number): number =>
+  Math.min(65535, Math.max(1, Math.trunc(Number(port) || 9100)))
+watch(
+  () => printerSettings.value.stations.map((station) => station.id).join('|'),
+  () => {
+    const selectedStillExists = printerSettings.value.stations.some((station) => station.id === devicePrinterPairingDraft.value.stationId)
+    if (!selectedStillExists) {
+      fillDevicePrinterPairingDraft(printerSettings.value.stations[0] ?? null)
+    }
+  },
+  { immediate: true },
+)
 const cashDrawerDeliveryLabel = (status: 'sent' | 'preview' | 'failed'): string => {
   if (status === 'sent') {
     return '已送出'
@@ -8992,6 +9070,61 @@ const refreshDeviceManagementAction = async (): Promise<void> => {
     deviceManagementMessage.value = `重新整理失敗：${error instanceof Error ? error.message : '未知錯誤'}`
   } finally {
     isDeviceManagementRefreshing.value = false
+  }
+}
+
+const saveDevicePrinterPairingAction = async (): Promise<void> => {
+  if (isDevicePrinterPairingSaving.value) {
+    return
+  }
+
+  if (!requireBackendEditMode('配對出單機')) {
+    return
+  }
+
+  const draft = devicePrinterPairingDraft.value
+  const stationId = draft.stationId
+  const host = draft.host.trim()
+  const protocol = draft.protocol.trim() || 'EZPL over TCP'
+  const port = normalizeDevicePrinterPairingPort(draft.port)
+  if (!stationId) {
+    deviceManagementMessage.value = '請先選擇要配對的出單機'
+    return
+  }
+
+  if (!host) {
+    deviceManagementMessage.value = '請輸入實體出單機 IP 位置'
+    return
+  }
+
+  const nextSettings = clonePrinterSettingsForSave()
+  const targetStation = nextSettings.stations.find((station) => station.id === stationId)
+  if (!targetStation) {
+    deviceManagementMessage.value = '找不到此出單機，請重新整理後再試'
+    fillDevicePrinterPairingDraft(nextSettings.stations[0] ?? null)
+    return
+  }
+
+  isDevicePrinterPairingSaving.value = true
+  deviceManagementMessage.value = `正在配對 ${targetStation.name} 到 ${host}:${port}`
+
+  try {
+    targetStation.host = host
+    targetStation.port = port
+    targetStation.protocol = protocol
+    targetStation.enabled = draft.enabled
+    targetStation.autoPrint = draft.autoPrint
+    const savedSettings = await updateAdminSetting<PrinterSettings>('printer_settings', nextSettings)
+    applySavedPrinterSettings(savedSettings)
+    const savedStation = printerSettings.value.stations.find((station) => station.id === stationId) ?? null
+    fillDevicePrinterPairingDraft(savedStation)
+    deviceManagementMessage.value = savedStation
+      ? `已配對 ${savedStation.name} · ${savedStation.host}:${savedStation.port}`
+      : '出單機配對已儲存'
+  } catch (error) {
+    deviceManagementMessage.value = `出單機配對失敗：${error instanceof Error ? error.message : '未知錯誤'}`
+  } finally {
+    isDevicePrinterPairingSaving.value = false
   }
 }
 
@@ -16065,6 +16198,85 @@ onBeforeUnmount(() => {
               </div>
             </article>
           </div>
+          <form class="device-printer-pairing" @submit.prevent="saveDevicePrinterPairingAction">
+            <header>
+              <Printer :size="20" aria-hidden="true" />
+              <div>
+                <strong>配對出單機</strong>
+                <span>{{ devicePrinterPairingStation ? `${devicePrinterPairingStation.name} · ${devicePrinterPairingStation.host}:${devicePrinterPairingStation.port}` : '尚未設定出單機' }}</span>
+              </div>
+            </header>
+            <div class="device-printer-pairing-grid">
+              <label>
+                出單機
+                <select
+                  v-model="devicePrinterPairingDraft.stationId"
+                  :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving"
+                  @change="selectDevicePrinterPairingStation"
+                >
+                  <option v-for="station in printerSettings.stations" :key="`device-pair-${station.id}`" :value="station.id">
+                    {{ station.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                實體 IP
+                <input
+                  v-model.trim="devicePrinterPairingDraft.host"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="192.168.1.100"
+                  :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving"
+                />
+              </label>
+              <label>
+                連接埠
+                <input
+                  v-model.number="devicePrinterPairingDraft.port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  step="1"
+                  inputmode="numeric"
+                  :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving"
+                />
+              </label>
+              <label>
+                協定
+                <input
+                  v-model.trim="devicePrinterPairingDraft.protocol"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="EZPL over TCP"
+                  :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving"
+                />
+              </label>
+              <label class="toggle-row">
+                <input v-model="devicePrinterPairingDraft.enabled" type="checkbox" :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving" />
+                啟用
+              </label>
+              <label class="toggle-row">
+                <input v-model="devicePrinterPairingDraft.autoPrint" type="checkbox" :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving" />
+                自動列印
+              </label>
+            </div>
+            <div class="device-management-actions">
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving"
+                @click="fillDevicePrinterPairingDraft()"
+              >
+                <RefreshCw :size="18" aria-hidden="true" />
+                重設
+              </button>
+              <button class="primary-button" type="submit" :disabled="printerSettings.stations.length === 0 || isDevicePrinterPairingSaving">
+                <Save :size="18" aria-hidden="true" />
+                {{ isDevicePrinterPairingSaving ? '儲存中' : '儲存配對' }}
+              </button>
+            </div>
+          </form>
           <div class="device-management-actions">
             <button class="secondary-button" type="button" :disabled="isDeviceManagementRefreshing" @click="refreshDeviceManagementAction">
               <RefreshCw :size="18" aria-hidden="true" />
