@@ -4,6 +4,10 @@ import type {
   AdminPermission,
   MenuCategory,
   MenuItem,
+  MemberAudienceExecutionMode,
+  MemberAudiencePreview,
+  MemberAudiencePreviewSummary,
+  MemberAudienceRuleSetting,
   MemberCoupon,
   FloorLevelSetting,
   FloorDisplayPreferences,
@@ -494,6 +498,11 @@ interface PaymentEventsResponse {
 
 interface MembersResponse {
   members: ApiMember[]
+}
+
+interface MemberAudiencePreviewResponse {
+  members: ApiMember[]
+  summary: MemberAudiencePreviewSummary
 }
 
 interface MemberResponse {
@@ -1886,6 +1895,55 @@ const normalizeReservationSpecialDates = (value: unknown): ReservationSpecialDat
   }).slice(0, 80)
 }
 
+const memberAudienceExecutionModes = new Set<MemberAudienceExecutionMode>(['excel', 'flydove', 'line-oa'])
+
+const normalizeMemberAudienceExecutionMode = (value: unknown): MemberAudienceExecutionMode =>
+  memberAudienceExecutionModes.has(value as MemberAudienceExecutionMode)
+    ? value as MemberAudienceExecutionMode
+    : 'excel'
+
+const normalizeMemberAudienceRules = (value: unknown): MemberAudienceRuleSetting[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenIds = new Set<string>()
+  return value.flatMap((entry, index): MemberAudienceRuleSetting[] => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return []
+    }
+
+    const rule = entry as Partial<MemberAudienceRuleSetting>
+    const baseId = sanitizeOnlineText(rule.id, `audience-${index + 1}`).slice(0, 80)
+    const id = baseId && !seenIds.has(baseId) ? baseId : `audience-${index + 1}`
+    if (seenIds.has(id)) {
+      return []
+    }
+
+    seenIds.add(id)
+    return [{
+      id,
+      name: sanitizeOnlineText(rule.name, `分眾條件 ${index + 1}`).slice(0, 80),
+      executionMode: normalizeMemberAudienceExecutionMode(rule.executionMode),
+      keyword: sanitizeOnlineText(rule.keyword, '').slice(0, 80),
+      customerType: sanitizeOnlineText(rule.customerType, '').slice(0, 40),
+      minPoints: clampRuntimeInteger(rule.minPoints, 0, 0, 999_999),
+      requireActiveCoupon: rule.requireActiveCoupon === true,
+      requireLineBinding: rule.requireLineBinding === true,
+      productSku: sanitizeOnlineText(rule.productSku, '').slice(0, 80),
+      productDays: clampRuntimeInteger(rule.productDays, 180, 1, 180),
+      minSpend: clampRuntimeInteger(rule.minSpend, 0, 0, 9_999_999),
+      spendDays: clampRuntimeInteger(rule.spendDays, 365, 1, 365),
+      lastVisitDays: clampRuntimeInteger(rule.lastVisitDays, 0, 0, 365),
+      minOrderCount: clampRuntimeInteger(rule.minOrderCount, 0, 0, 9999),
+      orderCountDays: clampRuntimeInteger(rule.orderCountDays, 365, 1, 365),
+      updatedAt: typeof rule.updatedAt === 'string' ? rule.updatedAt : null,
+      lastPreviewedAt: typeof rule.lastPreviewedAt === 'string' ? rule.lastPreviewedAt : null,
+      lastPreviewCount: clampRuntimeInteger(rule.lastPreviewCount, 0, 0, 999_999),
+    }]
+  }).slice(0, 24)
+}
+
 const normalizeOnlineMenuCategories = (value: unknown): OnlineMenuCategory[] => {
   if (!Array.isArray(value)) {
     return []
@@ -2668,6 +2726,7 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
   orderPageDisplay: {
     noteColumns: 3,
   },
+  memberAudiences: [],
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
     { id: 'food-pairing', trigger: 'morning', title: '早餐搭配', productIds: [], enabled: true },
@@ -2791,6 +2850,7 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.orderPageDisplay
     : defaults.orderPageDisplay
   const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings['orderPageDisplay']>
+  const memberAudiences = normalizeMemberAudienceRules(settings.memberAudiences)
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
       const book = entry && typeof entry === 'object' ? entry as Partial<CustomerEngagementSettings['checkoutCounters']['books'][number]> : null
@@ -3005,6 +3065,7 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         3,
       ),
     },
+    memberAudiences,
     recommendations,
     translations,
     hardwareDevices,
@@ -3445,6 +3506,39 @@ export const fetchAdminMembers = async (limit = 50, keyword = ''): Promise<PosMe
   const data = await request<MembersResponse>(`/admin/members?${params.toString()}`)
 
   return data.members.map(normalizeMember)
+}
+
+const normalizeMemberAudiencePreviewSummary = (
+  summary: MemberAudiencePreviewSummary | null | undefined,
+): MemberAudiencePreviewSummary => ({
+  totalCount: Math.max(0, Math.trunc(Number(summary?.totalCount) || 0)),
+  phoneReadyCount: Math.max(0, Math.trunc(Number(summary?.phoneReadyCount) || 0)),
+  lineReadyCount: Math.max(0, Math.trunc(Number(summary?.lineReadyCount) || 0)),
+  excelCount: Math.max(0, Math.trunc(Number(summary?.excelCount) || 0)),
+  previewedAt: typeof summary?.previewedAt === 'string' ? summary.previewedAt : new Date().toISOString(),
+  appliedFilters: Array.isArray(summary?.appliedFilters)
+    ? summary.appliedFilters.filter((entry): entry is string => typeof entry === 'string').slice(0, 20)
+    : [],
+})
+
+export const previewAdminMemberAudience = async (
+  input: MemberAudienceRuleSetting,
+): Promise<MemberAudiencePreview> => {
+  const data = await request<MemberAudiencePreviewResponse>('/admin/member-audience-preview', {
+    method: 'POST',
+    headers: {
+      'X-POS-STATION-ID': currentStationId(),
+    },
+    body: JSON.stringify({
+      ...input,
+      stationId: currentStationId(),
+    }),
+  })
+
+  return {
+    members: data.members.map(normalizeMember),
+    summary: normalizeMemberAudiencePreviewSummary(data.summary),
+  }
 }
 
 export const searchPosMembers = async (keyword: string, limit = 8): Promise<PosMember[]> => {

@@ -59,6 +59,7 @@ import {
   fetchAdminSettings,
   fetchAdminStations,
   fetchAdminTimeClockEntries,
+  previewAdminMemberAudience,
   type ProductUpdateInput,
   type InventoryConsumptionRuleInput,
   updateAdminSetting,
@@ -81,6 +82,9 @@ import type {
   InventoryConsumptionRule,
   InventoryItem,
   MemberCoupon,
+  MemberAudienceExecutionMode,
+  MemberAudiencePreviewSummary,
+  MemberAudienceRuleSetting,
   MenuCategory,
   MenuItem,
   OnlineOrderingSettings,
@@ -210,6 +214,33 @@ const adminTabs: Array<{ value: AdminTab; label: string }> = [
   { value: 'audit', label: '稽核' },
 ]
 
+const memberAudienceExecutionModeOptions: Array<{ value: MemberAudienceExecutionMode; label: string }> = [
+  { value: 'excel', label: '下載顧客清單' },
+  { value: 'flydove', label: 'FlyDove 簡訊' },
+  { value: 'line-oa', label: 'LINE OA 訊息' },
+]
+
+const createMemberAudienceRule = (): MemberAudienceRuleSetting => ({
+  id: `audience-${Date.now().toString(36)}`,
+  name: '回訪會員名單',
+  executionMode: 'excel',
+  keyword: '',
+  customerType: '',
+  minPoints: 0,
+  requireActiveCoupon: false,
+  requireLineBinding: false,
+  productSku: '',
+  productDays: 180,
+  minSpend: 0,
+  spendDays: 365,
+  lastVisitDays: 0,
+  minOrderCount: 0,
+  orderCountDays: 365,
+  updatedAt: null,
+  lastPreviewedAt: null,
+  lastPreviewCount: 0,
+})
+
 const categoryOptions: Array<{ value: 'all' | MenuCategory; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'coffee', label: categoryLabels.coffee ?? '咖啡' },
@@ -292,6 +323,7 @@ const auditActionLabels: Record<string, string> = {
   'inventory.record.consumption': '庫存消耗',
   'member.create': '建立會員',
   'member.wallet.adjust': '錢包調整',
+  'member.audience.preview': '會員分眾試算',
   'order.create': '建立訂單',
   'order.claim': '鎖單',
   'order.release_claim': '釋放鎖單',
@@ -664,6 +696,7 @@ const cloneEngagementSettings = (settings: CustomerEngagementSettings): Customer
       ...defaults.orderPageDisplay,
       ...settings.orderPageDisplay,
     },
+    memberAudiences: (settings.memberAudiences ?? defaults.memberAudiences).map((rule) => ({ ...rule })),
     checkoutCounters: {
       ...defaults.checkoutCounters,
       ...settings.checkoutCounters,
@@ -722,6 +755,10 @@ const coupons = ref<MemberCoupon[]>([])
 const reservations = ref<PosReservation[]>([])
 const reservationBlacklist = ref<ReservationBlacklistEntry[]>([])
 const memberSearchTerm = ref('')
+const memberAudienceDraft = ref<MemberAudienceRuleSetting>(createMemberAudienceRule())
+const selectedMemberAudienceId = ref('')
+const memberAudiencePreviewMembers = ref<PosMember[]>([])
+const memberAudiencePreviewSummary = ref<MemberAudiencePreviewSummary | null>(null)
 const newMember = ref<MemberDraft>({
   lineUserId: '',
   displayName: '',
@@ -803,6 +840,7 @@ const isStationLoading = ref(false)
 const isIchefLoading = ref(false)
 const isOperationLoading = ref(false)
 const isTimeClockLoading = ref(false)
+const isMemberAudienceLoading = ref(false)
 const savingProductId = ref<string | null>(null)
 const savingMemberId = ref<string | null>(null)
 const savingSettingKey = ref<string | null>(null)
@@ -837,6 +875,7 @@ const paymentEventCount = computed(() => paymentEvents.value.length)
 const unappliedPaymentEventCount = computed(() => paymentEvents.value.filter((event) => !event.applied).length)
 const memberCount = computed(() => members.value.length)
 const couponCount = computed(() => coupons.value.length)
+const memberAudienceCount = computed(() => engagementSettings.value.memberAudiences.length)
 const activeReservationCount = computed(() =>
   reservations.value.filter((reservation) => activeReservationStatuses.includes(reservation.status)).length,
 )
@@ -1342,6 +1381,142 @@ const filteredMembers = computed(() => {
     (member.lineUserId ?? '').toLowerCase().includes(keyword),
   )
 })
+
+const memberAudienceProductOptions = computed(() =>
+  [...productDrafts.value]
+    .filter((product) => product.sku.trim().length > 0)
+    .sort((first, second) => first.name.localeCompare(second.name, 'zh-TW')),
+)
+
+const memberAudienceExecutionLabel = (mode: MemberAudienceExecutionMode): string =>
+  memberAudienceExecutionModeOptions.find((option) => option.value === mode)?.label ?? '下載顧客清單'
+
+const memberAudienceProductLabel = (sku: string): string => {
+  if (!sku) {
+    return '不限制商品'
+  }
+
+  const product = productDrafts.value.find((item) => item.sku === sku)
+  return product ? `${product.name} (${product.sku})` : sku
+}
+
+const memberAudienceFilterSummary = (rule: MemberAudienceRuleSetting): string[] => {
+  const filters = [
+    rule.keyword ? `關鍵字 ${rule.keyword}` : '',
+    rule.customerType ? `顧客類型 ${rule.customerType}` : '',
+    rule.minPoints > 0 ? `點數 >= ${rule.minPoints}` : '',
+    rule.requireActiveCoupon ? '有可用優惠券' : '',
+    rule.requireLineBinding ? '已綁定 LINE' : '',
+    rule.productSku ? `${rule.productDays} 天內買過 ${memberAudienceProductLabel(rule.productSku)}` : '',
+    rule.minSpend > 0 ? `${rule.spendDays} 天累積消費 >= ${formatCurrency(rule.minSpend)}` : '',
+    rule.lastVisitDays > 0 ? `${rule.lastVisitDays} 天內有消費` : '',
+    rule.minOrderCount > 0 ? `${rule.orderCountDays} 天消費次數 >= ${rule.minOrderCount}` : '',
+  ].filter(Boolean)
+
+  return filters.length > 0 ? filters : ['全體會員']
+}
+
+const selectMemberAudienceRule = (rule: MemberAudienceRuleSetting): void => {
+  selectedMemberAudienceId.value = rule.id
+  memberAudienceDraft.value = { ...rule }
+  memberAudiencePreviewMembers.value = []
+  memberAudiencePreviewSummary.value = null
+}
+
+const addMemberAudienceRule = (): void => {
+  const rule = createMemberAudienceRule()
+  engagementSettings.value.memberAudiences = [rule, ...engagementSettings.value.memberAudiences]
+  selectMemberAudienceRule(rule)
+}
+
+const removeMemberAudienceRule = (ruleId: string): void => {
+  engagementSettings.value.memberAudiences = engagementSettings.value.memberAudiences.filter((rule) => rule.id !== ruleId)
+  if (selectedMemberAudienceId.value === ruleId) {
+    selectedMemberAudienceId.value = ''
+    memberAudienceDraft.value = createMemberAudienceRule()
+    memberAudiencePreviewMembers.value = []
+    memberAudiencePreviewSummary.value = null
+  }
+}
+
+const upsertMemberAudienceDraft = (): void => {
+  const draft = {
+    ...memberAudienceDraft.value,
+    id: memberAudienceDraft.value.id.trim() || `audience-${Date.now().toString(36)}`,
+    name: memberAudienceDraft.value.name.trim() || '未命名分眾',
+    keyword: memberAudienceDraft.value.keyword.trim(),
+    customerType: memberAudienceDraft.value.customerType.trim(),
+    productSku: memberAudienceDraft.value.productSku.trim(),
+    minPoints: Math.max(0, Math.trunc(Number(memberAudienceDraft.value.minPoints) || 0)),
+    productDays: Math.min(Math.max(Math.trunc(Number(memberAudienceDraft.value.productDays) || 180), 1), 180),
+    minSpend: Math.max(0, Math.trunc(Number(memberAudienceDraft.value.minSpend) || 0)),
+    spendDays: Math.min(Math.max(Math.trunc(Number(memberAudienceDraft.value.spendDays) || 365), 1), 365),
+    lastVisitDays: Math.min(Math.max(Math.trunc(Number(memberAudienceDraft.value.lastVisitDays) || 0), 0), 365),
+    minOrderCount: Math.max(0, Math.trunc(Number(memberAudienceDraft.value.minOrderCount) || 0)),
+    orderCountDays: Math.min(Math.max(Math.trunc(Number(memberAudienceDraft.value.orderCountDays) || 365), 1), 365),
+    updatedAt: new Date().toISOString(),
+  }
+  const existingIndex = engagementSettings.value.memberAudiences.findIndex((rule) => rule.id === draft.id)
+  engagementSettings.value.memberAudiences = existingIndex >= 0
+    ? engagementSettings.value.memberAudiences.map((rule) => (rule.id === draft.id ? draft : rule))
+    : [draft, ...engagementSettings.value.memberAudiences]
+  selectedMemberAudienceId.value = draft.id
+  memberAudienceDraft.value = { ...draft }
+}
+
+const saveMemberAudienceRule = async (): Promise<void> => {
+  upsertMemberAudienceDraft()
+  await saveEngagementSettings()
+}
+
+const previewMemberAudience = async (): Promise<void> => {
+  upsertMemberAudienceDraft()
+  isMemberAudienceLoading.value = true
+  adminMessage.value = `試算分眾名單：${memberAudienceDraft.value.name}`
+
+  try {
+    const preview = await previewAdminMemberAudience(memberAudienceDraft.value)
+    memberAudiencePreviewMembers.value = preview.members
+    memberAudiencePreviewSummary.value = preview.summary
+    memberAudienceDraft.value = {
+      ...memberAudienceDraft.value,
+      lastPreviewedAt: preview.summary.previewedAt,
+      lastPreviewCount: preview.summary.totalCount,
+    }
+    upsertMemberAudienceDraft()
+    adminMessage.value = `已試算 ${preview.summary.totalCount} 位會員；電話 ${preview.summary.phoneReadyCount}、LINE ${preview.summary.lineReadyCount}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '會員分眾試算失敗'
+  } finally {
+    isMemberAudienceLoading.value = false
+  }
+}
+
+const exportMemberAudienceCsv = (): void => {
+  if (memberAudiencePreviewMembers.value.length === 0 || !memberAudiencePreviewSummary.value) {
+    adminMessage.value = '請先試算分眾名單'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['audience', 'execution_mode', 'display_name', 'phone', 'line_user_id', 'customer_type', 'points_balance', 'total_orders', 'total_spent', 'last_consumed_at'],
+    ...memberAudiencePreviewMembers.value.map((member) => [
+      memberAudienceDraft.value.name,
+      memberAudienceExecutionLabel(memberAudienceDraft.value.executionMode),
+      member.displayName,
+      member.phone,
+      member.lineUserId ?? '',
+      member.customerType,
+      member.pointsBalance,
+      member.analysis.totalOrders,
+      member.analysis.totalSpent,
+      member.analysis.lastConsumedAt ?? '',
+    ]),
+  ]
+  const safeName = memberAudienceDraft.value.id.replace(/[^a-zA-Z0-9_-]/g, '-')
+  downloadCsv(`script-coffee-member-audience-${safeName}.csv`, rows)
+  adminMessage.value = `已匯出 ${memberAudiencePreviewMembers.value.length} 位會員分眾名單`
+}
 
 const toDraft = (product: MenuItem): ProductDraft => ({
   ...product,
@@ -4892,6 +5067,140 @@ const saveAccessControl = async (): Promise<void> => {
             </button>
           </div>
         </div>
+
+        <section class="admin-subpanel admin-member-audience">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Audience</p>
+              <h3>廣告分眾名單</h3>
+              <span class="panel-note">{{ memberAudienceCount }} 組條件 · {{ memberAudiencePreviewSummary?.totalCount ?? 0 }} 位試算</span>
+            </div>
+            <button class="icon-button" type="button" title="新增分眾條件" @click="addMemberAudienceRule">
+              <Plus :size="18" aria-hidden="true" />
+            </button>
+          </div>
+
+          <div class="admin-online-settings-grid">
+            <label>
+              名單名稱
+              <input v-model="memberAudienceDraft.name" type="text" maxlength="80" />
+            </label>
+            <label>
+              執行方式
+              <select v-model="memberAudienceDraft.executionMode">
+                <option v-for="option in memberAudienceExecutionModeOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label>
+              關鍵字
+              <input v-model="memberAudienceDraft.keyword" type="search" placeholder="姓名、電話、LINE UID" />
+            </label>
+            <label>
+              顧客類型
+              <select v-model="memberAudienceDraft.customerType">
+                <option value="">全部</option>
+                <option v-for="type in engagementSettings.customerTypes" :key="type" :value="type">
+                  {{ type }}
+                </option>
+              </select>
+            </label>
+            <label>
+              最低點數
+              <input v-model.number="memberAudienceDraft.minPoints" type="number" min="0" max="999999" step="1" />
+            </label>
+            <label>
+              商品偏好
+              <select v-model="memberAudienceDraft.productSku">
+                <option value="">不限制</option>
+                <option v-for="product in memberAudienceProductOptions" :key="product.id" :value="product.sku">
+                  {{ product.name }} · {{ product.sku }}
+                </option>
+              </select>
+            </label>
+            <label>
+              商品天數
+              <input v-model.number="memberAudienceDraft.productDays" type="number" min="1" max="180" step="1" />
+            </label>
+            <label>
+              累積消費
+              <input v-model.number="memberAudienceDraft.minSpend" type="number" min="0" max="9999999" step="1" />
+            </label>
+            <label>
+              消費金額天數
+              <input v-model.number="memberAudienceDraft.spendDays" type="number" min="1" max="365" step="1" />
+            </label>
+            <label>
+              最後消費天數
+              <input v-model.number="memberAudienceDraft.lastVisitDays" type="number" min="0" max="365" step="1" />
+            </label>
+            <label>
+              消費次數
+              <input v-model.number="memberAudienceDraft.minOrderCount" type="number" min="0" max="9999" step="1" />
+            </label>
+            <label>
+              消費次數天數
+              <input v-model.number="memberAudienceDraft.orderCountDays" type="number" min="1" max="365" step="1" />
+            </label>
+            <label class="toggle-row">
+              <input v-model="memberAudienceDraft.requireActiveCoupon" type="checkbox" />
+              有可用優惠券
+            </label>
+            <label class="toggle-row">
+              <input v-model="memberAudienceDraft.requireLineBinding" type="checkbox" />
+              已綁定 LINE
+            </label>
+          </div>
+
+          <div class="admin-action-row">
+            <button class="primary-button" type="button" :disabled="savingSettingKey === 'engagement_settings'" @click="saveMemberAudienceRule">
+              <Save :size="18" aria-hidden="true" />
+              儲存條件
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="isMemberAudienceLoading" @click="previewMemberAudience">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isMemberAudienceLoading ? '試算中' : '試算 / 更新名單' }}
+            </button>
+            <button
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="memberAudiencePreviewMembers.length === 0"
+              @click="exportMemberAudienceCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              下載 Excel CSV
+            </button>
+          </div>
+
+          <div class="admin-audit-meta">
+            <span v-for="filter in memberAudienceFilterSummary(memberAudienceDraft)" :key="filter">{{ filter }}</span>
+            <span v-if="memberAudiencePreviewSummary">
+              {{ memberAudienceExecutionLabel(memberAudienceDraft.executionMode) }} · {{ memberAudiencePreviewSummary.totalCount }} 位 · 電話 {{ memberAudiencePreviewSummary.phoneReadyCount }} · LINE {{ memberAudiencePreviewSummary.lineReadyCount }}
+            </span>
+          </div>
+
+          <div class="admin-rule-scope">
+            <strong>已儲存分眾條件</strong>
+            <article v-for="rule in engagementSettings.memberAudiences" :key="rule.id" class="admin-rule-grid">
+              <button class="secondary-button" type="button" @click="selectMemberAudienceRule(rule)">
+                {{ rule.name }}
+              </button>
+              <span>{{ memberAudienceExecutionLabel(rule.executionMode) }}</span>
+              <span>{{ rule.lastPreviewCount }} 位</span>
+              <button class="icon-button" type="button" title="刪除分眾條件" @click="removeMemberAudienceRule(rule.id)">
+                <Trash2 :size="16" aria-hidden="true" />
+              </button>
+            </article>
+            <span v-if="engagementSettings.memberAudiences.length === 0" class="panel-note">尚未建立分眾條件</span>
+          </div>
+
+          <div v-if="memberAudiencePreviewMembers.length > 0" class="admin-audit-meta">
+            <span v-for="member in memberAudiencePreviewMembers.slice(0, 8)" :key="member.id">
+              {{ member.displayName }} · {{ member.phone || member.lineUserId || '缺聯絡資料' }} · {{ member.customerType }} · 消費 {{ member.analysis.totalOrders }} 次
+            </span>
+          </div>
+        </section>
 
         <section class="admin-subpanel admin-member-create">
           <div class="admin-subpanel-heading">

@@ -777,6 +777,43 @@ export interface LoyaltyPointSettings {
   maximumRedeemPointsPerOrder: number
 }
 
+export type MemberAudienceExecutionMode = 'excel' | 'flydove' | 'line-oa'
+
+export interface MemberAudienceRuleSetting {
+  id: string
+  name: string
+  executionMode: MemberAudienceExecutionMode
+  keyword: string
+  customerType: string
+  minPoints: number
+  requireActiveCoupon: boolean
+  requireLineBinding: boolean
+  productSku: string
+  productDays: number
+  minSpend: number
+  spendDays: number
+  lastVisitDays: number
+  minOrderCount: number
+  orderCountDays: number
+  updatedAt: string | null
+  lastPreviewedAt: string | null
+  lastPreviewCount: number
+}
+
+export interface MemberAudiencePreviewSummary {
+  totalCount: number
+  phoneReadyCount: number
+  lineReadyCount: number
+  excelCount: number
+  previewedAt: string
+  appliedFilters: string[]
+}
+
+export interface MemberAudiencePreview {
+  members: PosMember[]
+  summary: MemberAudiencePreviewSummary
+}
+
 export interface CheckoutCounterBookSetting {
   id: string
   name: string
@@ -862,6 +899,7 @@ export interface CustomerEngagementSettings {
   electronicInvoice: ElectronicInvoiceSettings
   workflowAlerts: WorkflowAlertSettings
   orderPageDisplay: OrderPageDisplaySettings
+  memberAudiences: MemberAudienceRuleSetting[]
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
   hardwareDevices: HardwareDeviceSetting[]

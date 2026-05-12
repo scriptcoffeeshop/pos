@@ -929,6 +929,38 @@ interface ReservationWebsiteSettings {
   specialDates: ReservationSpecialDateRule[];
 }
 
+type MemberAudienceExecutionMode = "excel" | "flydove" | "line-oa";
+
+interface MemberAudienceRuleSetting {
+  id: string;
+  name: string;
+  executionMode: MemberAudienceExecutionMode;
+  keyword: string;
+  customerType: string;
+  minPoints: number;
+  requireActiveCoupon: boolean;
+  requireLineBinding: boolean;
+  productSku: string;
+  productDays: number;
+  minSpend: number;
+  spendDays: number;
+  lastVisitDays: number;
+  minOrderCount: number;
+  orderCountDays: number;
+  updatedAt: string | null;
+  lastPreviewedAt: string | null;
+  lastPreviewCount: number;
+}
+
+interface MemberAudiencePreviewSummary {
+  totalCount: number;
+  phoneReadyCount: number;
+  lineReadyCount: number;
+  excelCount: number;
+  previewedAt: string;
+  appliedFilters: string[];
+}
+
 interface CustomerEngagementSettings {
   orderLabels: OrderLabelSetting[];
   customerTypes: string[];
@@ -992,6 +1024,7 @@ interface CustomerEngagementSettings {
   orderPageDisplay: {
     noteColumns: number;
   };
+  memberAudiences: MemberAudienceRuleSetting[];
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
   hardwareDevices: HardwareDeviceSetting[];
@@ -1673,6 +1706,7 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
   orderPageDisplay: {
     noteColumns: 3,
   },
+  memberAudiences: [],
   recommendations: [
     { id: "retail-add-on", trigger: "coffee", title: "咖啡加購", productIds: [], enabled: true },
     { id: "food-pairing", trigger: "morning", title: "早餐搭配", productIds: [], enabled: true },
@@ -4175,6 +4209,277 @@ api.get("/admin/members", async (c) => {
       analysis: analysisByMember.get(member.id) ?? emptyMemberSalesAnalysis(),
     })),
   });
+});
+
+api.post("/admin/member-audience-preview", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const input = await c.req.json<unknown>().catch(() => ({}));
+  const rule = normalizeMemberAudienceRuleInput(input);
+  const stationId = sanitizeStationId(
+    c.req.header("x-pos-station-id") ?? (input && typeof input === "object" ? (input as { stationId?: unknown }).stationId : ""),
+  );
+  const appliedFilters: string[] = [];
+
+  let query = supabase
+    .from("members")
+    .select(memberSelect)
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  if (rule.keyword) {
+    const pattern = `%${rule.keyword.replace(/[%_]/g, "\\$&")}%`;
+    query = query.or(`line_display_name.ilike.${pattern},line_user_id.ilike.${pattern},phone.ilike.${pattern},customer_type.ilike.${pattern}`);
+    appliedFilters.push(`關鍵字 ${rule.keyword}`);
+  }
+
+  if (rule.customerType) {
+    query = query.eq("customer_type", rule.customerType);
+    appliedFilters.push(`顧客類型 ${rule.customerType}`);
+  }
+
+  if (rule.minPoints > 0) {
+    query = query.gte("points_balance", rule.minPoints);
+    appliedFilters.push(`可用點數 >= ${rule.minPoints}`);
+  }
+
+  if (rule.requireLineBinding) {
+    query = query.not("line_user_id", "is", null).neq("line_user_id", "");
+    appliedFilters.push("已綁定 LINE OA");
+  }
+
+  const { data: memberRows, error: memberError } = await query;
+  if (memberError) {
+    return c.json({ error: memberError.message }, 500);
+  }
+
+  const baseMembers = (memberRows ?? []) as Array<Record<string, unknown> & { id: string }>;
+  const memberIds = baseMembers.map((member) => member.id);
+  const activeCouponMemberIds = new Set<string>();
+
+  if (rule.requireActiveCoupon && memberIds.length > 0) {
+    const { data: activeCoupons, error: activeCouponError } = await supabase
+      .from("member_coupons")
+      .select("member_id")
+      .in("member_id", memberIds)
+      .eq("status", "active")
+      .limit(Math.min(memberIds.length * 10, 5000));
+
+    if (activeCouponError) {
+      return c.json({ error: activeCouponError.message }, 500);
+    }
+
+    for (const coupon of activeCoupons ?? []) {
+      if (typeof coupon.member_id === "string") {
+        activeCouponMemberIds.add(coupon.member_id);
+      }
+    }
+    appliedFilters.push("有可用優惠券");
+  }
+
+  const maxOrderWindowDays = Math.max(
+    rule.productSku ? rule.productDays : 0,
+    rule.minSpend > 0 ? rule.spendDays : 0,
+    rule.lastVisitDays,
+    rule.minOrderCount > 0 ? rule.orderCountDays : 0,
+  );
+  const now = Date.now();
+  const oneDayMs = 24 * 60 * 60_000;
+  const productCutoff = now - rule.productDays * oneDayMs;
+  const spendCutoff = now - rule.spendDays * oneDayMs;
+  const lastVisitCutoff = now - rule.lastVisitDays * oneDayMs;
+  const orderCountCutoff = now - rule.orderCountDays * oneDayMs;
+  const orderStats = new Map<string, {
+    productMatched: boolean;
+    spent: number;
+    lastVisitTime: number | null;
+    orderCount: number;
+  }>();
+
+  if (maxOrderWindowDays > 0 && memberIds.length > 0) {
+    const { data: orderRows, error: orderError } = await supabase
+      .from("orders")
+      .select(memberAnalysisOrderSelect)
+      .in("member_id", memberIds)
+      .in("payment_status", ["authorized", "paid"])
+      .neq("status", "voided")
+      .gte("created_at", new Date(now - maxOrderWindowDays * oneDayMs).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(Math.min(Math.max(memberIds.length * 80, 200), 10_000));
+
+    if (orderError) {
+      return c.json({ error: orderError.message }, 500);
+    }
+
+    for (const order of (orderRows ?? []) as MemberAnalysisOrderRow[]) {
+      const memberId = order.member_id;
+      if (!memberId) {
+        continue;
+      }
+
+      const orderTime = new Date(order.created_at).getTime();
+      if (!Number.isFinite(orderTime)) {
+        continue;
+      }
+
+      const stats = orderStats.get(memberId) ?? {
+        productMatched: false,
+        spent: 0,
+        lastVisitTime: null,
+        orderCount: 0,
+      };
+
+      if (rule.productSku && orderTime >= productCutoff) {
+        stats.productMatched = stats.productMatched || (order.order_items ?? []).some((item) =>
+          sanitizeText(item.product_sku, "") === rule.productSku &&
+          clampNonNegativeInteger(item.quantity) > 0
+        );
+      }
+
+      if (rule.minSpend > 0 && orderTime >= spendCutoff) {
+        stats.spent += clampNonNegativeInteger(order.subtotal);
+      }
+
+      if (rule.lastVisitDays > 0 && orderTime >= lastVisitCutoff) {
+        stats.lastVisitTime = Math.max(stats.lastVisitTime ?? 0, orderTime);
+      }
+
+      if (rule.minOrderCount > 0 && orderTime >= orderCountCutoff) {
+        stats.orderCount += 1;
+      }
+
+      orderStats.set(memberId, stats);
+    }
+  }
+
+  if (rule.productSku) {
+    appliedFilters.push(`商品偏好 ${rule.productSku} / ${rule.productDays} 天`);
+  }
+  if (rule.minSpend > 0) {
+    appliedFilters.push(`累積消費 >= ${rule.minSpend} / ${rule.spendDays} 天`);
+  }
+  if (rule.lastVisitDays > 0) {
+    appliedFilters.push(`最後消費 ${rule.lastVisitDays} 天內`);
+  }
+  if (rule.minOrderCount > 0) {
+    appliedFilters.push(`消費次數 >= ${rule.minOrderCount} / ${rule.orderCountDays} 天`);
+  }
+
+  const matchedBaseMembers = baseMembers.filter((member) => {
+    const memberId = member.id;
+    if (rule.requireActiveCoupon && !activeCouponMemberIds.has(memberId)) {
+      return false;
+    }
+
+    const stats = orderStats.get(memberId) ?? {
+      productMatched: false,
+      spent: 0,
+      lastVisitTime: null,
+      orderCount: 0,
+    };
+    if (rule.productSku && !stats.productMatched) {
+      return false;
+    }
+    if (rule.minSpend > 0 && stats.spent < rule.minSpend) {
+      return false;
+    }
+    if (rule.lastVisitDays > 0 && stats.lastVisitTime === null) {
+      return false;
+    }
+    if (rule.minOrderCount > 0 && stats.orderCount < rule.minOrderCount) {
+      return false;
+    }
+    return true;
+  }).slice(0, 500);
+
+  const matchedIds = matchedBaseMembers.map((member) => member.id);
+  let ledgerByMember = new Map<string, unknown[]>();
+  let couponsByMember = new Map<string, unknown[]>();
+  let analysisByMember = new Map<string, MemberSalesAnalysis>();
+
+  if (matchedIds.length > 0) {
+    const { data: ledger, error: ledgerError } = await supabase
+      .from("transaction_ledger")
+      .select(transactionLedgerSelect)
+      .in("member_id", matchedIds)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(matchedIds.length * 5, 1000));
+
+    if (ledgerError) {
+      return c.json({ error: ledgerError.message }, 500);
+    }
+
+    ledgerByMember = (ledger ?? []).reduce((map, entry) => {
+      const memberId = entry.member_id as string;
+      const current = map.get(memberId) ?? [];
+      if (current.length < 5) {
+        current.push(entry);
+        map.set(memberId, current);
+      }
+      return map;
+    }, new Map<string, unknown[]>());
+
+    const { data: coupons, error: couponError } = await supabase
+      .from("member_coupons")
+      .select(memberCouponSelect)
+      .in("member_id", matchedIds)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(matchedIds.length * 10, 1000));
+
+    if (couponError) {
+      return c.json({ error: couponError.message }, 500);
+    }
+
+    couponsByMember = (coupons ?? []).reduce((map, coupon) => {
+      const memberId = coupon.member_id as string;
+      const current = map.get(memberId) ?? [];
+      if (current.length < 10) {
+        current.push(coupon);
+        map.set(memberId, current);
+      }
+      return map;
+    }, new Map<string, unknown[]>());
+
+    const analysisResult = await loadMemberSalesAnalysis(matchedIds);
+    if (analysisResult.error) {
+      return c.json({ error: analysisResult.error }, 500);
+    }
+    analysisByMember = analysisResult.analysisByMember;
+  }
+
+  const members = matchedBaseMembers.map((member) => ({
+    ...member,
+    ledger: ledgerByMember.get(member.id) ?? [],
+    coupons: couponsByMember.get(member.id) ?? [],
+    analysis: analysisByMember.get(member.id) ?? emptyMemberSalesAnalysis(),
+  }));
+  const summary: MemberAudiencePreviewSummary = {
+    totalCount: members.length,
+    phoneReadyCount: members.filter((member) => sanitizeText((member as Record<string, unknown>).phone, "").length > 0).length,
+    lineReadyCount: members.filter((member) => sanitizeText((member as Record<string, unknown>).line_user_id, "").length > 0).length,
+    excelCount: members.length,
+    previewedAt: new Date().toISOString(),
+    appliedFilters,
+  };
+
+  await writeAuditEvent({
+    action: "member.audience.preview",
+    stationId,
+    metadata: {
+      audienceId: rule.id,
+      audienceName: rule.name,
+      executionMode: rule.executionMode,
+      totalCount: summary.totalCount,
+      phoneReadyCount: summary.phoneReadyCount,
+      lineReadyCount: summary.lineReadyCount,
+      appliedFilters,
+    },
+  });
+
+  return c.json({ members, summary });
 });
 
 api.get("/members/search", async (c) => {
@@ -9781,6 +10086,77 @@ const normalizeReservationSpecialDates = (input: unknown): ReservationSpecialDat
   }).slice(0, 80);
 };
 
+const memberAudienceExecutionModes: MemberAudienceExecutionMode[] = ["excel", "flydove", "line-oa"];
+
+const normalizeMemberAudienceExecutionMode = (value: unknown): MemberAudienceExecutionMode =>
+  memberAudienceExecutionModes.includes(value as MemberAudienceExecutionMode)
+    ? value as MemberAudienceExecutionMode
+    : "excel";
+
+const normalizeMemberAudienceRules = (input: unknown): MemberAudienceRuleSetting[] => {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seenIds = new Set<string>();
+  return input.flatMap((entry, index): MemberAudienceRuleSetting[] => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return [];
+    }
+
+    const rule = entry as Partial<MemberAudienceRuleSetting>;
+    const baseId = sanitizeText(rule.id, `audience-${index + 1}`).slice(0, 80);
+    const id = baseId && !seenIds.has(baseId) ? baseId : `audience-${index + 1}`;
+    if (seenIds.has(id)) {
+      return [];
+    }
+
+    seenIds.add(id);
+    return [{
+      id,
+      name: sanitizeText(rule.name, `分眾條件 ${index + 1}`).slice(0, 80),
+      executionMode: normalizeMemberAudienceExecutionMode(rule.executionMode),
+      keyword: sanitizeText(rule.keyword, "").slice(0, 80),
+      customerType: sanitizeText(rule.customerType, "").slice(0, 40),
+      minPoints: clampIntegerRange(rule.minPoints, 0, 0, 999_999),
+      requireActiveCoupon: rule.requireActiveCoupon === true,
+      requireLineBinding: rule.requireLineBinding === true,
+      productSku: sanitizeText(rule.productSku, "").slice(0, 80),
+      productDays: clampIntegerRange(rule.productDays, 180, 1, 180),
+      minSpend: clampIntegerRange(rule.minSpend, 0, 0, 9_999_999),
+      spendDays: clampIntegerRange(rule.spendDays, 365, 1, 365),
+      lastVisitDays: clampIntegerRange(rule.lastVisitDays, 0, 0, 365),
+      minOrderCount: clampIntegerRange(rule.minOrderCount, 0, 0, 9999),
+      orderCountDays: clampIntegerRange(rule.orderCountDays, 365, 1, 365),
+      updatedAt: typeof rule.updatedAt === "string" ? rule.updatedAt : null,
+      lastPreviewedAt: typeof rule.lastPreviewedAt === "string" ? rule.lastPreviewedAt : null,
+      lastPreviewCount: clampIntegerRange(rule.lastPreviewCount, 0, 0, 999_999),
+    }];
+  }).slice(0, 24);
+};
+
+const normalizeMemberAudienceRuleInput = (input: unknown): MemberAudienceRuleSetting =>
+  normalizeMemberAudienceRules([input])[0] ?? {
+    id: "audience-preview",
+    name: "未命名分眾",
+    executionMode: "excel",
+    keyword: "",
+    customerType: "",
+    minPoints: 0,
+    requireActiveCoupon: false,
+    requireLineBinding: false,
+    productSku: "",
+    productDays: 180,
+    minSpend: 0,
+    spendDays: 365,
+    lastVisitDays: 0,
+    minOrderCount: 0,
+    orderCountDays: 365,
+    updatedAt: null,
+    lastPreviewedAt: null,
+    lastPreviewCount: 0,
+  };
+
 const normalizePrintRuleName = (name: string, serviceMode: ServiceMode): string => {
   if (name === "內用收據" || (name.includes("內用") && name.includes("收據"))) {
     return "內用貼紙";
@@ -10863,6 +11239,7 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.orderPageDisplay
     : defaultEngagementSettings.orderPageDisplay;
   const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings["orderPageDisplay"]>;
+  const memberAudiences = normalizeMemberAudienceRules(settings.memberAudiences);
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
       if (!entry || typeof entry !== "object") {
@@ -11129,6 +11506,7 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         3,
       ),
     },
+    memberAudiences,
     recommendations,
     translations,
     hardwareDevices,
