@@ -205,7 +205,7 @@ interface CounterDraftState {
 }
 
 const serviceModes: ServiceMode[] = ['dine-in', 'takeout', 'delivery']
-const paymentMethods: PaymentMethod[] = ['cash', 'card', 'line-pay', 'jkopay', 'transfer']
+const paymentMethods: PaymentMethod[] = ['cash', 'card', 'app91-card', 'line-pay', 'jkopay', 'transfer']
 const orderSources: OrderSource[] = ['counter', 'qr', 'online']
 const orderStatuses: OrderStatus[] = ['new', 'preparing', 'ready', 'served', 'failed', 'voided']
 const paymentStatuses: PaymentStatus[] = ['pending', 'authorized', 'paid', 'expired', 'failed', 'refunded']
