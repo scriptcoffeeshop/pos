@@ -78,7 +78,7 @@ import {
   normalizeDineInTimeLimitSettings,
 } from './dineInTimeLimit'
 import { defaultDiscountSettings, normalizeDiscountSettings } from './discounts'
-import { normalizeProductTaxCategory } from './taxCategory'
+import { normalizeProductTaxCategory, normalizeZeroTaxSalesReason } from './taxCategory'
 
 interface ApiProduct {
   id: string
@@ -140,6 +140,7 @@ interface ApiOrder {
   tax_id?: string | null
   invoice_carrier_barcode?: string | null
   invoice_donation_code?: string | null
+  zero_tax_sales_reason?: string | null
   electronic_invoice_requested?: boolean | null
   electronic_invoice_status?: PosOrder['electronicInvoiceStatus'] | null
   electronic_invoice_print_mode?: PosOrder['electronicInvoicePrintMode'] | null
@@ -3004,6 +3005,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     taxId: order.tax_id ?? '',
     invoiceCarrierBarcode: order.invoice_carrier_barcode ?? '',
     invoiceDonationCode: order.invoice_donation_code ?? '',
+    zeroTaxSalesReason: normalizeZeroTaxSalesReason(order.zero_tax_sales_reason),
     electronicInvoiceRequested: order.electronic_invoice_requested === true,
     electronicInvoiceStatus: order.electronic_invoice_status ?? 'not_requested',
     electronicInvoicePrintMode: order.electronic_invoice_print_mode ?? 'none',
@@ -3806,6 +3808,7 @@ const orderPayload = (order: PosOrder) => ({
   taxId: order.taxId,
   invoiceCarrierBarcode: order.invoiceCarrierBarcode,
   invoiceDonationCode: order.invoiceDonationCode,
+  zeroTaxSalesReason: normalizeZeroTaxSalesReason(order.zeroTaxSalesReason),
   electronicInvoiceRequested: order.electronicInvoiceRequested,
   electronicInvoicePrintMode: order.electronicInvoicePrintMode,
   memberId: order.memberId,

@@ -120,6 +120,7 @@ export interface CustomerDraft {
   taxId: string
   invoiceCarrierBarcode: string
   invoiceDonationCode: string
+  zeroTaxSalesReason: string
   electronicInvoiceRequested: boolean
   electronicInvoicePrintMode: ElectronicInvoicePrintMode
   note: string
@@ -138,6 +139,7 @@ export interface PosOrder {
   taxId: string
   invoiceCarrierBarcode: string
   invoiceDonationCode: string
+  zeroTaxSalesReason: string
   electronicInvoiceRequested: boolean
   electronicInvoiceStatus: ElectronicInvoiceStatus
   electronicInvoicePrintMode: ElectronicInvoicePrintMode
@@ -977,6 +979,7 @@ export interface ElectronicInvoiceReportRow {
   salesAmount: number
   taxAmount: number
   zeroTaxSalesAmount: number
+  zeroTaxSalesReason: string
   taxExemptSalesAmount: number
   totalAmount: number
   status: ElectronicInvoiceStatus

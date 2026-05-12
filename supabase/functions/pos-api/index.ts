@@ -87,6 +87,7 @@ interface CreateOrderInput {
   taxId?: string;
   invoiceCarrierBarcode?: string;
   invoiceDonationCode?: string;
+  zeroTaxSalesReason?: string;
   electronicInvoiceRequested?: boolean;
   electronicInvoicePrintMode?: ElectronicInvoicePrintMode;
   memberId?: string | null;
@@ -226,6 +227,7 @@ interface ElectronicInvoiceReportRow {
   salesAmount: number;
   taxAmount: number;
   zeroTaxSalesAmount: number;
+  zeroTaxSalesReason: string;
   taxExemptSalesAmount: number;
   totalAmount: number;
   status: ElectronicInvoiceStatus;
@@ -252,6 +254,7 @@ interface ElectronicInvoiceReportOrderRow {
   tax_id: string | null;
   invoice_carrier_barcode: string | null;
   invoice_donation_code: string | null;
+  zero_tax_sales_reason: string | null;
   electronic_invoice_status: ElectronicInvoiceStatus;
   electronic_invoice_print_mode: ElectronicInvoicePrintMode;
   electronic_invoice_number: string | null;
@@ -2115,6 +2118,25 @@ const collectedPaymentStatuses = new Set<PaymentStatus>(["authorized", "paid"]);
 const normalizeInvoiceDonationCode = (value: unknown): string =>
   sanitizeText(value, "").replace(/\s/g, "").slice(0, 7);
 
+const normalizeZeroTaxSalesReason = (value: unknown): string =>
+  sanitizeText(value, "").slice(0, 120);
+
+const electronicInvoiceRequestedForInput = (
+  input: CreateOrderInput,
+  settings: CustomerEngagementSettings["electronicInvoice"],
+): boolean => {
+  const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8);
+  const carrierBarcode = sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32);
+  const donationCode = normalizeInvoiceDonationCode(input.invoiceDonationCode);
+  const requestedByInput = typeof input.electronicInvoiceRequested === "boolean"
+    ? input.electronicInvoiceRequested
+    : settings.defaultIssueOnCheckout;
+  return settings.enabled && (requestedByInput || Boolean(taxId || carrierBarcode || donationCode));
+};
+
+const allOrderLinesZeroTax = (lines: OrderLineInput[] = []): boolean =>
+  lines.length > 0 && lines.every((line) => sanitizeProductTaxCategory(line.taxCategory) === "zero");
+
 const normalizeElectronicInvoicePrintMode = (
   input: CreateOrderInput,
   donationCode: string,
@@ -2144,11 +2166,7 @@ const buildElectronicInvoicePayload = (
   const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8);
   const carrierBarcode = sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32);
   const donationCode = normalizeInvoiceDonationCode(input.invoiceDonationCode);
-  const requestedByInput = typeof input.electronicInvoiceRequested === "boolean"
-    ? input.electronicInvoiceRequested
-    : settings.defaultIssueOnCheckout;
-  const requested = settings.enabled &&
-    (requestedByInput || Boolean(taxId || carrierBarcode || donationCode));
+  const requested = electronicInvoiceRequestedForInput(input, settings);
   const status: ElectronicInvoiceStatus = requested && collectedPaymentStatuses.has(input.paymentStatus ?? "pending")
     ? "queued"
     : "not_requested";
@@ -2185,6 +2203,7 @@ const buildOrderEnhancementPayload = (
   member_points_earned: clampNonNegativeInteger(input.memberPointsEarned),
   tax_id: sanitizeText(input.taxId, "").replace(/\s/g, "").slice(0, 8),
   invoice_carrier_barcode: sanitizeText(input.invoiceCarrierBarcode, "").replace(/\s/g, "").toUpperCase().slice(0, 32),
+  zero_tax_sales_reason: normalizeZeroTaxSalesReason(input.zeroTaxSalesReason),
   ...buildElectronicInvoicePayload(input, engagementSettings.electronicInvoice),
 });
 
@@ -4465,7 +4484,7 @@ api.get("/admin/reports/electronic-invoices", async (c) => {
   let query = supabase
     .from("orders")
     .select(
-      "id, order_number, source, service_mode, note, subtotal, status, payment_status, tax_id, invoice_carrier_barcode, invoice_donation_code, electronic_invoice_status, electronic_invoice_print_mode, electronic_invoice_number, electronic_invoice_random_code, electronic_invoice_issued_at, electronic_invoice_upload_due_at, created_at, updated_at, order_items(tax_category, line_total)",
+      "id, order_number, source, service_mode, note, subtotal, status, payment_status, tax_id, invoice_carrier_barcode, invoice_donation_code, zero_tax_sales_reason, electronic_invoice_status, electronic_invoice_print_mode, electronic_invoice_number, electronic_invoice_random_code, electronic_invoice_issued_at, electronic_invoice_upload_due_at, created_at, updated_at, order_items(tax_category, line_total)",
     )
     .eq("electronic_invoice_requested", true)
     .or(
@@ -4871,6 +4890,11 @@ api.post("/orders", async (c) => {
     }
   }
 
+  const zeroTaxSalesReasonError = validateZeroTaxSalesReason(input, engagementSettings.electronicInvoice);
+  if (zeroTaxSalesReasonError) {
+    return c.json({ error: zeroTaxSalesReasonError }, 400);
+  }
+
   const couponClaimResult = await claimCouponForOrderInput(input, stationId);
   if (couponClaimResult.error) {
     const status = couponClaimResult.error === couponUnavailableMessage ? 409 : 500;
@@ -5164,6 +5188,10 @@ api.post("/orders/:id/finalize", async (c) => {
     "engagement_settings",
     defaultEngagementSettings,
   ));
+  const zeroTaxSalesReasonError = validateZeroTaxSalesReason(input, engagementSettings.electronicInvoice);
+  if (zeroTaxSalesReasonError) {
+    return c.json({ error: zeroTaxSalesReasonError }, 400);
+  }
   const couponClaimResult = await claimCouponForOrderInput(input, stationId);
   if (couponClaimResult.error) {
     const status = couponClaimResult.error === couponUnavailableMessage ? 409 : 500;
@@ -6908,6 +6936,7 @@ const buildElectronicInvoiceReport = (
       salesAmount,
       taxAmount,
       zeroTaxSalesAmount,
+      zeroTaxSalesReason: normalizeZeroTaxSalesReason(order.zero_tax_sales_reason),
       taxExemptSalesAmount,
       totalAmount,
       status: order.electronic_invoice_status,
@@ -7352,6 +7381,21 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
     if (line.taxCategory !== undefined && !isProductTaxCategory(line.taxCategory)) {
       return "taxCategory is invalid";
     }
+  }
+
+  return null;
+};
+
+const validateZeroTaxSalesReason = (
+  input: CreateOrderInput,
+  settings: CustomerEngagementSettings["electronicInvoice"],
+): string | null => {
+  if (
+    electronicInvoiceRequestedForInput(input, settings) &&
+    allOrderLinesZeroTax(input.lines ?? []) &&
+    !normalizeZeroTaxSalesReason(input.zeroTaxSalesReason)
+  ) {
+    return "zeroTaxSalesReason is required for all zero-tax electronic invoices";
   }
 
   return null;

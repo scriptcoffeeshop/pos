@@ -1645,7 +1645,7 @@ const exportElectronicInvoiceReportCsv = (): void => {
   }
 
   const rows: unknown[][] = [
-    ['checkout_at', 'order_number', 'source', 'service_mode', 'people', 'carrier_or_donation', 'tax_id', 'sales_amount', 'tax_amount', 'zero_tax_sales_amount', 'tax_exempt_sales_amount', 'total_amount', 'status', 'print_mode', 'invoice_number', 'random_code', 'upload_due_at'],
+    ['checkout_at', 'order_number', 'source', 'service_mode', 'people', 'carrier_or_donation', 'tax_id', 'sales_amount', 'tax_amount', 'zero_tax_sales_amount', 'zero_tax_sales_reason', 'tax_exempt_sales_amount', 'total_amount', 'status', 'print_mode', 'invoice_number', 'random_code', 'upload_due_at'],
     ...report.rows.map((row) => [
       row.checkoutAt,
       row.orderNumber,
@@ -1657,6 +1657,7 @@ const exportElectronicInvoiceReportCsv = (): void => {
       row.salesAmount,
       row.taxAmount,
       row.zeroTaxSalesAmount,
+      row.zeroTaxSalesReason,
       row.taxExemptSalesAmount,
       row.totalAmount,
       electronicInvoiceStatusLabel(row.status),
@@ -6173,6 +6174,7 @@ const saveAccessControl = async (): Promise<void> => {
                 <span>銷售 {{ formatCurrency(row.salesAmount) }}</span>
                 <span>營業稅 {{ formatCurrency(row.taxAmount) }}</span>
                 <span v-if="row.zeroTaxSalesAmount">零稅 {{ formatCurrency(row.zeroTaxSalesAmount) }}</span>
+                <span v-if="row.zeroTaxSalesReason">零稅原因 {{ row.zeroTaxSalesReason }}</span>
                 <span v-if="row.taxExemptSalesAmount">免稅 {{ formatCurrency(row.taxExemptSalesAmount) }}</span>
                 <span v-if="row.taxId">統編 {{ row.taxId }}</span>
                 <span v-if="row.invoiceNumber">發票 {{ row.invoiceNumber }}</span>

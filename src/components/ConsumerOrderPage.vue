@@ -24,6 +24,7 @@ import {
 import { calculateDineInTimeLimitWindow } from '../lib/dineInTimeLimit'
 import { formatCurrency, formatDateKey } from '../lib/formatters'
 import { calculateServiceChargeAmount, serviceChargeLabel, serviceChargeRateForMode } from '../lib/serviceCharge'
+import { normalizeZeroTaxSalesReason, zeroTaxSalesReasonOptions } from '../lib/taxCategory'
 import {
   createOrder,
   defaultEngagementSettings,
@@ -144,6 +145,7 @@ const customer = reactive<CustomerDraft>({
   taxId: '',
   invoiceCarrierBarcode: '',
   invoiceDonationCode: '',
+  zeroTaxSalesReason: '',
   electronicInvoiceRequested: false,
   electronicInvoicePrintMode: 'none',
   note: '',
@@ -179,6 +181,10 @@ const invoiceFieldError = (): string | null => {
 
   if (carrierBarcode && donationCode) {
     return '載具條碼與捐贈碼只能擇一'
+  }
+
+  if (zeroTaxSalesReasonRequired.value && !normalizeZeroTaxSalesReason(customer.zeroTaxSalesReason)) {
+    return '全零稅商品開立電子發票需選擇銷售原因'
   }
 
   return null
@@ -277,6 +283,19 @@ const storeNoticeOpen = computed(() => onlineStoreProfile.value.noticeExpanded |
 
 const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
 const cartTotal = computed(() => cartLines.value.reduce((total, line) => total + line.unitPrice * line.quantity, 0))
+const requestedElectronicInvoice = computed(() =>
+  engagementSettings.value.electronicInvoice.enabled && Boolean(
+    engagementSettings.value.electronicInvoice.defaultIssueOnCheckout ||
+    normalizeTaxId(customer.taxId) ||
+    normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode) ||
+    normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+  ),
+)
+const zeroTaxSalesReasonRequired = computed(() =>
+  requestedElectronicInvoice.value &&
+  cartLines.value.length > 0 &&
+  cartLines.value.every((line) => line.taxCategory === 'zero'),
+)
 const onlineDiscountCalculation = computed(() =>
   calculateDiscountApplications(discountSettings.value, {
     lines: cartLines.value,
@@ -1146,12 +1165,7 @@ const submitOnlineOrder = async (): Promise<void> => {
 
   const now = new Date()
   const selectedPaymentMethod = dineInCheckoutPostpaid.value ? 'cash' : paymentMethod.value
-  const requestedElectronicInvoice = engagementSettings.value.electronicInvoice.enabled && Boolean(
-    engagementSettings.value.electronicInvoice.defaultIssueOnCheckout ||
-    normalizeTaxId(customer.taxId) ||
-    normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode) ||
-    normalizeInvoiceDonationCode(customer.invoiceDonationCode),
-  )
+  const requestedElectronicInvoiceValue = requestedElectronicInvoice.value
   const order: PosOrder = {
     id: buildOnlineOrderNumber(now),
     source: consumerOrderSource,
@@ -1163,7 +1177,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     taxId: normalizeTaxId(customer.taxId),
     invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
     invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
-    electronicInvoiceRequested: requestedElectronicInvoice,
+    zeroTaxSalesReason: normalizeZeroTaxSalesReason(customer.zeroTaxSalesReason),
+    electronicInvoiceRequested: requestedElectronicInvoiceValue,
     electronicInvoiceStatus: 'not_requested',
     electronicInvoicePrintMode: normalizeInvoiceDonationCode(customer.invoiceDonationCode)
       ? 'donation'
@@ -1171,7 +1186,7 @@ const submitOnlineOrder = async (): Promise<void> => {
         ? 'carrier'
         : normalizeTaxId(customer.taxId)
           ? 'paper'
-          : requestedElectronicInvoice && engagementSettings.value.electronicInvoice.defaultPrintPaper
+          : requestedElectronicInvoiceValue && engagementSettings.value.electronicInvoice.defaultPrintPaper
             ? 'paper'
             : 'none',
     electronicInvoiceNumber: '',
@@ -1220,6 +1235,7 @@ const submitOnlineOrder = async (): Promise<void> => {
     customer.taxId = ''
     customer.invoiceCarrierBarcode = ''
     customer.invoiceDonationCode = ''
+    customer.zeroTaxSalesReason = ''
     customer.electronicInvoiceRequested = false
     customer.electronicInvoicePrintMode = 'none'
     customer.note = ''
@@ -1614,6 +1630,16 @@ watch(
         <label v-if="onlineOrdering.showDonationCodeField">
           捐贈碼
           <input v-model="customer.invoiceDonationCode" type="text" inputmode="numeric" maxlength="7" placeholder="3 至 7 碼" />
+        </label>
+        <label v-if="zeroTaxSalesReasonRequired || customer.zeroTaxSalesReason">
+          零稅銷售原因
+          <select v-model="customer.zeroTaxSalesReason">
+            <option value="">請選擇</option>
+            <option v-for="option in zeroTaxSalesReasonOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <small>全零稅商品開立電子發票時必填</small>
         </label>
         <label v-if="orderNoteVisible" class="wide-field">
           備註
