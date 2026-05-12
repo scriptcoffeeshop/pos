@@ -24,6 +24,7 @@ export type InventoryConsumptionSubject = 'product' | 'option'
 export type DiscountCampaignKind = 'automatic' | 'manual'
 export type DiscountCampaignScope = 'whole-order' | 'categories' | 'products'
 export type DiscountValueType = 'amount' | 'percentage'
+export type ProductTaxCategory = 'taxable' | 'zero' | 'exempt'
 export type ElectronicInvoiceStatus = 'not_requested' | 'queued' | 'issued' | 'voided' | 'refunded' | 'failed'
 export type ElectronicInvoicePrintMode = 'paper' | 'carrier' | 'donation' | 'none'
 
@@ -42,6 +43,7 @@ export interface MenuItem {
   name: string
   category: MenuCategory
   price: number
+  taxCategory: ProductTaxCategory
   tags: string[]
   accent: string
   available: boolean
@@ -63,6 +65,7 @@ export interface CartLine {
   productId?: string
   productSku: string
   category?: MenuCategory
+  taxCategory: ProductTaxCategory
   name: string
   unitPrice: number
   quantity: number

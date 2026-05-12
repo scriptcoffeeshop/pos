@@ -13,6 +13,7 @@ import {
   normalizeDiscountSettings,
 } from '../lib/discounts'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
+import { normalizeProductTaxCategory } from '../lib/taxCategory'
 import {
   clearOnlineOrderNotifier,
   markOnlineOrderNotifierSeen,
@@ -313,6 +314,7 @@ const sanitizeCounterDraftLine = (line: unknown): CartLine | null => {
   const nextLine: CartLine = {
     itemId: entry.itemId,
     productSku: entry.productSku,
+    taxCategory: normalizeProductTaxCategory(entry.taxCategory),
     name: entry.name,
     unitPrice: Math.max(0, Math.trunc(entry.unitPrice)),
     quantity: Math.max(1, Math.trunc(entry.quantity)),
@@ -1001,6 +1003,7 @@ const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrid
   name: product.name,
   category: product.category,
   price: product.price,
+  taxCategory: product.taxCategory,
   tags: [...product.tags],
   accent: product.accent,
   isAvailable: overrides.isAvailable ?? product.available,
@@ -1038,6 +1041,7 @@ const buildLocalProduct = (input: ProductUpdateInput): MenuItem => ({
   name: input.name.trim(),
   category: input.category.trim(),
   price: input.price,
+  taxCategory: input.taxCategory,
   tags: [...input.tags],
   accent: input.accent,
   available: input.isAvailable,
@@ -1079,6 +1083,7 @@ const sanitizeLocalProduct = (value: unknown): MenuItem | null => {
     name: product.name,
     category: product.category,
     price: Math.max(0, Math.trunc(product.price)),
+    taxCategory: normalizeProductTaxCategory(product.taxCategory),
     tags: Array.isArray(product.tags) ? product.tags.filter((tag): tag is string => typeof tag === 'string') : [],
     accent: typeof product.accent === 'string' ? product.accent : '#0b6b63',
     available: typeof product.available === 'boolean' ? product.available : true,
@@ -3344,6 +3349,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       itemId,
       productSku: item.sku,
       category: item.category,
+      taxCategory: item.taxCategory,
       name: item.name,
       unitPrice,
       quantity,

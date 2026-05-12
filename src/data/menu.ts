@@ -5,6 +5,7 @@ const defaultChannelState = {
   posVisible: true,
   onlineVisible: true,
   qrVisible: true,
+  taxCategory: 'taxable' as const,
   prepStation: 'bar',
   printLabel: true,
   inventoryCount: null,

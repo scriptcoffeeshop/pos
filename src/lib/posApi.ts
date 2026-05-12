@@ -65,6 +65,7 @@ import type {
   WaitlineEntry,
   PrintJob,
   PrintLabelMode,
+  ProductTaxCategory,
   PrintRuleSetting,
   PrintRuleTiming,
   PrintStatus,
@@ -77,6 +78,7 @@ import {
   normalizeDineInTimeLimitSettings,
 } from './dineInTimeLimit'
 import { defaultDiscountSettings, normalizeDiscountSettings } from './discounts'
+import { normalizeProductTaxCategory } from './taxCategory'
 
 interface ApiProduct {
   id: string
@@ -85,6 +87,7 @@ interface ApiProduct {
   name: string
   category: MenuCategory
   price: number
+  tax_category?: ProductTaxCategory | null
   tags: string[] | null
   accent: string | null
   is_available: boolean
@@ -105,6 +108,7 @@ interface ApiOrderItem {
   id: string
   product_id: string | null
   product_sku: string
+  tax_category?: ProductTaxCategory | null
   name: string
   unit_price: number
   quantity: number
@@ -571,6 +575,7 @@ export interface ProductUpdateInput {
   name: string
   category: MenuCategory
   price: number
+  taxCategory: ProductTaxCategory
   tags: string[]
   accent: string
   isAvailable: boolean
@@ -917,6 +922,7 @@ const normalizeDraftLines = (lines: unknown): CartLine[] => {
     const cartLine: CartLine = {
       itemId: productId || productSku,
       productSku,
+      taxCategory: normalizeProductTaxCategory(line.taxCategory ?? line.tax_category),
       name,
       unitPrice,
       quantity,
@@ -1225,6 +1231,7 @@ export const normalizeProduct = (product: ApiProduct): MenuItem => ({
   name: product.name,
   category: product.category,
   price: product.price,
+  taxCategory: normalizeProductTaxCategory(product.tax_category),
   tags: product.tags ?? [],
   accent: product.accent ?? '#0b6b63',
   available: product.is_available,
@@ -3037,6 +3044,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
           itemId: line.product_id ?? line.product_sku,
           orderItemId: line.id,
           productSku: line.product_sku,
+          taxCategory: normalizeProductTaxCategory(line.tax_category),
           name: line.name,
           unitPrice: line.unit_price,
           quantity: line.quantity,
@@ -3837,6 +3845,7 @@ const orderPayload = (order: PosOrder) => ({
     productId: line.productId,
     productSku: line.productSku,
     category: line.category,
+    taxCategory: line.taxCategory,
     name: line.name,
     unitPrice: line.unitPrice,
     quantity: line.quantity,

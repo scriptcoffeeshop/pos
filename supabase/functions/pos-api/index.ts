@@ -13,6 +13,7 @@ type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | "refunded";
 type ElectronicInvoiceStatus = "not_requested" | "queued" | "issued" | "voided" | "refunded" | "failed";
 type ElectronicInvoicePrintMode = "paper" | "carrier" | "donation" | "none";
+type ProductTaxCategory = "taxable" | "zero" | "exempt";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
 type RegisterCashAdjustmentKind = "income" | "expense";
@@ -35,6 +36,13 @@ type InventoryConsumptionSubject = "product" | "option";
 
 const awaitingGuestReservationStatuses: ReservationStatus[] = ["booked", "reminded", "confirmed"];
 const taipeiTimeZoneOffsetMs = 8 * 60 * 60 * 1000;
+const productTaxCategories: ProductTaxCategory[] = ["taxable", "zero", "exempt"];
+
+const isProductTaxCategory = (value: unknown): value is ProductTaxCategory =>
+  typeof value === "string" && productTaxCategories.includes(value as ProductTaxCategory);
+
+const sanitizeProductTaxCategory = (value: unknown): ProductTaxCategory =>
+  isProductTaxCategory(value) ? value : "taxable";
 
 interface SupplyWindowRule {
   id: string;
@@ -48,6 +56,7 @@ interface OrderLineInput {
   productId?: string;
   productSku: string;
   category?: MenuCategory;
+  taxCategory?: ProductTaxCategory;
   name: string;
   unitPrice: number;
   quantity: number;
@@ -226,6 +235,11 @@ interface ElectronicInvoiceReportRow {
   uploadDueAt: string | null;
 }
 
+interface ElectronicInvoiceReportOrderItemRow {
+  tax_category?: ProductTaxCategory | null;
+  line_total?: number | null;
+}
+
 interface ElectronicInvoiceReportOrderRow {
   id: string;
   order_number: string;
@@ -246,6 +260,7 @@ interface ElectronicInvoiceReportOrderRow {
   electronic_invoice_upload_due_at: string | null;
   created_at: string;
   updated_at: string;
+  order_items?: ElectronicInvoiceReportOrderItemRow[];
 }
 
 interface StationHeartbeatInput {
@@ -401,6 +416,7 @@ interface ProductUpdateInput {
   name?: string;
   category?: MenuCategory;
   price?: number;
+  taxCategory?: ProductTaxCategory;
   tags?: unknown;
   accent?: string;
   isAvailable?: boolean;
@@ -997,7 +1013,7 @@ const orderSelect =
   "*, order_items(*), print_jobs(id, status, printed_at, created_at, attempts, last_error)";
 const printJobSelect = "id, status, printed_at, created_at, attempts, last_error";
 const productSelect =
-  "id, sku, barcode, name, category, price, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until, supply_windows, future_order_available";
+  "id, sku, barcode, name, category, price, tax_category, tags, accent, is_available, sort_order, pos_visible, online_visible, qr_visible, prep_station, print_label, inventory_count, low_stock_threshold, sold_out_until, supply_windows, future_order_available";
 const memberSelect =
   "id, line_user_id, line_display_name, phone, customer_type, points_balance, wallet_balance, created_at, updated_at";
 const transactionLedgerSelect =
@@ -4449,7 +4465,7 @@ api.get("/admin/reports/electronic-invoices", async (c) => {
   let query = supabase
     .from("orders")
     .select(
-      "id, order_number, source, service_mode, note, subtotal, status, payment_status, tax_id, invoice_carrier_barcode, invoice_donation_code, electronic_invoice_status, electronic_invoice_print_mode, electronic_invoice_number, electronic_invoice_random_code, electronic_invoice_issued_at, electronic_invoice_upload_due_at, created_at, updated_at",
+      "id, order_number, source, service_mode, note, subtotal, status, payment_status, tax_id, invoice_carrier_barcode, invoice_donation_code, electronic_invoice_status, electronic_invoice_print_mode, electronic_invoice_number, electronic_invoice_random_code, electronic_invoice_issued_at, electronic_invoice_upload_due_at, created_at, updated_at, order_items(tax_category, line_total)",
     )
     .eq("electronic_invoice_requested", true)
     .or(
@@ -4884,6 +4900,7 @@ api.post("/orders", async (c) => {
     p_lines: orderLines.map((line) => ({
       productId: line.productId ?? null,
       productSku: line.productSku,
+      taxCategory: sanitizeProductTaxCategory(line.taxCategory),
       name: line.name,
       unitPrice: line.unitPrice,
       quantity: line.quantity,
@@ -5174,6 +5191,7 @@ api.post("/orders/:id/finalize", async (c) => {
     p_lines: orderLines.map((line) => ({
       productId: line.productId ?? null,
       productSku: line.productSku,
+      taxCategory: sanitizeProductTaxCategory(line.taxCategory),
       name: line.name,
       unitPrice: line.unitPrice,
       quantity: line.quantity,
@@ -6819,18 +6837,47 @@ const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): st
 const electronicInvoiceTaxAmounts = (
   totalAmount: number,
   taxId: string,
-): { salesAmount: number; taxAmount: number } => {
-  const taxAmount = Math.round(totalAmount * 5 / 105);
+  orderItems: ElectronicInvoiceReportOrderItemRow[] = [],
+): {
+  salesAmount: number;
+  taxAmount: number;
+  zeroTaxSalesAmount: number;
+  taxExemptSalesAmount: number;
+} => {
+  const lineTotals = orderItems.reduce(
+    (totals, item) => {
+      const lineTotal = Math.max(Number(item.line_total) || 0, 0);
+      totals.all += lineTotal;
+      const taxCategory = sanitizeProductTaxCategory(item.tax_category);
+      totals[taxCategory] += lineTotal;
+      return totals;
+    },
+    { all: 0, taxable: 0, zero: 0, exempt: 0 } as Record<ProductTaxCategory | "all", number>,
+  );
+  const scale = lineTotals.all > 0 ? totalAmount / lineTotals.all : 1;
+  let zeroTaxSalesAmount = Math.max(0, Math.round(lineTotals.zero * scale));
+  let taxExemptSalesAmount = Math.max(0, Math.round(lineTotals.exempt * scale));
+  if (zeroTaxSalesAmount + taxExemptSalesAmount > totalAmount) {
+    const ratio = totalAmount / (zeroTaxSalesAmount + taxExemptSalesAmount);
+    zeroTaxSalesAmount = Math.round(zeroTaxSalesAmount * ratio);
+    taxExemptSalesAmount = Math.max(0, totalAmount - zeroTaxSalesAmount);
+  }
+  const taxableGrossAmount = Math.max(0, totalAmount - zeroTaxSalesAmount - taxExemptSalesAmount);
+  const taxAmount = Math.round(taxableGrossAmount * 5 / 105);
   if (taxId) {
     return {
-      salesAmount: Math.max(0, totalAmount - taxAmount),
+      salesAmount: Math.max(0, taxableGrossAmount - taxAmount),
       taxAmount,
+      zeroTaxSalesAmount,
+      taxExemptSalesAmount,
     };
   }
 
   return {
-    salesAmount: totalAmount,
+    salesAmount: taxableGrossAmount,
     taxAmount,
+    zeroTaxSalesAmount,
+    taxExemptSalesAmount,
   };
 };
 
@@ -6841,7 +6888,11 @@ const buildElectronicInvoiceReport = (
   const reportRows: ElectronicInvoiceReportRow[] = rows.map((order) => {
     const totalAmount = Math.max(Number(order.subtotal) || 0, 0);
     const taxId = sanitizeText(order.tax_id, "");
-    const { salesAmount, taxAmount } = electronicInvoiceTaxAmounts(totalAmount, taxId);
+    const { salesAmount, taxAmount, zeroTaxSalesAmount, taxExemptSalesAmount } = electronicInvoiceTaxAmounts(
+      totalAmount,
+      taxId,
+      order.order_items ?? [],
+    );
     const carrier = sanitizeText(order.invoice_carrier_barcode, "");
     const donation = sanitizeText(order.invoice_donation_code, "");
 
@@ -6856,8 +6907,8 @@ const buildElectronicInvoiceReport = (
       taxId,
       salesAmount,
       taxAmount,
-      zeroTaxSalesAmount: 0,
-      taxExemptSalesAmount: 0,
+      zeroTaxSalesAmount,
+      taxExemptSalesAmount,
       totalAmount,
       status: order.electronic_invoice_status,
       printMode: order.electronic_invoice_print_mode,
@@ -7298,6 +7349,9 @@ const validateOrderInput = (input: CreateOrderInput): string | null => {
     if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
       return "quantity must be a positive integer";
     }
+    if (line.taxCategory !== undefined && !isProductTaxCategory(line.taxCategory)) {
+      return "taxCategory is invalid";
+    }
   }
 
   return null;
@@ -7390,6 +7444,7 @@ const normalizeDraftOrderLines = (lines: unknown): OrderLineInput[] => {
     const normalizedLine: OrderLineInput = {
       productSku,
       ...(category ? { category } : {}),
+      taxCategory: sanitizeProductTaxCategory(line.taxCategory),
       name,
       unitPrice,
       quantity,
@@ -8507,6 +8562,11 @@ const validateProductUpdateInput = (
     return { payload, error: "price must be a non-negative integer" };
   }
   payload.price = price;
+
+  if (input.taxCategory !== undefined && !isProductTaxCategory(input.taxCategory)) {
+    return { payload, error: "taxCategory is invalid" };
+  }
+  payload.tax_category = sanitizeProductTaxCategory(input.taxCategory);
 
   if (!Array.isArray(input.tags) || !input.tags.every((tag) => typeof tag === "string")) {
     return { payload, error: "tags must be an array of strings" };

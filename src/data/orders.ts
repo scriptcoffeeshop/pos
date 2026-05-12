@@ -26,6 +26,7 @@ export const initialOrders: PosOrder[] = [
       {
         itemId: 'latte-hot',
         productSku: 'latte-hot',
+        taxCategory: 'taxable',
         name: '熱拿鐵',
         unitPrice: 120,
         quantity: 1,
@@ -34,6 +35,7 @@ export const initialOrders: PosOrder[] = [
       {
         itemId: 'drip-bag',
         productSku: 'drip-bag',
+        taxCategory: 'taxable',
         name: '耳掛咖啡',
         unitPrice: 45,
         quantity: 2,
@@ -96,6 +98,7 @@ export const initialOrders: PosOrder[] = [
       {
         itemId: 'americano-ice',
         productSku: 'americano-ice',
+        taxCategory: 'taxable',
         name: '冰美式',
         unitPrice: 95,
         quantity: 2,
