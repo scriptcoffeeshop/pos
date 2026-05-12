@@ -4541,6 +4541,18 @@ const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.
 const ticketStartedLabel = computed(() =>
   counterDraftStartedAt.value ? formatOrderTime(counterDraftStartedAt.value) : currentClockLabel.value,
 )
+const currentTicketOrder = computed<PosOrder | null>(() =>
+  counterDraftOrderId.value
+    ? orderQueue.value.find((order) => order.id === counterDraftOrderId.value) ?? null
+    : null,
+)
+const ticketCustomerReceiptDisabled = computed(() =>
+  !counterDraftOrderId.value ||
+  cartLines.value.length === 0 ||
+  isSubmitting.value ||
+  Boolean(printingOrderId.value) ||
+  Boolean(currentTicketOrder.value && orderClaimedByOtherStation(currentTicketOrder.value)),
+)
 const supplyNoteStatusForName = (name: string): ProductSupplyStatus => {
   const note = supplyNoteItems.value.find((item) => item.name === name)
   return note ? noteCurrentSupplyStatus(note) : 'normal'
@@ -6575,6 +6587,19 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
 
 const handleSubmitCounterOrder = async (): Promise<void> => {
   await handleTicketAction('print')
+}
+
+const printCurrentTicketCustomerReceipt = async (): Promise<void> => {
+  if (ticketCustomerReceiptDisabled.value) {
+    return
+  }
+
+  const order = await saveCounterOrder(false)
+  if (!order) {
+    return
+  }
+
+  await printCustomerReceipt(order.id)
 }
 
 const isProductTemporarilyStopped = (product: MenuItem): boolean => {
@@ -10712,6 +10737,17 @@ onBeforeUnmount(() => {
                         <strong>{{ formatCurrency(ticketDisplayTotal) }}</strong>
                       </div>
                       <button
+                        v-if="counterDraftOrderId"
+                        class="icon-button ticket-customer-receipt-button"
+                        type="button"
+                        title="重印顧客聯"
+                        aria-label="重印顧客聯"
+                        :disabled="ticketCustomerReceiptDisabled"
+                        @click="printCurrentTicketCustomerReceipt"
+                      >
+                        <ReceiptText :size="20" aria-hidden="true" />
+                      </button>
+                      <button
                         class="icon-button ticket-more-button"
                         type="button"
                         title="開啟工具箱"
@@ -12791,7 +12827,7 @@ onBeforeUnmount(() => {
                               @click="printCustomerReceipt(order.id)"
                             >
                               <ReceiptText :size="16" aria-hidden="true" />
-                              顧客聯
+                              重印顧客聯
                             </button>
                             <button
                               class="order-action--print"
@@ -13697,7 +13733,7 @@ onBeforeUnmount(() => {
                     @click="printCustomerReceipt(activeOrder.id)"
                   >
                     <ReceiptText :size="16" aria-hidden="true" />
-                    顧客聯
+                    重印顧客聯
                   </button>
                   <button
                     class="active-order-print-button"

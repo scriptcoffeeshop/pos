@@ -117,6 +117,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'payment',
   },
   {
+    id: 'customer-receipt-reprint',
+    category: 'orders',
+    title: '重印顧客聯整理加點單據',
+    summary: '同一張訂單多次出單後，可在點餐頁重印完整顧客聯，避免客人拿到多張分段小計。',
+    steps: [
+      '已建立或載回購物車的同一張票券，底部會顯示「重印顧客聯」圖示。',
+      '多次加點後按「重印顧客聯」，系統會先保存目前票券內容，再用同一張訂單的完整明細建立顧客聯 print job。',
+      '重印顧客聯仍保留折扣前商品/服務費總額；若要給客人確認折扣後金額，請使用付款頁「請款明細」。',
+      '訂單中心與目前票券的重印都走同一個雲端 print job 與 Android LAN printer 流程，換平板或 fresh reinstall 後仍可追蹤列印紀錄。',
+    ],
+    keywords: ['顧客聯', '重印顧客聯', '加點', '整理單據', '同單多張顧客聯', 'print job', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'online-claim',
     category: 'online',
     title: '處理線上/掃碼新單',
