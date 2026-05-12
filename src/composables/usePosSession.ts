@@ -570,10 +570,11 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
   ) {
     return null
   }
+  const source = isOrderSource(order.source) ? order.source : 'counter'
 
   return {
     id: order.id,
-    source: isOrderSource(order.source) ? order.source : 'counter',
+    source,
     mode: isServiceMode(order.mode) ? order.mode : 'takeout',
     customerName: order.customerName.trim() || '現場客',
     customerPhone: order.customerPhone,
@@ -592,6 +593,12 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     electronicInvoiceVoidedAt: nullableString(order.electronicInvoiceVoidedAt),
     electronicInvoiceUploadDueAt: nullableString(order.electronicInvoiceUploadDueAt),
     memberId: nullableString(order.memberId),
+    customerNote: typeof order.customerNote === 'string'
+      ? order.customerNote
+      : (source === 'counter' ? '' : order.note),
+    staffNote: typeof order.staffNote === 'string'
+      ? order.staffNote
+      : (source === 'counter' ? order.note : ''),
     note: order.note,
     paymentNote: typeof order.paymentNote === 'string' ? order.paymentNote : '',
     lines,
@@ -2319,6 +2326,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceVoidedAt: null,
       electronicInvoiceUploadDueAt: null,
       memberId: null,
+      customerNote: '',
+      staffNote: '',
       note: '',
       paymentNote: '',
       lines: [],
@@ -2579,6 +2588,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceVoidedAt: currentOrder.electronicInvoiceVoidedAt,
       electronicInvoiceUploadDueAt: currentOrder.electronicInvoiceUploadDueAt,
       memberId: customer.memberId,
+      customerNote: currentOrder.customerNote ?? '',
+      staffNote: customer.note.trim(),
       note: customer.note.trim(),
       paymentNote: paymentNote.value.trim().slice(0, 240),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -3832,6 +3843,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     memberPointsEarned: targetOrder.memberPointsEarned + sourceOrder.memberPointsEarned,
     orderLabels: [...new Set([...targetOrder.orderLabels, ...sourceOrder.orderLabels])],
     memberId: targetOrder.memberId ?? sourceOrder.memberId,
+    customerNote: [targetOrder.customerNote, sourceOrder.customerNote].filter(Boolean).join(' · ').slice(0, 500),
+    staffNote: mergedDineInNote(targetOrder, sourceOrder),
     note: mergedDineInNote(targetOrder, sourceOrder),
     paymentNote: [targetOrder.paymentNote, sourceOrder.paymentNote].filter(Boolean).join(' · ').slice(0, 240),
     status: mergeStatus(targetOrder.status, sourceOrder.status),
@@ -4843,6 +4856,8 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceVoidedAt: existingOrder?.electronicInvoiceVoidedAt ?? null,
       electronicInvoiceUploadDueAt: existingOrder?.electronicInvoiceUploadDueAt ?? null,
       memberId: customer.memberId,
+      customerNote: existingOrder?.customerNote ?? '',
+      staffNote: customer.note.trim(),
       note: customer.note.trim(),
       paymentNote: paymentNote.value.trim().slice(0, 240),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
@@ -5098,7 +5113,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.zeroTaxSalesReason = editableOrder.zeroTaxSalesReason
     customer.electronicInvoiceRequested = editableOrder.electronicInvoiceRequested
     customer.electronicInvoicePrintMode = editableOrder.electronicInvoicePrintMode
-    customer.note = editableOrder.note
+    customer.note = editableOrder.staffNote || editableOrder.note
     cartLines.value = editableOrder.lines.map((line) => ({ ...line, options: [...line.options] }))
     counterDraftOrderId.value = editableOrder.id
     counterDraftStartedAt.value = editableOrder.createdAt

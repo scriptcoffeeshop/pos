@@ -154,6 +154,8 @@ interface ApiOrder {
   electronic_invoice_voided_at?: string | null
   electronic_invoice_upload_due_at?: string | null
   member_id?: string | null
+  customer_note?: string | null
+  staff_note?: string | null
   note: string
   payment_note?: string | null
   subtotal: number
@@ -467,6 +469,8 @@ interface ApiReservation {
   important_label: string
   assigned_table_ids?: string[] | null
   pre_order: unknown
+  customer_note?: string | null
+  staff_note?: string | null
   note: string
   created_at: string
   updated_at: string
@@ -661,6 +665,8 @@ export interface ReservationInput {
   importantLabel: string
   assignedTableIds?: string[]
   preOrder: CartLine[]
+  customerNote?: string
+  staffNote?: string
   note: string
 }
 
@@ -669,6 +675,7 @@ export interface PublicReservationInput {
   customerPhone: string
   partySize: number
   reservedAt: string
+  customerNote?: string
   note: string
 }
 
@@ -1264,6 +1271,8 @@ const normalizeReservation = (reservation: ApiReservation): PosReservation => ({
     ? reservation.assigned_table_ids.filter((tableId): tableId is string => typeof tableId === 'string')
     : [],
   preOrder: normalizeDraftLines(reservation.pre_order),
+  customerNote: reservation.customer_note ?? '',
+  staffNote: reservation.staff_note || reservation.note,
   note: reservation.note,
   createdAt: reservation.created_at,
   updatedAt: reservation.updated_at,
@@ -1290,6 +1299,14 @@ const normalizeStationHeartbeat = (station: ApiStationHeartbeat): PosStationHear
   lastSeenAt: station.last_seen_at,
   createdAt: station.created_at,
 })
+
+const legacyOnlineCustomerNote = (note: string): string =>
+  note
+    .split(/[·]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment && !/^樓層\s+\S+/i.test(segment) && !/^桌位\s+\S+/i.test(segment))
+    .join(' · ')
+    .slice(0, 500)
 
 const normalizeStaffTimeClockEntry = (entry: ApiStaffTimeClockEntry): StaffTimeClockEntry => ({
   id: entry.id,
@@ -3228,6 +3245,8 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     electronicInvoiceVoidedAt: order.electronic_invoice_voided_at ?? null,
     electronicInvoiceUploadDueAt: order.electronic_invoice_upload_due_at ?? null,
     memberId: order.member_id ?? null,
+    customerNote: order.customer_note || (order.source === 'counter' ? '' : legacyOnlineCustomerNote(order.note)),
+    staffNote: order.staff_note || (order.source === 'counter' ? order.note : ''),
     note: order.note,
     paymentNote: order.payment_note ?? '',
     subtotal: order.subtotal,
@@ -4059,6 +4078,8 @@ const orderPayload = (order: PosOrder) => ({
   electronicInvoiceRequested: order.electronicInvoiceRequested,
   electronicInvoicePrintMode: order.electronicInvoicePrintMode,
   memberId: order.memberId,
+  customerNote: order.customerNote,
+  staffNote: order.staffNote,
   note: order.note,
   paymentNote: order.paymentNote,
   qrSessionOrderId: order.qrSessionOrderId ?? null,

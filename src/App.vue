@@ -180,6 +180,8 @@ interface ReservationDraft {
   partySize: number
   reservedAt: string
   importantLabel: string
+  customerNote: string
+  staffNote: string
   note: string
   assignedTableIds: string[]
 }
@@ -3028,6 +3030,8 @@ const defaultReservationDraft = (): ReservationDraft => ({
   partySize: Math.max(1, engagementSettings.value.reservationWebsite.minPartySize || 1),
   reservedAt: nextReservationSlotInput(),
   importantLabel: '',
+  customerNote: '',
+  staffNote: '',
   note: '',
   assignedTableIds: [],
 })
@@ -8109,6 +8113,8 @@ const reservationToEditDraft = (reservation: PosReservation): ReservationEditDra
     partySize: Math.max(1, reservation.partySize),
     reservedAt: Number.isFinite(reservedAt.getTime()) ? localDateTimeInputValue(reservedAt) : nextReservationSlotInput(),
     importantLabel: reservation.importantLabel,
+    customerNote: reservation.customerNote,
+    staffNote: reservation.staffNote || reservation.note,
     note: reservation.note,
     assignedTableIds: [...reservation.assignedTableIds],
     status: reservation.status,
@@ -8236,7 +8242,9 @@ const saveReservationEdits = async (): Promise<void> => {
       reservedAt,
       status: draft.status,
       importantLabel: draft.importantLabel.trim(),
-      note: draft.note.trim(),
+      customerNote: draft.customerNote.trim(),
+      staffNote: draft.staffNote.trim(),
+      note: [draft.customerNote.trim(), draft.staffNote.trim()].filter(Boolean).join('、'),
       assignedTableIds: [...new Set(draft.assignedTableIds)],
     })
     replaceReservation(saved)
@@ -8270,7 +8278,9 @@ const createReservationFromPos = async (): Promise<void> => {
       reservedAt,
       status: 'booked',
       importantLabel: reservationDraft.value.importantLabel.trim(),
-      note: reservationDraft.value.note.trim(),
+      customerNote: reservationDraft.value.customerNote.trim(),
+      staffNote: reservationDraft.value.staffNote.trim(),
+      note: [reservationDraft.value.customerNote.trim(), reservationDraft.value.staffNote.trim()].filter(Boolean).join('、'),
       assignedTableIds: [...reservationDraft.value.assignedTableIds],
       preOrder: [],
     })
@@ -8339,7 +8349,8 @@ const checkInReservation = async (reservation: PosReservation): Promise<void> =>
       `${reservation.partySize} 人`,
       `訂位 ${reservedTimeLabel}`,
       reservation.importantLabel,
-      reservation.note,
+      reservation.customerNote ? `訂位客人備註 ${reservation.customerNote}` : '',
+      reservation.staffNote ? `訂位店內備註 ${reservation.staffNote}` : '',
       reservedTables.length > 0 ? `保留桌位 ${reservedTables.join(' / ')}` : '',
     ].filter(Boolean).join('、')
     const saved = await updateAdminReservation(reservation.id, {
@@ -12654,7 +12665,11 @@ onBeforeUnmount(() => {
                                 {{ warning }}
                               </span>
                             </div>
-                            <small v-if="reservation.note">{{ reservation.note }}</small>
+                            <small v-if="reservation.customerNote || reservation.staffNote">
+                              <template v-if="reservation.customerNote">客人備註：{{ reservation.customerNote }}</template>
+                              <template v-if="reservation.customerNote && reservation.staffNote"> · </template>
+                              <template v-if="reservation.staffNote">店內備註：{{ reservation.staffNote }}</template>
+                            </small>
                           </div>
                           <div class="reservation-row-actions">
                             <button class="secondary-button" type="button" @click="startEditingReservation(reservation)">
@@ -12761,7 +12776,8 @@ onBeforeUnmount(() => {
                             </option>
                           </select>
                           <input v-model="reservationEditDraft.importantLabel" type="text" placeholder="標籤 / 節日" />
-                          <input v-model="reservationEditDraft.note" type="text" placeholder="店內備註 / 客人備註" />
+                          <input v-model="reservationEditDraft.customerNote" type="text" placeholder="客人備註" />
+                          <input v-model="reservationEditDraft.staffNote" type="text" placeholder="店內備註" />
                         </div>
                         <div class="reservation-table-picker" aria-label="修改安排桌位">
                           <button
@@ -12807,7 +12823,8 @@ onBeforeUnmount(() => {
                           </div>
                           <input v-model="reservationDraft.reservedAt" type="datetime-local" />
                           <input v-model="reservationDraft.importantLabel" type="text" placeholder="標籤 / 節日" />
-                          <input v-model="reservationDraft.note" type="text" placeholder="店內備註 / 客人備註" />
+                          <input v-model="reservationDraft.customerNote" type="text" placeholder="客人備註" />
+                          <input v-model="reservationDraft.staffNote" type="text" placeholder="店內備註" />
                         </div>
                         <div class="reservation-table-picker" aria-label="安排桌位">
                           <button

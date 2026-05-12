@@ -1343,6 +1343,8 @@ const submitOnlineOrder = async (): Promise<void> => {
     electronicInvoiceVoidedAt: null,
     electronicInvoiceUploadDueAt: null,
     memberId: customer.memberId,
+    customerNote: orderNoteVisible.value ? customer.note.trim() : '',
+    staffNote: '',
     note: [
       qrFloorLabel ? `樓層 ${qrFloorLabel}` : '',
       qrTableLabel ? `桌位 ${qrTableLabel}` : '',
