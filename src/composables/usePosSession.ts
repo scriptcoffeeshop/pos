@@ -993,6 +993,7 @@ interface ProductUpdateOverrides {
   posVisible?: boolean
   onlineVisible?: boolean
   qrVisible?: boolean
+  inventoryCount?: number | null
 }
 
 const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrides = {}): ProductUpdateInput => ({
@@ -1009,7 +1010,7 @@ const productToUpdateInput = (product: MenuItem, overrides: ProductUpdateOverrid
   qrVisible: overrides.qrVisible ?? product.qrVisible,
   prepStation: product.prepStation,
   printLabel: product.printLabel,
-  inventoryCount: product.inventoryCount,
+  inventoryCount: 'inventoryCount' in overrides ? overrides.inventoryCount ?? null : product.inventoryCount,
   lowStockThreshold: product.lowStockThreshold,
   soldOutUntil: product.soldOutUntil,
   supplyPeriods: product.supplyPeriods.map((period) => ({ ...period, days: [...period.days] })),
@@ -4413,6 +4414,10 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     const statusLabel = status === 'normal' ? '正常供應' : status === 'online-stopped' ? '線上停售' : '全部停售'
+    const overrides: ProductUpdateOverrides = productSupplyOverrides(status)
+    if (status !== 'stopped' && product.inventoryCount === 0) {
+      overrides.inventoryCount = null
+    }
     togglingProductId.value = productId
     productStatusMessage.value = `${product.name} 更新為${statusLabel}中`
 
@@ -4424,7 +4429,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     }
 
     try {
-      const savedProduct = await updateProduct(productId, productToUpdateInput(product, productSupplyOverrides(status)))
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, overrides))
       applySavedProduct(savedProduct)
       productStatusMessage.value = `${savedProduct.name} 已更新為${statusLabel}`
       setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
@@ -4432,6 +4437,51 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } catch (error) {
       productStatusMessage.value = `商品狀態更新失敗：${getErrorMessage(error)}`
       setBackendStatus('fallback', '供應狀態未同步', productStatusMessage.value)
+      return false
+    } finally {
+      togglingProductId.value = null
+    }
+  }
+
+  const updateProductSupplyQuantity = async (
+    productId: string,
+    inventoryCount: number | null,
+  ): Promise<boolean> => {
+    const product = productStatusCatalog.value.find((entry) => entry.id === productId)
+      ?? menuCatalog.value.find((entry) => entry.id === productId)
+    if (!product) {
+      productStatusMessage.value = '找不到商品資料，請重新載入'
+      return false
+    }
+
+    const normalizedCount = inventoryCount === null
+      ? null
+      : Math.min(maxCartLineQuantity, Math.max(0, Math.trunc(inventoryCount)))
+    const quantityLabel = normalizedCount === null ? '不限量' : `${normalizedCount}`
+    const overrides: ProductUpdateOverrides = { inventoryCount: normalizedCount }
+    if (normalizedCount === 0) {
+      Object.assign(overrides, productSupplyOverrides('stopped'))
+    }
+
+    togglingProductId.value = productId
+    productStatusMessage.value = `${product.name} 可供應數量更新為 ${quantityLabel} 中`
+
+    if (!isPosApiConfigured) {
+      togglingProductId.value = null
+      productStatusMessage.value = `${product.name} 可供應數量未同步：需連線 POS API 才會寫入資料庫`
+      setBackendStatus('fallback', '供應數量未同步', productStatusMessage.value)
+      return false
+    }
+
+    try {
+      const savedProduct = await updateProduct(productId, productToUpdateInput(product, overrides))
+      applySavedProduct(savedProduct)
+      productStatusMessage.value = `${savedProduct.name} 可供應數量已更新為 ${quantityLabel}`
+      setBackendStatus('connected', 'API 已同步', productStatusMessage.value)
+      return true
+    } catch (error) {
+      productStatusMessage.value = `商品供應數量更新失敗：${getErrorMessage(error)}`
+      setBackendStatus('fallback', '供應數量未同步', productStatusMessage.value)
       return false
     } finally {
       togglingProductId.value = null
@@ -5356,6 +5406,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updateOrderFloorAssignmentForStation,
     updatePaymentStatus,
     updateProductAvailability,
+    updateProductSupplyQuantity,
     updateProductSupplyStatus,
     voidingOrderId,
     voidOrderForStation,

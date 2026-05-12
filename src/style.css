@@ -8829,7 +8829,7 @@ button.cart-line-summary:focus-visible {
 
 .supply-row-top {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 48px minmax(260px, 0.28fr);
+  grid-template-columns: 36px minmax(0, 1fr) 48px minmax(178px, 0.18fr) minmax(246px, 0.24fr);
   gap: 14px;
   align-items: center;
   min-width: 0;
@@ -8891,6 +8891,49 @@ button.cart-line-summary:focus-visible {
   opacity: 0.45;
 }
 
+.supply-row-quantity {
+  align-self: center;
+  min-height: 62px;
+}
+
+.supply-row-quantity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.supply-row-quantity span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supply-row-quantity input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+  text-align: center;
+}
+
+.supply-row-quantity input:disabled {
+  color: var(--muted);
+}
+
 .supply-row-status {
   position: relative;
   display: grid;
@@ -8917,6 +8960,10 @@ button.cart-line-summary:focus-visible {
 
 .supply-row-status--stopped svg:first-child {
   color: var(--muted);
+}
+
+.supply-row-status--no-quantity {
+  grid-column: 4 / 6;
 }
 
 .supply-row-status select {
@@ -12905,7 +12952,12 @@ button.cart-line-summary:focus-visible {
     grid-column: 1 / 2;
   }
 
-  .supply-row-status {
+  .supply-row-quantity {
+    grid-column: 2 / 3;
+  }
+
+  .supply-row-status,
+  .supply-row-status--no-quantity {
     grid-column: 2 / 3;
   }
 

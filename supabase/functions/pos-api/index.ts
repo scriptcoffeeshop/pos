@@ -429,6 +429,7 @@ type AdminPermission =
   | "applyManualDiscounts"
   | "sendDailyReports"
   | "manageProducts"
+  | "manageSupplyQuantityStatus"
   | "managePrinting"
   | "managePayments"
   | "manageReports"
@@ -1152,6 +1153,7 @@ const defaultAccessControl: AccessControlSettings = {
         "applyManualDiscounts",
         "sendDailyReports",
         "manageProducts",
+        "manageSupplyQuantityStatus",
         "managePrinting",
         "managePayments",
         "manageReports",
@@ -8032,6 +8034,7 @@ const knownPermissions: AdminPermission[] = [
   "applyManualDiscounts",
   "sendDailyReports",
   "manageProducts",
+  "manageSupplyQuantityStatus",
   "managePrinting",
   "managePayments",
   "manageReports",
@@ -8053,6 +8056,9 @@ const isKnownPermission = (permission: unknown): permission is AdminPermission =
 
 const normalizeRolePermissions = (permissions: AdminPermission[]): AdminPermission[] => {
   const normalized = new Set<AdminPermission>(permissions);
+  if (normalized.has("manageProducts")) {
+    normalized.add("manageSupplyQuantityStatus");
+  }
   if (normalized.has("manageReports") || normalized.has("closeRegister")) {
     normalized.add("viewCurrentSales");
   }
@@ -8326,11 +8332,17 @@ const validateProductUpdateInput = (
   } else if (
     typeof input.inventoryCount !== "number" ||
     !Number.isInteger(input.inventoryCount) ||
-    input.inventoryCount < 0
+    input.inventoryCount < 0 ||
+    input.inventoryCount > 999
   ) {
-    return { payload, error: "inventoryCount must be null or a non-negative integer" };
+    return { payload, error: "inventoryCount must be null or an integer between 0 and 999" };
   } else {
     payload.inventory_count = input.inventoryCount;
+    if (input.inventoryCount === 0) {
+      payload.is_available = false;
+      payload.online_visible = false;
+      payload.qr_visible = false;
+    }
   }
 
   if (input.lowStockThreshold === null || input.lowStockThreshold === undefined) {

@@ -911,6 +911,7 @@ const {
   updateOrderItemFulfillment,
   updateOrderStatus,
   updatePaymentStatus,
+  updateProductSupplyQuantity,
   updateProductSupplyStatus,
   updatingPaymentOrderId,
   voidingOrderId,
@@ -1031,6 +1032,7 @@ const accessPermissionLabels: Record<AdminPermission, string> = {
   applyManualDiscounts: '手動折扣',
   sendDailyReports: '日結報表寄送',
   manageProducts: '商品管理',
+  manageSupplyQuantityStatus: '供應數量／狀態',
   managePrinting: '列印設定',
   managePayments: '支付設定',
   manageReports: '報表',
@@ -5938,6 +5940,43 @@ const inventoryLimitForProduct = (product: MenuItem): number => {
   return Math.min(maxCartQuantityInput, Math.max(0, Math.trunc(product.inventoryCount)))
 }
 
+const normalizeSupplyQuantityInput = (value: number | null): number | null =>
+  value === null ? null : Math.min(maxCartQuantityInput, Math.max(0, Math.trunc(value)))
+
+const supplyQuantityInputValue = (product: MenuItem): string =>
+  product.inventoryCount === null ? '' : String(normalizeSupplyQuantityInput(product.inventoryCount) ?? '')
+
+const eventSupplyQuantity = (event: Event): number | null => {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return null
+  }
+
+  const value = event.target.value.trim()
+  if (!value) {
+    return null
+  }
+
+  const quantity = Number(value)
+  return Number.isFinite(quantity) ? normalizeSupplyQuantityInput(quantity) : null
+}
+
+const supplyQuantityHint = (product: MenuItem): string => {
+  if (product.inventoryCount === null) {
+    return '可供應數量不限'
+  }
+
+  const quantity = normalizeSupplyQuantityInput(product.inventoryCount) ?? 0
+  return quantity === 0 ? '數量 0 會自動全部停售' : `今日剩餘 ${quantity} 份`
+}
+
+const supplyRowHint = (row: SupplyStatusRow): string => {
+  if (row.kind === 'product' && row.product) {
+    return `${supplyStatusDetail(row.status)} · ${supplyQuantityHint(row.product)}`
+  }
+
+  return supplyStatusDetail(row.status)
+}
+
 const cartLineProductId = (line: CartLine): string => line.productId ?? line.itemId.split('::')[0] ?? line.itemId
 
 const cartLineMatchesProduct = (line: CartLine, product: MenuItem): boolean =>
@@ -6013,6 +6052,17 @@ const deleteOrderItemPermissionStep = (detail = '刪除訂單品項前需驗證�
   title: accessPermissionLabels.deleteOrderItems,
   detail,
 })
+
+const supplyQuantityStatusPermissionStep = (
+  detail = '調整供應數量／狀態前需驗證員工識別碼。',
+): ProtectedPermissionStep => ({
+  permission: 'manageSupplyQuantityStatus',
+  title: accessPermissionLabels.manageSupplyQuantityStatus,
+  detail,
+})
+
+const verifySupplyQuantityStatusOperation = (detail?: string): Promise<boolean> =>
+  verifyProtectedPermissions([supplyQuantityStatusPermissionStep(detail)])
 
 const setProductQuantityAction = async (item: MenuItem, quantity: number): Promise<void> => {
   const currentQuantity = cartLines.value.find((line) => line.itemId === item.id)?.quantity ?? 0
@@ -10237,8 +10287,12 @@ const deleteAvailableNote = (choiceId: string): void => {
   supplyActionMessage.value = `${note?.label ?? '註記'} 已刪除`
 }
 
-const updateAvailableNoteSupplyStatus = (choice: MenuOptionChoice, status: ProductSupplyStatus): void => {
+const updateAvailableNoteSupplyStatus = async (choice: MenuOptionChoice, status: ProductSupplyStatus): Promise<void> => {
   if (availableNoteSupplyStatus(choice.id) === status) {
+    return
+  }
+
+  if (!(await verifySupplyQuantityStatusOperation(`${choice.label} 調整供應狀態前需驗證員工識別碼。`))) {
     return
   }
 
@@ -10297,10 +10351,14 @@ const supplyRowIsBusy = (row: SupplyStatusRow): boolean =>
 const updateSupplyRowStatus = async (
   row: SupplyStatusRow,
   status: ProductSupplyStatus,
-  options: { recordUndo?: boolean } = {},
+  options: { recordUndo?: boolean; skipVerification?: boolean } = {},
 ): Promise<boolean> => {
   if (row.status === status) {
     return true
+  }
+
+  if (!options.skipVerification && !(await verifySupplyQuantityStatusOperation(`${row.name} 調整供應狀態前需驗證員工識別碼。`))) {
+    return false
   }
 
   if (options.recordUndo !== false) {
@@ -10319,6 +10377,32 @@ const updateSupplyRowStatus = async (
   return true
 }
 
+const updateSupplyRowQuantity = async (row: SupplyStatusRow, quantity: number | null): Promise<boolean> => {
+  if (row.kind !== 'product' || !row.product) {
+    return false
+  }
+
+  const normalizedQuantity = normalizeSupplyQuantityInput(quantity)
+  const currentQuantity = normalizeSupplyQuantityInput(row.product.inventoryCount)
+  if (currentQuantity === normalizedQuantity) {
+    return true
+  }
+
+  if (!(await verifySupplyQuantityStatusOperation(`${row.name} 調整可供應數量前需驗證員工識別碼。`))) {
+    return false
+  }
+
+  pushSupplyUndo('變更供應數量')
+  const updated = await updateProductSupplyQuantity(row.id, normalizedQuantity)
+  if (updated) {
+    if (normalizedQuantity === 0) {
+      setProductSupplyStatus(row.id, 'stopped')
+    }
+    supplyActionMessage.value = `${row.name} 可供應數量已更新為${normalizedQuantity === null ? '不限量' : normalizedQuantity}`
+  }
+  return updated
+}
+
 const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<void> => {
   if (isStationBatchBusy.value) {
     return
@@ -10330,13 +10414,18 @@ const updateVisibleSupplyRows = async (status: ProductSupplyStatus): Promise<voi
     return
   }
 
+  if (!(await verifySupplyQuantityStatusOperation(`批次變更 ${targetRows.length} 個項目供應狀態前需驗證員工識別碼。`))) {
+    supplyBatchStatusSelection.value = ''
+    return
+  }
+
   pushSupplyUndo('批次變更供應狀態')
   isSupplyBatchRunning.value = true
   stationBatchProductIds.value = targetRows.filter((row) => row.kind === 'product').map((row) => row.id)
   try {
     let updatedCount = 0
     for (const row of targetRows) {
-      if (await updateSupplyRowStatus(row, status, { recordUndo: false })) {
+      if (await updateSupplyRowStatus(row, status, { recordUndo: false, skipVerification: true })) {
         updatedCount += 1
       }
     }
@@ -14781,7 +14870,24 @@ onBeforeUnmount(() => {
                       <Trash2 :size="18" aria-hidden="true" />
                     </button>
                     <span v-else class="supply-row-delete-spacer" aria-hidden="true" />
-                    <label class="supply-row-status" :class="`supply-row-status--${row.status}`">
+                    <label v-if="row.kind === 'product' && row.product" class="supply-row-quantity">
+                      <span>可供應數量</span>
+                      <input
+                        :value="supplyQuantityInputValue(row.product)"
+                        type="number"
+                        inputmode="numeric"
+                        min="0"
+                        max="999"
+                        placeholder="--"
+                        :disabled="supplyRowIsBusy(row)"
+                        :aria-label="`${row.name} 可供應數量`"
+                        @change="updateSupplyRowQuantity(row, eventSupplyQuantity($event))"
+                      />
+                    </label>
+                    <label
+                      class="supply-row-status"
+                      :class="[`supply-row-status--${row.status}`, { 'supply-row-status--no-quantity': row.kind !== 'product' }]"
+                    >
                       <CheckCircle2 v-if="row.status === 'normal'" :size="22" aria-hidden="true" />
                       <CircleAlert v-else-if="row.status === 'online-stopped'" :size="22" aria-hidden="true" />
                       <X v-else :size="22" aria-hidden="true" />
@@ -14798,7 +14904,7 @@ onBeforeUnmount(() => {
                       <ChevronDown :size="20" aria-hidden="true" />
                     </label>
                   </div>
-                  <small class="supply-row-hint">{{ supplyStatusDetail(row.status) }}</small>
+                  <small class="supply-row-hint">{{ supplyRowHint(row) }}</small>
                   <details v-if="row.kind === 'product' && row.product" class="supply-row-options">
                     <summary>
                       <span>註記群組</span>
