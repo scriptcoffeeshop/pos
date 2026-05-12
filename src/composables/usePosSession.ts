@@ -190,6 +190,7 @@ interface CounterDraftState {
   draftOrderId: string | null
   draftStartedAt: string | null
   paymentMethod: PaymentMethod
+  paymentNote: string
   serviceMode: ServiceMode
   orderLabels: string[]
   serviceFeeRate: number
@@ -439,6 +440,7 @@ const readCounterDraft = (): CounterDraftState | null => {
       draftOrderId: sanitizeDraftOrderId(parsed.draftOrderId),
       draftStartedAt: sanitizeDraftStartedAt(parsed.draftStartedAt),
       paymentMethod: isPaymentMethod(parsed.paymentMethod) ? parsed.paymentMethod : 'cash',
+      paymentNote: typeof parsed.paymentNote === 'string' ? parsed.paymentNote.slice(0, 240) : '',
       serviceMode: isServiceMode(parsed.serviceMode) ? parsed.serviceMode : 'takeout',
       orderLabels: Array.isArray(parsed.orderLabels)
         ? parsed.orderLabels.filter((label): label is string => typeof label === 'string').slice(0, orderLabelSelectionMaxCount)
@@ -489,6 +491,7 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       Boolean(draft.customer.memberId) ||
       Boolean(draft.draftOrderId) ||
       draft.paymentMethod !== 'cash' ||
+      draft.paymentNote.trim().length > 0 ||
       draft.serviceMode !== 'takeout' ||
       draft.orderLabels.length > 0 ||
       draft.serviceFeeRate > 0 ||
@@ -590,6 +593,7 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     electronicInvoiceUploadDueAt: nullableString(order.electronicInvoiceUploadDueAt),
     memberId: nullableString(order.memberId),
     note: order.note,
+    paymentNote: typeof order.paymentNote === 'string' ? order.paymentNote : '',
     lines,
     subtotal: Math.max(0, Math.trunc(order.subtotal)),
     orderLabels: Array.isArray(order.orderLabels)
@@ -1246,6 +1250,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   const searchTerm = ref('')
   const serviceMode = ref<ServiceMode>(savedCounterDraft?.serviceMode ?? 'takeout')
   const paymentMethod = ref<PaymentMethod>(savedCounterDraft?.paymentMethod ?? 'cash')
+  const paymentNote = ref(savedCounterDraft?.paymentNote ?? '')
   const orderLabels = ref<string[]>(savedCounterDraft?.orderLabels ?? [])
   const serviceFeeRate = ref(savedCounterDraft?.serviceFeeRate ?? 0)
   const extraFeeAmount = ref(savedCounterDraft?.extraFeeAmount ?? 0)
@@ -2315,6 +2320,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceUploadDueAt: null,
       memberId: null,
       note: '',
+      paymentNote: '',
       lines: [],
       subtotal: 0,
       orderLabels: [],
@@ -2345,6 +2351,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.requestedFulfillmentAt = toDatetimeLocalInputValue(requestedFulfillmentAt)
     resetOrderAdjustments()
     paymentMethod.value = 'cash'
+    paymentNote.value = ''
     serviceMode.value = mode
     counterDraftOrderId.value = orderId
     counterDraftStartedAt.value = startedAtIso
@@ -2573,6 +2580,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceUploadDueAt: currentOrder.electronicInvoiceUploadDueAt,
       memberId: customer.memberId,
       note: customer.note.trim(),
+      paymentNote: paymentNote.value.trim().slice(0, 240),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
       subtotal: cartTotal.value,
       orderLabels: [...orderLabels.value],
@@ -2609,6 +2617,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       cartLines,
       serviceMode,
       paymentMethod,
+      paymentNote,
       customer,
       counterDraftOrderId,
       counterDraftStartedAt,
@@ -2631,6 +2640,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         draftOrderId: counterDraftOrderId.value,
         draftStartedAt: counterDraftOrderId.value ? counterDraftStartedAt.value : null,
         paymentMethod: paymentMethod.value,
+        paymentNote: paymentNote.value.slice(0, 240),
         serviceMode: serviceMode.value,
         orderLabels: [...orderLabels.value],
         serviceFeeRate: serviceFeeRate.value,
@@ -3823,6 +3833,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderLabels: [...new Set([...targetOrder.orderLabels, ...sourceOrder.orderLabels])],
     memberId: targetOrder.memberId ?? sourceOrder.memberId,
     note: mergedDineInNote(targetOrder, sourceOrder),
+    paymentNote: [targetOrder.paymentNote, sourceOrder.paymentNote].filter(Boolean).join(' · ').slice(0, 240),
     status: mergeStatus(targetOrder.status, sourceOrder.status),
     printJobs: mergePrintJobs(targetOrder, sourceOrder.printJobs),
   })
@@ -4833,6 +4844,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       electronicInvoiceUploadDueAt: existingOrder?.electronicInvoiceUploadDueAt ?? null,
       memberId: customer.memberId,
       note: customer.note.trim(),
+      paymentNote: paymentNote.value.trim().slice(0, 240),
       lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),
       subtotal: cartTotal.value,
       orderLabels: [...orderLabels.value],
@@ -4863,6 +4875,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     clearCart()
     resetCustomerDraft()
     resetOrderAdjustments()
+    paymentNote.value = ''
     clearCounterDraftIdentity()
   }
 
@@ -5063,6 +5076,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const editableOrder = orderQueue.value.find((entry) => entry.id === orderId) ?? order
     serviceMode.value = editableOrder.mode
     paymentMethod.value = editableOrder.paymentMethod
+    paymentNote.value = editableOrder.paymentNote ?? ''
     orderLabels.value = [...editableOrder.orderLabels]
     serviceFeeRate.value = editableOrder.serviceFeeRate
     extraFeeAmount.value = editableOrder.extraFeeAmount
@@ -5119,6 +5133,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     if (counterDraftOrderId.value === orderId) {
       clearCart()
       resetCustomerDraft()
+      paymentNote.value = ''
       clearCounterDraftIdentity()
     }
   }
@@ -5358,6 +5373,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     orderLabels,
     paymentBreakdown,
     paymentMethod,
+    paymentNote,
     paymentSplits,
     transactionReceiptCount,
     pendingOrders,

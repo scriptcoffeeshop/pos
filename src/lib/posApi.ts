@@ -151,6 +151,7 @@ interface ApiOrder {
   electronic_invoice_upload_due_at?: string | null
   member_id?: string | null
   note: string
+  payment_note?: string | null
   subtotal: number
   order_labels?: string[] | null
   service_fee_rate?: number | null
@@ -3018,6 +3019,7 @@ export const normalizeOrder = (order: ApiOrder): PosOrder => {
     electronicInvoiceUploadDueAt: order.electronic_invoice_upload_due_at ?? null,
     memberId: order.member_id ?? null,
     note: order.note,
+    paymentNote: order.payment_note ?? '',
     subtotal: order.subtotal,
     orderLabels: Array.isArray(order.order_labels) ? order.order_labels.filter((label): label is string => typeof label === 'string') : [],
     serviceFeeRate: order.service_fee_rate ?? 0,
@@ -3815,6 +3817,7 @@ const orderPayload = (order: PosOrder) => ({
   electronicInvoicePrintMode: order.electronicInvoicePrintMode,
   memberId: order.memberId,
   note: order.note,
+  paymentNote: order.paymentNote,
   qrSessionOrderId: order.qrSessionOrderId ?? null,
   qrSessionStartedAt: order.qrSessionStartedAt ?? null,
   subtotal: order.subtotal,

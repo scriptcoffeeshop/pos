@@ -146,7 +146,7 @@ type CloseoutPreflightStatus = 'ready' | 'warning' | 'danger'
 type CloseoutPreflightAction = 'active-orders' | 'pending-payments' | 'payment-issues' | 'print-issues' | 'voided-orders'
 type MenuOptionGroupId = string
 type QueueAdminActionKind = 'void' | 'refund'
-type TransactionSearchCriterion = 'receipt' | 'carrier' | 'table' | 'order'
+type TransactionSearchCriterion = 'receipt' | 'carrier' | 'table' | 'payment-note' | 'order'
 type CustomerManagementSortMode = 'consumed' | 'created'
 type InventoryOperationDraftMode = InventoryRecordAction
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
@@ -854,6 +854,7 @@ const {
   openCashDrawerForStation,
   paymentBreakdown,
   paymentMethod,
+  paymentNote,
   paymentSplits,
   pendingOrders,
   posAppearanceSettings,
@@ -1653,6 +1654,7 @@ const transactionSearchOptions: Array<{ value: TransactionSearchCriterion; label
   { value: 'receipt', label: '發票/收據號碼', placeholder: '範例：#-00001234 或 POS-000123' },
   { value: 'carrier', label: '載具/捐贈碼', placeholder: '輸入載具、統編或捐贈碼' },
   { value: 'table', label: '桌號', placeholder: '範例：A1 或 1F A1' },
+  { value: 'payment-note', label: '支付備註', placeholder: '輸入禮券、外送平台或收款備註' },
   { value: 'order', label: '訂單號碼', placeholder: '輸入 POS / WEB / 短單號' },
 ]
 
@@ -5420,6 +5422,7 @@ const transactionSearchHaystack = (order: PosOrder): string[] => {
     order.customerName,
     order.customerPhone,
     order.note,
+    order.paymentNote,
   ]
 
   if (transactionSearchCriterion.value === 'receipt') {
@@ -5440,6 +5443,10 @@ const transactionSearchHaystack = (order: PosOrder): string[] => {
 
   if (transactionSearchCriterion.value === 'table') {
     return [tableLabel, tableLabel.replace(/\s+/g, ''), order.note, order.customerName]
+  }
+
+  if (transactionSearchCriterion.value === 'payment-note') {
+    return [order.paymentNote, paymentLabels[order.paymentMethod], order.note, order.customerName]
   }
 
   return [...common, orderSequenceLabel(order.id)]
@@ -12810,6 +12817,16 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
 
+                  <label class="payment-note-field">
+                    <span>支付備註</span>
+                    <input
+                      v-model="paymentNote"
+                      type="text"
+                      maxlength="240"
+                      placeholder="禮券號碼、外送平台或其他收款資訊"
+                    />
+                  </label>
+
                   <section class="mixed-payment-panel" aria-label="混合支付">
                     <div class="mixed-payment-header">
                       <div>
@@ -13654,6 +13671,10 @@ onBeforeUnmount(() => {
                               </template>
                               <span>付款</span>
                               <strong>{{ paymentLabels[order.paymentMethod] }} / {{ paymentStatusLabels[order.paymentStatus] }}</strong>
+                              <template v-if="order.paymentNote">
+                                <span>支付備註</span>
+                                <strong>{{ order.paymentNote }}</strong>
+                              </template>
                               <template v-if="orderPaymentSplitSummary(order)">
                                 <span>拆單</span>
                                 <strong>{{ orderPaymentSplitSummary(order) }}</strong>
@@ -15785,6 +15806,10 @@ onBeforeUnmount(() => {
                 <div>
                   <dt>付款</dt>
                   <dd>{{ paymentLabels[selectedTransactionOrder.paymentMethod] }} / {{ paymentStatusLabels[selectedTransactionOrder.paymentStatus] }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.paymentNote">
+                  <dt>支付備註</dt>
+                  <dd>{{ selectedTransactionOrder.paymentNote }}</dd>
                 </div>
                 <div v-if="selectedTransactionOrder.invoiceCarrierBarcode">
                   <dt>載具</dt>
