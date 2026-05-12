@@ -113,6 +113,54 @@ interface CreateOrderInput {
   lines?: OrderLineInput[];
 }
 
+interface MemberFavoriteProductAnalysis {
+  productSku: string;
+  name: string;
+  quantity: number;
+  orderCount: number;
+  totalAmount: number;
+}
+
+interface MemberSalesAnalysis {
+  totalOrders: number;
+  totalSpent: number;
+  averageSpent: number;
+  averageCycleDays: number | null;
+  firstConsumedAt: string | null;
+  lastConsumedAt: string | null;
+  favoriteProducts: MemberFavoriteProductAnalysis[];
+}
+
+interface MemberAnalysisOrderItemRow {
+  product_sku?: string | null;
+  name?: string | null;
+  quantity?: number | null;
+  line_total?: number | null;
+}
+
+interface MemberAnalysisOrderRow {
+  id: string;
+  member_id: string | null;
+  subtotal: number | null;
+  created_at: string;
+  order_items?: MemberAnalysisOrderItemRow[];
+}
+
+interface MemberFavoriteProductDraft {
+  productSku: string;
+  name: string;
+  quantity: number;
+  totalAmount: number;
+  orderIds: Set<string>;
+}
+
+interface MemberSalesAnalysisDraft {
+  totalOrders: number;
+  totalSpent: number;
+  consumedAtTimes: number[];
+  favoriteProducts: Map<string, MemberFavoriteProductDraft>;
+}
+
 interface PaymentSplitInput {
   id?: string;
   label?: string;
@@ -1028,6 +1076,124 @@ const reservationSelect =
   "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, note, created_at, updated_at";
 const reservationBlacklistSelect =
   "id, phone, normalized_phone, customer_name, reason, note, is_active, created_at, updated_at";
+
+const memberAnalysisOrderSelect =
+  "id, member_id, subtotal, created_at, order_items(product_sku, name, quantity, line_total)";
+
+const emptyMemberSalesAnalysis = (): MemberSalesAnalysis => ({
+  totalOrders: 0,
+  totalSpent: 0,
+  averageSpent: 0,
+  averageCycleDays: null,
+  firstConsumedAt: null,
+  lastConsumedAt: null,
+  favoriteProducts: [],
+});
+
+const loadMemberSalesAnalysis = async (
+  memberIds: string[],
+): Promise<{ analysisByMember: Map<string, MemberSalesAnalysis>; error: string | null }> => {
+  const analysisByMember = new Map<string, MemberSalesAnalysis>();
+  if (memberIds.length === 0) {
+    return { analysisByMember, error: null };
+  }
+
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select(memberAnalysisOrderSelect)
+    .in("member_id", memberIds)
+    .in("payment_status", ["authorized", "paid"])
+    .neq("status", "voided")
+    .order("created_at", { ascending: false })
+    .limit(Math.min(Math.max(memberIds.length * 60, 200), 5000));
+
+  if (error) {
+    return { analysisByMember, error: error.message };
+  }
+
+  const drafts = new Map<string, MemberSalesAnalysisDraft>();
+
+  for (const order of (orders ?? []) as MemberAnalysisOrderRow[]) {
+    const memberId = order.member_id;
+    if (!memberId) {
+      continue;
+    }
+
+    const draft = drafts.get(memberId) ?? {
+      totalOrders: 0,
+      totalSpent: 0,
+      consumedAtTimes: [],
+      favoriteProducts: new Map<string, MemberFavoriteProductDraft>(),
+    };
+
+    const consumedAtTime = new Date(order.created_at).getTime();
+    draft.totalOrders += 1;
+    draft.totalSpent += Math.max(Math.trunc(Number(order.subtotal) || 0), 0);
+    if (Number.isFinite(consumedAtTime)) {
+      draft.consumedAtTimes.push(consumedAtTime);
+    }
+
+    for (const item of order.order_items ?? []) {
+      const productSku = sanitizeText(item.product_sku, "");
+      const name = sanitizeText(item.name, productSku || "未命名商品");
+      const key = productSku || name;
+      const quantity = Math.max(Math.trunc(Number(item.quantity) || 0), 0);
+      if (!key || quantity <= 0) {
+        continue;
+      }
+
+      const favorite = draft.favoriteProducts.get(key) ?? {
+        productSku,
+        name,
+        quantity: 0,
+        totalAmount: 0,
+        orderIds: new Set<string>(),
+      };
+      favorite.quantity += quantity;
+      favorite.totalAmount += Math.max(Math.trunc(Number(item.line_total) || 0), 0);
+      favorite.orderIds.add(order.id);
+      draft.favoriteProducts.set(key, favorite);
+    }
+
+    drafts.set(memberId, draft);
+  }
+
+  for (const [memberId, draft] of drafts) {
+    const sortedTimes = [...draft.consumedAtTimes].sort((left, right) => left - right);
+    const firstTime = sortedTimes[0] ?? null;
+    const lastTime = sortedTimes[sortedTimes.length - 1] ?? null;
+    const averageCycleDays = sortedTimes.length > 1 && firstTime !== null && lastTime !== null
+      ? Math.round(((lastTime - firstTime) / (sortedTimes.length - 1) / 86400000) * 10) / 10
+      : null;
+    const favoriteProducts = [...draft.favoriteProducts.values()]
+      .map((item) => ({
+        productSku: item.productSku,
+        name: item.name,
+        quantity: item.quantity,
+        orderCount: item.orderIds.size,
+        totalAmount: item.totalAmount,
+      }))
+      .sort((left, right) =>
+        right.quantity - left.quantity ||
+        right.orderCount - left.orderCount ||
+        right.totalAmount - left.totalAmount ||
+        left.name.localeCompare(right.name),
+      )
+      .slice(0, 5);
+
+    analysisByMember.set(memberId, {
+      totalOrders: draft.totalOrders,
+      totalSpent: draft.totalSpent,
+      averageSpent: draft.totalOrders > 0 ? Math.round(draft.totalSpent / draft.totalOrders) : 0,
+      averageCycleDays,
+      firstConsumedAt: firstTime === null ? null : new Date(firstTime).toISOString(),
+      lastConsumedAt: lastTime === null ? null : new Date(lastTime).toISOString(),
+      favoriteProducts,
+    });
+  }
+
+  return { analysisByMember, error: null };
+};
 const inventoryCategorySelect =
   "id, name, sort_order, is_active, created_at, updated_at";
 const inventoryItemSelect =
@@ -3950,6 +4116,7 @@ api.get("/admin/members", async (c) => {
   const memberIds = (members ?? []).map((member) => member.id);
   let ledgerByMember = new Map<string, unknown[]>();
   let couponsByMember = new Map<string, unknown[]>();
+  let analysisByMember = new Map<string, MemberSalesAnalysis>();
   if (memberIds.length > 0) {
     const { data: ledger, error: ledgerError } = await supabase
       .from("transaction_ledger")
@@ -3992,6 +4159,12 @@ api.get("/admin/members", async (c) => {
       }
       return map;
     }, new Map<string, unknown[]>());
+
+    const analysisResult = await loadMemberSalesAnalysis(memberIds);
+    if (analysisResult.error) {
+      return c.json({ error: analysisResult.error }, 500);
+    }
+    analysisByMember = analysisResult.analysisByMember;
   }
 
   return c.json({
@@ -3999,6 +4172,7 @@ api.get("/admin/members", async (c) => {
       ...member,
       ledger: ledgerByMember.get(member.id) ?? [],
       coupons: couponsByMember.get(member.id) ?? [],
+      analysis: analysisByMember.get(member.id) ?? emptyMemberSalesAnalysis(),
     })),
   });
 });
@@ -4029,6 +4203,7 @@ api.get("/members/search", async (c) => {
   const memberIds = (members ?? []).map((member) => member.id);
   let couponsByMember = new Map<string, unknown[]>();
   let ledgerByMember = new Map<string, unknown[]>();
+  let analysisByMember = new Map<string, MemberSalesAnalysis>();
   if (memberIds.length > 0) {
     const { data: coupons, error: couponError } = await supabase
       .from("member_coupons")
@@ -4070,6 +4245,12 @@ api.get("/members/search", async (c) => {
       }
       return map;
     }, new Map<string, unknown[]>());
+
+    const analysisResult = await loadMemberSalesAnalysis(memberIds);
+    if (analysisResult.error) {
+      return c.json({ error: analysisResult.error }, 500);
+    }
+    analysisByMember = analysisResult.analysisByMember;
   }
 
   return c.json({
@@ -4077,6 +4258,7 @@ api.get("/members/search", async (c) => {
       ...member,
       ledger: ledgerByMember.get(member.id) ?? [],
       coupons: couponsByMember.get(member.id) ?? [],
+      analysis: analysisByMember.get(member.id) ?? emptyMemberSalesAnalysis(),
     })),
   });
 });
