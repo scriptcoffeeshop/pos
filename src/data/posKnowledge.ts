@@ -387,6 +387,20 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'queue',
   },
   {
+    id: 'basic-custom-payment',
+    category: 'payments',
+    title: '基本支付與自定義支付',
+    summary: '付款頁可用現金、刷卡與自定義支付記錄現場收款，適合禮券、兌換券等非整合支付。',
+    steps: [
+      '在點餐頁按「付款/拆單」進入付款頁，付款方式可選現金、LINE Pay、街口或自定義支付。',
+      '自定義支付用於禮券、兌換券等基本支付記錄，不會出現在消費者線上點餐付款方式。',
+      '若同張單有多種付款來源，開啟混合支付後可把其中一筆付款方式設為自定義支付。',
+      '送單後付款方式會寫入 Supabase 訂單欄位、列印 payload 與營運日報，換平板或 fresh reinstall 後仍可還原。',
+    ],
+    keywords: ['基本支付', '自定義支付', '禮券', '兌換券', '現金', '刷卡', '混合支付', 'iCHEF'],
+    target: 'payment',
+  },
+  {
     id: 'split-bills',
     category: 'payments',
     title: '拆單各付各與均分',
@@ -408,12 +422,12 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     summary: '同張訂單可拆成多筆付款金額，並設定結帳時要列印幾張交易明細。',
     steps: [
       '在點餐頁按「付款/拆單」進入付款頁。',
-      '按「開啟混合支付」後新增付款方式，逐筆選擇現金、刷卡、91APP 支付線上刷卡、LINE Pay、街口或轉帳並輸入金額。',
+      '按「開啟混合支付」後新增付款方式，逐筆選擇現金、刷卡、自定義支付、91APP 支付線上刷卡、LINE Pay、街口或轉帳並輸入金額。',
       '所有付款金額加總必須等於訂單合計；線上支付模組同張訂單只能保留一種。',
       '收完款後可把各付款方式標記已結，訂單中心會顯示混合支付摘要，關帳付款方式也會依金額分攤。',
       '需要給客人確認時，調整「交易明細」張數；結帳後會自動列印，也可在訂單中心補印交易明細。',
     ],
-    keywords: ['混合支付', '多種付款', '交易明細', '付款方式', '現金', '刷卡', 'LINE Pay', '街口', 'iCHEF'],
+    keywords: ['混合支付', '多種付款', '交易明細', '付款方式', '現金', '刷卡', '自定義支付', '91APP', 'LINE Pay', '街口', '轉帳', 'iCHEF'],
     target: 'payment',
   },
   {

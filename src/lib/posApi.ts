@@ -787,6 +787,7 @@ export const normalizePaymentSplits = (splits: unknown): PaymentSplit[] => {
     const split = entry as Partial<PaymentSplit>
     const amount = Math.max(0, Math.trunc(Number(split.amount) || 0))
     const paymentMethod: PaymentMethod = split.paymentMethod === 'card' ||
+      split.paymentMethod === 'custom' ||
       split.paymentMethod === 'app91-card' ||
       split.paymentMethod === 'line-pay' ||
       split.paymentMethod === 'jkopay' ||
@@ -829,6 +830,7 @@ export const normalizePaymentBreakdown = (payments: unknown): PaymentAllocation[
 
     const payment = entry as Partial<PaymentAllocation>
     const paymentMethod: PaymentMethod = payment.paymentMethod === 'card' ||
+      payment.paymentMethod === 'custom' ||
       payment.paymentMethod === 'app91-card' ||
       payment.paymentMethod === 'line-pay' ||
       payment.paymentMethod === 'jkopay' ||

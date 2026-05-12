@@ -1516,6 +1516,7 @@ const reportBreakdownLabel = (key: string): string => {
   const labels: Record<string, string> = {
     cash: '現金',
     card: '刷卡',
+    custom: '自定義支付',
     'app91-card': '91APP 支付線上刷卡',
     'line-pay': 'LINE Pay',
     jkopay: '街口',
