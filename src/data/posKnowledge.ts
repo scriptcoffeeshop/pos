@@ -566,10 +566,11 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
       '進入後台「權限」，先建立角色、勾選角色可執行的操作，並替員工設定識別碼。',
       '在「操作驗證開關」勾選需要驗證的操作，例如開單、出單至廚房、轉單、刪單、刪品項、變價註記、結帳、服務費/其他費用、手動折扣、作廢、退款、錢櫃或線上接單。',
       '平板執行被保護操作時會跳出員工識別碼視窗；後端會檢查員工是否啟用、角色是否具備該權限。',
-      '驗證成功會寫入 access.verify 稽核；關帳仍會另外在 register.close 稽核記錄操作員與班別資料。',
+      '驗證成功會寫入 access.verify 稽核；後台「權限」頁的權限紀錄可直接查看員工、角色、驗證權限、平板與時間，並可下載 CSV。',
+      '關帳仍會另外在 register.close 稽核記錄操作員與班別資料。',
       '設定存在 access_control runtime，新平板、重開 App 或 fresh reinstall 後都會從 POS API 同步，不靠本機記憶體保存。',
     ],
-    keywords: ['權限', '員工識別碼', '開單', '出單', '刪品項', '變價註記', '結帳', '服務費', '手動折扣', '作廢', '退款', '錢櫃', 'access_control', 'iCHEF'],
+    keywords: ['權限', '權限紀錄', '員工識別碼', '開單', '出單', '刪品項', '變價註記', '結帳', '服務費', '手動折扣', '作廢', '退款', '錢櫃', 'access_control', 'access.verify', 'iCHEF'],
     target: 'closeout',
   },
   {
