@@ -59,6 +59,7 @@ import type {
   StaffTimeClockEntry,
   StaffPermissionVerification,
   SupplyPeriodRule,
+  TimeClockEventType,
   WaitlineEntry,
   PrintJob,
   PrintLabelMode,
@@ -3464,13 +3465,14 @@ export const sendStationHeartbeat = async (): Promise<PosStationHeartbeat> => {
 export const createStaffTimeClockEntry = async (
   staffCode: string,
   note = '',
+  eventType?: TimeClockEventType,
 ): Promise<StaffTimeClockEntry> => {
   const data = await request<StaffTimeClockEntryResponse>('/time-clock', {
     method: 'POST',
     headers: {
       'X-POS-STATION-ID': currentStationId(),
     },
-    body: JSON.stringify({ staffCode, note, stationId: currentStationId() }),
+    body: JSON.stringify({ staffCode, note, eventType, stationId: currentStationId() }),
   })
 
   return normalizeStaffTimeClockEntry(data.entry)

@@ -116,6 +116,7 @@ import type {
   ReservationStatus,
   ServiceMode,
   StaffTimeClockEntry,
+  TimeClockEventType,
   WaitlineEntry,
 } from './types/pos'
 
@@ -4081,6 +4082,7 @@ const timeClockStaffCode = ref('')
 const timeClockNote = ref('')
 const timeClockMessage = ref('輸入員工識別碼打卡')
 const isTimeClockSubmitting = ref(false)
+const timeClockSubmittingEvent = ref<TimeClockEventType | null>(null)
 const isTimeClockEntriesLoading = ref(false)
 const latestTimeClockEntry = ref<StaffTimeClockEntry | null>(null)
 const timeClockEntries = ref<StaffTimeClockEntry[]>([])
@@ -8988,7 +8990,7 @@ const handleTimeClockStaffFilterChange = (): void => {
   void loadTimeClockEntries()
 }
 
-const submitTimeClockAction = async (): Promise<void> => {
+const submitTimeClockAction = async (eventType: TimeClockEventType): Promise<void> => {
   const staffCode = timeClockStaffCode.value.trim()
 
   if (!staffCode) {
@@ -9002,10 +9004,11 @@ const submitTimeClockAction = async (): Promise<void> => {
   }
 
   isTimeClockSubmitting.value = true
-  timeClockMessage.value = '打卡同步中'
+  timeClockSubmittingEvent.value = eventType
+  timeClockMessage.value = `${eventType === 'clock-in' ? '上班' : '下班'}打卡同步中`
 
   try {
-    const entry = await createStaffTimeClockEntry(staffCode, timeClockNote.value.trim())
+    const entry = await createStaffTimeClockEntry(staffCode, timeClockNote.value.trim(), eventType)
     latestTimeClockEntry.value = entry
     syncTimeClockStaffOptions([entry])
     timeClockStaffFilter.value = entry.staffAccountId || 'all'
@@ -9017,6 +9020,7 @@ const submitTimeClockAction = async (): Promise<void> => {
     timeClockMessage.value = `打卡失敗：${error instanceof Error ? error.message : '未知錯誤'}`
   } finally {
     isTimeClockSubmitting.value = false
+    timeClockSubmittingEvent.value = null
   }
 }
 
@@ -15473,7 +15477,7 @@ onBeforeUnmount(() => {
           <p class="label-management-message" aria-live="polite">{{ labelManagementMessage }}</p>
         </section>
         <section v-else-if="activeToolboxPanel === 'time-clock'" class="toolbox-detail-panel" aria-labelledby="toolbox-title">
-          <form class="time-clock-form" @submit.prevent="submitTimeClockAction">
+          <form class="time-clock-form" @submit.prevent="submitTimeClockAction('clock-in')">
             <label>
               員工識別碼
               <input
@@ -15488,10 +15492,16 @@ onBeforeUnmount(() => {
               備註
               <input v-model="timeClockNote" type="text" maxlength="120" placeholder="選填" />
             </label>
-            <button class="primary-button" type="submit" :disabled="isTimeClockSubmitting">
-              <Clock3 :size="18" aria-hidden="true" />
-              {{ isTimeClockSubmitting ? '同步中' : '打卡' }}
-            </button>
+            <div class="time-clock-actions" aria-label="打卡操作">
+              <button class="primary-button" type="submit" :disabled="isTimeClockSubmitting">
+                <Clock3 :size="18" aria-hidden="true" />
+                {{ timeClockSubmittingEvent === 'clock-in' ? '上班同步中' : '上班' }}
+              </button>
+              <button class="secondary-button" type="button" :disabled="isTimeClockSubmitting" @click="submitTimeClockAction('clock-out')">
+                <Clock3 :size="18" aria-hidden="true" />
+                {{ timeClockSubmittingEvent === 'clock-out' ? '下班同步中' : '下班' }}
+              </button>
+            </div>
             <p class="time-clock-message" aria-live="polite">{{ timeClockMessage }}</p>
           </form>
           <article v-if="latestTimeClockEntry" class="time-clock-result">

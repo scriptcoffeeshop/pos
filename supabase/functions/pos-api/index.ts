@@ -343,6 +343,7 @@ interface StaffTimeClockInput {
   staffCode?: string;
   note?: string;
   stationId?: string;
+  eventType?: string;
 }
 
 interface AccessVerificationInput {
@@ -2772,6 +2773,11 @@ api.post("/time-clock", async (c) => {
   }
 
   const role = normalizedAccessControl.roles.find((entry) => entry.id === staffAccount.roleId);
+  const requestedEventType = normalizeTimeClockEventType(input.eventType);
+  if (input.eventType !== undefined && input.eventType !== null && !requestedEventType) {
+    return c.json({ error: "eventType must be clock-in or clock-out" }, 400);
+  }
+
   const { data: latestEntry, error: latestError } = await supabase
     .from("staff_time_clock_entries")
     .select(staffTimeClockEntrySelect)
@@ -2784,9 +2790,9 @@ api.post("/time-clock", async (c) => {
     return c.json({ error: latestError.message }, 500);
   }
 
-  const eventType = (latestEntry as StaffTimeClockEntryRow | null)?.event_type === "clock_in"
+  const eventType = requestedEventType ?? ((latestEntry as StaffTimeClockEntryRow | null)?.event_type === "clock_in"
     ? "clock_out"
-    : "clock_in";
+    : "clock_in");
   const stationId = sanitizeStationId(input.stationId ?? c.req.header("x-pos-station-id"));
   const note = sanitizeText(input.note, "").slice(0, 240);
   const { data, error } = await supabase
@@ -9067,6 +9073,18 @@ const sanitizeIdentifier = (value: unknown, fallback: string): string =>
 
 const normalizeStaffCode = (value: unknown): string =>
   typeof value === "string" ? value.trim().replace(/\s+/g, "").slice(0, 32) : "";
+
+const normalizeTimeClockEventType = (value: unknown): "clock_in" | "clock_out" | null => {
+  if (value === "clock_in" || value === "clock-in") {
+    return "clock_in";
+  }
+
+  if (value === "clock_out" || value === "clock-out") {
+    return "clock_out";
+  }
+
+  return null;
+};
 
 const sanitizeText = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
