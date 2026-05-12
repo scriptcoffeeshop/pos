@@ -1075,6 +1075,14 @@ interface CustomerEngagementSettings {
   orderPageDisplay: {
     noteColumns: number;
   };
+  flyDoveSmsMarketing: {
+    enabled: boolean;
+    apiTokenConfigured: boolean;
+    accountName: string;
+    audienceNamePrefix: string;
+    defaultMessageTemplate: string;
+    complianceNote: string;
+  };
   memberAudiences: MemberAudienceRuleSetting[];
   recommendations: RecommendationRule[];
   translations: TranslationSetting[];
@@ -1795,6 +1803,14 @@ const defaultEngagementSettings: CustomerEngagementSettings = {
   },
   orderPageDisplay: {
     noteColumns: 3,
+  },
+  flyDoveSmsMarketing: {
+    enabled: false,
+    apiTokenConfigured: false,
+    accountName: "",
+    audienceNamePrefix: "script-coffee",
+    defaultMessageTemplate: "",
+    complianceNote: "FlyDove 簡訊費用與內容編輯由 FlyDove 後台處理；匯出前請確認會員電話與簡訊同意狀態。",
   },
   memberAudiences: [],
   recommendations: [
@@ -11927,6 +11943,10 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
     ? settings.orderPageDisplay
     : defaultEngagementSettings.orderPageDisplay;
   const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings["orderPageDisplay"]>;
+  const rawFlyDoveSmsMarketing = settings.flyDoveSmsMarketing && typeof settings.flyDoveSmsMarketing === "object"
+    ? settings.flyDoveSmsMarketing
+    : defaultEngagementSettings.flyDoveSmsMarketing;
+  const flyDoveSmsMarketing = rawFlyDoveSmsMarketing as Partial<CustomerEngagementSettings["flyDoveSmsMarketing"]>;
   const memberAudiences = normalizeMemberAudienceRules(settings.memberAudiences);
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CheckoutCounterBookSetting[] => {
@@ -12193,6 +12213,18 @@ const normalizeEngagementSettingsForRuntime = (input: unknown): CustomerEngageme
         1,
         3,
       ),
+    },
+    flyDoveSmsMarketing: {
+      enabled: flyDoveSmsMarketing.enabled === true,
+      apiTokenConfigured: flyDoveSmsMarketing.apiTokenConfigured === true,
+      accountName: sanitizeText(flyDoveSmsMarketing.accountName, "").slice(0, 80),
+      audienceNamePrefix: sanitizeText(flyDoveSmsMarketing.audienceNamePrefix, defaultEngagementSettings.flyDoveSmsMarketing.audienceNamePrefix)
+        .replace(/[^a-zA-Z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 40) || defaultEngagementSettings.flyDoveSmsMarketing.audienceNamePrefix,
+      defaultMessageTemplate: sanitizeText(flyDoveSmsMarketing.defaultMessageTemplate, "").slice(0, 280),
+      complianceNote: sanitizeText(flyDoveSmsMarketing.complianceNote, defaultEngagementSettings.flyDoveSmsMarketing.complianceNote).slice(0, 200),
     },
     memberAudiences,
     recommendations,

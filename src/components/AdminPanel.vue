@@ -1631,6 +1631,30 @@ const memberAudienceFilterSummary = (rule: MemberAudienceRuleSetting): string[] 
   return filters.length > 0 ? filters : ['全體會員']
 }
 
+const normalizeFlyDovePhone = (phone: string): string => phone.replace(/[^\d+]/g, '')
+
+const sanitizeFlyDoveAudienceName = (value: string): string => {
+  const normalized = value
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60)
+
+  return normalized || 'script-coffee-audience'
+}
+
+const flyDoveAudienceListName = computed(() => {
+  const prefix = engagementSettings.value.flyDoveSmsMarketing.audienceNamePrefix || 'script-coffee'
+  const source = memberAudienceDraft.value.id || memberAudienceDraft.value.name || 'audience'
+  return sanitizeFlyDoveAudienceName(`${prefix}-${source}`)
+})
+
+const flyDovePhoneReadyCount = computed(() =>
+  memberAudiencePreviewMembers.value.filter((member) => normalizeFlyDovePhone(member.phone).length > 0).length,
+)
+
 const selectMemberAudienceRule = (rule: MemberAudienceRuleSetting): void => {
   selectedMemberAudienceId.value = rule.id
   memberAudienceDraft.value = { ...rule }
@@ -1731,6 +1755,60 @@ const exportMemberAudienceCsv = (): void => {
   const safeName = memberAudienceDraft.value.id.replace(/[^a-zA-Z0-9_-]/g, '-')
   downloadCsv(`script-coffee-member-audience-${safeName}.csv`, rows)
   adminMessage.value = `已匯出 ${memberAudiencePreviewMembers.value.length} 位會員分眾名單`
+}
+
+const exportFlyDoveMemberAudienceCsv = (): void => {
+  if (memberAudiencePreviewMembers.value.length === 0 || !memberAudiencePreviewSummary.value) {
+    adminMessage.value = '請先試算 FlyDove 分眾名單'
+    return
+  }
+
+  if (memberAudienceDraft.value.executionMode !== 'flydove') {
+    adminMessage.value = '執行方式需選擇 FlyDove 簡訊'
+    return
+  }
+
+  const phoneReadyMembers = memberAudiencePreviewMembers.value
+    .map((member) => ({ member, phone: normalizeFlyDovePhone(member.phone) }))
+    .filter((entry) => entry.phone.length > 0)
+  if (phoneReadyMembers.length === 0) {
+    adminMessage.value = '此分眾名單沒有可用電話'
+    return
+  }
+
+  const settings = engagementSettings.value.flyDoveSmsMarketing
+  const listName = flyDoveAudienceListName.value
+  const rows: unknown[][] = [
+    [
+      'list_name',
+      'display_name',
+      'phone',
+      'customer_type',
+      'points_balance',
+      'total_orders',
+      'total_spent',
+      'last_consumed_at',
+      'message_template',
+      'compliance_note',
+    ],
+    ...phoneReadyMembers.map(({ member, phone }) => [
+      listName,
+      member.displayName,
+      phone,
+      member.customerType,
+      member.pointsBalance,
+      member.analysis.totalOrders,
+      member.analysis.totalSpent,
+      member.analysis.lastConsumedAt ?? '',
+      settings.defaultMessageTemplate,
+      settings.complianceNote,
+    ]),
+  ]
+  downloadCsv(`script-coffee-flydove-${listName}.csv`, rows)
+  const tokenWarning = settings.enabled && settings.apiTokenConfigured
+    ? ''
+    : '；目前 FlyDove API Token 標示未完成'
+  adminMessage.value = `已匯出 ${phoneReadyMembers.length} 位 FlyDove 名單${tokenWarning}`
 }
 
 const toDraft = (product: MenuItem): ProductDraft => ({
@@ -5794,6 +5872,39 @@ const saveAccessControl = async (): Promise<void> => {
           </div>
 
           <div class="admin-online-settings-grid">
+            <label class="toggle-row">
+              <input v-model="engagementSettings.flyDoveSmsMarketing.enabled" type="checkbox" />
+              FlyDove 簡訊
+            </label>
+            <label class="toggle-row">
+              <input v-model="engagementSettings.flyDoveSmsMarketing.apiTokenConfigured" type="checkbox" />
+              iCHEF API Token 已設定
+            </label>
+            <label>
+              FlyDove 帳號
+              <input v-model="engagementSettings.flyDoveSmsMarketing.accountName" type="text" maxlength="80" />
+            </label>
+            <label>
+              英文名單前綴
+              <input v-model="engagementSettings.flyDoveSmsMarketing.audienceNamePrefix" type="text" maxlength="40" />
+            </label>
+            <label>
+              簡訊草稿
+              <textarea v-model="engagementSettings.flyDoveSmsMarketing.defaultMessageTemplate" maxlength="280" rows="3" />
+            </label>
+            <label>
+              發送備註
+              <textarea v-model="engagementSettings.flyDoveSmsMarketing.complianceNote" maxlength="200" rows="3" />
+            </label>
+          </div>
+
+          <div class="admin-audit-meta">
+            <span>{{ engagementSettings.flyDoveSmsMarketing.apiTokenConfigured ? 'FlyDove API Token 已設定' : 'FlyDove API Token 未設定' }}</span>
+            <span>FlyDove 名單 {{ flyDoveAudienceListName }}</span>
+            <span v-if="memberAudienceDraft.executionMode === 'flydove'">可傳簡訊電話 {{ flyDovePhoneReadyCount }}</span>
+          </div>
+
+          <div class="admin-online-settings-grid">
             <label>
               名單名稱
               <input v-model="memberAudienceDraft.name" type="text" maxlength="80" />
@@ -5883,6 +5994,16 @@ const saveAccessControl = async (): Promise<void> => {
             >
               <Download :size="18" aria-hidden="true" />
               下載 Excel CSV
+            </button>
+            <button
+              v-if="memberAudienceDraft.executionMode === 'flydove'"
+              class="primary-button secondary-button"
+              type="button"
+              :disabled="memberAudiencePreviewMembers.length === 0"
+              @click="exportFlyDoveMemberAudienceCsv"
+            >
+              <Download :size="18" aria-hidden="true" />
+              下載 FlyDove CSV
             </button>
           </div>
 

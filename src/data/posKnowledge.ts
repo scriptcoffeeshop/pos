@@ -561,6 +561,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'flydove-sms-marketing',
+    category: 'orders',
+    title: 'FlyDove 簡訊分眾名單',
+    summary: '後台可保存 FlyDove 整合狀態，並把會員廣告分眾匯出成英文名單與電話清單。',
+    steps: [
+      '先在 iCHEF 後台完成 FlyDove 申請與 API Token 整合；Script Coffee 後台可標示此狀態與帳號名稱。',
+      '在「會員錢包 > 廣告分眾名單」建立條件，執行方式選擇「FlyDove 簡訊」。',
+      'FlyDove 名單名稱會由英文前綴與分眾 id 組成，符合 iCHEF 後台新增分眾名單只能輸入英文名稱的限制。',
+      '按「試算 / 更新名單」後，後台會計算總人數、電話可觸及數與 LINE 可觸及數。',
+      '按「下載 FlyDove CSV」只匯出有電話的會員，包含名單名稱、姓名、電話、顧客類型、消費分析、簡訊草稿與發送備註。',
+      'POS 不會直接呼叫 FlyDove API 或發送簡訊；簡訊內容、費用與實際發送仍在 FlyDove 後台處理。',
+    ],
+    keywords: ['FlyDove', 'Flydove', '簡訊', '廣告分眾', '會員名單', 'API Token', 'CSV', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'waitline-preorder',
     category: 'orders',
     title: '候位提前點餐與入座出單',
