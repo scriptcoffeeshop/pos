@@ -10136,6 +10136,118 @@ button.cart-line-summary:focus-visible {
   font-weight: 850;
 }
 
+.time-clock-records {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.time-clock-records-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.time-clock-records-header > div,
+.time-clock-record-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.time-clock-records-header strong {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 950;
+}
+
+.time-clock-records-header span,
+.time-clock-filter,
+.time-clock-record-main span,
+.time-clock-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.time-clock-filter {
+  display: grid;
+  gap: 7px;
+}
+
+.time-clock-filter select {
+  min-height: 42px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.time-clock-record-list {
+  display: grid;
+  gap: 8px;
+}
+
+.time-clock-record {
+  display: grid;
+  grid-template-columns: minmax(78px, auto) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.time-clock-record-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.time-clock-record-main strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 950;
+}
+
+.time-clock-event-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.time-clock-event-pill--in {
+  background: rgba(11, 107, 99, 0.12);
+  color: #0b6b63;
+}
+
+.time-clock-event-pill--out {
+  background: rgba(154, 87, 29, 0.14);
+  color: #7a4315;
+}
+
+.time-clock-empty {
+  margin: 0;
+}
+
 .knowledge-modal {
   width: min(960px, 100%);
 }
@@ -12107,7 +12219,8 @@ button.cart-line-summary:focus-visible {
 .admin-role-row input:focus,
 .admin-role-row select:focus,
 .admin-inline-field input:focus,
-.time-clock-form input:focus {
+.time-clock-form input:focus,
+.time-clock-filter select:focus {
   outline: 3px solid rgba(11, 107, 99, 0.24);
   outline-offset: 2px;
 }
