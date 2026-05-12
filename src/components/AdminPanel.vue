@@ -514,6 +514,18 @@ const defaultOnlineOrderingSettings = (): OnlineOrderingSettings => ({
     businessHoursNote: '',
     menuPhotoDataUrls: [],
   },
+  lineOfficialAccount: {
+    connected: false,
+    officialAccountId: '',
+    displayName: 'Script Coffee',
+    profileUrl: '',
+    orderEntryUrl: '',
+    liffId: '',
+    channelId: '',
+    orderStatusNotifications: true,
+    marketingAudienceEnabled: true,
+    messageQuotaNote: '',
+  },
   notificationRouting: {
     stations: [],
   },
@@ -606,6 +618,28 @@ const cloneGoogleBusinessProfile = (
   }
 }
 
+const cloneLineOfficialAccount = (
+  settings?: Partial<OnlineOrderingSettings['lineOfficialAccount']>,
+): OnlineOrderingSettings['lineOfficialAccount'] => {
+  const defaults = defaultOnlineOrderingSettings().lineOfficialAccount
+  const displayName = sanitizeAdminText(settings?.displayName, 80)
+
+  return {
+    ...defaults,
+    ...(settings ?? {}),
+    connected: settings?.connected === true,
+    officialAccountId: sanitizeAdminText(settings?.officialAccountId, 80, defaults.officialAccountId),
+    displayName: displayName || defaults.displayName,
+    profileUrl: sanitizeAdminUrl(settings?.profileUrl),
+    orderEntryUrl: sanitizeAdminUrl(settings?.orderEntryUrl),
+    liffId: sanitizeAdminText(settings?.liffId, 80, defaults.liffId),
+    channelId: sanitizeAdminText(settings?.channelId, 80, defaults.channelId),
+    orderStatusNotifications: settings?.orderStatusNotifications !== false,
+    marketingAudienceEnabled: settings?.marketingAudienceEnabled !== false,
+    messageQuotaNote: sanitizeAdminText(settings?.messageQuotaNote, 240, defaults.messageQuotaNote),
+  }
+}
+
 const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSettings => ({
   ...defaultOnlineOrderingSettings(),
   ...settings,
@@ -673,6 +707,7 @@ const cloneOnlineOrdering = (settings: OnlineOrderingSettings): OnlineOrderingSe
       : [],
   },
   googleBusinessProfile: cloneGoogleBusinessProfile(settings.googleBusinessProfile),
+  lineOfficialAccount: cloneLineOfficialAccount(settings.lineOfficialAccount),
   notificationRouting: {
     stations: (settings.notificationRouting?.stations ?? [])
       .filter((station) => station.stationId)
@@ -968,6 +1003,41 @@ const activeStaffCount = computed(() => accessControl.value.staffAccounts.filter
 const onlineOrderingStatusLabel = computed(() => (onlineOrdering.value.enabled ? '開放中' : '已暫停'))
 const onlineOrderingPrepLabel = computed(() => `${onlineOrdering.value.averagePrepMinutes} 分`)
 const googleBusinessStatusLabel = computed(() => (onlineOrdering.value.googleBusinessProfile.connected ? '已綁定' : '未綁定'))
+const lineOfficialAccountStatusLabel = computed(() =>
+  onlineOrdering.value.lineOfficialAccount.connected ? '已綁定' : '未綁定',
+)
+const lineOfficialAccountPrerequisites = computed(() => [
+  {
+    label: '外帶/外送訂餐入口',
+    passed:
+      onlineOrdering.value.serviceModeAvailability.takeout ||
+      onlineOrdering.value.serviceModeAvailability.delivery,
+    detail: '官方文件要求先開啟雲端餐廳外帶/外送訂餐；僅菜單瀏覽也可作為申請前置。',
+  },
+  {
+    label: '會員專區',
+    passed: onlineOrdering.value.memberPortal.enabled,
+    detail: 'LINE OA 訂餐需讓消費者能註冊或登入會員。',
+  },
+  {
+    label: '外帶/外送強制登入',
+    passed: onlineOrdering.value.memberPortal.requireLoginForTakeoutDelivery,
+    detail: 'iCHEF 申請前注意事項指定外帶/外送訂餐需強制登入。',
+  },
+  {
+    label: 'LINE OA 綁定資料',
+    passed:
+      onlineOrdering.value.lineOfficialAccount.connected &&
+      Boolean(
+        onlineOrdering.value.lineOfficialAccount.officialAccountId.trim() ||
+        onlineOrdering.value.lineOfficialAccount.profileUrl.trim(),
+      ),
+    detail: '保存官方帳號 ID 或 LINE OA 加好友連結，供門市確認入口。',
+  },
+])
+const lineOfficialAccountReadyCount = computed(() =>
+  lineOfficialAccountPrerequisites.value.filter((entry) => entry.passed).length,
+)
 const onlineNotificationRoutedStationCount = computed(() =>
   onlineOrdering.value.notificationRouting.stations.filter((station) => station.enabled).length,
 )
@@ -3618,6 +3688,21 @@ const saveOnlineOrdering = async (): Promise<void> => {
             8,
           ),
         },
+        lineOfficialAccount: {
+          connected: Boolean(onlineOrdering.value.lineOfficialAccount.connected),
+          officialAccountId: sanitizeAdminText(onlineOrdering.value.lineOfficialAccount.officialAccountId, 80),
+          displayName:
+            sanitizeAdminText(onlineOrdering.value.lineOfficialAccount.displayName, 80) ||
+            onlineOrdering.value.storeProfile.name.trim().slice(0, 60) ||
+            defaultOnlineOrderingSettings().lineOfficialAccount.displayName,
+          profileUrl: sanitizeAdminUrl(onlineOrdering.value.lineOfficialAccount.profileUrl),
+          orderEntryUrl: sanitizeAdminUrl(onlineOrdering.value.lineOfficialAccount.orderEntryUrl),
+          liffId: sanitizeAdminText(onlineOrdering.value.lineOfficialAccount.liffId, 80),
+          channelId: sanitizeAdminText(onlineOrdering.value.lineOfficialAccount.channelId, 80),
+          orderStatusNotifications: Boolean(onlineOrdering.value.lineOfficialAccount.orderStatusNotifications),
+          marketingAudienceEnabled: Boolean(onlineOrdering.value.lineOfficialAccount.marketingAudienceEnabled),
+          messageQuotaNote: sanitizeAdminText(onlineOrdering.value.lineOfficialAccount.messageQuotaNote, 240),
+        },
         notificationRouting: {
           stations: onlineOrdering.value.notificationRouting.stations
             .filter((station) => station.stationId.trim())
@@ -4733,6 +4818,11 @@ const saveAccessControl = async (): Promise<void> => {
             <small>{{ onlineOrdering.googleBusinessProfile.menuPhotoDataUrls.length }} 張菜單照片</small>
           </article>
           <article>
+            <span>LINE 官方帳號</span>
+            <strong>{{ lineOfficialAccountStatusLabel }}</strong>
+            <small>前置 {{ lineOfficialAccountReadyCount }}/{{ lineOfficialAccountPrerequisites.length }}</small>
+          </article>
+          <article>
             <span>網站外觀</span>
             <strong>{{ websiteThemeColorLabel }}</strong>
             <small>預設菜單 {{ onlineMenuDisplayLabel }}</small>
@@ -4848,6 +4938,80 @@ const saveAccessControl = async (): Promise<void> => {
               <input v-model="onlineOrdering.aiMenuTranslation.enabled" type="checkbox" />
               AI 菜單翻譯
             </label>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="LINE 官方帳號">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">LINE OA</p>
+              <h3>LINE 官方帳號</h3>
+              <span class="panel-note">對齊 iCHEF LINE OA 功能整合的點餐入口、訂單狀態通知與會員分眾前置條件。</span>
+            </div>
+          </div>
+
+          <div class="admin-online-toggle-grid">
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.lineOfficialAccount.connected" type="checkbox" />
+              已完成 LINE OA 綁定
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.lineOfficialAccount.orderStatusNotifications" type="checkbox" />
+              訂單狀態 LINE 通知
+            </label>
+            <label class="toggle-row">
+              <input v-model="onlineOrdering.lineOfficialAccount.marketingAudienceEnabled" type="checkbox" />
+              會員分眾可用 LINE 名單
+            </label>
+          </div>
+
+          <div class="admin-online-settings-grid">
+            <label>
+              官方帳號 ID
+              <input v-model="onlineOrdering.lineOfficialAccount.officialAccountId" type="text" maxlength="80" />
+            </label>
+            <label>
+              顯示名稱
+              <input v-model="onlineOrdering.lineOfficialAccount.displayName" type="text" maxlength="80" />
+            </label>
+            <label>
+              LINE OA 連結
+              <input v-model="onlineOrdering.lineOfficialAccount.profileUrl" type="url" maxlength="240" />
+            </label>
+            <label>
+              點餐入口網址
+              <input v-model="onlineOrdering.lineOfficialAccount.orderEntryUrl" type="url" maxlength="240" />
+            </label>
+            <label>
+              LIFF ID
+              <input v-model="onlineOrdering.lineOfficialAccount.liffId" type="text" maxlength="80" />
+            </label>
+            <label>
+              Channel ID
+              <input v-model="onlineOrdering.lineOfficialAccount.channelId" type="text" maxlength="80" />
+            </label>
+            <label class="wide-field">
+              訊息用量備註
+              <input
+                v-model="onlineOrdering.lineOfficialAccount.messageQuotaNote"
+                type="text"
+                maxlength="240"
+                placeholder="例如：LINE 推播使用 LINE OA 訊息用量，額度用盡時會暫停推播。"
+              />
+            </label>
+          </div>
+
+          <div class="admin-report-grid">
+            <article
+              v-for="prerequisite in lineOfficialAccountPrerequisites"
+              :key="prerequisite.label"
+              class="admin-report-card"
+              :class="{ 'admin-report-card--primary': prerequisite.passed }"
+            >
+              <span>{{ prerequisite.label }}</span>
+              <strong>{{ prerequisite.passed ? '已符合' : '待補' }}</strong>
+              <small>{{ prerequisite.detail }}</small>
+            </article>
           </div>
         </section>
 

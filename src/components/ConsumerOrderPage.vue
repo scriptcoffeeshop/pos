@@ -306,6 +306,19 @@ const onlineStoreName = computed(() => onlineStoreProfile.value.name.trim() || '
 const onlineStorePhone = computed(() => onlineStoreProfile.value.phone.trim())
 const onlineStoreAddress = computed(() => onlineStoreProfile.value.address.trim())
 const onlineStoreNotice = computed(() => onlineStoreProfile.value.notice.trim())
+const lineOfficialAccount = computed(() => onlineOrdering.value.lineOfficialAccount)
+const lineOfficialAccountLink = computed(() => {
+  const orderEntryUrl = lineOfficialAccount.value.orderEntryUrl.trim()
+  if (lineOfficialAccount.value.connected && orderEntryUrl) {
+    return orderEntryUrl
+  }
+
+  const profileUrl = lineOfficialAccount.value.profileUrl.trim()
+  return lineOfficialAccount.value.connected && profileUrl ? profileUrl : ''
+})
+const lineOfficialAccountLabel = computed(() =>
+  lineOfficialAccount.value.displayName.trim() || onlineStoreName.value,
+)
 const onlineStoreCoverImages = computed(() =>
   onlineStoreProfile.value.coverImageDataUrls.filter((imageUrl) => imageUrl.startsWith('data:image/')).slice(0, 4),
 )
@@ -1567,6 +1580,12 @@ watch(
           <p v-if="onlineStorePhone || onlineStoreAddress" class="consumer-status-line">
             <Info :size="18" aria-hidden="true" />
             <span>{{ [onlineStorePhone, onlineStoreAddress].filter(Boolean).join(' · ') }}</span>
+          </p>
+          <p v-if="lineOfficialAccountLink" class="consumer-status-line">
+            <LogIn :size="18" aria-hidden="true" />
+            <a :href="lineOfficialAccountLink" target="_blank" rel="noreferrer">
+              {{ lineOfficialAccountLabel }} LINE 官方帳號
+            </a>
           </p>
           <div
             v-if="onlineStoreNotice"

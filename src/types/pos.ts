@@ -544,6 +544,19 @@ export interface OnlineGoogleBusinessProfileSettings {
   menuPhotoDataUrls: string[]
 }
 
+export interface OnlineLineOfficialAccountSettings {
+  connected: boolean
+  officialAccountId: string
+  displayName: string
+  profileUrl: string
+  orderEntryUrl: string
+  liffId: string
+  channelId: string
+  orderStatusNotifications: boolean
+  marketingAudienceEnabled: boolean
+  messageQuotaNote: string
+}
+
 export interface OnlineWebsiteAppearanceSettings {
   themeColor: OnlineWebsiteThemeColor
   defaultMenuDisplay: OnlineMenuDisplayMode
@@ -608,6 +621,7 @@ export interface OnlineOrderingSettings {
   tableQrCode: OnlineTableQrCodeSettings
   storeProfile: OnlineStoreProfileSettings
   googleBusinessProfile: OnlineGoogleBusinessProfileSettings
+  lineOfficialAccount: OnlineLineOfficialAccountSettings
   websiteAppearance: OnlineWebsiteAppearanceSettings
   memberPortal: OnlineMemberPortalSettings
   aiMenuTranslation: OnlineAiMenuTranslationSettings
