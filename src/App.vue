@@ -1577,7 +1577,7 @@ const serviceModeOptions: Array<{ value: ServiceMode; label: string }> = [
 
 const paymentOptions: Array<{ value: PaymentMethod; label: string; visible: boolean }> = [
   { value: 'cash', label: '現金', visible: true },
-  { value: 'card', label: '刷卡', visible: false },
+  { value: 'card', label: '刷卡', visible: true },
   { value: 'custom', label: '自定義支付', visible: true },
   { value: 'app91-card', label: '91APP 支付線上刷卡', visible: false },
   { value: 'line-pay', label: 'LINE Pay', visible: true },
