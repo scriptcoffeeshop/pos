@@ -151,6 +151,8 @@ export interface PosOrder {
   electronicInvoiceVoidedAt: string | null
   electronicInvoiceUploadDueAt: string | null
   memberId: string | null
+  customerNote: string
+  staffNote: string
   note: string
   paymentNote: string
   qrSessionOrderId?: string | null
@@ -1009,6 +1011,8 @@ export interface PosReservation {
   importantLabel: string
   assignedTableIds: string[]
   preOrder: CartLine[]
+  customerNote: string
+  staffNote: string
   note: string
   createdAt: string
   updatedAt: string

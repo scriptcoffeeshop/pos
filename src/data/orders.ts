@@ -22,6 +22,8 @@ export const initialOrders: PosOrder[] = [
     electronicInvoiceVoidedAt: null,
     electronicInvoiceUploadDueAt: null,
     memberId: null,
+    customerNote: '拿鐵少冰，15 分鐘後取餐',
+    staffNote: '',
     note: '拿鐵少冰，15 分鐘後取餐',
     paymentNote: '',
     lines: [
@@ -96,6 +98,8 @@ export const initialOrders: PosOrder[] = [
     electronicInvoiceVoidedAt: null,
     electronicInvoiceUploadDueAt: new Date(Date.now() + 1000 * 60 * 60 * 44).toISOString(),
     memberId: null,
+    customerNote: '送到一樓櫃台',
+    staffNote: '',
     note: '送到一樓櫃台',
     paymentNote: '',
     lines: [

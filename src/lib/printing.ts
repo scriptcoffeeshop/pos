@@ -80,6 +80,9 @@ const orderPayableTotal = (order: PosOrder, lines: CartLine[]): number =>
       orderAdjustmentAmount(order.pointsRedeemed),
   )
 
+const customerVisibleOrderNote = (order: PosOrder): string =>
+  (order.customerNote || (order.source === 'counter' ? '' : order.note)).trim()
+
 const fulfillmentLinesForOrder = (order: PosOrder): string[] => {
   const fulfillmentLines: string[] = []
 
@@ -196,7 +199,7 @@ const customerReceiptFooterLines = (order: PosOrder, lines: CartLine[]): string[
   ...paymentLinesForOrder(order),
   ...fulfillmentLinesForOrder(order),
   ...invoiceLinesForOrder(order),
-  `NOTE ${escapeEzplText(order.note || '-')}`,
+  `NOTE ${escapeEzplText(customerVisibleOrderNote(order) || '-')}`,
 ]
 
 const billingStatementFooterLines = (order: PosOrder, lines: CartLine[]): string[] => [
@@ -207,7 +210,7 @@ const billingStatementFooterLines = (order: PosOrder, lines: CartLine[]): string
   ...paymentLinesForOrder(order),
   ...fulfillmentLinesForOrder(order),
   ...invoiceLinesForOrder(order),
-  `NOTE ${escapeEzplText(order.note || '-')}`,
+  `NOTE ${escapeEzplText(customerVisibleOrderNote(order) || '-')}`,
 ]
 
 const lineMatchesRule = (line: CartLine, rule: PrintRuleSetting): boolean => {
@@ -289,7 +292,7 @@ const buildReceiptPayload = (
     ...paymentLinesForOrder(order),
     ...fulfillmentLinesForOrder(order),
     ...invoiceLinesForOrder(order),
-    `NOTE ${escapeEzplText(order.note || '-')}`,
+    `NOTE ${escapeEzplText(customerVisibleOrderNote(order) || '-')}`,
   ]
 
   return [

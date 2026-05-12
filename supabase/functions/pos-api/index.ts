@@ -93,6 +93,8 @@ interface CreateOrderInput {
   electronicInvoiceRequested?: boolean;
   electronicInvoicePrintMode?: ElectronicInvoicePrintMode;
   memberId?: string | null;
+  customerNote?: string;
+  staffNote?: string;
   note?: string;
   paymentNote?: string;
   qrSessionOrderId?: string | null;
@@ -1081,6 +1083,8 @@ interface ReservationInput {
   importantLabel?: string;
   assignedTableIds?: string[];
   preOrder?: unknown;
+  customerNote?: string;
+  staffNote?: string;
   note?: string;
   stationId?: string;
 }
@@ -1126,7 +1130,7 @@ const transactionLedgerSelect =
 const memberCouponSelect =
   "id, member_id, code, title, discount_amount, discount_percent, status, expires_at, redeemed_order_id, redeemed_at, redemption_station_id, created_at, updated_at";
 const reservationSelect =
-  "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, note, created_at, updated_at";
+  "id, customer_name, customer_phone, party_size, reserved_at, status, important_label, assigned_table_ids, pre_order, customer_note, staff_note, note, created_at, updated_at";
 const reservationBlacklistSelect =
   "id, phone, normalized_phone, customer_name, reason, note, is_active, created_at, updated_at";
 
@@ -2418,11 +2422,38 @@ const buildElectronicInvoicePayload = (
   };
 };
 
+const customerNoteForOrderInput = (input: CreateOrderInput): string => {
+  if (typeof input.customerNote === "string") {
+    return sanitizeText(input.customerNote, "").slice(0, 500);
+  }
+
+  const source = input.source ?? "counter";
+  if (source !== "online" && source !== "qr") {
+    return "";
+  }
+
+  return onlineOrderCustomerNoteSegments(onlineOrderNoteSegments(input.note ?? ""))
+    .join(" · ")
+    .slice(0, 500);
+};
+
+const staffNoteForOrderInput = (input: CreateOrderInput): string => {
+  if (typeof input.staffNote === "string") {
+    return sanitizeText(input.staffNote, "").slice(0, 500);
+  }
+
+  return (input.source ?? "counter") === "counter"
+    ? sanitizeText(input.note, "").slice(0, 500)
+    : "";
+};
+
 const buildOrderEnhancementPayload = (
   input: CreateOrderInput,
   engagementSettings = defaultEngagementSettings,
 ): Record<string, unknown> => ({
   member_id: normalizeUuid(input.memberId) ?? null,
+  customer_note: customerNoteForOrderInput(input),
+  staff_note: staffNoteForOrderInput(input),
   order_labels: normalizeOrderLabels(input.orderLabels),
   service_fee_rate: Math.min(clampNonNegativeInteger(input.serviceFeeRate), 30),
   service_fee_amount: clampNonNegativeInteger(input.serviceFeeAmount),
@@ -4712,6 +4743,9 @@ api.post("/reservations", async (c) => {
     status: "booked",
     importantLabel: "",
     preOrder: [],
+    customerNote: input.customerNote ?? input.note ?? "",
+    staffNote: "",
+    note: input.note ?? "",
   }, true);
   if (validationError) {
     return c.json({ error: validationError }, 400);
@@ -5335,6 +5369,7 @@ api.post("/orders", async (c) => {
   const deliveryAddress = sanitizeText(input.deliveryAddress, "").slice(0, 240);
   const requestedFulfillmentAt = normalizeRequestedFulfillmentAt(input.requestedFulfillmentAt);
   const orderSource = input.source ?? "counter";
+  input.source = orderSource;
   const discountRuntime = await applyRuntimeDiscountsToInput(input, orderSource);
   const engagementSettings = normalizeEngagementSettingsForRuntime(await loadSetting<CustomerEngagementSettings>(
     "engagement_settings",
@@ -6196,6 +6231,7 @@ api.patch("/orders/:id/floor", async (c) => {
       service_mode: "dine-in" as ServiceMode,
       customer_name: `${floorLabel ? `${floorLabel} ` : ""}${tableLabel} 內用客`,
       note,
+      staff_note: note,
       ...buildClaimPayload(stationId, now),
     })
     .eq("id", current.data.id)
@@ -6318,6 +6354,10 @@ api.post("/orders/:id/merge", async (c) => {
   }
 
   const mergedNote = buildMergedDineInNote(target.data, source.data);
+  const mergedCustomerNote = [
+    sanitizeText(target.data.customer_note, ""),
+    sanitizeText(source.data.customer_note, ""),
+  ].filter(Boolean).join(" · ").slice(0, 500);
   const mergedOrderLabels = [
     ...new Set([
       ...normalizeOrderLabels(target.data.order_labels),
@@ -6328,6 +6368,8 @@ api.post("/orders/:id/merge", async (c) => {
     service_mode: "dine-in" as ServiceMode,
     customer_name: target.data.customer_name || source.data.customer_name || "現場客",
     customer_phone: target.data.customer_phone || source.data.customer_phone || "",
+    customer_note: mergedCustomerNote,
+    staff_note: mergedNote,
     note: mergedNote,
     subtotal: orderAmount(target.data.subtotal) + orderAmount(source.data.subtotal),
     service_fee_amount: orderAmount(target.data.service_fee_amount) + orderAmount(source.data.service_fee_amount),
@@ -7844,6 +7886,14 @@ const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
     return "paymentNote must be a string";
   }
 
+  if (input.customerNote !== undefined && typeof input.customerNote !== "string") {
+    return "customerNote must be a string";
+  }
+
+  if (input.staffNote !== undefined && typeof input.staffNote !== "string") {
+    return "staffNote must be a string";
+  }
+
   if (sanitizeText(input.paymentNote, "").length > 240) {
     return "paymentNote must be 240 characters or fewer";
   }
@@ -8919,6 +8969,9 @@ const applyOnlineCommentFieldRules = (
   input.note = (settings.orderNote === "hidden" ? structuralSegments : [...structuralSegments, ...customerSegments])
     .join(" · ")
     .slice(0, 240);
+  input.customerNote = settings.orderNote === "hidden"
+    ? ""
+    : customerSegments.join(" · ").slice(0, 500);
 
   if (settings.itemNotes === "hidden" && Array.isArray(input.lines)) {
     input.lines = input.lines.map((line) => ({
@@ -9794,8 +9847,23 @@ const validateReservationInput = (
     payload.pre_order = normalizeReservationPreOrder(input.preOrder ?? []);
   }
 
+  if (input.customerNote !== undefined) {
+    payload.customer_note = sanitizeText(input.customerNote, "").slice(0, 500);
+  } else if (requireReservedAt) {
+    payload.customer_note = "";
+  }
+
+  if (input.staffNote !== undefined) {
+    payload.staff_note = sanitizeText(input.staffNote, "").slice(0, 500);
+  } else if (requireReservedAt) {
+    payload.staff_note = "";
+  }
+
   if (input.note !== undefined) {
     payload.note = sanitizeText(input.note, "").slice(0, 500);
+    if (input.customerNote === undefined && input.staffNote === undefined) {
+      payload.staff_note = payload.note;
+    }
   } else if (requireReservedAt) {
     payload.note = "";
   }

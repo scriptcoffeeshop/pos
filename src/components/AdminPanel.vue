@@ -142,6 +142,8 @@ interface ReservationDraft {
   partySize: number
   reservedAt: string
   importantLabel: string
+  customerNote: string
+  staffNote: string
   note: string
 }
 
@@ -816,6 +818,8 @@ const newReservation = ref<ReservationDraft>({
   partySize: 2,
   reservedAt: '',
   importantLabel: '',
+  customerNote: '',
+  staffNote: '',
   note: '',
 })
 const newBlacklistEntry = ref<ReservationBlacklistDraft>({
@@ -3791,7 +3795,9 @@ const addReservation = async (): Promise<void> => {
       status: 'booked',
       importantLabel: newReservation.value.importantLabel.trim(),
       preOrder: [],
-      note: newReservation.value.note.trim(),
+      customerNote: newReservation.value.customerNote.trim(),
+      staffNote: newReservation.value.staffNote.trim(),
+      note: [newReservation.value.customerNote.trim(), newReservation.value.staffNote.trim()].filter(Boolean).join('、'),
     })
     reservations.value = [reservation, ...reservations.value].sort((first, second) =>
       new Date(first.reservedAt).getTime() - new Date(second.reservedAt).getTime(),
@@ -3802,6 +3808,8 @@ const addReservation = async (): Promise<void> => {
       partySize: 2,
       reservedAt: '',
       importantLabel: '',
+      customerNote: '',
+      staffNote: '',
       note: '',
     }
     pendingBlacklistedReservationPhone.value = ''
@@ -5901,8 +5909,12 @@ const saveAccessControl = async (): Promise<void> => {
                 <input v-model="newReservation.importantLabel" type="text" placeholder="母親節 / 包場" />
               </label>
               <label class="wide-field">
-                備註 / 預先點餐
-                <input v-model="newReservation.note" type="text" placeholder="可記錄預點餐內容" />
+                客人備註
+                <input v-model="newReservation.customerNote" type="text" placeholder="消費者可查看的訂位需求" />
+              </label>
+              <label class="wide-field">
+                店內備註 / 預先點餐
+                <input v-model="newReservation.staffNote" type="text" placeholder="僅供 POS 與後台查看" />
               </label>
               <button class="primary-button" type="button" :disabled="isIchefLoading" @click="addReservation">
                 <Save :size="18" aria-hidden="true" />

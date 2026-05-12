@@ -328,6 +328,7 @@ const submitReservation = async (): Promise<void> => {
       customerPhone: reservationDraft.customerPhone.trim(),
       partySize: reservationDraft.partySize,
       reservedAt: reservedDate.toISOString(),
+      customerNote: reservationDraft.note.trim(),
       note: reservationDraft.note.trim(),
     })
     reservationDraft.note = ''
