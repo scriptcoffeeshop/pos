@@ -901,6 +901,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'online',
   },
   {
+    id: 'google-business-profile',
+    category: 'online',
+    title: 'Google 商家檔案整合',
+    summary: '後台可保存 Google 商家檔案綁定狀態、商家資訊、菜單照片與雲端餐廳連結。',
+    steps: [
+      '連點工具箱 6 下進入後台編輯模式，再開啟線上點餐設定面板。',
+      '在「Google 商家檔案」記錄綁定狀態、商家名稱、主要類別、電話、地址、商家檔案網址與 Place ID。',
+      '補上菜單網址與雲端餐廳連結，讓門市能對照 iCHEF「商家連結設定」維護 Google 搜尋與地圖入口。',
+      '上傳最多 8 張 JPG/PNG 菜單照片；最新上傳會排在最前面，對齊 iCHEF 菜單照片設定的顯示順序。',
+      '設定存在 `online_ordering.googleBusinessProfile`，換平板、重開 App 或 fresh reinstall 後仍從 runtime 還原。',
+    ],
+    keywords: ['Google 商家檔案', 'Google 地圖', '商家資訊', '菜單照片', '商家連結', '雲端餐廳連結', 'Place ID', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'online-checkout-invoice-fields',
     category: 'online',
     title: '線上結帳統編與載具欄位',
