@@ -1308,7 +1308,7 @@ button:disabled {
 
 .ticket-action-group {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr) minmax(0, 1.22fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 0.92fr) minmax(0, 0.9fr) minmax(0, 1.18fr);
   width: 100%;
   min-width: 0;
   gap: 8px;
@@ -4152,6 +4152,41 @@ h3 {
 .cart-inline-panel--customer {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   align-items: end;
+}
+
+.cart-inline-panel--customer .cart-inline-done {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  align-self: stretch;
+  min-width: 78px;
+}
+
+.cart-inline-pickup-field,
+.cart-inline-time-actions {
+  grid-column: 1 / 3;
+}
+
+.cart-inline-time-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cart-inline-time-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 34px;
+  gap: 3px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 950;
+  white-space: nowrap;
 }
 
 .cart-inline-panel label {
@@ -13024,6 +13059,17 @@ button.cart-line-summary:focus-visible {
 
   .cart-inline-panel--customer {
     grid-template-columns: 1fr;
+  }
+
+  .cart-inline-panel--customer .cart-inline-done,
+  .cart-inline-pickup-field,
+  .cart-inline-time-actions {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .cart-inline-time-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cart-line strong {

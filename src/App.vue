@@ -29,6 +29,7 @@ import {
   QrCode,
   ReceiptText,
   RefreshCw,
+  Save,
   Search,
   Settings2,
   ShoppingBag,
@@ -148,7 +149,7 @@ type CustomerManagementSortMode = 'consumed' | 'created'
 type InventoryOperationDraftMode = InventoryRecordAction
 type SupplyCategoryFilter = MenuCategory | 'notes' | 'note-groups'
 type SupplyStatusFilter = 'all' | ProductSupplyStatus
-type TicketAction = 'checkout-print' | 'print' | 'checkout-only'
+type TicketAction = 'checkout-print' | 'print' | 'checkout-only' | 'save'
 type CartBatchStatus = 'ready' | 'paused'
 type CategoryMoveDirection = -1 | 1
 type MenuCategoryOptionValue = 'all' | MenuCategory
@@ -4585,6 +4586,33 @@ const ticketOrderNumber = computed(() => orderSequenceLabel(counterDraftOrderId.
 const ticketStartedLabel = computed(() =>
   counterDraftStartedAt.value ? formatOrderTime(counterDraftStartedAt.value) : currentClockLabel.value,
 )
+const ticketFulfillmentLabel = computed(() => serviceMode.value === 'delivery' ? '送達時間' : '取餐時間')
+const defaultTakeoutPickupMinutes = computed(() =>
+  Math.min(
+    Math.max(Math.trunc(Number(engagementSettings.value.workflowAlerts.defaultTakeoutPickupMinutes) || 0), 0),
+    86400,
+  ),
+)
+const ticketFulfillmentStepMinutes = computed(() =>
+  Math.min(60, Math.max(15, defaultTakeoutPickupMinutes.value || 15)),
+)
+const ticketFulfillmentSummary = computed(() => {
+  if (serviceMode.value === 'dine-in') {
+    return ''
+  }
+
+  return customer.requestedFulfillmentAt
+    ? `${ticketFulfillmentLabel.value} ${formatOrderTime(customer.requestedFulfillmentAt)}`
+    : `未設定${ticketFulfillmentLabel.value}`
+})
+const ticketCustomerMeta = computed(() => {
+  const parts = [
+    customer.phone.trim(),
+    ticketFulfillmentSummary.value,
+    customer.note.trim(),
+  ].filter(Boolean)
+  return parts.join(' · ') || '點一下加入姓名、電話或取餐時間'
+})
 const currentTicketOrder = computed<PosOrder | null>(() =>
   counterDraftOrderId.value
     ? orderQueue.value.find((order) => order.id === counterDraftOrderId.value) ?? null
@@ -6610,7 +6638,8 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
 
   activeTicketAction.value = action
   const transactionDetailCopies = Math.min(10, Math.max(0, Math.trunc(transactionReceiptCount.value || 0)))
-  const order = await saveCounterOrder()
+  const queuePrint = action === 'checkout-print' || action === 'print'
+  const order = await saveCounterOrder(true, { queuePrint })
   if (!order) {
     activeTicketAction.value = null
     return
@@ -6631,7 +6660,7 @@ const handleTicketAction = async (action: TicketAction): Promise<void> => {
       }
     }
 
-    if (order.mode === 'takeout' && engagementSettings.value.workflowAlerts.takeoutLoopEnabled) {
+    if (action !== 'save' && order.mode === 'takeout' && engagementSettings.value.workflowAlerts.takeoutLoopEnabled) {
       expandedOrderId.value = null
       await startCounterDraft('takeout')
       setWorkspaceTab('order')
@@ -9300,6 +9329,35 @@ const selectCartPaymentMethod = (method: PaymentMethod): void => {
   activeCartQuickEditor.value = null
 }
 
+const ticketFulfillmentBaseDate = (): Date => {
+  const current = customer.requestedFulfillmentAt ? new Date(customer.requestedFulfillmentAt) : new Date(currentTime.value)
+  return Number.isFinite(current.getTime()) ? current : new Date(currentTime.value)
+}
+
+const setTicketFulfillmentTime = (date: Date): void => {
+  if (!Number.isFinite(date.getTime())) {
+    return
+  }
+
+  customer.requestedFulfillmentAt = localDateTimeInputValue(date)
+}
+
+const shiftTicketFulfillmentTime = (minutes: number): void => {
+  const next = ticketFulfillmentBaseDate()
+  next.setMinutes(next.getMinutes() + minutes, 0, 0)
+  setTicketFulfillmentTime(next)
+}
+
+const applyDefaultTicketFulfillmentTime = (): void => {
+  const next = new Date(currentTime.value + defaultTakeoutPickupMinutes.value * 60_000)
+  next.setSeconds(0, 0)
+  setTicketFulfillmentTime(next)
+}
+
+const clearTicketFulfillmentTime = (): void => {
+  customer.requestedFulfillmentAt = ''
+}
+
 const handlePosShortcut = (event: KeyboardEvent): void => {
   if (activeView.value !== 'pos') {
     return
@@ -10766,7 +10824,7 @@ onBeforeUnmount(() => {
                     <UserRound :size="28" aria-hidden="true" />
                     <span>
                       <strong>{{ customer.name || '未輸入顧客資訊' }}</strong>
-                      <small>{{ customer.phone || customer.note || '點一下加入姓名、電話或備註' }}</small>
+                      <small>{{ ticketCustomerMeta }}</small>
                     </span>
                   </button>
 
@@ -10842,6 +10900,30 @@ onBeforeUnmount(() => {
                           @keydown.escape="closeCartQuickEditor"
                         />
                       </label>
+                      <label v-if="serviceMode !== 'dine-in'" class="cart-inline-pickup-field">
+                        {{ ticketFulfillmentLabel }}
+                        <input
+                          v-model="customer.requestedFulfillmentAt"
+                          type="datetime-local"
+                          @keydown.escape="closeCartQuickEditor"
+                        />
+                      </label>
+                      <div v-if="serviceMode !== 'dine-in'" class="cart-inline-time-actions" :aria-label="`${ticketFulfillmentLabel}快速調整`">
+                        <button type="button" @click="shiftTicketFulfillmentTime(-ticketFulfillmentStepMinutes)">
+                          <ChevronLeft :size="15" aria-hidden="true" />
+                          {{ ticketFulfillmentStepMinutes }}分
+                        </button>
+                        <button type="button" @click="applyDefaultTicketFulfillmentTime">
+                          預設
+                        </button>
+                        <button type="button" @click="shiftTicketFulfillmentTime(ticketFulfillmentStepMinutes)">
+                          {{ ticketFulfillmentStepMinutes }}分
+                          <ChevronRight :size="15" aria-hidden="true" />
+                        </button>
+                        <button type="button" @click="clearTicketFulfillmentTime">
+                          清除
+                        </button>
+                      </div>
                       <button class="cart-inline-done" type="button" @click="closeCartQuickEditor">
                         <CheckCircle2 :size="18" aria-hidden="true" />
                         完成
@@ -11040,6 +11122,17 @@ onBeforeUnmount(() => {
                           <CreditCard :size="24" aria-hidden="true" />
                         </span>
                         <span class="ticket-action-label">付款/拆單</span>
+                      </button>
+                      <button
+                        class="ticket-submit-button ticket-submit-button--secondary"
+                        type="button"
+                        :disabled="ticketActionDisabled()"
+                        @click="handleTicketAction('save')"
+                      >
+                        <span class="ticket-action-icon">
+                          <Save :size="24" aria-hidden="true" />
+                        </span>
+                        <span class="ticket-action-label">{{ activeTicketAction === 'save' ? '儲存中' : '儲存後返回' }}</span>
                       </button>
                       <button
                         class="primary-button ticket-submit-button"

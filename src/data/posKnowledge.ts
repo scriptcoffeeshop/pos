@@ -42,6 +42,21 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'order',
   },
   {
+    id: 'takeout-scheduled-order',
+    category: 'orders',
+    title: '新增外帶預約訂單',
+    summary: '電話或粉專接單時，可先建立外帶單、設定取餐時間，再選擇暫存或直接出單。',
+    steps: [
+      '在外帶 / 外送頁或工具箱按「新增外帶」，系統會先建立櫃台外帶票券。',
+      '點票券左上角日曆按鈕，輸入顧客姓名、電話與「取餐時間」。',
+      '用「預設」帶入後台店面流程的預設外帶取餐時間，也可用前後時段快速調整。',
+      '加入品項後若暫時不印單，按「儲存後返回」讓預約單回到外帶 / 外送佇列。',
+      '若要立即通知廚房，按「出單」；之後仍可在訂單佇列依取餐時間提醒與排序。',
+    ],
+    keywords: ['外帶預約', '取餐時間', '電話訂餐', '儲存後返回', '出單', '預約單', 'iCHEF'],
+    target: 'order',
+  },
+  {
     id: 'product-barcode-ordering',
     category: 'orders',
     title: '商品條碼點餐',
