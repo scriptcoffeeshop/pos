@@ -2927,6 +2927,14 @@ export const defaultEngagementSettings = (): CustomerEngagementSettings => ({
   orderPageDisplay: {
     noteColumns: 3,
   },
+  flyDoveSmsMarketing: {
+    enabled: false,
+    apiTokenConfigured: false,
+    accountName: '',
+    audienceNamePrefix: 'script-coffee',
+    defaultMessageTemplate: '',
+    complianceNote: 'FlyDove 簡訊費用與內容編輯由 FlyDove 後台處理；匯出前請確認會員電話與簡訊同意狀態。',
+  },
   memberAudiences: [],
   recommendations: [
     { id: 'retail-add-on', trigger: 'coffee', title: '咖啡加購', productIds: [], enabled: true },
@@ -3051,6 +3059,10 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
     ? settings.orderPageDisplay
     : defaults.orderPageDisplay
   const orderPageDisplay = rawOrderPageDisplay as Partial<CustomerEngagementSettings['orderPageDisplay']>
+  const rawFlyDoveSmsMarketing = settings.flyDoveSmsMarketing && typeof settings.flyDoveSmsMarketing === 'object'
+    ? settings.flyDoveSmsMarketing
+    : defaults.flyDoveSmsMarketing
+  const flyDoveSmsMarketing = rawFlyDoveSmsMarketing as Partial<CustomerEngagementSettings['flyDoveSmsMarketing']>
   const memberAudiences = normalizeMemberAudienceRules(settings.memberAudiences)
   const checkoutCounterBooks = Array.isArray(checkoutCounters.books)
     ? checkoutCounters.books.flatMap((entry, index): CustomerEngagementSettings['checkoutCounters']['books'] => {
@@ -3265,6 +3277,18 @@ export const normalizeEngagementSettings = (value: unknown): CustomerEngagementS
         1,
         3,
       ),
+    },
+    flyDoveSmsMarketing: {
+      enabled: flyDoveSmsMarketing.enabled === true,
+      apiTokenConfigured: flyDoveSmsMarketing.apiTokenConfigured === true,
+      accountName: sanitizeOnlineText(flyDoveSmsMarketing.accountName, '').slice(0, 80),
+      audienceNamePrefix: sanitizeOnlineText(flyDoveSmsMarketing.audienceNamePrefix, defaults.flyDoveSmsMarketing.audienceNamePrefix)
+        .replace(/[^a-zA-Z0-9_-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 40) || defaults.flyDoveSmsMarketing.audienceNamePrefix,
+      defaultMessageTemplate: sanitizeOnlineText(flyDoveSmsMarketing.defaultMessageTemplate, '').slice(0, 280),
+      complianceNote: sanitizeOnlineText(flyDoveSmsMarketing.complianceNote, defaults.flyDoveSmsMarketing.complianceNote).slice(0, 200),
     },
     memberAudiences,
     recommendations,

@@ -828,6 +828,15 @@ export interface LoyaltyPointSettings {
   maximumRedeemPointsPerOrder: number
 }
 
+export interface FlyDoveSmsMarketingSettings {
+  enabled: boolean
+  apiTokenConfigured: boolean
+  accountName: string
+  audienceNamePrefix: string
+  defaultMessageTemplate: string
+  complianceNote: string
+}
+
 export type MemberAudienceExecutionMode = 'excel' | 'flydove' | 'line-oa'
 
 export interface MemberAudienceRuleSetting {
@@ -950,6 +959,7 @@ export interface CustomerEngagementSettings {
   electronicInvoice: ElectronicInvoiceSettings
   workflowAlerts: WorkflowAlertSettings
   orderPageDisplay: OrderPageDisplaySettings
+  flyDoveSmsMarketing: FlyDoveSmsMarketingSettings
   memberAudiences: MemberAudienceRuleSetting[]
   recommendations: RecommendationRule[]
   translations: TranslationSetting[]
