@@ -949,6 +949,9 @@ const crmSearchTerm = ref('')
 const crmMatches = ref<PosMember[]>([])
 const isCrmSearching = ref(false)
 const crmMessage = ref('輸入電話或姓名可查會員')
+const activeCrmMember = computed(() =>
+  customer.memberId ? crmMatches.value.find((member) => member.id === customer.memberId) ?? null : null,
+)
 
 const selectedOrderLabelSettings = computed(() =>
   engagementSettings.value.orderLabels.filter((label) => orderLabels.value.includes(label.id)),
@@ -1009,9 +1012,10 @@ const customerManagementTypes = computed(() => {
 const filteredCustomerManagementMembers = computed(() => {
   const keyword = customerManagementSearchTerm.value.trim().toLowerCase()
   const typeFilter = customerManagementTypeFilter.value
-  const latestLedgerTime = (member: PosMember): number =>
-    member.ledger.reduce((latest, entry) => Math.max(latest, new Date(entry.createdAt).getTime()), 0)
-      || new Date(member.updatedAt).getTime()
+  const latestActivityTime = (member: PosMember): number =>
+    (member.analysis.lastConsumedAt ? new Date(member.analysis.lastConsumedAt).getTime() : 0) ||
+    member.ledger.reduce((latest, entry) => Math.max(latest, new Date(entry.createdAt).getTime()), 0) ||
+    new Date(member.updatedAt).getTime()
 
   return customerManagementMembers.value
     .filter((member) => {
@@ -1035,12 +1039,44 @@ const filteredCustomerManagementMembers = computed(() => {
         return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
       }
 
-      return latestLedgerTime(right) - latestLedgerTime(left)
+      return latestActivityTime(right) - latestActivityTime(left)
     })
 })
 const customerManagementSummary = computed(() =>
   `${customerManagementMembers.value.length} 位顧客 · ${customerManagementTypes.value.length} 類型`,
 )
+
+const memberLastConsumedLabel = (member: PosMember): string =>
+  member.analysis.lastConsumedAt ? formatOrderTime(member.analysis.lastConsumedAt) : '尚無完成消費'
+
+const memberAverageCycleLabel = (member: PosMember): string => {
+  const days = member.analysis.averageCycleDays
+  if (days === null) {
+    return '尚無週期'
+  }
+  if (days < 1) {
+    return '同日回訪'
+  }
+  return `${days} 天`
+}
+
+const memberFavoriteProductLabel = (member: PosMember): string =>
+  member.analysis.favoriteProducts.length > 0
+    ? member.analysis.favoriteProducts.slice(0, 3).map((product, index) =>
+      `${index + 1}. ${product.name} x${product.quantity}`,
+    ).join(' · ')
+    : '尚無點選率排行'
+
+const memberCrmChipMeta = (member: PosMember): string =>
+  member.analysis.totalOrders > 0
+    ? `${member.phone || member.customerType} · 消費 ${member.analysis.totalOrders} 次 · ${member.pointsBalance} 點`
+    : `${member.phone || member.customerType} · ${member.pointsBalance} 點`
+
+const memberCouponStatusLabel = (member: PosMember): string => {
+  const activeCount = member.coupons.filter((coupon) => coupon.status === 'active').length
+  const redeemedCount = member.coupons.filter((coupon) => coupon.status === 'redeemed').length
+  return `${activeCount} 張可用券${redeemedCount > 0 ? ` · ${redeemedCount} 張已使用` : ''}`
+}
 
 const accessPermissionLabels: Record<AdminPermission, string> = {
   openOrders: '開單',
@@ -9156,6 +9192,10 @@ const cancelAllUnprintedPrintJobsAction = async (): Promise<void> => {
 }
 
 const latestCustomerActivityLabel = (member: PosMember): string => {
+  if (member.analysis.lastConsumedAt) {
+    return formatOrderTime(member.analysis.lastConsumedAt)
+  }
+
   const latestLedgerEntry = [...member.ledger].sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   )[0]
@@ -12884,7 +12924,7 @@ onBeforeUnmount(() => {
                     >
                       <UserRound :size="16" aria-hidden="true" />
                       <span>{{ member.displayName }}</span>
-                      <small>{{ member.phone || member.customerType }} · {{ member.pointsBalance }} 點</small>
+                      <small>{{ memberCrmChipMeta(member) }}</small>
                     </button>
                     <button v-if="customer.memberId" type="button" class="crm-result-chip" @click="clearCustomerMember">
                       <X :size="16" aria-hidden="true" />
@@ -12893,6 +12933,38 @@ onBeforeUnmount(() => {
                     </button>
                     <span v-if="crmMatches.length === 0 && !customer.memberId" class="panel-note">{{ crmMessage }}</span>
                   </div>
+
+                  <section v-if="activeCrmMember" class="crm-analysis-panel" aria-label="會員消費分析">
+                    <header>
+                      <div>
+                        <strong>{{ activeCrmMember.displayName || activeCrmMember.phone || '會員' }}</strong>
+                        <span>{{ memberCouponStatusLabel(activeCrmMember) }} · {{ activeCrmMember.pointsBalance }} 點</span>
+                      </div>
+                      <b>{{ memberLastConsumedLabel(activeCrmMember) }}</b>
+                    </header>
+                    <dl class="crm-analysis-grid">
+                      <div>
+                        <dt>消費次數</dt>
+                        <dd>{{ activeCrmMember.analysis.totalOrders }}</dd>
+                      </div>
+                      <div>
+                        <dt>累積金額</dt>
+                        <dd>{{ formatCurrency(activeCrmMember.analysis.totalSpent) }}</dd>
+                      </div>
+                      <div>
+                        <dt>平均金額</dt>
+                        <dd>{{ formatCurrency(activeCrmMember.analysis.averageSpent) }}</dd>
+                      </div>
+                      <div>
+                        <dt>平均週期</dt>
+                        <dd>{{ memberAverageCycleLabel(activeCrmMember) }}</dd>
+                      </div>
+                    </dl>
+                    <div class="crm-favorite-products" aria-label="點選率排行">
+                      <span>點選率排行</span>
+                      <strong>{{ memberFavoriteProductLabel(activeCrmMember) }}</strong>
+                    </div>
+                  </section>
 
                   <div class="order-label-strip" aria-label="訂單標籤">
                     <button
@@ -16346,11 +16418,20 @@ onBeforeUnmount(() => {
           </div>
           <div class="customer-management-list">
             <article v-for="member in filteredCustomerManagementMembers" :key="member.id" class="customer-management-row">
-              <div>
+              <div class="customer-management-profile">
                 <strong>{{ member.displayName || member.phone || member.lineUserId || '未命名顧客' }}</strong>
                 <span>{{ member.phone || '未留電話' }} · {{ member.customerType }}</span>
+                <small>{{ memberFavoriteProductLabel(member) }}</small>
               </div>
               <dl>
+                <div>
+                  <dt>次數</dt>
+                  <dd>{{ member.analysis.totalOrders }}</dd>
+                </div>
+                <div>
+                  <dt>累積</dt>
+                  <dd>{{ formatCurrency(member.analysis.totalSpent) }}</dd>
+                </div>
                 <div>
                   <dt>點數</dt>
                   <dd>{{ member.pointsBalance }}</dd>

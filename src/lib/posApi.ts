@@ -404,6 +404,24 @@ interface ApiTransactionLedgerEntry {
   created_at: string
 }
 
+interface ApiMemberFavoriteProductAnalysis {
+  productSku?: string | null
+  name?: string | null
+  quantity?: number | null
+  orderCount?: number | null
+  totalAmount?: number | null
+}
+
+interface ApiMemberSalesAnalysis {
+  totalOrders?: number | null
+  totalSpent?: number | null
+  averageSpent?: number | null
+  averageCycleDays?: number | null
+  firstConsumedAt?: string | null
+  lastConsumedAt?: string | null
+  favoriteProducts?: ApiMemberFavoriteProductAnalysis[] | null
+}
+
 interface ApiMember {
   id: string
   line_user_id: string | null
@@ -416,6 +434,7 @@ interface ApiMember {
   updated_at: string
   ledger?: ApiTransactionLedgerEntry[]
   coupons?: ApiMemberCoupon[]
+  analysis?: ApiMemberSalesAnalysis | null
 }
 
 interface ApiMemberCoupon {
@@ -1162,6 +1181,53 @@ const normalizeCoupon = (coupon: ApiMemberCoupon) => ({
   updatedAt: coupon.updated_at,
 })
 
+const emptyMemberSalesAnalysis = (): PosMember['analysis'] => ({
+  totalOrders: 0,
+  totalSpent: 0,
+  averageSpent: 0,
+  averageCycleDays: null,
+  firstConsumedAt: null,
+  lastConsumedAt: null,
+  favoriteProducts: [],
+})
+
+const normalizeMemberSalesAnalysis = (analysis: ApiMemberSalesAnalysis | null | undefined): PosMember['analysis'] => {
+  if (!analysis || typeof analysis !== 'object') {
+    return emptyMemberSalesAnalysis()
+  }
+
+  const favoriteProducts = Array.isArray(analysis.favoriteProducts)
+    ? analysis.favoriteProducts.flatMap((item) => {
+      if (!item || typeof item !== 'object') {
+        return []
+      }
+      const name = String(item.name ?? item.productSku ?? '').trim()
+      if (!name) {
+        return []
+      }
+      return [{
+        productSku: String(item.productSku ?? '').trim(),
+        name,
+        quantity: Math.max(0, Math.trunc(Number(item.quantity) || 0)),
+        orderCount: Math.max(0, Math.trunc(Number(item.orderCount) || 0)),
+        totalAmount: Math.max(0, Math.trunc(Number(item.totalAmount) || 0)),
+      }]
+    })
+    : []
+
+  return {
+    totalOrders: Math.max(0, Math.trunc(Number(analysis.totalOrders) || 0)),
+    totalSpent: Math.max(0, Math.trunc(Number(analysis.totalSpent) || 0)),
+    averageSpent: Math.max(0, Math.trunc(Number(analysis.averageSpent) || 0)),
+    averageCycleDays: typeof analysis.averageCycleDays === 'number' && Number.isFinite(analysis.averageCycleDays)
+      ? Math.max(0, analysis.averageCycleDays)
+      : null,
+    firstConsumedAt: typeof analysis.firstConsumedAt === 'string' ? analysis.firstConsumedAt : null,
+    lastConsumedAt: typeof analysis.lastConsumedAt === 'string' ? analysis.lastConsumedAt : null,
+    favoriteProducts,
+  }
+}
+
 const normalizeMember = (member: ApiMember): PosMember => ({
   id: member.id,
   lineUserId: member.line_user_id,
@@ -1174,6 +1240,7 @@ const normalizeMember = (member: ApiMember): PosMember => ({
   updatedAt: member.updated_at,
   ledger: (member.ledger ?? []).map(normalizeLedgerEntry),
   coupons: (member.coupons ?? []).map(normalizeCoupon),
+  analysis: normalizeMemberSalesAnalysis(member.analysis),
 })
 
 const normalizeReservation = (reservation: ApiReservation): PosReservation => ({

@@ -2205,6 +2205,90 @@ h3 {
   font-size: 0.78rem;
 }
 
+.crm-analysis-panel {
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #91c5b6;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+}
+
+.crm-analysis-panel header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.crm-analysis-panel header div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.crm-analysis-panel header strong,
+.crm-analysis-panel header b {
+  color: var(--primary-dark);
+  font-size: 0.94rem;
+  font-weight: 950;
+}
+
+.crm-analysis-panel header span,
+.crm-favorite-products span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.crm-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.crm-analysis-grid div {
+  display: grid;
+  gap: 2px;
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.crm-analysis-grid dt,
+.crm-analysis-grid dd {
+  margin: 0;
+}
+
+.crm-analysis-grid dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.crm-analysis-grid dd {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crm-favorite-products {
+  display: grid;
+  gap: 3px;
+}
+
+.crm-favorite-products strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
 .order-label-chip,
 .order-label-pill {
   --label-color: #0f766e;
@@ -9983,6 +10067,15 @@ button.cart-line-summary:focus-visible {
   gap: 4px;
 }
 
+.customer-management-profile small {
+  overflow: hidden;
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .customer-management-row strong {
   color: var(--ink);
   font-size: 0.98rem;
@@ -13282,6 +13375,7 @@ button.cart-line-summary:focus-visible {
   .admin-member-adjust-grid,
   .admin-section-grid,
   .admin-report-grid,
+  .crm-analysis-grid,
   .admin-report-sections,
   .admin-online-status-grid,
   .admin-online-settings-grid,
@@ -13328,6 +13422,7 @@ button.cart-line-summary:focus-visible {
 
   .label-management-intro,
   .label-management-actions,
+  .crm-analysis-panel header,
   .online-toolbox-section-heading,
   .online-toolbox-table-heading,
   .admin-table-qr-actions,

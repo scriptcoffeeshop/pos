@@ -892,6 +892,24 @@ export interface TransactionLedgerEntry {
   createdAt: string
 }
 
+export interface MemberFavoriteProductAnalysis {
+  productSku: string
+  name: string
+  quantity: number
+  orderCount: number
+  totalAmount: number
+}
+
+export interface MemberSalesAnalysis {
+  totalOrders: number
+  totalSpent: number
+  averageSpent: number
+  averageCycleDays: number | null
+  firstConsumedAt: string | null
+  lastConsumedAt: string | null
+  favoriteProducts: MemberFavoriteProductAnalysis[]
+}
+
 export interface PosMember {
   id: string
   lineUserId: string | null
@@ -904,6 +922,7 @@ export interface PosMember {
   updatedAt: string
   ledger: TransactionLedgerEntry[]
   coupons: MemberCoupon[]
+  analysis: MemberSalesAnalysis
 }
 
 export interface MemberCoupon {
