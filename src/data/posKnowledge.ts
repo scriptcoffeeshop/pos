@@ -1,4 +1,4 @@
-export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations'
+export type PosKnowledgeCategory = 'orders' | 'online' | 'payments' | 'supply' | 'printing' | 'register' | 'reservations' | 'reports'
 export type PosKnowledgeTarget = 'floor' | 'order' | 'payment' | 'queue' | 'reservations' | 'printing' | 'closeout' | 'admin' | 'online'
 
 export interface PosKnowledgeCategoryOption {
@@ -24,6 +24,7 @@ export const posKnowledgeCategories: PosKnowledgeCategoryOption[] = [
   { value: 'printing', label: '列印' },
   { value: 'register', label: '班別' },
   { value: 'reservations', label: '訂位' },
+  { value: 'reports', label: '報表' },
 ]
 
 export const posKnowledgeArticles: PosKnowledgeArticle[] = [
@@ -450,7 +451,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
   },
   {
     id: 'electronic-invoice-report',
-    category: 'payments',
+    category: 'reports',
     title: '電子發票開立紀錄',
     summary: '後台營運報表可依 iCHEF 電子發票開立紀錄查詢結帳時間、載具/捐贈碼、銷售額、營業稅與目前概況。',
     steps: [
@@ -465,7 +466,7 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
   },
   {
     id: 'product-sales-report',
-    category: 'register',
+    category: 'reports',
     title: '商品銷售報表',
     summary: '後台營運報表可依 iCHEF 商品銷售報表查詢類別、品項、銷售走勢與套餐搭配。',
     steps: [
@@ -477,6 +478,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
       '按「匯出商品 CSV」可下載目前篩選結果，供後續商品調整或備貨判斷。',
     ],
     keywords: ['商品銷售報表', '商品報表', '類別概況', '品項概況', '點選率', '平均售價', '套餐搭配', 'CSV', '報表分析', 'iCHEF'],
+    target: 'admin',
+  },
+  {
+    id: 'note-analysis-report',
+    category: 'reports',
+    title: '註記分析',
+    summary: '後台營運報表可依 iCHEF 註記分析查看商品口味註記的點選數與累計加減價額。',
+    steps: [
+      '連點工具箱 6 下進入後台，再到「營運報表」。',
+      '在「註記分析」選擇開始/結束日期；單次查詢不可超過 93 天，資料窗口限近 2 年。',
+      '可用日、週、月切換走勢單位，也可依服務方式、訂單來源與人數範圍篩選。',
+      '註記排行會顯示名稱、點選數、累計加減價額、比率與使用到的品項數，對齊 iCHEF 後台欄位；作廢或退款會以負向點選回補。',
+      '「註記使用品項」可查看某個註記用在哪些商品，並顯示該商品內的註記比率。',
+      '按「匯出註記 CSV」可下載目前篩選結果，供調整口味選項、加價註記與備貨判斷；單純文字註記不列入排行。',
+    ],
+    keywords: ['註記分析', '註記報表', '點選數', '累計加減價額', '註記比率', '口味', 'CSV', '報表分析', 'iCHEF'],
     target: 'admin',
   },
   {

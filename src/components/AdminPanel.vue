@@ -52,6 +52,7 @@ import {
   fetchAdminElectronicInvoiceReport,
   fetchAdminInventory,
   fetchAdminMembers,
+  fetchAdminNoteAnalysisReport,
   fetchAdminPaymentEvents,
   fetchAdminProductSalesReport,
   fetchAdminReservationBlacklist,
@@ -79,6 +80,8 @@ import type {
   DiscountSettings,
   ElectronicInvoiceReport,
   ElectronicInvoiceStatus,
+  NoteAnalysisReport,
+  NoteAnalysisReportTimeUnit,
   FloorPlanSettings,
   InventoryConsumptionRule,
   InventoryItem,
@@ -931,6 +934,14 @@ const productSalesReportSource = ref<OrderSource | 'all'>('all')
 const productSalesReportMinPeople = ref<number | null>(null)
 const productSalesReportMaxPeople = ref<number | null>(null)
 const productSalesReport = ref<ProductSalesReport | null>(null)
+const noteAnalysisReportStartDate = ref(dateInputDaysAgo(6))
+const noteAnalysisReportEndDate = ref(toDateInput())
+const noteAnalysisReportTimeUnit = ref<NoteAnalysisReportTimeUnit>('day')
+const noteAnalysisReportServiceMode = ref<ServiceMode | 'all'>('all')
+const noteAnalysisReportSource = ref<OrderSource | 'all'>('all')
+const noteAnalysisReportMinPeople = ref<number | null>(null)
+const noteAnalysisReportMaxPeople = ref<number | null>(null)
+const noteAnalysisReport = ref<NoteAnalysisReport | null>(null)
 const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
 const electronicInvoiceReportEndDate = ref(toDateInput())
 const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
@@ -972,6 +983,7 @@ const isPaymentEventLoading = ref(false)
 const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isProductSalesReportLoading = ref(false)
+const isNoteAnalysisReportLoading = ref(false)
 const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
@@ -1152,6 +1164,24 @@ const productSalesReportRangeValid = computed(() =>
 )
 const productSalesTopCategory = computed(() => productSalesReport.value?.categories[0] ?? null)
 const productSalesTopProduct = computed(() => productSalesReport.value?.products[0] ?? null)
+const noteAnalysisReportRangeDays = computed(() => {
+  if (!noteAnalysisReportStartDate.value || !noteAnalysisReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${noteAnalysisReportStartDate.value}T00:00:00`)
+  const end = new Date(`${noteAnalysisReportEndDate.value}T00:00:00`)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start.getTime() > end.getTime()) {
+    return null
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
+})
+const noteAnalysisReportRangeValid = computed(() =>
+  noteAnalysisReportRangeDays.value !== null && noteAnalysisReportRangeDays.value <= 93,
+)
+const noteAnalysisTopNote = computed(() => noteAnalysisReport.value?.notes[0] ?? null)
+const noteAnalysisTopProduct = computed(() => noteAnalysisReport.value?.products[0] ?? null)
 const electronicInvoiceReportRangeDays = computed(() => {
   if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
     return null
@@ -2177,6 +2207,57 @@ const exportProductSalesReportCsv = (): void => {
   adminMessage.value = `${report.startDate} - ${report.endDate} 商品銷售 CSV 已匯出`
 }
 
+const exportNoteAnalysisReportCsv = (): void => {
+  const report = noteAnalysisReport.value
+  if (!report) {
+    adminMessage.value = '請先載入註記分析'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['section', 'note_name', 'sku', 'product_name', 'category', 'click_count', 'price_delta_total', 'note_rate', 'product_count'],
+    ['summary', 'total_orders', '', '', '', report.summary.totalOrders, '', '', ''],
+    ['summary', 'total_party_size', '', '', '', report.summary.totalPartySize, '', '', ''],
+    ['summary', 'total_selections', '', '', '', report.summary.totalSelections, report.summary.totalPriceDelta, report.summary.averageSelectionsPerOrder, ''],
+    ...report.notes.map((row) => [
+      'note',
+      row.noteName,
+      '',
+      '',
+      '',
+      row.clickCount,
+      row.priceDeltaTotal,
+      row.noteRate,
+      row.productCount,
+    ]),
+    ...report.products.map((row) => [
+      'product',
+      row.noteName,
+      row.sku,
+      row.name,
+      productSalesCategoryLabel(row.category),
+      row.clickCount,
+      row.priceDeltaTotal,
+      row.noteRate,
+      '',
+    ]),
+    ...report.trend.map((row) => [
+      'trend',
+      row.label,
+      '',
+      '',
+      '',
+      row.clickCount,
+      row.priceDeltaTotal,
+      '',
+      '',
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-note-analysis-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 註記分析 CSV 已匯出`
+}
+
 const exportElectronicInvoiceReportCsv = (): void => {
   const report = electronicInvoiceReport.value
   if (!report) {
@@ -2591,6 +2672,16 @@ type ProductSalesReportQuery = {
   maxPartySize: number | null
 }
 
+type NoteAnalysisReportQuery = {
+  startDate: string
+  endDate: string
+  timeUnit: NoteAnalysisReportTimeUnit
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
 const emptyProductSalesReport = (query: ProductSalesReportQuery): ProductSalesReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2625,6 +2716,41 @@ const productSalesReportQueryOptions = (): ProductSalesReportQuery | null => {
     source: productSalesReportSource.value,
     minPartySize: productSalesReportMinPeople.value ? Math.max(1, Math.trunc(productSalesReportMinPeople.value)) : null,
     maxPartySize: productSalesReportMaxPeople.value ? Math.max(1, Math.trunc(productSalesReportMaxPeople.value)) : null,
+  }
+}
+
+const emptyNoteAnalysisReport = (query: NoteAnalysisReportQuery): NoteAnalysisReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  timeUnit: query.timeUnit,
+  summary: {
+    totalOrders: 0,
+    totalPartySize: 0,
+    totalSelections: 0,
+    totalPriceDelta: 0,
+    averageSelectionsPerOrder: 0,
+  },
+  notes: [],
+  products: [],
+  trend: [],
+})
+
+const noteAnalysisReportQueryOptions = (): NoteAnalysisReportQuery | null => {
+  if (!noteAnalysisReportRangeValid.value) {
+    adminMessage.value = '註記分析日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: noteAnalysisReportStartDate.value,
+    endDate: noteAnalysisReportEndDate.value,
+    timeUnit: noteAnalysisReportTimeUnit.value,
+    serviceMode: noteAnalysisReportServiceMode.value,
+    source: noteAnalysisReportSource.value,
+    minPartySize: noteAnalysisReportMinPeople.value ? Math.max(1, Math.trunc(noteAnalysisReportMinPeople.value)) : null,
+    maxPartySize: noteAnalysisReportMaxPeople.value ? Math.max(1, Math.trunc(noteAnalysisReportMaxPeople.value)) : null,
   }
 }
 
@@ -2671,11 +2797,13 @@ const loadAdminData = async (): Promise<void> => {
   try {
     const timeClockQuery = timeClockQueryOptions()
     const productSalesReportQuery = productSalesReportQueryOptions()
+    const noteAnalysisReportQuery = noteAnalysisReportQueryOptions()
     const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
-    if (!timeClockQuery || !productSalesReportQuery || !electronicInvoiceReportQuery) {
+    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !electronicInvoiceReportQuery) {
       return
     }
     let productSalesReportWarning = ''
+    let noteAnalysisReportWarning = ''
     let electronicInvoiceReportWarning = ''
 
     const [
@@ -2694,6 +2822,7 @@ const loadAdminData = async (): Promise<void> => {
       inventory,
       closeoutDeliveries,
       productReport,
+      noteReport,
       invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
@@ -2713,6 +2842,10 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminProductSalesReport(productSalesReportQuery).catch((error) => {
         productSalesReportWarning = error instanceof Error ? error.message : '商品銷售報表暫時無法載入'
         return emptyProductSalesReport(productSalesReportQuery)
+      }),
+      fetchAdminNoteAnalysisReport(noteAnalysisReportQuery).catch((error) => {
+        noteAnalysisReportWarning = error instanceof Error ? error.message : '註記分析暫時無法載入'
+        return emptyNoteAnalysisReport(noteAnalysisReportQuery)
       }),
       fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
         electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
@@ -2740,9 +2873,10 @@ const loadAdminData = async (): Promise<void> => {
     timeClockEntries.value = timeClockRows
     closeoutReportDeliveries.value = closeoutDeliveries
     productSalesReport.value = productReport
+    noteAnalysisReport.value = noteReport
     electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -2888,6 +3022,25 @@ const loadProductSalesReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '商品銷售報表讀取失敗'
   } finally {
     isProductSalesReportLoading.value = false
+  }
+}
+
+const loadNoteAnalysisReport = async (): Promise<void> => {
+  const query = noteAnalysisReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isNoteAnalysisReportLoading.value = true
+  adminMessage.value = '讀取註記分析中'
+
+  try {
+    noteAnalysisReport.value = await fetchAdminNoteAnalysisReport(query)
+    adminMessage.value = `已載入 ${noteAnalysisReport.value.summary.totalSelections} 筆註記點選，加減價 ${formatCurrency(noteAnalysisReport.value.summary.totalPriceDelta)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '註記分析讀取失敗'
+  } finally {
+    isNoteAnalysisReportLoading.value = false
   }
 }
 
@@ -7350,6 +7503,153 @@ const saveAccessControl = async (): Promise<void> => {
               <div v-if="productSalesReport.comboSelections.length === 0" class="empty-state">
                 <Search :size="24" aria-hidden="true" />
                 <span>此區間沒有套餐搭配資料</span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="註記分析">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Note Analysis</p>
+              <h3>註記分析</h3>
+            </div>
+            <span class="panel-note">
+              {{ noteAnalysisReport ? `${noteAnalysisReport.startDate} - ${noteAnalysisReport.endDate} · ${noteAnalysisReport.summary.totalSelections} 次` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="noteAnalysisReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="noteAnalysisReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              單位
+              <select v-model="noteAnalysisReportTimeUnit">
+                <option value="day">日</option>
+                <option value="week">週</option>
+                <option value="month">月</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="noteAnalysisReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="noteAnalysisReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="noteAnalysisReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="noteAnalysisReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isNoteAnalysisReportLoading" @click="loadNoteAnalysisReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isNoteAnalysisReportLoading ? '讀取中' : '刷新註記' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!noteAnalysisReport" @click="exportNoteAnalysisReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出註記 CSV
+            </button>
+          </div>
+
+          <div v-if="noteAnalysisReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>點選數</span>
+              <strong>{{ noteAnalysisReport.summary.totalSelections }}</strong>
+              <small>{{ noteAnalysisReport.summary.totalOrders }} 張 · 平均 {{ noteAnalysisReport.summary.averageSelectionsPerOrder }} 次/張</small>
+            </article>
+            <article class="admin-report-card">
+              <span>累計加減價額</span>
+              <strong>{{ formatCurrency(noteAnalysisReport.summary.totalPriceDelta) }}</strong>
+              <small>來客數 {{ noteAnalysisReport.summary.totalPartySize }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>熱門註記</span>
+              <strong>{{ noteAnalysisTopNote?.noteName ?? '尚無' }}</strong>
+              <small>{{ noteAnalysisTopNote ? `${noteAnalysisTopNote.clickCount} 次 · ${formatReportPercent(noteAnalysisTopNote.noteRate)}` : '尚無資料' }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>熱門品項</span>
+              <strong>{{ noteAnalysisTopProduct?.name ?? '尚無' }}</strong>
+              <small>{{ noteAnalysisTopProduct ? `${noteAnalysisTopProduct.noteName} · ${noteAnalysisTopProduct.clickCount} 次` : '尚無資料' }}</small>
+            </article>
+          </div>
+
+          <div v-if="noteAnalysisReport" class="admin-section-grid admin-report-sections">
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Notes</p>
+                  <h3>註記排行</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in noteAnalysisReport.notes.slice(0, 12)" :key="row.key" class="admin-report-row">
+                <span>{{ row.noteName }}</span>
+                <strong>{{ row.clickCount }} 次</strong>
+                <small>加減價 {{ formatCurrency(row.priceDeltaTotal) }} · 比率 {{ formatReportPercent(row.noteRate) }} · {{ row.productCount }} 個品項</small>
+              </article>
+              <div v-if="noteAnalysisReport.notes.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間沒有註記點選</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Products</p>
+                  <h3>註記使用品項</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in noteAnalysisReport.products.slice(0, 12)" :key="row.key" class="admin-report-row">
+                <span>{{ row.noteName }} / {{ row.name }}</span>
+                <strong>{{ row.clickCount }} 次</strong>
+                <small>{{ productSalesCategoryLabel(row.category) }} · 加減價 {{ formatCurrency(row.priceDeltaTotal) }} · 比率 {{ formatReportPercent(row.noteRate) }}</small>
+              </article>
+              <div v-if="noteAnalysisReport.products.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>尚無註記品項資料</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Trend</p>
+                  <h3>註記走勢</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in noteAnalysisReport.trend.slice(0, 16)" :key="row.key" class="admin-report-row">
+                <span>{{ row.label }}</span>
+                <strong>{{ row.clickCount }} 次</strong>
+                <small>加減價 {{ formatCurrency(row.priceDeltaTotal) }}</small>
+              </article>
+              <div v-if="noteAnalysisReport.trend.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間尚無註記走勢</span>
               </div>
             </section>
           </div>

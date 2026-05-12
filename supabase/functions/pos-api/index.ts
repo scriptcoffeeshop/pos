@@ -5150,6 +5150,82 @@ api.get("/admin/reports/product-sales", async (c) => {
   });
 });
 
+api.get("/admin/reports/note-analysis", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "note analysis report can query the latest 2 years only" }, 400);
+  }
+
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, payment_method, payment_status, status, created_at, order_items(product_id, product_sku, name, unit_price, quantity, options, line_total, combo_items)",
+    )
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString())
+    .in("payment_status", [...Array.from(collectedPaymentStatuses), "failed", "refunded"])
+    .neq("status", "failed")
+    .order("created_at", { ascending: true })
+    .limit(5000);
+
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const [{ data: orderData, error: orderError }, { data: productData, error: productError }] = await Promise.all([
+    query,
+    supabase.from("products").select("id, sku, name, category, price"),
+  ]);
+
+  if (orderError) {
+    return c.json({ error: orderError.message }, 500);
+  }
+  if (productError) {
+    return c.json({ error: productError.message }, 500);
+  }
+
+  const rows = ((orderData ?? []) as DailyReportOrderRow[]).filter((order) => {
+    if (order.status !== "voided" && !collectedPaymentStatuses.has(order.payment_status)) {
+      return false;
+    }
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+
+  return c.json({
+    report: buildNoteAnalysisReport(
+      range,
+      validNoteAnalysisTimeUnit(c.req.query("timeUnit")),
+      rows,
+      (productData ?? []) as ProductCatalogReportRow[],
+    ),
+  });
+});
+
 api.get("/admin/reports/electronic-invoices", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -6959,7 +7035,9 @@ interface DailyReportOrderItemRow {
   product_id?: string | null;
   product_sku: string;
   name: string;
+  unit_price?: number;
   quantity: number;
+  options?: unknown;
   line_total: number;
   combo_items?: unknown;
 }
@@ -6975,12 +7053,14 @@ interface DailyReportOrderRow extends RegisterOrderSummaryRow {
 }
 
 type ProductSalesReportTimeUnit = "day" | "week" | "month";
+type NoteAnalysisReportTimeUnit = "day" | "week" | "month";
 
 interface ProductCatalogReportRow {
   id: string;
   sku: string;
   name: string;
   category: string;
+  price?: number;
 }
 
 interface ProductSalesReportAccumulator {
@@ -7014,6 +7094,32 @@ interface ProductSalesTrendAccumulator {
   partySize: number;
   quantity: number;
   total: number;
+}
+
+interface NoteAnalysisAccumulator {
+  key: string;
+  noteName: string;
+  clickCount: number;
+  priceDeltaTotal: number;
+  productKeys: Set<string>;
+}
+
+interface NoteAnalysisProductAccumulator {
+  key: string;
+  noteName: string;
+  productKey: string;
+  sku: string;
+  name: string;
+  category: string;
+  clickCount: number;
+  priceDeltaTotal: number;
+}
+
+interface NoteAnalysisTrendAccumulator {
+  key: string;
+  label: string;
+  clickCount: number;
+  priceDeltaTotal: number;
 }
 
 const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
@@ -7620,6 +7726,9 @@ const validOrderSourceFilter = (value: string | undefined): OrderSource | null =
 const validProductSalesTimeUnit = (value: string | undefined): ProductSalesReportTimeUnit =>
   value === "week" || value === "month" ? value : "day";
 
+const validNoteAnalysisTimeUnit = (value: string | undefined): NoteAnalysisReportTimeUnit =>
+  value === "week" || value === "month" ? value : "day";
+
 const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
   order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
 
@@ -7836,6 +7945,209 @@ const readProductSalesComboItems = (items: unknown): ComboLineItemInput[] => {
         : [],
     }];
   }).slice(0, 80);
+};
+
+const normalizedNoteAnalysisKey = (label: string): string =>
+  label.trim().replace(/\s+/g, " ").toLowerCase();
+
+const manualTextNotePrefix = "文字註記：";
+
+const noteAnalysisPriceDeltaFromLabel = (label: string): { noteName: string; priceDelta: number } => {
+  const normalized = label.trim().replace(/\s+/g, " ");
+  const amountPattern = "(?:NT\\$|NTD|TWD|[$＄])?\\s*([\\d,]+)";
+  const manualIncreaseMatch = new RegExp(`^手動加價\\s*\\+\\s*${amountPattern}$`, "i").exec(normalized);
+  if (manualIncreaseMatch) {
+    return {
+      noteName: "手動加價",
+      priceDelta: Number(manualIncreaseMatch[1].replace(/,/g, "")) || 0,
+    };
+  }
+
+  const manualDecreaseMatch = new RegExp(`^手動減價\\s*-\\s*${amountPattern}$`, "i").exec(normalized);
+  if (manualDecreaseMatch) {
+    return {
+      noteName: "手動減價",
+      priceDelta: -(Number(manualDecreaseMatch[1].replace(/,/g, "")) || 0),
+    };
+  }
+
+  const priceMatch = new RegExp(`\\s([+-])\\s*${amountPattern}$`, "i").exec(normalized);
+  if (!priceMatch) {
+    return { noteName: normalized, priceDelta: 0 };
+  }
+
+  const amount = Number(priceMatch[2].replace(/,/g, "")) || 0;
+  return {
+    noteName: normalized.slice(0, priceMatch.index).trim() || normalized,
+    priceDelta: priceMatch[1] === "-" ? -amount : amount,
+  };
+};
+
+const noteAnalysisSelectionsFromOptions = (options: unknown): Array<{ noteName: string; priceDelta: number }> => {
+  if (!Array.isArray(options)) {
+    return [];
+  }
+
+  return options.flatMap((option) => {
+    const label = sanitizeText(option, "").slice(0, 120);
+    if (!label || label.startsWith(manualTextNotePrefix) || /^[^:：]{1,40}: .+/.test(label)) {
+      return [];
+    }
+
+    return [noteAnalysisPriceDeltaFromLabel(label)];
+  });
+};
+
+const buildNoteAnalysisReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  timeUnit: NoteAnalysisReportTimeUnit,
+  rows: DailyReportOrderRow[],
+  products: ProductCatalogReportRow[],
+) => {
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const productBySku = new Map(products.map((product) => [product.sku, product]));
+  const noteMap = new Map<string, NoteAnalysisAccumulator>();
+  const productMap = new Map<string, NoteAnalysisProductAccumulator>();
+  const trendMap = new Map<string, NoteAnalysisTrendAccumulator>();
+  const rangeDays = Math.ceil((range.end.getTime() - range.start.getTime()) / (24 * 60 * 60_000));
+  const singleDay = rangeDays <= 1;
+  let totalPartySize = 0;
+  let totalSelections = 0;
+  let totalPriceDelta = 0;
+
+  const addSelection = (
+    order: DailyReportOrderRow,
+    product: { key: string; sku: string; name: string; category: string },
+    noteName: string,
+    unitPriceDelta: number,
+    quantity: number,
+  ): void => {
+    const clickCount = Math.trunc(Number(quantity) || 0);
+    if (!noteName || clickCount === 0) {
+      return;
+    }
+
+    const priceDeltaTotal = unitPriceDelta * clickCount;
+    const noteKey = normalizedNoteAnalysisKey(noteName);
+    const noteRow = noteMap.get(noteKey) ?? {
+      key: noteKey,
+      noteName,
+      clickCount: 0,
+      priceDeltaTotal: 0,
+      productKeys: new Set<string>(),
+    };
+    noteRow.clickCount += clickCount;
+    noteRow.priceDeltaTotal += priceDeltaTotal;
+    noteRow.productKeys.add(product.key);
+    noteMap.set(noteKey, noteRow);
+
+    const productRowKey = `${noteKey}:${product.key}`;
+    const productRow = productMap.get(productRowKey) ?? {
+      key: productRowKey,
+      noteName,
+      productKey: product.key,
+      sku: product.sku,
+      name: product.name,
+      category: product.category,
+      clickCount: 0,
+      priceDeltaTotal: 0,
+    };
+    productRow.clickCount += clickCount;
+    productRow.priceDeltaTotal += priceDeltaTotal;
+    productMap.set(productRowKey, productRow);
+
+    const bucket = productSalesTrendBucket(order.created_at, timeUnit, singleDay);
+    const trendKey = `${bucket.key}:${noteKey}`;
+    const trendRow = trendMap.get(trendKey) ?? {
+      key: trendKey,
+      label: `${bucket.label} / ${noteName}`,
+      clickCount: 0,
+      priceDeltaTotal: 0,
+    };
+    trendRow.clickCount += clickCount;
+    trendRow.priceDeltaTotal += priceDeltaTotal;
+    trendMap.set(trendKey, trendRow);
+
+    totalSelections += clickCount;
+    totalPriceDelta += priceDeltaTotal;
+  };
+
+  for (const order of rows) {
+    totalPartySize += partySizeFromOrderNote(order.note);
+    const orderSign = order.status === "voided" || order.payment_status === "refunded" ? -1 : 1;
+
+    for (const item of order.order_items ?? []) {
+      const quantity = Math.max(Number(item.quantity) || 0, 0) * orderSign;
+      if (quantity === 0) {
+        continue;
+      }
+
+      const catalogProduct = item.product_id
+        ? productById.get(item.product_id) ?? productBySku.get(item.product_sku)
+        : productBySku.get(item.product_sku);
+      const product = {
+        key: catalogProduct?.id ?? item.product_id ?? item.product_sku ?? item.name,
+        sku: catalogProduct?.sku ?? item.product_sku,
+        name: catalogProduct?.name ?? item.name,
+        category: catalogProduct?.category ?? "未分類",
+      };
+
+      for (const selection of noteAnalysisSelectionsFromOptions(item.options)) {
+        addSelection(order, product, selection.noteName, selection.priceDelta, quantity);
+      }
+
+      for (const comboItem of readProductSalesComboItems(item.combo_items)) {
+        const comboProduct = comboItem.productId
+          ? productById.get(comboItem.productId) ?? productBySku.get(comboItem.productSku)
+          : productBySku.get(comboItem.productSku);
+        const comboProductInfo = {
+          key: comboProduct?.id ?? comboItem.productId ?? comboItem.productSku,
+          sku: comboProduct?.sku ?? comboItem.productSku,
+          name: comboProduct?.name ?? comboItem.name,
+          category: comboProduct?.category ?? "未分類",
+        };
+        for (const selection of noteAnalysisSelectionsFromOptions(comboItem.options)) {
+          addSelection(order, comboProductInfo, selection.noteName, selection.priceDelta, quantity * comboItem.quantity);
+        }
+      }
+    }
+  }
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart: range.start.toISOString(),
+    rangeEnd: range.end.toISOString(),
+    timeUnit,
+    summary: {
+      totalOrders: rows.length,
+      totalPartySize,
+      totalSelections,
+      totalPriceDelta,
+      averageSelectionsPerOrder: rows.length > 0 ? Math.round((totalSelections / rows.length) * 10) / 10 : 0,
+    },
+    notes: Array.from(noteMap.values())
+      .map((row) => ({
+        key: row.key,
+        noteName: row.noteName,
+        clickCount: row.clickCount,
+        priceDeltaTotal: row.priceDeltaTotal,
+        noteRate: roundedPercent(row.clickCount, totalSelections),
+        productCount: row.productKeys.size,
+      }))
+      .sort((a, b) => b.clickCount - a.clickCount || b.priceDeltaTotal - a.priceDeltaTotal),
+    products: Array.from(productMap.values())
+      .map((row) => {
+        const noteTotal = noteMap.get(normalizedNoteAnalysisKey(row.noteName))?.clickCount ?? 0;
+        return {
+          ...row,
+          noteRate: roundedPercent(row.clickCount, noteTotal),
+        };
+      })
+      .sort((a, b) => b.clickCount - a.clickCount || b.priceDeltaTotal - a.priceDeltaTotal),
+    trend: Array.from(trendMap.values())
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
 };
 
 const buildProductSalesReport = (

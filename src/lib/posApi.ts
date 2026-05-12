@@ -30,6 +30,8 @@ import type {
   DailySalesReport,
   ElectronicInvoiceReport,
   ElectronicInvoiceStatus,
+  NoteAnalysisReport,
+  NoteAnalysisReportTimeUnit,
   CartLine,
   ComboLineItem,
   CustomerEngagementSettings,
@@ -603,6 +605,10 @@ interface DailyReportResponse {
 
 interface ProductSalesReportResponse {
   report: ProductSalesReport
+}
+
+interface NoteAnalysisReportResponse {
+  report: NoteAnalysisReport
 }
 
 interface ElectronicInvoiceReportResponse {
@@ -3934,6 +3940,37 @@ export const fetchAdminProductSalesReport = async (options: {
   }
 
   const data = await request<ProductSalesReportResponse>(`/admin/reports/product-sales?${params.toString()}`)
+
+  return data.report
+}
+
+export const fetchAdminNoteAnalysisReport = async (options: {
+  startDate: string
+  endDate: string
+  timeUnit: NoteAnalysisReportTimeUnit
+  serviceMode?: ServiceMode | 'all'
+  source?: OrderSource | 'all'
+  minPartySize?: number | null
+  maxPartySize?: number | null
+}): Promise<NoteAnalysisReport> => {
+  const params = new URLSearchParams()
+  params.set('startDate', options.startDate.trim())
+  params.set('endDate', options.endDate.trim())
+  params.set('timeUnit', options.timeUnit)
+  if (options.serviceMode && options.serviceMode !== 'all') {
+    params.set('serviceMode', options.serviceMode)
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source)
+  }
+  if (options.minPartySize !== null && options.minPartySize !== undefined) {
+    params.set('minPartySize', String(options.minPartySize))
+  }
+  if (options.maxPartySize !== null && options.maxPartySize !== undefined) {
+    params.set('maxPartySize', String(options.maxPartySize))
+  }
+
+  const data = await request<NoteAnalysisReportResponse>(`/admin/reports/note-analysis?${params.toString()}`)
 
   return data.report
 }

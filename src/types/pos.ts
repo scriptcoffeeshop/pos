@@ -1090,6 +1090,8 @@ export interface HourlyReportRow {
 
 export type ProductSalesReportTimeUnit = 'day' | 'week' | 'month'
 
+export type NoteAnalysisReportTimeUnit = 'day' | 'week' | 'month'
+
 export interface ProductSalesCategoryReportRow {
   category: string
   orderCount: number
@@ -1153,6 +1155,54 @@ export interface ProductSalesReport {
   products: ProductSalesProductReportRow[]
   comboSelections: ProductSalesComboReportRow[]
   trend: ProductSalesTrendReportRow[]
+}
+
+export interface NoteAnalysisReportRow {
+  key: string
+  noteName: string
+  clickCount: number
+  priceDeltaTotal: number
+  noteRate: number
+  productCount: number
+}
+
+export interface NoteAnalysisProductReportRow {
+  key: string
+  noteName: string
+  productKey: string
+  sku: string
+  name: string
+  category: string
+  clickCount: number
+  priceDeltaTotal: number
+  noteRate: number
+}
+
+export interface NoteAnalysisTrendReportRow {
+  key: string
+  label: string
+  clickCount: number
+  priceDeltaTotal: number
+}
+
+export interface NoteAnalysisReportSummary {
+  totalOrders: number
+  totalPartySize: number
+  totalSelections: number
+  totalPriceDelta: number
+  averageSelectionsPerOrder: number
+}
+
+export interface NoteAnalysisReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  timeUnit: NoteAnalysisReportTimeUnit
+  summary: NoteAnalysisReportSummary
+  notes: NoteAnalysisReportRow[]
+  products: NoteAnalysisProductReportRow[]
+  trend: NoteAnalysisTrendReportRow[]
 }
 
 export interface ElectronicInvoiceReportRow {
