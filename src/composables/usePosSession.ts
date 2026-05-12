@@ -866,6 +866,10 @@ const electronicInvoiceStatusFor = (
 ): PosOrder['electronicInvoiceStatus'] =>
   requested && (paymentStatus === 'authorized' || paymentStatus === 'paid') ? 'queued' : 'not_requested'
 
+interface SaveCounterOrderOptions {
+  queuePrint?: boolean
+}
+
 const buildOrderId = (date: Date, sequence: number): string =>
   `POS-${formatDateKey(date)}-${String(sequence).padStart(3, '0')}`
 
@@ -4713,7 +4717,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     clearCounterDraftIdentity()
   }
 
-  const saveCounterOrder = async (finish = true): Promise<PosOrder | null> => {
+  const saveCounterOrder = async (finish = true, options: SaveCounterOrderOptions = {}): Promise<PosOrder | null> => {
     if (cartLines.value.length === 0 || isSubmitting.value) {
       return null
     }
@@ -4735,8 +4739,9 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const draftSequence = sequenceFromOrderId(draftOrderId)
     const existingOrder = draftOrderId ? orderQueue.value.find((entry) => entry.id === draftOrderId) : null
     const order = buildCounterOrderFromDraft(now)
+    const queuePrint = options.queuePrint ?? true
     const printPlan = buildOrderPrintPlan(order, currentPrinterSettings(), { timing: 'order' })
-    order.printStatus = printPlan.jobs.length > 0 ? 'queued' : 'skipped'
+    order.printStatus = queuePrint && printPlan.jobs.length > 0 ? 'queued' : existingOrder?.printStatus ?? 'skipped'
 
     if (draftOrderId || existingOrder) {
       nextSequence.value = Math.max(nextSequence.value, draftSequence + 1)
@@ -4748,11 +4753,13 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     } else {
       orderQueue.value.unshift(order)
     }
-    lastPrintPreview.value = printPlan.preview
+    if (queuePrint) {
+      lastPrintPreview.value = printPlan.preview
+    }
 
     if (!isPosApiConfigured) {
       rememberPendingLocalOrder(order)
-      if (printPlan.jobs.length > 0) {
+      if (queuePrint && printPlan.jobs.length > 0) {
         appendPrintPreviewStatus('STATUS 本機模式已產生列印 payload，尚未建立雲端 print_jobs')
       }
       setBackendStatus('fallback', '本機待同步', `${order.id} 已保留在平板，待 POS API 恢復後補同步`)
@@ -4793,7 +4800,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
         nextOrder.remoteId = persistedOrder.remoteId
       }
 
-      let backendDetail = `${order.id} 已建立，${printPlan.jobs.length > 0 ? '可立即出單' : printPlan.skippedReason ?? '未建立列印任務'}`
+      let backendDetail = `${order.id} 已建立，${
+        queuePrint
+          ? (printPlan.jobs.length > 0 ? '可立即出單' : printPlan.skippedReason ?? '未建立列印任務')
+          : '已儲存但暫不出單'
+      }`
       let claimSucceeded = true
 
       try {
