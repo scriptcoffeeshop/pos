@@ -23,6 +23,7 @@ export const initialOrders: PosOrder[] = [
     electronicInvoiceUploadDueAt: null,
     memberId: null,
     note: '拿鐵少冰，15 分鐘後取餐',
+    paymentNote: '',
     lines: [
       {
         itemId: 'latte-hot',
@@ -96,6 +97,7 @@ export const initialOrders: PosOrder[] = [
     electronicInvoiceUploadDueAt: new Date(Date.now() + 1000 * 60 * 60 * 44).toISOString(),
     memberId: null,
     note: '送到一樓櫃台',
+    paymentNote: '',
     lines: [
       {
         itemId: 'americano-ice',

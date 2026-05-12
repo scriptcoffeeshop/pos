@@ -150,6 +150,7 @@ export interface PosOrder {
   electronicInvoiceUploadDueAt: string | null
   memberId: string | null
   note: string
+  paymentNote: string
   qrSessionOrderId?: string | null
   qrSessionStartedAt?: string | null
   lines: CartLine[]

@@ -1200,6 +1200,7 @@ const submitOnlineOrder = async (): Promise<void> => {
       qrTableLabel ? `桌位 ${qrTableLabel}` : '',
       orderNoteVisible.value ? customer.note.trim() : '',
     ].filter(Boolean).join(' · '),
+    paymentNote: '',
     qrSessionOrderId: qrSessionOrderId || null,
     qrSessionStartedAt: qrSessionStartedAt || null,
     lines: cartLines.value.map((line) => ({ ...line, options: [...line.options] })),

@@ -92,6 +92,7 @@ interface CreateOrderInput {
   electronicInvoicePrintMode?: ElectronicInvoicePrintMode;
   memberId?: string | null;
   note?: string;
+  paymentNote?: string;
   qrSessionOrderId?: string | null;
   qrSessionStartedAt?: string | null;
   subtotal: number;
@@ -2197,6 +2198,7 @@ const buildOrderEnhancementPayload = (
   discount_amount: clampNonNegativeInteger(input.discountAmount),
   points_redeemed: clampNonNegativeInteger(input.pointsRedeemed),
   coupon_code: normalizeCouponCode(input.couponCode),
+  payment_note: sanitizeText(input.paymentNote, "").slice(0, 240),
   payment_splits: normalizePaymentSplits(input.paymentSplits),
   payment_breakdown: normalizePaymentBreakdown(input.paymentBreakdown),
   transaction_receipt_count: clampIntegerRange(input.transactionReceiptCount, 0, 0, 10),
@@ -7311,6 +7313,14 @@ const validateOrderEnhancements = (input: CreateOrderInput): string | null => {
 
   if (input.paymentBreakdown !== undefined && !Array.isArray(input.paymentBreakdown)) {
     return "paymentBreakdown must be an array";
+  }
+
+  if (input.paymentNote !== undefined && typeof input.paymentNote !== "string") {
+    return "paymentNote must be a string";
+  }
+
+  if (sanitizeText(input.paymentNote, "").length > 240) {
+    return "paymentNote must be 240 characters or fewer";
   }
 
   const taxId = sanitizeText(input.taxId, "").replace(/\s/g, "");
