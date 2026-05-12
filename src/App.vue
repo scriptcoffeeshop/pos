@@ -58,6 +58,7 @@ import { activeDineInTimeLimitRule, calculateDineInTimeLimitWindow } from './lib
 import { formatCurrency, formatDateKey, formatOrderTime, formatRelativeMinutes } from './lib/formatters'
 import type { RegisterReportKind } from './lib/printing'
 import { serviceChargeRateForMode } from './lib/serviceCharge'
+import { zeroTaxSalesReasonOptions } from './lib/taxCategory'
 import {
   createAdminReservation,
   createAdminMember,
@@ -926,6 +927,7 @@ const {
   updatingPaymentOrderId,
   voidingOrderId,
   voidOrderForStation,
+  zeroTaxSalesReasonRequired,
 } = usePosSession({ autoLoad: !isConsumerDomain })
 
 const accessVerificationPrompt = ref<AccessVerificationPrompt | null>(null)
@@ -12887,6 +12889,16 @@ onBeforeUnmount(() => {
                           捐贈碼
                           <input v-model="customer.invoiceDonationCode" type="text" inputmode="numeric" maxlength="7" placeholder="3 至 7 碼" />
                         </label>
+                        <label v-if="zeroTaxSalesReasonRequired || customer.zeroTaxSalesReason">
+                          零稅銷售原因
+                          <select v-model="customer.zeroTaxSalesReason">
+                            <option value="">請選擇</option>
+                            <option v-for="option in zeroTaxSalesReasonOptions" :key="option.value" :value="option.value">
+                              {{ option.label }}
+                            </option>
+                          </select>
+                          <small>全零稅商品開立電子發票時必填</small>
+                        </label>
                       </div>
                     </section>
 
@@ -13629,6 +13641,10 @@ onBeforeUnmount(() => {
                               <template v-if="order.invoiceDonationCode">
                                 <span>捐贈碼</span>
                                 <strong>{{ order.invoiceDonationCode }}</strong>
+                              </template>
+                              <template v-if="order.zeroTaxSalesReason">
+                                <span>零稅原因</span>
+                                <strong>{{ order.zeroTaxSalesReason }}</strong>
                               </template>
                               <template v-if="order.electronicInvoiceRequested">
                                 <span>電子發票</span>
@@ -14668,6 +14684,10 @@ onBeforeUnmount(() => {
               <article v-if="onlineReminderDetailOrder.electronicInvoiceRequested">
                 <span>電子發票</span>
                 <strong>{{ electronicInvoiceStatusLabels[onlineReminderDetailOrder.electronicInvoiceStatus] }}</strong>
+              </article>
+              <article v-if="onlineReminderDetailOrder.zeroTaxSalesReason">
+                <span>零稅原因</span>
+                <strong>{{ onlineReminderDetailOrder.zeroTaxSalesReason }}</strong>
               </article>
             </div>
 
@@ -15771,6 +15791,10 @@ onBeforeUnmount(() => {
                 <div v-if="selectedTransactionOrder.invoiceDonationCode">
                   <dt>捐贈碼</dt>
                   <dd>{{ selectedTransactionOrder.invoiceDonationCode }}</dd>
+                </div>
+                <div v-if="selectedTransactionOrder.zeroTaxSalesReason">
+                  <dt>零稅原因</dt>
+                  <dd>{{ selectedTransactionOrder.zeroTaxSalesReason }}</dd>
                 </div>
                 <div v-if="selectedTransactionOrder.taxId">
                   <dt>統編</dt>

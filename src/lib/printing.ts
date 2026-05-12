@@ -110,6 +110,10 @@ const invoiceLinesForOrder = (order: PosOrder): string[] => {
     invoiceLines.push(`DONATE ${order.invoiceDonationCode}`)
   }
 
+  if (order.zeroTaxSalesReason) {
+    invoiceLines.push(`ZERO TAX ${order.zeroTaxSalesReason}`)
+  }
+
   if (order.electronicInvoiceRequested) {
     invoiceLines.push(`E-INVOICE ${order.electronicInvoiceStatus.toUpperCase()}`)
   }

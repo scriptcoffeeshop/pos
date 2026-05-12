@@ -13,7 +13,7 @@ import {
   normalizeDiscountSettings,
 } from '../lib/discounts'
 import { isNativeLanPrinterAvailable, lanPrinterModeLabel, sendLanPrintPayload } from '../lib/lanPrinter'
-import { normalizeProductTaxCategory } from '../lib/taxCategory'
+import { normalizeProductTaxCategory, normalizeZeroTaxSalesReason } from '../lib/taxCategory'
 import {
   clearOnlineOrderNotifier,
   markOnlineOrderNotifierSeen,
@@ -225,6 +225,7 @@ const defaultCustomerDraft = (): CustomerDraft => ({
   taxId: '',
   invoiceCarrierBarcode: '',
   invoiceDonationCode: '',
+  zeroTaxSalesReason: '',
   electronicInvoiceRequested: false,
   electronicInvoicePrintMode: 'none',
   note: '',
@@ -411,6 +412,7 @@ const sanitizeCustomerDraft = (value: unknown): CustomerDraft => {
     invoiceDonationCode: typeof draft.invoiceDonationCode === 'string'
       ? draft.invoiceDonationCode
       : fallback.invoiceDonationCode,
+    zeroTaxSalesReason: normalizeZeroTaxSalesReason(draft.zeroTaxSalesReason),
     electronicInvoiceRequested: typeof draft.electronicInvoiceRequested === 'boolean'
       ? draft.electronicInvoiceRequested
       : fallback.electronicInvoiceRequested,
@@ -479,6 +481,7 @@ const writeCounterDraft = (draft: CounterDraftState): void => {
       draft.customer.taxId.trim().length > 0 ||
       draft.customer.invoiceCarrierBarcode.trim().length > 0 ||
       draft.customer.invoiceDonationCode.trim().length > 0 ||
+      draft.customer.zeroTaxSalesReason.trim().length > 0 ||
       draft.customer.electronicInvoiceRequested ||
       draft.customer.electronicInvoicePrintMode !== 'none' ||
       draft.customer.note.trim().length > 0 ||
@@ -576,6 +579,7 @@ const sanitizeStoredOrder = (value: unknown, requireLines: boolean): PosOrder | 
     taxId: typeof order.taxId === 'string' ? order.taxId : '',
     invoiceCarrierBarcode: typeof order.invoiceCarrierBarcode === 'string' ? order.invoiceCarrierBarcode : '',
     invoiceDonationCode: typeof order.invoiceDonationCode === 'string' ? order.invoiceDonationCode : '',
+    zeroTaxSalesReason: normalizeZeroTaxSalesReason(order.zeroTaxSalesReason),
     electronicInvoiceRequested: order.electronicInvoiceRequested === true,
     electronicInvoiceStatus: isElectronicInvoiceStatus(order.electronicInvoiceStatus) ? order.electronicInvoiceStatus : 'not_requested',
     electronicInvoicePrintMode: isElectronicInvoicePrintMode(order.electronicInvoicePrintMode) ? order.electronicInvoicePrintMode : 'none',
@@ -2090,6 +2094,14 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
   )
 
   const cartQuantity = computed(() => cartLines.value.reduce((total, line) => total + line.quantity, 0))
+  const cartRequiresZeroTaxSalesReason = computed(() =>
+    cartLines.value.length > 0 && cartLines.value.every((line) => line.taxCategory === 'zero'),
+  )
+  const zeroTaxSalesReasonRequired = computed(() =>
+    engagementSettings.value.electronicInvoice.enabled &&
+    invoiceRequestedFromDraft(customer) &&
+    cartRequiresZeroTaxSalesReason.value,
+  )
   const lineCountsForProductTotal = (line: CartLine): boolean => {
     const settings = engagementSettings.value.productTotalDisplay
     if (!settings.enabled) {
@@ -2229,6 +2241,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.taxId = nextDraft.taxId
     customer.invoiceCarrierBarcode = nextDraft.invoiceCarrierBarcode
     customer.invoiceDonationCode = nextDraft.invoiceDonationCode
+    customer.zeroTaxSalesReason = nextDraft.zeroTaxSalesReason
     customer.electronicInvoiceRequested = engagementSettings.value.electronicInvoice.enabled &&
       engagementSettings.value.electronicInvoice.defaultIssueOnCheckout
     customer.electronicInvoicePrintMode = engagementSettings.value.electronicInvoice.defaultPrintPaper ? 'paper' : 'none'
@@ -2291,6 +2304,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       taxId: '',
       invoiceCarrierBarcode: '',
       invoiceDonationCode: '',
+      zeroTaxSalesReason: '',
       electronicInvoiceRequested: false,
       electronicInvoiceStatus: 'not_requested',
       electronicInvoicePrintMode: 'none',
@@ -2546,6 +2560,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       taxId: normalizeTaxId(customer.taxId),
       invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
       invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+      zeroTaxSalesReason: normalizeZeroTaxSalesReason(customer.zeroTaxSalesReason),
       electronicInvoiceRequested,
       electronicInvoiceStatus: currentOrder.electronicInvoiceStatus === 'not_requested'
         ? electronicInvoiceStatusFor(electronicInvoiceRequested, nextPaymentStatus)
@@ -4805,6 +4820,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
       taxId: normalizeTaxId(customer.taxId),
       invoiceCarrierBarcode: normalizeInvoiceCarrierBarcode(customer.invoiceCarrierBarcode),
       invoiceDonationCode: normalizeInvoiceDonationCode(customer.invoiceDonationCode),
+      zeroTaxSalesReason: normalizeZeroTaxSalesReason(customer.zeroTaxSalesReason),
       electronicInvoiceRequested,
       electronicInvoiceStatus: existingOrder?.electronicInvoiceStatus && existingOrder.electronicInvoiceStatus !== 'not_requested'
         ? existingOrder.electronicInvoiceStatus
@@ -4863,6 +4879,11 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     const invoiceError = invoiceFieldError(customer.taxId, customer.invoiceCarrierBarcode, customer.invoiceDonationCode)
     if (invoiceError) {
       setBackendStatus('fallback', '發票資訊格式錯誤', invoiceError)
+      return null
+    }
+
+    if (finish && zeroTaxSalesReasonRequired.value && !normalizeZeroTaxSalesReason(customer.zeroTaxSalesReason)) {
+      setBackendStatus('fallback', '零稅銷售原因未選', '全零稅商品開立電子發票時需選擇銷售原因')
       return null
     }
 
@@ -5060,6 +5081,7 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     customer.taxId = editableOrder.taxId
     customer.invoiceCarrierBarcode = editableOrder.invoiceCarrierBarcode
     customer.invoiceDonationCode = editableOrder.invoiceDonationCode
+    customer.zeroTaxSalesReason = editableOrder.zeroTaxSalesReason
     customer.electronicInvoiceRequested = editableOrder.electronicInvoiceRequested
     customer.electronicInvoicePrintMode = editableOrder.electronicInvoicePrintMode
     customer.note = editableOrder.note
@@ -5416,5 +5438,6 @@ export const usePosSession = (options: UsePosSessionOptions = {}) => {
     updateProductSupplyStatus,
     voidingOrderId,
     voidOrderForStation,
+    zeroTaxSalesReasonRequired,
   }
 }
