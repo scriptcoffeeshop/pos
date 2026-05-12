@@ -49,6 +49,7 @@ import {
   fetchAdminCloseoutReportDeliveries,
   fetchAdminCoupons,
   fetchAdminDailyReport,
+  fetchAdminDiscountAnalysisReport,
   fetchAdminElectronicInvoiceReport,
   fetchAdminInventory,
   fetchAdminMembers,
@@ -76,6 +77,9 @@ import type {
   CloseoutReportDelivery,
   CustomerEngagementSettings,
   DailySalesReport,
+  DiscountAnalysisActivityType,
+  DiscountAnalysisReport,
+  DiscountAnalysisReportTimeUnit,
   DiscountCampaign,
   DiscountSettings,
   ElectronicInvoiceReport,
@@ -942,6 +946,14 @@ const noteAnalysisReportSource = ref<OrderSource | 'all'>('all')
 const noteAnalysisReportMinPeople = ref<number | null>(null)
 const noteAnalysisReportMaxPeople = ref<number | null>(null)
 const noteAnalysisReport = ref<NoteAnalysisReport | null>(null)
+const discountAnalysisReportStartDate = ref(dateInputDaysAgo(6))
+const discountAnalysisReportEndDate = ref(toDateInput())
+const discountAnalysisReportTimeUnit = ref<DiscountAnalysisReportTimeUnit>('day')
+const discountAnalysisReportServiceMode = ref<ServiceMode | 'all'>('all')
+const discountAnalysisReportSource = ref<OrderSource | 'all'>('all')
+const discountAnalysisReportMinPeople = ref<number | null>(null)
+const discountAnalysisReportMaxPeople = ref<number | null>(null)
+const discountAnalysisReport = ref<DiscountAnalysisReport | null>(null)
 const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
 const electronicInvoiceReportEndDate = ref(toDateInput())
 const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
@@ -984,6 +996,7 @@ const isMemberLoading = ref(false)
 const isReportLoading = ref(false)
 const isProductSalesReportLoading = ref(false)
 const isNoteAnalysisReportLoading = ref(false)
+const isDiscountAnalysisReportLoading = ref(false)
 const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
@@ -1182,6 +1195,20 @@ const noteAnalysisReportRangeValid = computed(() =>
 )
 const noteAnalysisTopNote = computed(() => noteAnalysisReport.value?.notes[0] ?? null)
 const noteAnalysisTopProduct = computed(() => noteAnalysisReport.value?.products[0] ?? null)
+const discountAnalysisReportRangeDays = computed(() => {
+  if (!discountAnalysisReportStartDate.value || !discountAnalysisReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${discountAnalysisReportStartDate.value}T00:00:00`)
+  const end = new Date(`${discountAnalysisReportEndDate.value}T00:00:00`)
+  const diffDays = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
+  return Number.isFinite(diffDays) && diffDays > 0 ? diffDays : null
+})
+const discountAnalysisReportRangeValid = computed(() =>
+  discountAnalysisReportRangeDays.value !== null && discountAnalysisReportRangeDays.value <= 93,
+)
+const discountAnalysisTopActivity = computed(() => discountAnalysisReport.value?.activities[0] ?? null)
 const electronicInvoiceReportRangeDays = computed(() => {
   if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
     return null
@@ -2066,6 +2093,15 @@ const formatReportPercent = (value: number): string =>
 const productSalesCategoryLabel = (category: string): string =>
   categoryLabels[category as MenuCategory] ?? category
 
+const discountAnalysisActivityTypeLabel = (type: DiscountAnalysisActivityType): string => {
+  const labels: Record<DiscountAnalysisActivityType, string> = {
+    'merchant-discount': '店家優惠',
+    coupon: '優惠券',
+  }
+
+  return labels[type] ?? type
+}
+
 const closeoutReportDeliveryStatusLabel = (delivery: CloseoutReportDelivery): string => {
   const labels: Record<CloseoutReportDelivery['status'], string> = {
     queued: '待寄送',
@@ -2256,6 +2292,47 @@ const exportNoteAnalysisReportCsv = (): void => {
 
   downloadCsv(`script-coffee-note-analysis-${report.startDate}-${report.endDate}.csv`, rows)
   adminMessage.value = `${report.startDate} - ${report.endDate} 註記分析 CSV 已匯出`
+}
+
+const exportDiscountAnalysisReportCsv = (): void => {
+  const report = discountAnalysisReport.value
+  if (!report) {
+    adminMessage.value = '請先載入優惠活動分析'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['section', 'activity_name', 'activity_type', 'orders', 'discounted_sales', 'sales_share', 'discount_amount', 'pos_sales', 'online_sales', 'qr_sales'],
+    ['summary', 'total_orders', '', report.summary.totalOrders, report.summary.totalNetSales, '', '', '', '', ''],
+    ['summary', 'discount_orders', '', report.summary.discountOrderCount, report.summary.discountOrderSales, report.summary.discountSalesShare, report.summary.totalDiscountAmount, '', '', ''],
+    ...report.activities.map((row) => [
+      'activity',
+      row.activityName,
+      discountAnalysisActivityTypeLabel(row.activityType),
+      row.orderCount,
+      row.discountedSales,
+      row.salesShare,
+      row.discountAmount,
+      row.posSales,
+      row.onlineSales,
+      row.qrSales,
+    ]),
+    ...report.trend.map((row) => [
+      'trend',
+      row.label,
+      '',
+      row.orderCount,
+      row.discountedSales,
+      '',
+      row.discountAmount,
+      '',
+      '',
+      '',
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-discount-analysis-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 優惠活動分析 CSV 已匯出`
 }
 
 const exportElectronicInvoiceReportCsv = (): void => {
@@ -2682,6 +2759,16 @@ type NoteAnalysisReportQuery = {
   maxPartySize: number | null
 }
 
+type DiscountAnalysisReportQuery = {
+  startDate: string
+  endDate: string
+  timeUnit: DiscountAnalysisReportTimeUnit
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
 const emptyProductSalesReport = (query: ProductSalesReportQuery): ProductSalesReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2754,6 +2841,42 @@ const noteAnalysisReportQueryOptions = (): NoteAnalysisReportQuery | null => {
   }
 }
 
+const emptyDiscountAnalysisReport = (query: DiscountAnalysisReportQuery): DiscountAnalysisReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  timeUnit: query.timeUnit,
+  summary: {
+    totalOrders: 0,
+    totalNetSales: 0,
+    discountOrderCount: 0,
+    discountOrderSales: 0,
+    discountSalesShare: 0,
+    totalDiscountAmount: 0,
+    averageDiscountPerOrder: 0,
+  },
+  activities: [],
+  trend: [],
+})
+
+const discountAnalysisReportQueryOptions = (): DiscountAnalysisReportQuery | null => {
+  if (!discountAnalysisReportRangeValid.value) {
+    adminMessage.value = '優惠活動分析日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: discountAnalysisReportStartDate.value,
+    endDate: discountAnalysisReportEndDate.value,
+    timeUnit: discountAnalysisReportTimeUnit.value,
+    serviceMode: discountAnalysisReportServiceMode.value,
+    source: discountAnalysisReportSource.value,
+    minPartySize: discountAnalysisReportMinPeople.value ? Math.max(1, Math.trunc(discountAnalysisReportMinPeople.value)) : null,
+    maxPartySize: discountAnalysisReportMaxPeople.value ? Math.max(1, Math.trunc(discountAnalysisReportMaxPeople.value)) : null,
+  }
+}
+
 const emptyElectronicInvoiceReport = (query: ElectronicInvoiceReportQuery): ElectronicInvoiceReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2798,12 +2921,14 @@ const loadAdminData = async (): Promise<void> => {
     const timeClockQuery = timeClockQueryOptions()
     const productSalesReportQuery = productSalesReportQueryOptions()
     const noteAnalysisReportQuery = noteAnalysisReportQueryOptions()
+    const discountAnalysisReportQuery = discountAnalysisReportQueryOptions()
     const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
-    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !electronicInvoiceReportQuery) {
+    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !discountAnalysisReportQuery || !electronicInvoiceReportQuery) {
       return
     }
     let productSalesReportWarning = ''
     let noteAnalysisReportWarning = ''
+    let discountAnalysisReportWarning = ''
     let electronicInvoiceReportWarning = ''
 
     const [
@@ -2823,6 +2948,7 @@ const loadAdminData = async (): Promise<void> => {
       closeoutDeliveries,
       productReport,
       noteReport,
+      discountReport,
       invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
@@ -2846,6 +2972,10 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminNoteAnalysisReport(noteAnalysisReportQuery).catch((error) => {
         noteAnalysisReportWarning = error instanceof Error ? error.message : '註記分析暫時無法載入'
         return emptyNoteAnalysisReport(noteAnalysisReportQuery)
+      }),
+      fetchAdminDiscountAnalysisReport(discountAnalysisReportQuery).catch((error) => {
+        discountAnalysisReportWarning = error instanceof Error ? error.message : '優惠活動分析暫時無法載入'
+        return emptyDiscountAnalysisReport(discountAnalysisReportQuery)
       }),
       fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
         electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
@@ -2874,9 +3004,10 @@ const loadAdminData = async (): Promise<void> => {
     closeoutReportDeliveries.value = closeoutDeliveries
     productSalesReport.value = productReport
     noteAnalysisReport.value = noteReport
+    discountAnalysisReport.value = discountReport
     electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${discountReport.summary.discountOrderCount} 張優惠訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${discountAnalysisReportWarning ? `；優惠活動分析待後端更新：${discountAnalysisReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -3041,6 +3172,25 @@ const loadNoteAnalysisReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '註記分析讀取失敗'
   } finally {
     isNoteAnalysisReportLoading.value = false
+  }
+}
+
+const loadDiscountAnalysisReport = async (): Promise<void> => {
+  const query = discountAnalysisReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isDiscountAnalysisReportLoading.value = true
+  adminMessage.value = '讀取優惠活動分析中'
+
+  try {
+    discountAnalysisReport.value = await fetchAdminDiscountAnalysisReport(query)
+    adminMessage.value = `已載入 ${discountAnalysisReport.value.summary.discountOrderCount} 張優惠訂單，折抵 ${formatCurrency(discountAnalysisReport.value.summary.totalDiscountAmount)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '優惠活動分析讀取失敗'
+  } finally {
+    isDiscountAnalysisReportLoading.value = false
   }
 }
 
@@ -7650,6 +7800,153 @@ const saveAccessControl = async (): Promise<void> => {
               <div v-if="noteAnalysisReport.trend.length === 0" class="empty-state">
                 <Search :size="24" aria-hidden="true" />
                 <span>此區間尚無註記走勢</span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="優惠活動分析">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Discount Analysis</p>
+              <h3>優惠活動分析</h3>
+            </div>
+            <span class="panel-note">
+              {{ discountAnalysisReport ? `${discountAnalysisReport.startDate} - ${discountAnalysisReport.endDate} · ${discountAnalysisReport.summary.discountOrderCount} 張優惠訂單` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="discountAnalysisReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="discountAnalysisReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              單位
+              <select v-model="discountAnalysisReportTimeUnit">
+                <option value="day">日</option>
+                <option value="week">週</option>
+                <option value="month">月</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="discountAnalysisReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="discountAnalysisReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="discountAnalysisReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="discountAnalysisReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isDiscountAnalysisReportLoading" @click="loadDiscountAnalysisReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isDiscountAnalysisReportLoading ? '讀取中' : '刷新優惠' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!discountAnalysisReport" @click="exportDiscountAnalysisReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出優惠 CSV
+            </button>
+          </div>
+
+          <div v-if="discountAnalysisReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>優惠訂單營業額</span>
+              <strong>{{ formatCurrency(discountAnalysisReport.summary.discountOrderSales) }}</strong>
+              <small>{{ discountAnalysisReport.summary.discountOrderCount }} 張 · 總占比 {{ formatReportPercent(discountAnalysisReport.summary.discountSalesShare) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>優惠折抵金額</span>
+              <strong>{{ formatCurrency(discountAnalysisReport.summary.totalDiscountAmount) }}</strong>
+              <small>平均 {{ formatCurrency(discountAnalysisReport.summary.averageDiscountPerOrder) }} / 優惠訂單</small>
+            </article>
+            <article class="admin-report-card">
+              <span>營業淨額</span>
+              <strong>{{ formatCurrency(discountAnalysisReport.summary.totalNetSales) }}</strong>
+              <small>{{ discountAnalysisReport.summary.totalOrders }} 張已收款訂單</small>
+            </article>
+            <article class="admin-report-card">
+              <span>主要優惠</span>
+              <strong>{{ discountAnalysisTopActivity?.activityName ?? '尚無' }}</strong>
+              <small>{{ discountAnalysisTopActivity ? `${discountAnalysisTopActivity.orderCount} 張 · ${formatCurrency(discountAnalysisTopActivity.discountAmount)}` : '尚無資料' }}</small>
+            </article>
+          </div>
+
+          <div v-if="discountAnalysisReport" class="admin-section-grid admin-report-sections">
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Activities</p>
+                  <h3>優惠列表</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in discountAnalysisReport.activities.slice(0, 12)" :key="row.key" class="admin-report-row">
+                <span>{{ row.activityName }}</span>
+                <strong>{{ formatCurrency(row.discountedSales) }}</strong>
+                <small>{{ discountAnalysisActivityTypeLabel(row.activityType) }} · {{ row.orderCount }} 張 · 折抵 {{ formatCurrency(row.discountAmount) }} · 占比 {{ formatReportPercent(row.salesShare) }}</small>
+              </article>
+              <div v-if="discountAnalysisReport.activities.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間沒有優惠活動訂單</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Channel</p>
+                  <h3>優惠活動營業小計</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in discountAnalysisReport.activities.slice(0, 12)" :key="`channel-${row.key}`" class="admin-report-row">
+                <span>{{ row.activityName }}</span>
+                <strong>{{ formatCurrency(row.discountedSales) }}</strong>
+                <small>POS {{ formatCurrency(row.posSales) }} · 線上 {{ formatCurrency(row.onlineSales) }} · 掃碼 {{ formatCurrency(row.qrSales) }}</small>
+              </article>
+              <div v-if="discountAnalysisReport.activities.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>尚無通路小計</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Trend</p>
+                  <h3>成效總覽</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in discountAnalysisReport.trend.slice(0, 16)" :key="row.key" class="admin-report-row">
+                <span>{{ row.label }}</span>
+                <strong>{{ formatCurrency(row.discountedSales) }}</strong>
+                <small>{{ row.orderCount }} 張 · 折抵 {{ formatCurrency(row.discountAmount) }}</small>
+              </article>
+              <div v-if="discountAnalysisReport.trend.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間尚無優惠成效資料</span>
               </div>
             </section>
           </div>

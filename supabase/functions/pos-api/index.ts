@@ -5226,6 +5226,100 @@ api.get("/admin/reports/note-analysis", async (c) => {
   });
 });
 
+api.get("/admin/reports/discount-analysis", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "discount analysis report can query the latest 2 years only" }, 400);
+  }
+
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, discount_amount, coupon_code, payment_method, payment_status, status, created_at",
+    )
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString())
+    .in("payment_status", Array.from(collectedPaymentStatuses))
+    .neq("status", "voided")
+    .neq("status", "failed")
+    .order("created_at", { ascending: true })
+    .limit(5000);
+
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const { data: orderData, error: orderError } = await query;
+  if (orderError) {
+    return c.json({ error: orderError.message }, 500);
+  }
+
+  const rows = ((orderData ?? []) as DiscountAnalysisOrderRow[]).filter((order) => {
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+  const orderIds = rows.map((order) => order.id);
+  const couponCodes = [...new Set(rows.map((order) => sanitizeText(order.coupon_code, "").toUpperCase()).filter(Boolean))];
+
+  const [auditResult, couponResult] = await Promise.all([
+    orderIds.length > 0
+      ? supabase
+        .from("pos_audit_events")
+        .select("order_id, metadata")
+        .eq("action", "order.create")
+        .in("order_id", orderIds)
+        .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    couponCodes.length > 0
+      ? supabase
+        .from("member_coupons")
+        .select("code, title")
+        .in("code", couponCodes)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (auditResult.error) {
+    return c.json({ error: auditResult.error.message }, 500);
+  }
+  if (couponResult.error) {
+    return c.json({ error: couponResult.error.message }, 500);
+  }
+
+  return c.json({
+    report: buildDiscountAnalysisReport(
+      range,
+      validDiscountAnalysisTimeUnit(c.req.query("timeUnit")),
+      rows,
+      (auditResult.data ?? []) as DiscountAnalysisAuditEventRow[],
+      (couponResult.data ?? []) as DiscountAnalysisCouponRow[],
+    ),
+  });
+});
+
 api.get("/admin/reports/electronic-invoices", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -7054,6 +7148,8 @@ interface DailyReportOrderRow extends RegisterOrderSummaryRow {
 
 type ProductSalesReportTimeUnit = "day" | "week" | "month";
 type NoteAnalysisReportTimeUnit = "day" | "week" | "month";
+type DiscountAnalysisReportTimeUnit = "day" | "week" | "month";
+type DiscountAnalysisActivityType = "merchant-discount" | "coupon";
 
 interface ProductCatalogReportRow {
   id: string;
@@ -7120,6 +7216,41 @@ interface NoteAnalysisTrendAccumulator {
   label: string;
   clickCount: number;
   priceDeltaTotal: number;
+}
+
+interface DiscountAnalysisOrderRow extends DailyReportOrderRow {
+  discount_amount?: number | null;
+  coupon_code?: string | null;
+}
+
+interface DiscountAnalysisAuditEventRow {
+  order_id: string | null;
+  metadata: unknown;
+}
+
+interface DiscountAnalysisCouponRow {
+  code: string;
+  title: string;
+}
+
+interface DiscountAnalysisActivityAccumulator {
+  key: string;
+  activityName: string;
+  activityType: DiscountAnalysisActivityType;
+  orderIds: Set<string>;
+  discountedSales: number;
+  discountAmount: number;
+  posSales: number;
+  onlineSales: number;
+  qrSales: number;
+}
+
+interface DiscountAnalysisTrendAccumulator {
+  key: string;
+  label: string;
+  orderIds: Set<string>;
+  discountedSales: number;
+  discountAmount: number;
 }
 
 const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
@@ -7729,6 +7860,9 @@ const validProductSalesTimeUnit = (value: string | undefined): ProductSalesRepor
 const validNoteAnalysisTimeUnit = (value: string | undefined): NoteAnalysisReportTimeUnit =>
   value === "week" || value === "month" ? value : "day";
 
+const validDiscountAnalysisTimeUnit = (value: string | undefined): DiscountAnalysisReportTimeUnit =>
+  value === "week" || value === "month" ? value : "day";
+
 const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
   order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
 
@@ -8146,6 +8280,204 @@ const buildNoteAnalysisReport = (
       })
       .sort((a, b) => b.clickCount - a.clickCount || b.priceDeltaTotal - a.priceDeltaTotal),
     trend: Array.from(trendMap.values())
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
+};
+
+const normalizedDiscountAnalysisKey = (type: DiscountAnalysisActivityType, name: string): string =>
+  `${type}:${name.trim().replace(/\s+/g, " ").toLowerCase()}`;
+
+const discountAnalysisCampaignsFromMetadata = (
+  metadata: unknown,
+): Array<{ id: string; name: string; amount: number }> => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return [];
+  }
+
+  const rawCampaigns = (metadata as Record<string, unknown>).discountCampaigns;
+  if (!Array.isArray(rawCampaigns)) {
+    return [];
+  }
+
+  return rawCampaigns.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return [];
+    }
+
+    const campaign = entry as Record<string, unknown>;
+    const id = sanitizeText(campaign.id, "").slice(0, 80);
+    const name = sanitizeText(campaign.name, id || "店家優惠").slice(0, 120);
+    const amount = Math.max(0, Math.trunc(Number(campaign.amount) || 0));
+    return name && amount > 0 ? [{ id, name, amount }] : [];
+  });
+};
+
+const discountAnalysisCouponTitleFromMetadata = (metadata: unknown): string => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return "";
+  }
+
+  const rawCoupon = (metadata as Record<string, unknown>).redeemedCoupon;
+  if (!rawCoupon || typeof rawCoupon !== "object" || Array.isArray(rawCoupon)) {
+    return "";
+  }
+
+  return sanitizeText((rawCoupon as Record<string, unknown>).title, "").slice(0, 120);
+};
+
+const discountAnalysisActivityTypeLabel = (type: DiscountAnalysisActivityType): string =>
+  type === "coupon" ? "優惠券" : "店家優惠";
+
+const buildDiscountAnalysisReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  timeUnit: DiscountAnalysisReportTimeUnit,
+  rows: DiscountAnalysisOrderRow[],
+  auditEvents: DiscountAnalysisAuditEventRow[],
+  coupons: DiscountAnalysisCouponRow[],
+) => {
+  const auditByOrderId = new Map(
+    auditEvents.flatMap((event) => event.order_id ? [[event.order_id, event.metadata] as const] : []),
+  );
+  const couponTitleByCode = new Map(
+    coupons.map((coupon) => [sanitizeText(coupon.code, "").toUpperCase(), sanitizeText(coupon.title, "")]),
+  );
+  const activityMap = new Map<string, DiscountAnalysisActivityAccumulator>();
+  const trendMap = new Map<string, DiscountAnalysisTrendAccumulator>();
+  const rangeDays = Math.ceil((range.end.getTime() - range.start.getTime()) / (24 * 60 * 60_000));
+  const singleDay = rangeDays <= 1;
+
+  let totalNetSales = 0;
+  let discountOrderCount = 0;
+  let discountOrderSales = 0;
+  let totalDiscountAmount = 0;
+
+  const addActivity = (
+    order: DiscountAnalysisOrderRow,
+    activityName: string,
+    activityType: DiscountAnalysisActivityType,
+    discountAmount: number,
+  ): void => {
+    const amount = Math.max(0, Math.trunc(Number(discountAmount) || 0));
+    if (!activityName || amount <= 0) {
+      return;
+    }
+
+    const key = normalizedDiscountAnalysisKey(activityType, activityName);
+    const discountedSales = Math.max(Number(order.subtotal) || 0, 0);
+    const row = activityMap.get(key) ?? {
+      key,
+      activityName,
+      activityType,
+      orderIds: new Set<string>(),
+      discountedSales: 0,
+      discountAmount: 0,
+      posSales: 0,
+      onlineSales: 0,
+      qrSales: 0,
+    };
+
+    row.orderIds.add(order.id);
+    row.discountedSales += discountedSales;
+    row.discountAmount += amount;
+    if (order.source === "online") {
+      row.onlineSales += discountedSales;
+    } else if (order.source === "qr") {
+      row.qrSales += discountedSales;
+    } else {
+      row.posSales += discountedSales;
+    }
+    activityMap.set(key, row);
+  };
+
+  for (const order of rows) {
+    const orderSubtotal = Math.max(Number(order.subtotal) || 0, 0);
+    const orderDiscountAmount = Math.max(Number(order.discount_amount) || 0, 0);
+    totalNetSales += orderSubtotal;
+
+    if (orderDiscountAmount <= 0) {
+      continue;
+    }
+
+    discountOrderCount += 1;
+    discountOrderSales += orderSubtotal;
+    totalDiscountAmount += orderDiscountAmount;
+
+    const bucket = productSalesTrendBucket(order.created_at, timeUnit, singleDay);
+    const trend = trendMap.get(bucket.key) ?? {
+      ...bucket,
+      orderIds: new Set<string>(),
+      discountedSales: 0,
+      discountAmount: 0,
+    };
+    trend.orderIds.add(order.id);
+    trend.discountedSales += orderSubtotal;
+    trend.discountAmount += orderDiscountAmount;
+    trendMap.set(bucket.key, trend);
+
+    const metadata = auditByOrderId.get(order.id);
+    let allocatedDiscountAmount = 0;
+    for (const campaign of discountAnalysisCampaignsFromMetadata(metadata)) {
+      const amount = Math.min(campaign.amount, Math.max(0, orderDiscountAmount - allocatedDiscountAmount));
+      if (amount <= 0) {
+        continue;
+      }
+      addActivity(order, campaign.name, "merchant-discount", amount);
+      allocatedDiscountAmount += amount;
+    }
+
+    const residualDiscountAmount = Math.max(0, orderDiscountAmount - allocatedDiscountAmount);
+    if (residualDiscountAmount <= 0) {
+      continue;
+    }
+
+    const couponCode = sanitizeText(order.coupon_code, "").toUpperCase();
+    if (couponCode) {
+      const couponTitle = discountAnalysisCouponTitleFromMetadata(metadata) || couponTitleByCode.get(couponCode) ||
+        couponCode;
+      addActivity(order, `優惠券：${couponTitle}`, "coupon", residualDiscountAmount);
+    } else {
+      addActivity(order, "手動折扣", "merchant-discount", residualDiscountAmount);
+    }
+  }
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart: range.start.toISOString(),
+    rangeEnd: range.end.toISOString(),
+    timeUnit,
+    summary: {
+      totalOrders: rows.length,
+      totalNetSales,
+      discountOrderCount,
+      discountOrderSales,
+      discountSalesShare: roundedPercent(discountOrderSales, totalNetSales),
+      totalDiscountAmount,
+      averageDiscountPerOrder: discountOrderCount > 0 ? Math.round(totalDiscountAmount / discountOrderCount) : 0,
+    },
+    activities: Array.from(activityMap.values())
+      .map((row) => ({
+        key: row.key,
+        activityName: row.activityName,
+        activityType: row.activityType,
+        activityTypeLabel: discountAnalysisActivityTypeLabel(row.activityType),
+        orderCount: row.orderIds.size,
+        discountedSales: row.discountedSales,
+        salesShare: roundedPercent(row.discountedSales, totalNetSales),
+        discountAmount: row.discountAmount,
+        posSales: row.posSales,
+        onlineSales: row.onlineSales,
+        qrSales: row.qrSales,
+      }))
+      .sort((a, b) => b.discountedSales - a.discountedSales || b.discountAmount - a.discountAmount),
+    trend: Array.from(trendMap.values())
+      .map((row) => ({
+        key: row.key,
+        label: row.label,
+        orderCount: row.orderIds.size,
+        discountedSales: row.discountedSales,
+        discountAmount: row.discountAmount,
+      }))
       .sort((a, b) => a.key.localeCompare(b.key)),
   };
 };
