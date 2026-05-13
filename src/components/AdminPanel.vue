@@ -48,6 +48,7 @@ import {
   fetchAdminAuditEvents,
   fetchAdminCloseoutReportDeliveries,
   fetchAdminCoupons,
+  fetchAdminCheckoutVoidRecordReport,
   fetchAdminDailyReport,
   fetchAdminDiscountAnalysisReport,
   fetchAdminElectronicInvoiceReport,
@@ -75,6 +76,8 @@ import {
 import type {
   AccessControlSettings,
   AdminPermission,
+  CheckoutVoidRecordReport,
+  CheckoutVoidRecordStatus,
   CloseoutReportDelivery,
   CustomerEngagementSettings,
   DailySalesReport,
@@ -965,6 +968,14 @@ const serviceChargeReportSource = ref<OrderSource | 'all'>('all')
 const serviceChargeReportMinPeople = ref<number | null>(null)
 const serviceChargeReportMaxPeople = ref<number | null>(null)
 const serviceChargeReport = ref<ServiceChargeReport | null>(null)
+const checkoutVoidRecordReportStartDate = ref(dateInputDaysAgo(6))
+const checkoutVoidRecordReportEndDate = ref(toDateInput())
+const checkoutVoidRecordReportStatus = ref<CheckoutVoidRecordStatus | 'all'>('all')
+const checkoutVoidRecordReportServiceMode = ref<ServiceMode | 'all'>('all')
+const checkoutVoidRecordReportSource = ref<OrderSource | 'all'>('all')
+const checkoutVoidRecordReportMinPeople = ref<number | null>(null)
+const checkoutVoidRecordReportMaxPeople = ref<number | null>(null)
+const checkoutVoidRecordReport = ref<CheckoutVoidRecordReport | null>(null)
 const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
 const electronicInvoiceReportEndDate = ref(toDateInput())
 const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
@@ -1009,6 +1020,7 @@ const isProductSalesReportLoading = ref(false)
 const isNoteAnalysisReportLoading = ref(false)
 const isDiscountAnalysisReportLoading = ref(false)
 const isServiceChargeReportLoading = ref(false)
+const isCheckoutVoidRecordReportLoading = ref(false)
 const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
@@ -1236,6 +1248,22 @@ const serviceChargeReportRangeValid = computed(() =>
 )
 const serviceChargeTopServiceMode = computed(() => serviceChargeReport.value?.byServiceMode[0] ?? null)
 const serviceChargeTopSource = computed(() => serviceChargeReport.value?.bySource[0] ?? null)
+const checkoutVoidRecordReportRangeDays = computed(() => {
+  if (!checkoutVoidRecordReportStartDate.value || !checkoutVoidRecordReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${checkoutVoidRecordReportStartDate.value}T00:00:00`)
+  const end = new Date(`${checkoutVoidRecordReportEndDate.value}T00:00:00`)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start.getTime() > end.getTime()) {
+    return null
+  }
+
+  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
+})
+const checkoutVoidRecordReportRangeValid = computed(() =>
+  checkoutVoidRecordReportRangeDays.value !== null && checkoutVoidRecordReportRangeDays.value <= 93,
+)
 const electronicInvoiceReportRangeDays = computed(() => {
   if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
     return null
@@ -2112,6 +2140,28 @@ const electronicInvoiceStatusClass = (status: ElectronicInvoiceStatus): string =
   return 'status-pill--neutral'
 }
 
+const checkoutVoidRecordStatusLabel = (status: CheckoutVoidRecordStatus): string => {
+  const labels: Record<CheckoutVoidRecordStatus, string> = {
+    issued: '已開立',
+    voided: '已作廢',
+    refunded: '已退款',
+    failed: '已註銷',
+  }
+
+  return labels[status] ?? status
+}
+
+const checkoutVoidRecordStatusClass = (status: CheckoutVoidRecordStatus): string => {
+  if (status === 'issued') {
+    return 'status-pill--success'
+  }
+  if (status === 'failed') {
+    return 'status-pill--danger'
+  }
+
+  return 'status-pill--neutral'
+}
+
 const reportHourLabel = (hour: number): string => `${String(hour).padStart(2, '0')}:00`
 
 const formatReportPercent = (value: number): string =>
@@ -2403,6 +2453,45 @@ const exportServiceChargeReportCsv = (): void => {
 
   downloadCsv(`script-coffee-service-charges-${report.startDate}-${report.endDate}.csv`, rows)
   adminMessage.value = `${report.startDate} - ${report.endDate} 服務費報表 CSV 已匯出`
+}
+
+const exportCheckoutVoidRecordReportCsv = (): void => {
+  const report = checkoutVoidRecordReport.value
+  if (!report) {
+    adminMessage.value = '請先載入結帳／作廢紀錄'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['receipt_invoice_number', 'carrier_or_donation', 'tax_id', 'checkout_at', 'original_order_number', 'external_order_number', 'source', 'service_mode', 'people', 'service_fee_amount', 'extra_fee_amount', 'discount_amount', 'invoice_amount', 'payment_module', 'ledger', 'payment_info', 'payment_note', 'status', 'customer_name', 'customer_phone', 'order_labels_and_notes', 'orderer_info'],
+    ...report.rows.map((row) => [
+      row.receiptInvoiceNumber,
+      row.carrierOrDonationCode,
+      row.taxId,
+      row.checkoutAt,
+      row.originalOrderNumber,
+      row.externalOrderNumber,
+      reportBreakdownLabel(row.source),
+      reportBreakdownLabel(row.serviceMode),
+      row.partySize,
+      row.serviceFeeAmount,
+      row.extraFeeAmount,
+      row.discountAmount,
+      row.invoiceAmount,
+      row.paymentModule,
+      row.ledgerName,
+      row.paymentInfo,
+      row.paymentNote,
+      checkoutVoidRecordStatusLabel(row.status),
+      row.customerName,
+      row.customerPhone,
+      row.orderLabelsAndNotes,
+      row.ordererInfo,
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-checkout-void-records-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 結帳／作廢紀錄 CSV 已匯出`
 }
 
 const exportElectronicInvoiceReportCsv = (): void => {
@@ -2849,6 +2938,16 @@ type ServiceChargeReportQuery = {
   maxPartySize: number | null
 }
 
+type CheckoutVoidRecordReportQuery = {
+  startDate: string
+  endDate: string
+  status: CheckoutVoidRecordStatus | 'all'
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
 const emptyProductSalesReport = (query: ProductSalesReportQuery): ProductSalesReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2993,6 +3092,42 @@ const serviceChargeReportQueryOptions = (): ServiceChargeReportQuery | null => {
   }
 }
 
+const emptyCheckoutVoidRecordReport = (query: CheckoutVoidRecordReportQuery): CheckoutVoidRecordReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  summary: {
+    totalRecords: 0,
+    issuedRecords: 0,
+    voidedRecords: 0,
+    refundedRecords: 0,
+    failedRecords: 0,
+    receiptInvoiceTotal: 0,
+    serviceFeeTotal: 0,
+    extraFeeTotal: 0,
+    discountTotal: 0,
+  },
+  rows: [],
+})
+
+const checkoutVoidRecordReportQueryOptions = (): CheckoutVoidRecordReportQuery | null => {
+  if (!checkoutVoidRecordReportRangeValid.value) {
+    adminMessage.value = '結帳／作廢紀錄日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: checkoutVoidRecordReportStartDate.value,
+    endDate: checkoutVoidRecordReportEndDate.value,
+    status: checkoutVoidRecordReportStatus.value,
+    serviceMode: checkoutVoidRecordReportServiceMode.value,
+    source: checkoutVoidRecordReportSource.value,
+    minPartySize: checkoutVoidRecordReportMinPeople.value ? Math.max(1, Math.trunc(checkoutVoidRecordReportMinPeople.value)) : null,
+    maxPartySize: checkoutVoidRecordReportMaxPeople.value ? Math.max(1, Math.trunc(checkoutVoidRecordReportMaxPeople.value)) : null,
+  }
+}
+
 const emptyElectronicInvoiceReport = (query: ElectronicInvoiceReportQuery): ElectronicInvoiceReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -3039,14 +3174,16 @@ const loadAdminData = async (): Promise<void> => {
     const noteAnalysisReportQuery = noteAnalysisReportQueryOptions()
     const discountAnalysisReportQuery = discountAnalysisReportQueryOptions()
     const serviceChargeReportQuery = serviceChargeReportQueryOptions()
+    const checkoutVoidRecordReportQuery = checkoutVoidRecordReportQueryOptions()
     const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
-    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !discountAnalysisReportQuery || !serviceChargeReportQuery || !electronicInvoiceReportQuery) {
+    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !discountAnalysisReportQuery || !serviceChargeReportQuery || !checkoutVoidRecordReportQuery || !electronicInvoiceReportQuery) {
       return
     }
     let productSalesReportWarning = ''
     let noteAnalysisReportWarning = ''
     let discountAnalysisReportWarning = ''
     let serviceChargeReportWarning = ''
+    let checkoutVoidRecordReportWarning = ''
     let electronicInvoiceReportWarning = ''
 
     const [
@@ -3068,6 +3205,7 @@ const loadAdminData = async (): Promise<void> => {
       noteReport,
       discountReport,
       serviceChargeReportResult,
+      checkoutVoidReport,
       invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
@@ -3100,6 +3238,10 @@ const loadAdminData = async (): Promise<void> => {
         serviceChargeReportWarning = error instanceof Error ? error.message : '服務費報表暫時無法載入'
         return emptyServiceChargeReport(serviceChargeReportQuery)
       }),
+      fetchAdminCheckoutVoidRecordReport(checkoutVoidRecordReportQuery).catch((error) => {
+        checkoutVoidRecordReportWarning = error instanceof Error ? error.message : '結帳／作廢紀錄暫時無法載入'
+        return emptyCheckoutVoidRecordReport(checkoutVoidRecordReportQuery)
+      }),
       fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
         electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
         return emptyElectronicInvoiceReport(electronicInvoiceReportQuery)
@@ -3129,9 +3271,10 @@ const loadAdminData = async (): Promise<void> => {
     noteAnalysisReport.value = noteReport
     discountAnalysisReport.value = discountReport
     serviceChargeReport.value = serviceChargeReportResult
+    checkoutVoidRecordReport.value = checkoutVoidReport
     electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${discountReport.summary.discountOrderCount} 張優惠訂單、${serviceChargeReportResult.summary.serviceChargeOrderCount} 張服務費訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${discountAnalysisReportWarning ? `；優惠活動分析待後端更新：${discountAnalysisReportWarning}` : ''}${serviceChargeReportWarning ? `；服務費報表待後端更新：${serviceChargeReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${discountReport.summary.discountOrderCount} 張優惠訂單、${serviceChargeReportResult.summary.serviceChargeOrderCount} 張服務費訂單、${checkoutVoidReport.summary.totalRecords} 筆結帳／作廢紀錄、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${discountAnalysisReportWarning ? `；優惠活動分析待後端更新：${discountAnalysisReportWarning}` : ''}${serviceChargeReportWarning ? `；服務費報表待後端更新：${serviceChargeReportWarning}` : ''}${checkoutVoidRecordReportWarning ? `；結帳／作廢紀錄待後端更新：${checkoutVoidRecordReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -3334,6 +3477,25 @@ const loadServiceChargeReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '服務費報表讀取失敗'
   } finally {
     isServiceChargeReportLoading.value = false
+  }
+}
+
+const loadCheckoutVoidRecordReport = async (): Promise<void> => {
+  const query = checkoutVoidRecordReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isCheckoutVoidRecordReportLoading.value = true
+  adminMessage.value = '讀取結帳／作廢紀錄中'
+
+  try {
+    checkoutVoidRecordReport.value = await fetchAdminCheckoutVoidRecordReport(query)
+    adminMessage.value = `已載入 ${checkoutVoidRecordReport.value.summary.totalRecords} 筆結帳／作廢紀錄，結帳總額 ${formatCurrency(checkoutVoidRecordReport.value.summary.receiptInvoiceTotal)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '結帳／作廢紀錄讀取失敗'
+  } finally {
+    isCheckoutVoidRecordReportLoading.value = false
   }
 }
 
@@ -8239,6 +8401,129 @@ const saveAccessControl = async (): Promise<void> => {
                 <span>此區間尚無服務費走勢</span>
               </div>
             </section>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="結帳／作廢紀錄">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Checkout Records</p>
+              <h3>結帳／作廢紀錄</h3>
+            </div>
+            <span class="panel-note">
+              {{ checkoutVoidRecordReport ? `${checkoutVoidRecordReport.startDate} - ${checkoutVoidRecordReport.endDate} · ${checkoutVoidRecordReport.summary.totalRecords} 筆` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="checkoutVoidRecordReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="checkoutVoidRecordReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              狀態
+              <select v-model="checkoutVoidRecordReportStatus">
+                <option value="all">全部</option>
+                <option value="issued">已開立</option>
+                <option value="voided">已作廢</option>
+                <option value="refunded">已退款</option>
+                <option value="failed">已註銷</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="checkoutVoidRecordReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="checkoutVoidRecordReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="checkoutVoidRecordReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="checkoutVoidRecordReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isCheckoutVoidRecordReportLoading" @click="loadCheckoutVoidRecordReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isCheckoutVoidRecordReportLoading ? '讀取中' : '刷新紀錄' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!checkoutVoidRecordReport" @click="exportCheckoutVoidRecordReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出紀錄 CSV
+            </button>
+          </div>
+
+          <div v-if="checkoutVoidRecordReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>收據/發票結帳金額</span>
+              <strong>{{ formatCurrency(checkoutVoidRecordReport.summary.receiptInvoiceTotal) }}</strong>
+              <small>已扣除作廢與退款金額</small>
+            </article>
+            <article class="admin-report-card">
+              <span>服務費 / 運費</span>
+              <strong>{{ formatCurrency(checkoutVoidRecordReport.summary.serviceFeeTotal) }}</strong>
+              <small>運費 {{ formatCurrency(checkoutVoidRecordReport.summary.extraFeeTotal) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>折扣/折讓金額</span>
+              <strong>{{ formatCurrency(checkoutVoidRecordReport.summary.discountTotal) }}</strong>
+              <small>{{ checkoutVoidRecordReport.summary.totalRecords }} 筆紀錄</small>
+            </article>
+            <article class="admin-report-card">
+              <span>開立 / 作廢</span>
+              <strong>{{ checkoutVoidRecordReport.summary.issuedRecords }} / {{ checkoutVoidRecordReport.summary.voidedRecords + checkoutVoidRecordReport.summary.refundedRecords + checkoutVoidRecordReport.summary.failedRecords }}</strong>
+              <small>退款 {{ checkoutVoidRecordReport.summary.refundedRecords }} · 註銷 {{ checkoutVoidRecordReport.summary.failedRecords }}</small>
+            </article>
+          </div>
+
+          <div v-if="checkoutVoidRecordReport" class="admin-audit-list admin-report-delivery-list">
+            <article v-for="row in checkoutVoidRecordReport.rows" :key="row.orderId" class="admin-audit-row">
+              <header class="admin-row-header">
+                <div class="admin-audit-primary">
+                  <strong>{{ row.receiptInvoiceNumber }} · No. {{ row.originalOrderNumber }} · {{ formatCurrency(row.invoiceAmount) }}</strong>
+                  <span>{{ reportBreakdownLabel(row.source) }} / {{ reportBreakdownLabel(row.serviceMode) }} · {{ row.partySize }} 人 · {{ row.paymentModule }} · {{ row.ledgerName }}</span>
+                </div>
+                <time :datetime="row.checkoutAt">{{ formatAuditTime(row.checkoutAt) }}</time>
+              </header>
+              <div class="admin-audit-meta">
+                <span class="status-pill" :class="checkoutVoidRecordStatusClass(row.status)">
+                  {{ checkoutVoidRecordStatusLabel(row.status) }}
+                </span>
+                <span>服務費 {{ formatCurrency(row.serviceFeeAmount) }}</span>
+                <span>運費 {{ formatCurrency(row.extraFeeAmount) }}</span>
+                <span>折扣 {{ formatCurrency(row.discountAmount) }}</span>
+                <span>{{ row.paymentInfo }}</span>
+                <span v-if="row.paymentNote">支付備註 {{ row.paymentNote }}</span>
+                <span v-if="row.carrierOrDonationCode">載具/捐贈 {{ row.carrierOrDonationCode }}</span>
+                <span v-if="row.taxId">統編 {{ row.taxId }}</span>
+                <span v-if="row.externalOrderNumber">外部單號 {{ row.externalOrderNumber }}</span>
+                <span v-if="row.customerName || row.customerPhone">{{ row.customerName }} {{ row.customerPhone }}</span>
+                <span v-if="row.orderLabelsAndNotes">標籤/備註 {{ row.orderLabelsAndNotes }}</span>
+                <span v-if="row.ordererInfo">訂購人 {{ row.ordererInfo }}</span>
+              </div>
+            </article>
+
+            <div v-if="checkoutVoidRecordReport.rows.length === 0" class="empty-state">
+              <Search :size="24" aria-hidden="true" />
+              <span>此區間沒有結帳／作廢紀錄</span>
+            </div>
           </div>
         </section>
 

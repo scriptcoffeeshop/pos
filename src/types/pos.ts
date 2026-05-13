@@ -1096,6 +1096,8 @@ export type DiscountAnalysisReportTimeUnit = 'day' | 'week' | 'month'
 
 export type ServiceChargeReportTimeUnit = 'day' | 'week' | 'month'
 
+export type CheckoutVoidRecordStatus = 'issued' | 'voided' | 'refunded' | 'failed'
+
 export type DiscountAnalysisActivityType = 'merchant-discount' | 'coupon'
 
 export interface ProductSalesCategoryReportRow {
@@ -1290,6 +1292,53 @@ export interface ServiceChargeReport {
   byServiceMode: ServiceChargeBreakdownReportRow[]
   bySource: ServiceChargeBreakdownReportRow[]
   trend: ServiceChargeTrendReportRow[]
+}
+
+export interface CheckoutVoidRecordReportRow {
+  orderId: string
+  receiptInvoiceNumber: string
+  carrierOrDonationCode: string
+  taxId: string
+  checkoutAt: string
+  originalOrderNumber: string
+  externalOrderNumber: string
+  source: OrderSource
+  serviceMode: ServiceMode
+  partySize: number
+  serviceFeeAmount: number
+  extraFeeAmount: number
+  discountAmount: number
+  invoiceAmount: number
+  paymentModule: string
+  ledgerName: string
+  paymentInfo: string
+  paymentNote: string
+  status: CheckoutVoidRecordStatus
+  customerName: string
+  customerPhone: string
+  orderLabelsAndNotes: string
+  ordererInfo: string
+}
+
+export interface CheckoutVoidRecordReportSummary {
+  totalRecords: number
+  issuedRecords: number
+  voidedRecords: number
+  refundedRecords: number
+  failedRecords: number
+  receiptInvoiceTotal: number
+  serviceFeeTotal: number
+  extraFeeTotal: number
+  discountTotal: number
+}
+
+export interface CheckoutVoidRecordReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  summary: CheckoutVoidRecordReportSummary
+  rows: CheckoutVoidRecordReportRow[]
 }
 
 export interface ElectronicInvoiceReportRow {
