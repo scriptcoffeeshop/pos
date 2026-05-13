@@ -1094,6 +1094,8 @@ export type NoteAnalysisReportTimeUnit = 'day' | 'week' | 'month'
 
 export type DiscountAnalysisReportTimeUnit = 'day' | 'week' | 'month'
 
+export type ServiceChargeReportTimeUnit = 'day' | 'week' | 'month'
+
 export type DiscountAnalysisActivityType = 'merchant-discount' | 'coupon'
 
 export interface ProductSalesCategoryReportRow {
@@ -1249,6 +1251,45 @@ export interface DiscountAnalysisReport {
   summary: DiscountAnalysisReportSummary
   activities: DiscountAnalysisActivityReportRow[]
   trend: DiscountAnalysisTrendReportRow[]
+}
+
+export interface ServiceChargeBreakdownReportRow {
+  key: string
+  orderCount: number
+  serviceChargeOrderCount: number
+  serviceChargeTotal: number
+  averageServiceCharge: number
+}
+
+export interface ServiceChargeTrendReportRow {
+  key: string
+  label: string
+  orderCount: number
+  partySize: number
+  serviceChargeOrderCount: number
+  serviceChargeTotal: number
+  averageServiceCharge: number
+}
+
+export interface ServiceChargeReportSummary {
+  totalOrders: number
+  totalPartySize: number
+  serviceChargeOrderCount: number
+  totalServiceCharge: number
+  averageServiceChargePerServiceOrder: number
+  averageServiceChargePerOrder: number
+}
+
+export interface ServiceChargeReport {
+  startDate: string
+  endDate: string
+  rangeStart: string
+  rangeEnd: string
+  timeUnit: ServiceChargeReportTimeUnit
+  summary: ServiceChargeReportSummary
+  byServiceMode: ServiceChargeBreakdownReportRow[]
+  bySource: ServiceChargeBreakdownReportRow[]
+  trend: ServiceChargeTrendReportRow[]
 }
 
 export interface ElectronicInvoiceReportRow {
