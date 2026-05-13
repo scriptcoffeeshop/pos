@@ -13,6 +13,7 @@ type OrderStatus = "new" | "preparing" | "ready" | "served" | "failed" | "voided
 type PaymentStatus = "pending" | "authorized" | "paid" | "expired" | "failed" | "refunded";
 type ElectronicInvoiceStatus = "not_requested" | "queued" | "issued" | "voided" | "refunded" | "failed";
 type ElectronicInvoicePrintMode = "paper" | "carrier" | "donation" | "none";
+type CheckoutVoidRecordStatus = "issued" | "voided" | "refunded" | "failed";
 type ProductTaxCategory = "taxable" | "zero" | "exempt";
 type PrintStatus = "queued" | "printed" | "skipped" | "failed";
 type RegisterSessionStatus = "open" | "closed";
@@ -317,6 +318,57 @@ interface ElectronicInvoiceReportOrderRow {
   created_at: string;
   updated_at: string;
   order_items?: ElectronicInvoiceReportOrderItemRow[];
+}
+
+interface CheckoutVoidRecordReportRow {
+  orderId: string;
+  receiptInvoiceNumber: string;
+  carrierOrDonationCode: string;
+  taxId: string;
+  checkoutAt: string;
+  originalOrderNumber: string;
+  externalOrderNumber: string;
+  source: OrderSource;
+  serviceMode: ServiceMode;
+  partySize: number;
+  serviceFeeAmount: number;
+  extraFeeAmount: number;
+  discountAmount: number;
+  invoiceAmount: number;
+  paymentModule: string;
+  ledgerName: string;
+  paymentInfo: string;
+  paymentNote: string;
+  status: CheckoutVoidRecordStatus;
+  customerName: string;
+  customerPhone: string;
+  orderLabelsAndNotes: string;
+  ordererInfo: string;
+}
+
+interface CheckoutVoidRecordOrderRow extends DailyReportOrderRow {
+  updated_at: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_note: string | null;
+  staff_note: string | null;
+  order_labels?: string[] | null;
+  tax_id: string | null;
+  invoice_carrier_barcode: string | null;
+  invoice_donation_code: string | null;
+  electronic_invoice_requested: boolean | null;
+  electronic_invoice_status: ElectronicInvoiceStatus | null;
+  electronic_invoice_number: string | null;
+  electronic_invoice_issued_at: string | null;
+  register_session_id: string | null;
+  checkout_station_id: string | null;
+  checkout_book_id: string | null;
+  service_fee_amount?: number | null;
+  extra_fee_amount?: number | null;
+  discount_amount?: number | null;
+  payment_note?: string | null;
+  payment_breakdown?: unknown;
+  payment_splits?: unknown;
 }
 
 interface StationHeartbeatInput {
@@ -5386,6 +5438,74 @@ api.get("/admin/reports/service-charges", async (c) => {
   });
 });
 
+api.get("/admin/reports/checkout-void-records", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "checkout void record report can query the latest 2 years only" }, 400);
+  }
+
+  const status = validCheckoutVoidRecordStatus(c.req.query("status"));
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  const rangeStart = range.start.toISOString();
+  const rangeEnd = range.end.toISOString();
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, status, payment_status, payment_method, customer_name, customer_phone, customer_note, staff_note, order_labels, tax_id, invoice_carrier_barcode, invoice_donation_code, electronic_invoice_requested, electronic_invoice_status, electronic_invoice_number, electronic_invoice_issued_at, register_session_id, checkout_station_id, checkout_book_id, service_fee_amount, extra_fee_amount, discount_amount, payment_note, payment_breakdown, payment_splits, created_at, updated_at",
+    )
+    .or(`and(created_at.gte.${rangeStart},created_at.lt.${rangeEnd}),and(updated_at.gte.${rangeStart},updated_at.lt.${rangeEnd})`)
+    .order("updated_at", { ascending: false })
+    .limit(1000);
+
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return c.json({ error: error.message }, 500);
+  }
+
+  const rows = ((data ?? []) as CheckoutVoidRecordOrderRow[]).filter((order) => {
+    const recordStatus = checkoutVoidRecordStatus(order);
+    const hasRecordedCheckout = collectedPaymentStatuses.has(order.payment_status) ||
+      order.payment_status === "refunded" ||
+      order.status === "voided" ||
+      order.status === "failed";
+    if (!hasRecordedCheckout || (status && recordStatus !== status)) {
+      return false;
+    }
+
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+
+  return c.json({ report: buildCheckoutVoidRecordReport(range, rows) });
+});
+
 api.get("/admin/reports/electronic-invoices", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -7931,6 +8051,16 @@ const validElectronicInvoiceStatus = (value: string | undefined): ElectronicInvo
     : null;
 };
 
+const validCheckoutVoidRecordStatus = (value: string | undefined): CheckoutVoidRecordStatus | null => {
+  if (!value) {
+    return null;
+  }
+
+  return ["issued", "voided", "refunded", "failed"].includes(value)
+    ? value as CheckoutVoidRecordStatus
+    : null;
+};
+
 const validServiceModeFilter = (value: string | undefined): ServiceMode | null =>
   value === "dine-in" || value === "takeout" || value === "delivery" ? value : null;
 
@@ -7948,6 +8078,145 @@ const validDiscountAnalysisTimeUnit = (value: string | undefined): DiscountAnaly
 
 const validServiceChargeReportTimeUnit = (value: string | undefined): ServiceChargeReportTimeUnit =>
   value === "week" || value === "month" ? value : "day";
+
+const reportPaymentMethodLabel = (method: PaymentMethod): string => {
+  const labels: Record<PaymentMethod, string> = {
+    cash: "現金",
+    card: "刷卡",
+    custom: "自定義支付",
+    "app91-card": "91APP 支付線上刷卡",
+    "line-pay": "LINE Pay",
+    jkopay: "街口支付",
+    transfer: "轉帳",
+  };
+
+  return labels[method] ?? method;
+};
+
+const validReportPaymentMethod = (value: unknown): PaymentMethod | null => {
+  const method = typeof value === "string" ? value : "";
+  return ["cash", "card", "custom", "app91-card", "line-pay", "jkopay", "transfer"].includes(method)
+    ? method as PaymentMethod
+    : null;
+};
+
+const checkoutVoidRecordStatus = (order: CheckoutVoidRecordOrderRow): CheckoutVoidRecordStatus => {
+  if (order.payment_status === "refunded") {
+    return "refunded";
+  }
+  if (order.status === "voided") {
+    return "voided";
+  }
+  if (order.status === "failed" || order.payment_status === "failed" || order.payment_status === "expired") {
+    return "failed";
+  }
+
+  return "issued";
+};
+
+const checkoutVoidRecordPaymentEntries = (
+  order: CheckoutVoidRecordOrderRow,
+): Array<{ paymentMethod: PaymentMethod; amount: number; status: string; paidAt: string | null }> => {
+  const normalizeEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+
+    const raw = entry as Record<string, unknown>;
+    const paymentMethod = validReportPaymentMethod(raw.paymentMethod ?? raw.payment_method) ?? order.payment_method;
+    const paidAt = sanitizeText(raw.paidAt ?? raw.paid_at, "");
+    const paidAtTimestamp = paidAt ? new Date(paidAt).getTime() : NaN;
+
+    return {
+      paymentMethod,
+      amount: orderAmount(raw.amount),
+      status: sanitizeText(raw.status, ""),
+      paidAt: Number.isFinite(paidAtTimestamp) ? new Date(paidAt).toISOString() : null,
+    };
+  };
+
+  const breakdown = orderArrayField(order.payment_breakdown).flatMap((entry) => {
+    const normalized = normalizeEntry(entry);
+    return normalized ? [normalized] : [];
+  });
+  if (breakdown.length > 0) {
+    return breakdown;
+  }
+
+  return orderArrayField(order.payment_splits).flatMap((entry) => {
+    const normalized = normalizeEntry(entry);
+    return normalized ? [normalized] : [];
+  });
+};
+
+const checkoutVoidRecordCheckoutAt = (order: CheckoutVoidRecordOrderRow): string => {
+  const paymentTimes = checkoutVoidRecordPaymentEntries(order)
+    .flatMap((entry) => entry.paidAt ? [new Date(entry.paidAt).getTime()] : [])
+    .filter(Number.isFinite);
+  if (paymentTimes.length > 0) {
+    return new Date(Math.max(...paymentTimes)).toISOString();
+  }
+
+  return order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
+};
+
+const checkoutVoidRecordReceiptNumber = (order: CheckoutVoidRecordOrderRow): string => {
+  const invoiceNumber = sanitizeText(order.electronic_invoice_number, "");
+  if (invoiceNumber) {
+    return invoiceNumber;
+  }
+
+  const orderNumber = sanitizeText(order.order_number, "");
+  return orderNumber.startsWith("#-") ? orderNumber : `#-${orderNumber}`;
+};
+
+const checkoutVoidRecordExternalNumber = (order: CheckoutVoidRecordOrderRow): string => {
+  return order.source === "counter" ? "" : sanitizeText(order.id, "").slice(0, 8);
+};
+
+const checkoutVoidRecordLedgerName = (order: CheckoutVoidRecordOrderRow): string => {
+  const bookId = sanitizeText(order.checkout_book_id, "main");
+  if (!bookId || bookId === "main") {
+    return "主帳本";
+  }
+
+  return bookId;
+};
+
+const checkoutVoidRecordPaymentModule = (order: CheckoutVoidRecordOrderRow): string => {
+  const methods = checkoutVoidRecordPaymentEntries(order)
+    .map((entry) => reportPaymentMethodLabel(entry.paymentMethod));
+  return [...new Set(methods.length > 0 ? methods : [reportPaymentMethodLabel(order.payment_method)])].join(" / ");
+};
+
+const checkoutVoidRecordPaymentInfo = (order: CheckoutVoidRecordOrderRow): string => {
+  const entries = checkoutVoidRecordPaymentEntries(order).filter((entry) => entry.amount > 0);
+  if (entries.length === 0) {
+    return `${reportPaymentMethodLabel(order.payment_method)} ${orderAmount(order.subtotal)}`;
+  }
+
+  return entries
+    .map((entry) => `${reportPaymentMethodLabel(entry.paymentMethod)} $${entry.amount}`)
+    .join(" / ");
+};
+
+const checkoutVoidRecordLabelsAndNotes = (order: CheckoutVoidRecordOrderRow): string => {
+  const labels = normalizeOrderLabels(order.order_labels);
+  const notes = [
+    ...labels,
+    sanitizeText(order.customer_note, ""),
+    sanitizeText(order.staff_note, ""),
+    sanitizeText(order.note, ""),
+  ].filter(Boolean);
+
+  return [...new Set(notes)].join(" / ");
+};
+
+const checkoutVoidRecordOrdererInfo = (order: CheckoutVoidRecordOrderRow): string => {
+  const name = sanitizeText(order.customer_name, "");
+  const phone = sanitizeText(order.customer_phone, "");
+  return [name, phone].filter(Boolean).join(" / ");
+};
 
 const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
   order.electronic_invoice_issued_at ?? order.updated_at ?? order.created_at;
@@ -7996,6 +8265,70 @@ const electronicInvoiceTaxAmounts = (
     taxAmount,
     zeroTaxSalesAmount,
     taxExemptSalesAmount,
+  };
+};
+
+const buildCheckoutVoidRecordReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  rows: CheckoutVoidRecordOrderRow[],
+) => {
+  const rangeStart = range.start.toISOString();
+  const rangeEnd = range.end.toISOString();
+  const reportRows: CheckoutVoidRecordReportRow[] = rows.map((order) => {
+    const customerName = sanitizeText(order.customer_name, "");
+    const customerPhone = sanitizeText(order.customer_phone, "");
+    const carrier = sanitizeText(order.invoice_carrier_barcode, "");
+    const donation = sanitizeText(order.invoice_donation_code, "");
+
+    return {
+      orderId: order.id,
+      receiptInvoiceNumber: checkoutVoidRecordReceiptNumber(order),
+      carrierOrDonationCode: carrier || donation,
+      taxId: sanitizeText(order.tax_id, ""),
+      checkoutAt: checkoutVoidRecordCheckoutAt(order),
+      originalOrderNumber: order.order_number,
+      externalOrderNumber: checkoutVoidRecordExternalNumber(order),
+      source: order.source,
+      serviceMode: order.service_mode,
+      partySize: partySizeFromOrderNote(order.note),
+      serviceFeeAmount: orderAmount(order.service_fee_amount),
+      extraFeeAmount: orderAmount(order.extra_fee_amount),
+      discountAmount: orderAmount(order.discount_amount),
+      invoiceAmount: orderAmount(order.subtotal),
+      paymentModule: checkoutVoidRecordPaymentModule(order),
+      ledgerName: checkoutVoidRecordLedgerName(order),
+      paymentInfo: checkoutVoidRecordPaymentInfo(order),
+      paymentNote: sanitizeText(order.payment_note, ""),
+      status: checkoutVoidRecordStatus(order),
+      customerName,
+      customerPhone,
+      orderLabelsAndNotes: checkoutVoidRecordLabelsAndNotes(order),
+      ordererInfo: checkoutVoidRecordOrdererInfo(order),
+    };
+  });
+
+  const filteredRows = reportRows
+    .filter((row) => row.checkoutAt >= rangeStart && row.checkoutAt < rangeEnd)
+    .sort((first, second) => second.checkoutAt.localeCompare(first.checkoutAt));
+  const activeRows = filteredRows.filter((row) => row.status === "issued");
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart,
+    rangeEnd,
+    summary: {
+      totalRecords: filteredRows.length,
+      issuedRecords: filteredRows.filter((row) => row.status === "issued").length,
+      voidedRecords: filteredRows.filter((row) => row.status === "voided").length,
+      refundedRecords: filteredRows.filter((row) => row.status === "refunded").length,
+      failedRecords: filteredRows.filter((row) => row.status === "failed").length,
+      receiptInvoiceTotal: activeRows.reduce((total, row) => total + row.invoiceAmount, 0),
+      serviceFeeTotal: activeRows.reduce((total, row) => total + row.serviceFeeAmount, 0),
+      extraFeeTotal: activeRows.reduce((total, row) => total + row.extraFeeAmount, 0),
+      discountTotal: activeRows.reduce((total, row) => total + row.discountAmount, 0),
+    },
+    rows: filteredRows,
   };
 };
 

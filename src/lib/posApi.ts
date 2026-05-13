@@ -27,6 +27,8 @@ import type {
   PaymentStatus,
   PosAdminSettings,
   PosAuditEvent,
+  CheckoutVoidRecordReport,
+  CheckoutVoidRecordStatus,
   DailySalesReport,
   DiscountAnalysisReport,
   DiscountAnalysisReportTimeUnit,
@@ -621,6 +623,10 @@ interface DiscountAnalysisReportResponse {
 
 interface ServiceChargeReportResponse {
   report: ServiceChargeReport
+}
+
+interface CheckoutVoidRecordReportResponse {
+  report: CheckoutVoidRecordReport
 }
 
 interface ElectronicInvoiceReportResponse {
@@ -4045,6 +4051,39 @@ export const fetchAdminServiceChargeReport = async (options: {
   }
 
   const data = await request<ServiceChargeReportResponse>(`/admin/reports/service-charges?${params.toString()}`)
+
+  return data.report
+}
+
+export const fetchAdminCheckoutVoidRecordReport = async (options: {
+  startDate: string
+  endDate: string
+  status?: CheckoutVoidRecordStatus | 'all'
+  serviceMode?: ServiceMode | 'all'
+  source?: OrderSource | 'all'
+  minPartySize?: number | null
+  maxPartySize?: number | null
+}): Promise<CheckoutVoidRecordReport> => {
+  const params = new URLSearchParams()
+  params.set('startDate', options.startDate.trim())
+  params.set('endDate', options.endDate.trim())
+  if (options.status && options.status !== 'all') {
+    params.set('status', options.status)
+  }
+  if (options.serviceMode && options.serviceMode !== 'all') {
+    params.set('serviceMode', options.serviceMode)
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source)
+  }
+  if (options.minPartySize !== null && options.minPartySize !== undefined) {
+    params.set('minPartySize', String(options.minPartySize))
+  }
+  if (options.maxPartySize !== null && options.maxPartySize !== undefined) {
+    params.set('maxPartySize', String(options.maxPartySize))
+  }
+
+  const data = await request<CheckoutVoidRecordReportResponse>(`/admin/reports/checkout-void-records?${params.toString()}`)
 
   return data.report
 }
