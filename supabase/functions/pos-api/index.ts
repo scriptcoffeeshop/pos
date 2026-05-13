@@ -5320,6 +5320,72 @@ api.get("/admin/reports/discount-analysis", async (c) => {
   });
 });
 
+api.get("/admin/reports/service-charges", async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) {
+    return authError;
+  }
+
+  const { range, error: rangeError } = parseReportDateRange(c.req.query("startDate"), c.req.query("endDate"));
+  if (rangeError) {
+    return c.json({ error: rangeError }, 400);
+  }
+  if (!range) {
+    return c.json({ error: "startDate and endDate are required" }, 400);
+  }
+
+  const oldestStart = Date.now() - 731 * 24 * 60 * 60_000;
+  if (range.start.getTime() < oldestStart) {
+    return c.json({ error: "service charge report can query the latest 2 years only" }, 400);
+  }
+
+  const serviceMode = validServiceModeFilter(c.req.query("serviceMode"));
+  const source = validOrderSourceFilter(c.req.query("source"));
+  const minPartySize = Math.max(1, normalizeReportIntegerFilter(c.req.query("minPartySize"), 1));
+  const maxPartySize = Math.min(99, normalizeReportIntegerFilter(c.req.query("maxPartySize"), 99));
+  if (minPartySize > maxPartySize) {
+    return c.json({ error: "minPartySize must be less than or equal to maxPartySize" }, 400);
+  }
+
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, service_mode, note, subtotal, service_fee_amount, payment_method, payment_status, status, created_at",
+    )
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString())
+    .in("payment_status", Array.from(collectedPaymentStatuses))
+    .neq("status", "voided")
+    .neq("status", "failed")
+    .order("created_at", { ascending: true })
+    .limit(5000);
+
+  if (serviceMode) {
+    query = query.eq("service_mode", serviceMode);
+  }
+  if (source) {
+    query = query.eq("source", source);
+  }
+
+  const { data: orderData, error: orderError } = await query;
+  if (orderError) {
+    return c.json({ error: orderError.message }, 500);
+  }
+
+  const rows = ((orderData ?? []) as ServiceChargeReportOrderRow[]).filter((order) => {
+    const partySize = partySizeFromOrderNote(order.note);
+    return partySize >= minPartySize && partySize <= maxPartySize;
+  });
+
+  return c.json({
+    report: buildServiceChargeReport(
+      range,
+      validServiceChargeReportTimeUnit(c.req.query("timeUnit")),
+      rows,
+    ),
+  });
+});
+
 api.get("/admin/reports/electronic-invoices", async (c) => {
   const authError = requireAdmin(c);
   if (authError) {
@@ -7149,6 +7215,7 @@ interface DailyReportOrderRow extends RegisterOrderSummaryRow {
 type ProductSalesReportTimeUnit = "day" | "week" | "month";
 type NoteAnalysisReportTimeUnit = "day" | "week" | "month";
 type DiscountAnalysisReportTimeUnit = "day" | "week" | "month";
+type ServiceChargeReportTimeUnit = "day" | "week" | "month";
 type DiscountAnalysisActivityType = "merchant-discount" | "coupon";
 
 interface ProductCatalogReportRow {
@@ -7251,6 +7318,22 @@ interface DiscountAnalysisTrendAccumulator {
   orderIds: Set<string>;
   discountedSales: number;
   discountAmount: number;
+}
+
+interface ServiceChargeReportOrderRow extends DailyReportOrderRow {
+  service_fee_amount?: number | null;
+}
+
+interface ServiceChargeBreakdownAccumulator {
+  key: string;
+  orderIds: Set<string>;
+  serviceChargeOrderIds: Set<string>;
+  serviceChargeTotal: number;
+}
+
+interface ServiceChargeTrendAccumulator extends ServiceChargeBreakdownAccumulator {
+  label: string;
+  partySize: number;
 }
 
 const defaultCheckoutRegisterBook = (): CheckoutCounterBookSetting => ({
@@ -7861,6 +7944,9 @@ const validNoteAnalysisTimeUnit = (value: string | undefined): NoteAnalysisRepor
   value === "week" || value === "month" ? value : "day";
 
 const validDiscountAnalysisTimeUnit = (value: string | undefined): DiscountAnalysisReportTimeUnit =>
+  value === "week" || value === "month" ? value : "day";
+
+const validServiceChargeReportTimeUnit = (value: string | undefined): ServiceChargeReportTimeUnit =>
   value === "week" || value === "month" ? value : "day";
 
 const electronicInvoiceCheckoutAt = (order: ElectronicInvoiceReportOrderRow): string =>
@@ -8477,6 +8563,119 @@ const buildDiscountAnalysisReport = (
         orderCount: row.orderIds.size,
         discountedSales: row.discountedSales,
         discountAmount: row.discountAmount,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key)),
+  };
+};
+
+const buildServiceChargeReport = (
+  range: { startDate: string; endDate: string; start: Date; end: Date },
+  timeUnit: ServiceChargeReportTimeUnit,
+  rows: ServiceChargeReportOrderRow[],
+) => {
+  const serviceModeMap = new Map<string, ServiceChargeBreakdownAccumulator>();
+  const sourceMap = new Map<string, ServiceChargeBreakdownAccumulator>();
+  const trendMap = new Map<string, ServiceChargeTrendAccumulator>();
+  const rangeDays = Math.ceil((range.end.getTime() - range.start.getTime()) / (24 * 60 * 60_000));
+  const singleDay = rangeDays <= 1;
+
+  let totalPartySize = 0;
+  let totalServiceCharge = 0;
+  let serviceChargeOrderCount = 0;
+
+  const addBreakdown = (
+    map: Map<string, ServiceChargeBreakdownAccumulator>,
+    key: string,
+    orderId: string,
+    amount: number,
+  ): void => {
+    if (amount <= 0) {
+      return;
+    }
+
+    const row = map.get(key) ?? {
+      key,
+      orderIds: new Set<string>(),
+      serviceChargeOrderIds: new Set<string>(),
+      serviceChargeTotal: 0,
+    };
+    row.orderIds.add(orderId);
+    row.serviceChargeOrderIds.add(orderId);
+    row.serviceChargeTotal += amount;
+    map.set(key, row);
+  };
+
+  for (const order of rows) {
+    const partySize = partySizeFromOrderNote(order.note);
+    const serviceChargeAmount = Math.max(0, Math.trunc(Number(order.service_fee_amount) || 0));
+
+    totalPartySize += partySize;
+    totalServiceCharge += serviceChargeAmount;
+    if (serviceChargeAmount <= 0) {
+      continue;
+    }
+
+    serviceChargeOrderCount += 1;
+    addBreakdown(serviceModeMap, order.service_mode, order.id, serviceChargeAmount);
+    addBreakdown(sourceMap, order.source, order.id, serviceChargeAmount);
+
+    const bucket = productSalesTrendBucket(order.created_at, timeUnit, singleDay);
+    const trend = trendMap.get(bucket.key) ?? {
+      ...bucket,
+      orderIds: new Set<string>(),
+      serviceChargeOrderIds: new Set<string>(),
+      serviceChargeTotal: 0,
+      partySize: 0,
+    };
+    trend.orderIds.add(order.id);
+    trend.partySize += partySize;
+    trend.serviceChargeOrderIds.add(order.id);
+    trend.serviceChargeTotal += serviceChargeAmount;
+    trendMap.set(bucket.key, trend);
+  }
+
+  const breakdownRows = (map: Map<string, ServiceChargeBreakdownAccumulator>) =>
+    Array.from(map.values())
+      .map((row) => ({
+        key: row.key,
+        orderCount: row.orderIds.size,
+        serviceChargeOrderCount: row.serviceChargeOrderIds.size,
+        serviceChargeTotal: row.serviceChargeTotal,
+        averageServiceCharge: row.serviceChargeOrderIds.size > 0
+          ? Math.round(row.serviceChargeTotal / row.serviceChargeOrderIds.size)
+          : 0,
+      }))
+      .sort((a, b) => b.serviceChargeTotal - a.serviceChargeTotal || b.serviceChargeOrderCount - a.serviceChargeOrderCount);
+
+  return {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    rangeStart: range.start.toISOString(),
+    rangeEnd: range.end.toISOString(),
+    timeUnit,
+    summary: {
+      totalOrders: rows.length,
+      totalPartySize,
+      serviceChargeOrderCount,
+      totalServiceCharge,
+      averageServiceChargePerServiceOrder: serviceChargeOrderCount > 0
+        ? Math.round(totalServiceCharge / serviceChargeOrderCount)
+        : 0,
+      averageServiceChargePerOrder: rows.length > 0 ? Math.round(totalServiceCharge / rows.length) : 0,
+    },
+    byServiceMode: breakdownRows(serviceModeMap),
+    bySource: breakdownRows(sourceMap),
+    trend: Array.from(trendMap.values())
+      .map((row) => ({
+        key: row.key,
+        label: row.label,
+        orderCount: row.orderIds.size,
+        partySize: row.partySize,
+        serviceChargeOrderCount: row.serviceChargeOrderIds.size,
+        serviceChargeTotal: row.serviceChargeTotal,
+        averageServiceCharge: row.serviceChargeOrderIds.size > 0
+          ? Math.round(row.serviceChargeTotal / row.serviceChargeOrderIds.size)
+          : 0,
       }))
       .sort((a, b) => a.key.localeCompare(b.key)),
   };

@@ -61,6 +61,7 @@ import {
   fetchAdminReservations,
   fetchAdminSettings,
   fetchAdminStations,
+  fetchAdminServiceChargeReport,
   fetchAdminTimeClockEntries,
   previewAdminMemberAudience,
   type ProductUpdateInput,
@@ -112,6 +113,8 @@ import type {
   ReservationBlacklistEntry,
   ReservationSpecialDateRule,
   PosStationHeartbeat,
+  ServiceChargeReport,
+  ServiceChargeReportTimeUnit,
   PrintLabelMode,
   PrintRuleSetting,
   PrintRuleTiming,
@@ -954,6 +957,14 @@ const discountAnalysisReportSource = ref<OrderSource | 'all'>('all')
 const discountAnalysisReportMinPeople = ref<number | null>(null)
 const discountAnalysisReportMaxPeople = ref<number | null>(null)
 const discountAnalysisReport = ref<DiscountAnalysisReport | null>(null)
+const serviceChargeReportStartDate = ref(dateInputDaysAgo(6))
+const serviceChargeReportEndDate = ref(toDateInput())
+const serviceChargeReportTimeUnit = ref<ServiceChargeReportTimeUnit>('day')
+const serviceChargeReportServiceMode = ref<ServiceMode | 'all'>('all')
+const serviceChargeReportSource = ref<OrderSource | 'all'>('all')
+const serviceChargeReportMinPeople = ref<number | null>(null)
+const serviceChargeReportMaxPeople = ref<number | null>(null)
+const serviceChargeReport = ref<ServiceChargeReport | null>(null)
 const electronicInvoiceReportStartDate = ref(dateInputDaysAgo(6))
 const electronicInvoiceReportEndDate = ref(toDateInput())
 const electronicInvoiceReportStatus = ref<ElectronicInvoiceStatus | 'all'>('all')
@@ -997,6 +1008,7 @@ const isReportLoading = ref(false)
 const isProductSalesReportLoading = ref(false)
 const isNoteAnalysisReportLoading = ref(false)
 const isDiscountAnalysisReportLoading = ref(false)
+const isServiceChargeReportLoading = ref(false)
 const isElectronicInvoiceReportLoading = ref(false)
 const isCloseoutReportDeliveryLoading = ref(false)
 const isStationLoading = ref(false)
@@ -1209,6 +1221,21 @@ const discountAnalysisReportRangeValid = computed(() =>
   discountAnalysisReportRangeDays.value !== null && discountAnalysisReportRangeDays.value <= 93,
 )
 const discountAnalysisTopActivity = computed(() => discountAnalysisReport.value?.activities[0] ?? null)
+const serviceChargeReportRangeDays = computed(() => {
+  if (!serviceChargeReportStartDate.value || !serviceChargeReportEndDate.value) {
+    return null
+  }
+
+  const start = new Date(`${serviceChargeReportStartDate.value}T00:00:00`)
+  const end = new Date(`${serviceChargeReportEndDate.value}T00:00:00`)
+  const diffDays = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
+  return Number.isFinite(diffDays) && diffDays > 0 ? diffDays : null
+})
+const serviceChargeReportRangeValid = computed(() =>
+  serviceChargeReportRangeDays.value !== null && serviceChargeReportRangeDays.value <= 93,
+)
+const serviceChargeTopServiceMode = computed(() => serviceChargeReport.value?.byServiceMode[0] ?? null)
+const serviceChargeTopSource = computed(() => serviceChargeReport.value?.bySource[0] ?? null)
 const electronicInvoiceReportRangeDays = computed(() => {
   if (!electronicInvoiceReportStartDate.value || !electronicInvoiceReportEndDate.value) {
     return null
@@ -2335,6 +2362,49 @@ const exportDiscountAnalysisReportCsv = (): void => {
   adminMessage.value = `${report.startDate} - ${report.endDate} 優惠活動分析 CSV 已匯出`
 }
 
+const exportServiceChargeReportCsv = (): void => {
+  const report = serviceChargeReport.value
+  if (!report) {
+    adminMessage.value = '請先載入服務費報表'
+    return
+  }
+
+  const rows: unknown[][] = [
+    ['section', 'label', 'orders', 'party_size', 'service_charge_orders', 'service_charge_total', 'average_service_charge'],
+    ['summary', 'total_orders', report.summary.totalOrders, report.summary.totalPartySize, report.summary.serviceChargeOrderCount, report.summary.totalServiceCharge, report.summary.averageServiceChargePerServiceOrder],
+    ...report.byServiceMode.map((row) => [
+      'service_mode',
+      reportBreakdownLabel(row.key),
+      row.orderCount,
+      '',
+      row.serviceChargeOrderCount,
+      row.serviceChargeTotal,
+      row.averageServiceCharge,
+    ]),
+    ...report.bySource.map((row) => [
+      'source',
+      reportBreakdownLabel(row.key),
+      row.orderCount,
+      '',
+      row.serviceChargeOrderCount,
+      row.serviceChargeTotal,
+      row.averageServiceCharge,
+    ]),
+    ...report.trend.map((row) => [
+      'trend',
+      row.label,
+      row.orderCount,
+      row.partySize,
+      row.serviceChargeOrderCount,
+      row.serviceChargeTotal,
+      row.averageServiceCharge,
+    ]),
+  ]
+
+  downloadCsv(`script-coffee-service-charges-${report.startDate}-${report.endDate}.csv`, rows)
+  adminMessage.value = `${report.startDate} - ${report.endDate} 服務費報表 CSV 已匯出`
+}
+
 const exportElectronicInvoiceReportCsv = (): void => {
   const report = electronicInvoiceReport.value
   if (!report) {
@@ -2769,6 +2839,16 @@ type DiscountAnalysisReportQuery = {
   maxPartySize: number | null
 }
 
+type ServiceChargeReportQuery = {
+  startDate: string
+  endDate: string
+  timeUnit: ServiceChargeReportTimeUnit
+  serviceMode: ServiceMode | 'all'
+  source: OrderSource | 'all'
+  minPartySize: number | null
+  maxPartySize: number | null
+}
+
 const emptyProductSalesReport = (query: ProductSalesReportQuery): ProductSalesReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2877,6 +2957,42 @@ const discountAnalysisReportQueryOptions = (): DiscountAnalysisReportQuery | nul
   }
 }
 
+const emptyServiceChargeReport = (query: ServiceChargeReportQuery): ServiceChargeReport => ({
+  startDate: query.startDate,
+  endDate: query.endDate,
+  rangeStart: new Date(`${query.startDate}T00:00:00`).toISOString(),
+  rangeEnd: new Date(`${query.endDate}T23:59:59.999`).toISOString(),
+  timeUnit: query.timeUnit,
+  summary: {
+    totalOrders: 0,
+    totalPartySize: 0,
+    serviceChargeOrderCount: 0,
+    totalServiceCharge: 0,
+    averageServiceChargePerServiceOrder: 0,
+    averageServiceChargePerOrder: 0,
+  },
+  byServiceMode: [],
+  bySource: [],
+  trend: [],
+})
+
+const serviceChargeReportQueryOptions = (): ServiceChargeReportQuery | null => {
+  if (!serviceChargeReportRangeValid.value) {
+    adminMessage.value = '服務費報表日期需為有效區間，且不可超過 93 天'
+    return null
+  }
+
+  return {
+    startDate: serviceChargeReportStartDate.value,
+    endDate: serviceChargeReportEndDate.value,
+    timeUnit: serviceChargeReportTimeUnit.value,
+    serviceMode: serviceChargeReportServiceMode.value,
+    source: serviceChargeReportSource.value,
+    minPartySize: serviceChargeReportMinPeople.value ? Math.max(1, Math.trunc(serviceChargeReportMinPeople.value)) : null,
+    maxPartySize: serviceChargeReportMaxPeople.value ? Math.max(1, Math.trunc(serviceChargeReportMaxPeople.value)) : null,
+  }
+}
+
 const emptyElectronicInvoiceReport = (query: ElectronicInvoiceReportQuery): ElectronicInvoiceReport => ({
   startDate: query.startDate,
   endDate: query.endDate,
@@ -2922,13 +3038,15 @@ const loadAdminData = async (): Promise<void> => {
     const productSalesReportQuery = productSalesReportQueryOptions()
     const noteAnalysisReportQuery = noteAnalysisReportQueryOptions()
     const discountAnalysisReportQuery = discountAnalysisReportQueryOptions()
+    const serviceChargeReportQuery = serviceChargeReportQueryOptions()
     const electronicInvoiceReportQuery = electronicInvoiceReportQueryOptions()
-    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !discountAnalysisReportQuery || !electronicInvoiceReportQuery) {
+    if (!timeClockQuery || !productSalesReportQuery || !noteAnalysisReportQuery || !discountAnalysisReportQuery || !serviceChargeReportQuery || !electronicInvoiceReportQuery) {
       return
     }
     let productSalesReportWarning = ''
     let noteAnalysisReportWarning = ''
     let discountAnalysisReportWarning = ''
+    let serviceChargeReportWarning = ''
     let electronicInvoiceReportWarning = ''
 
     const [
@@ -2949,6 +3067,7 @@ const loadAdminData = async (): Promise<void> => {
       productReport,
       noteReport,
       discountReport,
+      serviceChargeReportResult,
       invoiceReport,
     ] = await Promise.all([
       fetchAdminProducts(),
@@ -2976,6 +3095,10 @@ const loadAdminData = async (): Promise<void> => {
       fetchAdminDiscountAnalysisReport(discountAnalysisReportQuery).catch((error) => {
         discountAnalysisReportWarning = error instanceof Error ? error.message : '優惠活動分析暫時無法載入'
         return emptyDiscountAnalysisReport(discountAnalysisReportQuery)
+      }),
+      fetchAdminServiceChargeReport(serviceChargeReportQuery).catch((error) => {
+        serviceChargeReportWarning = error instanceof Error ? error.message : '服務費報表暫時無法載入'
+        return emptyServiceChargeReport(serviceChargeReportQuery)
       }),
       fetchAdminElectronicInvoiceReport(electronicInvoiceReportQuery).catch((error) => {
         electronicInvoiceReportWarning = error instanceof Error ? error.message : '電子發票開立紀錄暫時無法載入'
@@ -3005,9 +3128,10 @@ const loadAdminData = async (): Promise<void> => {
     productSalesReport.value = productReport
     noteAnalysisReport.value = noteReport
     discountAnalysisReport.value = discountReport
+    serviceChargeReport.value = serviceChargeReportResult
     electronicInvoiceReport.value = invoiceReport
     resetConsumptionDraftDefaults()
-    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${discountReport.summary.discountOrderCount} 張優惠訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${discountAnalysisReportWarning ? `；優惠活動分析待後端更新：${discountAnalysisReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
+    adminMessage.value = `已載入 ${products.length} 個商品、${memberRows.length} 位會員、${couponRows.length} 張券、${discountSettings.value.campaigns.length} 個優惠活動、${reservationRows.length} 筆訂位、${blacklistRows.length} 筆訂位黑名單、${inventory.items.length} 個庫存品項、${inventory.consumptionRules.length} 條自動消耗規則、${report.totalOrders} 張日報訂單、${productReport.summary.totalQuantity} 件商品銷售、${noteReport.summary.totalSelections} 筆註記、${discountReport.summary.discountOrderCount} 張優惠訂單、${serviceChargeReportResult.summary.serviceChargeOrderCount} 張服務費訂單、${invoiceReport.summary.totalRecords} 筆電子發票、${closeoutDeliveries.length} 筆關帳信、${settings.printerSettings.rules.length} 條出單規則、${accessControl.value.staffAccounts.length} 位員工、${timeClockRows.length} 筆打卡、${permissionEvents.length} 筆權限紀錄、${events.length} 筆稽核、${paymentRows.length} 筆支付事件、${stations.length} 台平板${productSalesReportWarning ? `；商品銷售報表待後端更新：${productSalesReportWarning}` : ''}${noteAnalysisReportWarning ? `；註記分析待後端更新：${noteAnalysisReportWarning}` : ''}${discountAnalysisReportWarning ? `；優惠活動分析待後端更新：${discountAnalysisReportWarning}` : ''}${serviceChargeReportWarning ? `；服務費報表待後端更新：${serviceChargeReportWarning}` : ''}${electronicInvoiceReportWarning ? `；電子發票開立紀錄待後端更新：${electronicInvoiceReportWarning}` : ''}`
   } catch (error) {
     adminMessage.value = error instanceof Error ? error.message : '讀取後台資料失敗'
   } finally {
@@ -3191,6 +3315,25 @@ const loadDiscountAnalysisReport = async (): Promise<void> => {
     adminMessage.value = error instanceof Error ? error.message : '優惠活動分析讀取失敗'
   } finally {
     isDiscountAnalysisReportLoading.value = false
+  }
+}
+
+const loadServiceChargeReport = async (): Promise<void> => {
+  const query = serviceChargeReportQueryOptions()
+  if (!query) {
+    return
+  }
+
+  isServiceChargeReportLoading.value = true
+  adminMessage.value = '讀取服務費報表中'
+
+  try {
+    serviceChargeReport.value = await fetchAdminServiceChargeReport(query)
+    adminMessage.value = `已載入 ${serviceChargeReport.value.summary.serviceChargeOrderCount} 張服務費訂單，服務費 ${formatCurrency(serviceChargeReport.value.summary.totalServiceCharge)}`
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '服務費報表讀取失敗'
+  } finally {
+    isServiceChargeReportLoading.value = false
   }
 }
 
@@ -7947,6 +8090,153 @@ const saveAccessControl = async (): Promise<void> => {
               <div v-if="discountAnalysisReport.trend.length === 0" class="empty-state">
                 <Search :size="24" aria-hidden="true" />
                 <span>此區間尚無優惠成效資料</span>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="admin-subpanel" aria-label="服務費報表">
+          <div class="admin-subpanel-heading">
+            <div>
+              <p class="eyebrow">Service Charge</p>
+              <h3>服務費報表</h3>
+            </div>
+            <span class="panel-note">
+              {{ serviceChargeReport ? `${serviceChargeReport.startDate} - ${serviceChargeReport.endDate} · ${formatCurrency(serviceChargeReport.summary.totalServiceCharge)}` : '近 2 年內，每次最多 93 天' }}
+            </span>
+          </div>
+
+          <div class="admin-action-row admin-audit-actions">
+            <label class="admin-limit-field">
+              開始
+              <input v-model="serviceChargeReportStartDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              結束
+              <input v-model="serviceChargeReportEndDate" type="date" />
+            </label>
+            <label class="admin-limit-field">
+              單位
+              <select v-model="serviceChargeReportTimeUnit">
+                <option value="day">日</option>
+                <option value="week">週</option>
+                <option value="month">月</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              服務
+              <select v-model="serviceChargeReportServiceMode">
+                <option value="all">全部</option>
+                <option value="dine-in">內用</option>
+                <option value="takeout">外帶</option>
+                <option value="delivery">外送</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              來源
+              <select v-model="serviceChargeReportSource">
+                <option value="all">全部</option>
+                <option value="counter">櫃台</option>
+                <option value="online">線上</option>
+                <option value="qr">掃碼</option>
+              </select>
+            </label>
+            <label class="admin-limit-field">
+              人數下限
+              <input v-model.number="serviceChargeReportMinPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <label class="admin-limit-field">
+              人數上限
+              <input v-model.number="serviceChargeReportMaxPeople" type="number" min="1" max="99" step="1" />
+            </label>
+            <button class="primary-button" type="button" :disabled="isServiceChargeReportLoading" @click="loadServiceChargeReport">
+              <RefreshCw :size="18" aria-hidden="true" />
+              {{ isServiceChargeReportLoading ? '讀取中' : '刷新服務費' }}
+            </button>
+            <button class="primary-button secondary-button" type="button" :disabled="!serviceChargeReport" @click="exportServiceChargeReportCsv">
+              <Download :size="18" aria-hidden="true" />
+              匯出服務費 CSV
+            </button>
+          </div>
+
+          <div v-if="serviceChargeReport" class="admin-report-grid">
+            <article class="admin-report-card admin-report-card--primary">
+              <span>服務費金額</span>
+              <strong>{{ formatCurrency(serviceChargeReport.summary.totalServiceCharge) }}</strong>
+              <small>{{ serviceChargeReport.summary.serviceChargeOrderCount }} 張 · 平均 {{ formatCurrency(serviceChargeReport.summary.averageServiceChargePerServiceOrder) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>已收款訂單</span>
+              <strong>{{ serviceChargeReport.summary.totalOrders }}</strong>
+              <small>來客數 {{ serviceChargeReport.summary.totalPartySize }} · 單均 {{ formatCurrency(serviceChargeReport.summary.averageServiceChargePerOrder) }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>主要服務</span>
+              <strong>{{ serviceChargeTopServiceMode ? reportBreakdownLabel(serviceChargeTopServiceMode.key) : '尚無' }}</strong>
+              <small>{{ serviceChargeTopServiceMode ? `${serviceChargeTopServiceMode.serviceChargeOrderCount} 張 · ${formatCurrency(serviceChargeTopServiceMode.serviceChargeTotal)}` : '尚無資料' }}</small>
+            </article>
+            <article class="admin-report-card">
+              <span>主要來源</span>
+              <strong>{{ serviceChargeTopSource ? reportBreakdownLabel(serviceChargeTopSource.key) : '尚無' }}</strong>
+              <small>{{ serviceChargeTopSource ? `${serviceChargeTopSource.serviceChargeOrderCount} 張 · ${formatCurrency(serviceChargeTopSource.serviceChargeTotal)}` : '尚無資料' }}</small>
+            </article>
+          </div>
+
+          <div v-if="serviceChargeReport" class="admin-section-grid admin-report-sections">
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Service</p>
+                  <h3>服務方式</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in serviceChargeReport.byServiceMode" :key="row.key" class="admin-report-row">
+                <span>{{ reportBreakdownLabel(row.key) }}</span>
+                <strong>{{ formatCurrency(row.serviceChargeTotal) }}</strong>
+                <small>{{ row.serviceChargeOrderCount }} 張服務費訂單 · 平均 {{ formatCurrency(row.averageServiceCharge) }}</small>
+              </article>
+              <div v-if="serviceChargeReport.byServiceMode.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間沒有服務費資料</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Source</p>
+                  <h3>訂單來源</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in serviceChargeReport.bySource" :key="row.key" class="admin-report-row">
+                <span>{{ reportBreakdownLabel(row.key) }}</span>
+                <strong>{{ formatCurrency(row.serviceChargeTotal) }}</strong>
+                <small>{{ row.serviceChargeOrderCount }} 張含服務費 · 平均 {{ formatCurrency(row.averageServiceCharge) }}</small>
+              </article>
+              <div v-if="serviceChargeReport.bySource.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>尚無來源小計</span>
+              </div>
+            </section>
+
+            <section class="admin-subpanel">
+              <div class="admin-subpanel-heading">
+                <div>
+                  <p class="eyebrow">Trend</p>
+                  <h3>服務費走勢</h3>
+                </div>
+                <BarChart3 :size="22" aria-hidden="true" />
+              </div>
+              <article v-for="row in serviceChargeReport.trend.slice(0, 16)" :key="row.key" class="admin-report-row">
+                <span>{{ row.label }}</span>
+                <strong>{{ formatCurrency(row.serviceChargeTotal) }}</strong>
+                <small>{{ row.serviceChargeOrderCount }} 張含服務費 · {{ row.orderCount }} 張已收款 · {{ row.partySize }} 人</small>
+              </article>
+              <div v-if="serviceChargeReport.trend.length === 0" class="empty-state">
+                <Search :size="24" aria-hidden="true" />
+                <span>此區間尚無服務費走勢</span>
               </div>
             </section>
           </div>

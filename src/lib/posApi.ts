@@ -68,6 +68,8 @@ import type {
   CloseoutReportDeliveryStatus,
   ComboProductGroup,
   ReservationStatus,
+  ServiceChargeReport,
+  ServiceChargeReportTimeUnit,
   StaffTimeClockEntry,
   StaffPermissionVerification,
   SupplyPeriodRule,
@@ -615,6 +617,10 @@ interface NoteAnalysisReportResponse {
 
 interface DiscountAnalysisReportResponse {
   report: DiscountAnalysisReport
+}
+
+interface ServiceChargeReportResponse {
+  report: ServiceChargeReport
 }
 
 interface ElectronicInvoiceReportResponse {
@@ -4008,6 +4014,37 @@ export const fetchAdminDiscountAnalysisReport = async (options: {
   }
 
   const data = await request<DiscountAnalysisReportResponse>(`/admin/reports/discount-analysis?${params.toString()}`)
+
+  return data.report
+}
+
+export const fetchAdminServiceChargeReport = async (options: {
+  startDate: string
+  endDate: string
+  timeUnit: ServiceChargeReportTimeUnit
+  serviceMode?: ServiceMode | 'all'
+  source?: OrderSource | 'all'
+  minPartySize?: number | null
+  maxPartySize?: number | null
+}): Promise<ServiceChargeReport> => {
+  const params = new URLSearchParams()
+  params.set('startDate', options.startDate.trim())
+  params.set('endDate', options.endDate.trim())
+  params.set('timeUnit', options.timeUnit)
+  if (options.serviceMode && options.serviceMode !== 'all') {
+    params.set('serviceMode', options.serviceMode)
+  }
+  if (options.source && options.source !== 'all') {
+    params.set('source', options.source)
+  }
+  if (options.minPartySize !== null && options.minPartySize !== undefined) {
+    params.set('minPartySize', String(options.minPartySize))
+  }
+  if (options.maxPartySize !== null && options.maxPartySize !== undefined) {
+    params.set('maxPartySize', String(options.maxPartySize))
+  }
+
+  const data = await request<ServiceChargeReportResponse>(`/admin/reports/service-charges?${params.toString()}`)
 
   return data.report
 }

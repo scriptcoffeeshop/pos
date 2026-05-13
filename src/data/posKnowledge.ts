@@ -513,6 +513,22 @@ export const posKnowledgeArticles: PosKnowledgeArticle[] = [
     target: 'admin',
   },
   {
+    id: 'service-charge-report',
+    category: 'reports',
+    title: '服務費報表',
+    summary: '後台營運報表可依 iCHEF 服務費報表查看服務費金額、服務方式小計、來源小計與走勢。',
+    steps: [
+      '連點工具箱 6 下進入後台，再到「營運報表」。',
+      '在「服務費報表」選擇開始/結束日期；單次查詢不可超過 93 天，資料窗口限近 2 年。',
+      '可用日、週、月切換走勢單位；只查單日且選日單位時，走勢會細分到小時。',
+      '可依服務方式、訂單來源與人數範圍篩選，對照 iCHEF 的進階篩選。',
+      '摘要會顯示服務費金額、含服務費訂單數、平均服務費、已收款訂單數與來客數。',
+      '按「匯出服務費 CSV」可下載目前篩選結果；報表只統計服務費，不把其他費用併入。',
+    ],
+    keywords: ['服務費報表', '服務費', '清潔費', '場地費', '服務方式', '訂單來源', 'CSV', '報表分析', 'iCHEF'],
+    target: 'admin',
+  },
+  {
     id: 'fulfillment-alerts',
     category: 'orders',
     title: '任務快篩與取餐/送達時間預警',
